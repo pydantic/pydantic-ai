@@ -17,6 +17,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from .conftest import try_import
+from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
     from examples.pydantic_ai_examples import realtime_voice
@@ -33,7 +34,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
-    class ScriptedConnection(RealtimeConnection):
+    class ScriptedConnection(InferredConnection):
         """Replays an assistant turn and a user barge-in, recording what the session sends back.
 
         Defined inside the `try_import` block because its base class is one of the guarded imports:
@@ -55,12 +56,12 @@ with try_import() as imports_successful:
             self.sent: list[RealtimeInput] = []
             self.response_cancelled = asyncio.Event()
 
-        async def send(self, content: RealtimeInput) -> None:
+        async def send_input(self, content: RealtimeInput) -> None:
             self.sent.append(content)
             if isinstance(content, CancelResponse):
                 self.response_cancelled.set()
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             if self._completed_turn is not None:
                 # A full earlier turn, spoken and played to the end before the next turn starts.
                 prior_chunk, prior_played = self._completed_turn

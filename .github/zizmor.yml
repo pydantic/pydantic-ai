@@ -20,6 +20,9 @@ rules:
       - ci.yml
       - docs-navigation.yml
       - manually-deploy-docs.yml
+      # The sandbox provider tokens reach only the pytest step's `env:`, after checkout and
+      # setup, and the job runs only for same-repo pull requests, pushes and the nightly.
+      - sandbox-live.yml
       # These reusable triage workflows deliberately consume the named
       # `workflow_call` webhook secret. A job-level environment can shadow that
       # value with a caller-repository environment secret, breaking cross-repo

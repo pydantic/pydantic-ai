@@ -13,13 +13,6 @@ from pydantic_ai.output import OutputSpec
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.advisor import Advisor
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 class Decision(BaseModel):
     proceed: bool

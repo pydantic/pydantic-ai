@@ -24,13 +24,6 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 @pytest.mark.parametrize('stream', [False, True])
 async def test_input_checkpoint_on_first_model_failure(stream: bool) -> None:
@@ -89,6 +82,7 @@ async def test_same_length_after_run_rewrite_gets_final_checkpoint(tmp_path: Pat
     assert snapshot.messages == result.all_messages()
 
 
+@pytest.mark.subprocess(reason='hard-kills a process mid-run to check what it leaves persisted')
 async def test_hard_kill_leaves_model_frontier_and_unknown_effects(tmp_path: Path) -> None:
     database = tmp_path / 'steps.db'
     script = """

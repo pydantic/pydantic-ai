@@ -57,7 +57,7 @@ def test_moonshotai_model_profile():
     model = OpenAIChatModel('kimi-k2-0711-preview', provider=provider)
     assert isinstance(model.profile, dict)
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
-    assert model.profile.get('openai_supports_tool_choice_required', True) is False
+    assert model.profile.get('supports_forced_tool_choice', True) is False
     assert model.profile.get('supports_json_object_output', False) is True
 
 

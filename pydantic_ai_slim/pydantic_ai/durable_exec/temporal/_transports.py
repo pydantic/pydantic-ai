@@ -22,6 +22,7 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
 from pydantic_ai.durable_exec._utils import StreamedActivityResult
+from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -29,6 +30,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._operation_backend import TemporalParameterTransport
 from ._toolset import CallToolParams, GetToolsParams
@@ -52,6 +54,8 @@ __all__ = (
     '_ModelRequestTransport',
     '_RequestParams',
     '_StreamedActivityPayload',
+    '_WorkspaceCallTransport',
+    '_WorkspaceCallWire',
 )
 
 
@@ -381,3 +385,30 @@ class _EventStreamHandlerTransport(
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)
+
+
+@dataclass(kw_only=True)
+class _WorkspaceCallWire:
+    call: WorkspaceCall
+    ref: WorkspaceRef | None
+    serialized_run_context: Any
+
+
+class _WorkspaceCallTransport(TemporalParameterTransport[WorkspaceCallParams, tuple[_WorkspaceCallWire, Any]]):
+    wire_type = _WorkspaceCallWire
+    result_type = WorkspaceCallResult
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: WorkspaceCallParams) -> tuple[_WorkspaceCallWire, Any]:
+        ctx = params.run_context
+        serialized_run_context = self._durability.run_context_type.serialize_run_context(ctx)
+        return _WorkspaceCallWire(
+            call=params.call, ref=params.ref, serialized_run_context=serialized_run_context
+        ), ctx.deps
+
+    def load(self, payload: tuple[_WorkspaceCallWire, Any], *, runtime: object) -> WorkspaceCallParams:
+        wire, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(wire.serialized_run_context, deps)
+        return WorkspaceCallParams(run_context=ctx, ref=wire.ref, call=wire.call)

@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     CompactionPart,
@@ -29,7 +29,7 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ..cassette_utils import single_request_body
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 def refund_tool() -> ToolDefinition:

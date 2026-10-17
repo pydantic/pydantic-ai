@@ -16,16 +16,9 @@ from pydantic import SecretStr, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import openrouter
+from pydantic_clai2.models import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
 from tests.clai2.menu_script import make_context
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
@@ -42,7 +35,9 @@ def test_invalid_code(text: str) -> None:
     assert 'secret' not in str(error.value)
 
 
-@pytest.mark.parametrize('mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'eof', 'timeout', 'cancel'])
+@pytest.mark.parametrize(
+    'mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'declined', 'timeout', 'cancel']
+)
 async def test_login(mode: str) -> None:
     output = StringIO()
     console = Console(file=output)
@@ -62,13 +57,13 @@ async def test_login(mode: str) -> None:
 
     lines = iter(['', 'http://127.0.0.1/callback?code=secret-code'])
 
-    async def read_line(message: str) -> str:
+    async def read_line(message: str) -> str | None:
         prompt_started.set()
         try:
             if mode in ('paste', 'manual', 'browser_error'):
                 return next(lines)
-            if mode == 'eof':
-                raise EOFError
+            if mode == 'declined':
+                return None
             await asyncio.Future[None]()
             raise AssertionError('unreachable')  # pragma: no cover
         finally:
@@ -112,8 +107,10 @@ async def test_login(mode: str) -> None:
         login.cancel()
         with pytest.raises(asyncio.CancelledError):
             await login
-    elif mode in ('denied', 'eof', 'timeout'):
-        with pytest.raises(UserError, match={'denied': 'denied', 'eof': 'cancelled', 'timeout': 'timed out'}[mode]):
+    elif mode in ('denied', 'declined', 'timeout'):
+        with pytest.raises(
+            UserError, match={'denied': 'denied', 'declined': 'cancelled', 'timeout': 'timed out'}[mode]
+        ):
             await login
     else:
         assert (await login).get_secret_value() == 'private-api-key'

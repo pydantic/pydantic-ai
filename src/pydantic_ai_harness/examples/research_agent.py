@@ -8,7 +8,7 @@ Run the packaged equivalent without assembling the blocks:
 import os
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebFetch, WebSearch
+from pydantic_ai.capabilities import LocalWorkspace, WebFetch, WebSearch
 from pydantic_ai.models import Model
 from pydantic_ai_harness import SubAgent, SubAgents, ToolOutputLimits
 
@@ -38,10 +38,11 @@ def build_agent(model: Model | str = DEFAULT_MODEL) -> Agent:
         model,
         instructions=INSTRUCTIONS,
         capabilities=[
+            LocalWorkspace('.'),  # Oversized tool results are spilled under `.pydantic-ai-harness/` here.
             WebSearch(local=True),  # Use native search when supported, with DuckDuckGo as the local fallback.
             WebFetch(local=True),  # Use native URL fetching when supported, with a local fallback.
             SubAgents(agents=[sub_researcher], agent_folders=None),
-            ToolOutputLimits(),  # Bound large search responses.
+            ToolOutputLimits(),  # Bound large search responses; spills go to the workspace.
         ],
     )
 

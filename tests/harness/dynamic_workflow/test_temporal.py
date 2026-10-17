@@ -37,8 +37,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+from tests.harness._temporal import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='harness-temporal')]
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7247  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-dynamic-workflow-queue'
@@ -57,16 +59,11 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

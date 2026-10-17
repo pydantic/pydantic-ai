@@ -7,6 +7,7 @@ from dirty_equals import IsDatetime, IsInstance, IsStr
 from inline_snapshot.plugin import customize
 
 from pydantic_ai.usage import RequestUsage
+from tests import cassette_hooks
 
 
 class InlineSnapshotPlugin:
@@ -24,19 +25,15 @@ class InlineSnapshotPlugin:
             return builder.create_call(IsStr, [], {'regex': pattern})
 
 
+_IP_LITERAL_HOST = re.compile(r'://(?:(?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-fA-F:]+\])(?::\d+)?/')
+
+
+def _normalize_resolved_host(uri: str) -> str:
+    # `safe_download` connects to a resolved IPv4 or IPv6 address, which may differ
+    # between recording and replay for the same URL.
+    return _IP_LITERAL_HOST.sub('://RESOLVED_IP/', cassette_hooks.normalize_uri(uri))
+
+
 @pytest.fixture(scope='module')
-def vcr_config() -> dict[str, Any]:
-    return {
-        'filter_headers': [
-            ('authorization', 'REDACTED'),
-            ('x-api-key', 'REDACTED'),
-        ],
-        # `safe_download` connects to a resolved IP address, which may differ
-        # between recording and replay for the same URL.
-        'match_on': ['method', 'path', 'query'],
-    }
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    return {**vcr_config, 'uri_normalizer': _normalize_resolved_host}

@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import anyio
-import sniffio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
 from ._otel_emit import build_parent_context, emit_otel_events
+from ._utils import running_on_asyncio
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
@@ -137,9 +137,7 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    library = sniffio.current_async_library()
-
-    if library == 'trio':  # pragma: no cover
+    if not running_on_asyncio():  # pragma: no cover
         import trio.lowlevel
 
         done_event = anyio.Event()

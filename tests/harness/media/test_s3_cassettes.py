@@ -26,8 +26,6 @@ import pytest
 
 from pydantic_ai_harness.media import MediaContext, S3MediaStore, media_uri_for
 
-pytestmark = pytest.mark.anyio
-
 # Deterministic payload so the URI / object key are stable across re-records.
 _PAYLOAD = b'pydantic-ai-harness step-persistence VCR cassette payload v1'
 _MISSING_URI = 'media+sha256://' + ('0' * 64)

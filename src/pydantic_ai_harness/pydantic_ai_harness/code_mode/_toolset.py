@@ -11,12 +11,12 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
-from typing_extensions import NotRequired, Self, TypedDict, TypeIs
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.capabilities import AbstractCapability
@@ -35,11 +35,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-
-try:
-    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
-except ImportError:  # pragma: no cover
-    _SEARCH_TOOLS_NAME = 'search_tools'  # pyright: ignore[reportConstantRedefinition]
 
 try:
     from pydantic_monty import (
@@ -65,6 +60,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -402,7 +398,7 @@ Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -505,11 +501,14 @@ _SEARCH_TOOLS_MODIFIER = (
     ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
 )
 
-_TOOL_SEARCH_ADDENDUM = (
-    f'\n\nNot all functions may be available initially.'
-    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
-    f' that will become callable in subsequent `run_code` invocations.'
-)
+
+def _tool_search_addendum(search_tool_name: str) -> str:
+    return (
+        f'\n\nNot all functions may be available initially.'
+        f' Use the `{search_tool_name}` tool to discover additional functions'
+        f' that will become callable in subsequent `run_code` invocations.'
+    )
+
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
@@ -520,7 +519,7 @@ def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
     Such tools carry `code_arg_name` metadata -- the same marker instrumentation reads to render
     the argument as code. It covers script sandboxes (this `run_code`, DynamicWorkflow's
     `run_workflow`), shell surfaces that hand the argument to a shell (`Shell`'s
-    `run_command`/`start_command`, ModalSandbox's `run_command`), and tools that import the
+    `run_command`/`start_command`), and tools that import the
     argument as Python (`CapabilityCreation`'s `author_capability`). They must not be folded
     into `run_code`: nesting one code surface inside another would make the model write a script
     that passes a second script as a string literal. They stay native so the two code surfaces
@@ -544,8 +543,44 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
+class CodeModeReturnSchemaWarning(UserWarning):
+    """A sandboxed tool has no return schema, so its generated signature shows `-> Any`.
+
+    The model then writes code against a result shape it has to guess. A function tool gets a
+    return schema from its return annotation; an MCP tool gets one when its server declares an
+    `outputSchema`. When the tools come from a server you do not control, silence this category
+    alone with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
+    """
+
+
+def _warn_missing_return_schemas(names: Sequence[str]) -> None:
+    """Warn once for every tool whose sandbox signature will show `-> Any`.
+
+    MCP servers commonly omit output schemas, so the tools are named in one warning rather
+    than one warning each.
+    """
+    if not names:
+        return
+    if len(names) == 1:
+        message = f'CodeMode: tool {names[0]!r} has no return schema; its signature will show `-> Any`'
+    else:
+        listed = ', '.join(repr(name) for name in names)
+        message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
+    warnings.warn(
+        f'{message}, which may reduce code mode effectiveness. Add a return annotation to a function tool, '
+        'or an `outputSchema` to an MCP tool; to silence this, filter `CodeModeReturnSchemaWarning`.',
+        CodeModeReturnSchemaWarning,
+        stacklevel=3,
+    )
+
+
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
+
+    Only `'sequential'` does. `'parallel_ordered_events'` runs top-level tool calls concurrently and
+    orders only their result events, which nested sandbox calls do not emit, so it dispatches them
+    concurrently like `'parallel'`. `DBOSDurability` defaults to that mode, so serializing there
+    would make every `asyncio.gather` in a DBOS run cost the sum of its calls' latencies.
 
     pydantic-ai v1's `get_parallel_execution_mode` took the pending calls list
     and folded per-tool `sequential` flags into the result; v2 dropped the
@@ -559,8 +594,8 @@ def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) ->
     major's stubs pyright resolves.
     """
     if inspect.signature(get_mode).parameters:
-        return get_mode([]) != 'parallel'
-    return get_mode() != 'parallel'
+        return get_mode([]) == 'sequential'
+    return get_mode() == 'sequential'
 
 
 @dataclass(kw_only=True)
@@ -778,6 +813,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     so Tool Search discoveries don't bust the tool-definitions cache prefix.
     """
 
+    repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
+    """Keep the `run_code` REPL across agent runs in this store; unset, each run starts a fresh REPL.
+
+    Not used under durable execution.
+    """
+
     capability: AbstractCapability[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
     """The run's `CodeMode` instance, when this toolset was built by one.
 
@@ -795,6 +836,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # Shared by `for_run_step` copies so they use the same REPL session and the original entered
     # instance can close it. `for_run` leaves this unset, giving concurrent runs isolated state.
     _run_state: MontyRunState | None = field(default=None, init=False, repr=False, compare=False)
+
+    # Shared with `_run_state`: created on entry when `repl_store` is set, saved on exit.
+    _repl: PersistentRepl[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     # Catalog string stashed during `get_tools` (when `dynamic_catalog`) and read back by
     # `get_instructions` in the same step. Empty when there's nothing to surface.
@@ -820,6 +864,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return self
         new_self = replace(self, wrapped=new_wrapped)
         new_self._run_state = self._run_state
+        new_self._repl = self._repl
         new_self._warned_deferred = self._warned_deferred
         new_self._last_catalog = self._last_catalog
         return new_self
@@ -836,19 +881,29 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = MontyRunState(monty_sandbox_url=self.monty_sandbox_url)
         await self.wrapped.__aenter__()
         self._run_state = run_state
+        self._repl = (
+            None
+            if self.repl_store is None
+            else PersistentRepl(self.repl_store, limits=_resolve_resource_limits(self.resource_limits))
+        )
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
         """Exit the wrapped toolset, then tear down the worker pool."""
         run_state = self._run_state
         assert run_state is not None
+        repl, self._repl = self._repl, None
         self._run_state = None
         try:
             if self.speculation is not None:
                 await self.speculation.close()
             return await self.wrapped.__aexit__(*args)
         finally:
-            await run_state.close()
+            try:
+                if repl is not None:
+                    await repl.save(run_state)
+            finally:
+                await run_state.close()
 
     @classmethod
     def from_run_context(cls, ctx: RunContext[AgentDepsT]) -> Self | None:
@@ -947,19 +1002,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
             )
 
-        # When search_tools is present, append context about run_code to its
-        # description and add a discovery note to the run_code description.
-        has_search_tools = _SEARCH_TOOLS_NAME in native_tools
-        if has_search_tools:
-            search_tool = native_tools[_SEARCH_TOOLS_NAME]
-            native_tools[_SEARCH_TOOLS_NAME] = replace(
+        # When the tool search tool is present, append context about run_code to its
+        # description and add a discovery note to the run_code description. It is found by its
+        # `tool_kind`, since its name can be prefixed.
+        search_tool_name = next(
+            (name for name, tool in native_tools.items() if tool.tool_def.tool_kind == 'tool-search'), None
+        )
+        if search_tool_name is not None:
+            search_tool = native_tools[search_tool_name]
+            native_tools[search_tool_name] = replace(
                 search_tool,
                 tool_def=replace(
                     search_tool.tool_def,
                     description=(search_tool.tool_def.description or '') + _SEARCH_TOOLS_MODIFIER,
                 ),
             )
-            description += _TOOL_SEARCH_ADDENDUM
+            description += _tool_search_addendum(search_tool_name)
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(native_tools)
         result[_RUN_CODE_TOOL_NAME] = _RunCodeTool(
@@ -996,6 +1054,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
         if restart:
+            repl = self._persistent_repl(ctx)
+            if repl is not None:
+                repl.restart(ctx)
             await run_state.reset()
 
         execution = RunCodeExecution(parent_tool_call_id=ctx.tool_call_id or 'pyd_ai_code_mode')
@@ -1023,6 +1084,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     def _as_run_code_tool(tool: ToolsetTool[AgentDepsT]) -> _RunCodeTool[AgentDepsT] | None:
         return tool if isinstance(tool, _RunCodeTool) else None
 
+    def _persistent_repl(self, ctx: RunContext[AgentDepsT]) -> PersistentRepl[AgentDepsT] | None:
+        """The run's link to `repl_store`, or `None` without one or under durable execution.
+
+        A durable workflow replays its code, so store I/O there would need to be deterministic.
+        """
+        return None if in_durable_execution(ctx) else self._repl
+
     def _capability_id(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """The id `capability` is registered under this run, so `run_code` is attributed to it."""
         if self.capability is None:
@@ -1040,6 +1108,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state = self._run_state
         assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
 
+        repl = self._persistent_repl(ctx)
+        if repl is not None:
+            await repl.begin(ctx)
         fresh_repl = not run_state.has_executed_feed
 
         callable_defs = tool.callable_defs
@@ -1127,9 +1198,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # original run and replay take different branches, which Temporal cannot record.
         limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
         try:
+            if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+                # The type checker would reject the names the restored state defines.
+                fresh_repl = type_check = False
             session = await run_state.get_session(
                 type_check=type_check,
-                type_check_stubs=type_check_stubs,
+                type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
                 in_temporal_workflow=in_workflow,
             )
@@ -1278,6 +1352,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
+        missing_return_schema: list[str] = []
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
@@ -1296,23 +1371,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            # Warn when a sandboxed tool has no return schema -- the generated
-            # signature will show `-> Any`, giving the model no type information
-            # about the return shape, which limits code mode effectiveness.
             if td.return_schema is None and name not in self._warned_deferred:
-                self._warned_deferred.add(name)
-                warnings.warn(
-                    f'CodeMode: tool {name!r} has no return schema; '
-                    f'its signature will show `-> Any`, which may reduce code mode effectiveness.',
-                    UserWarning,
-                    stacklevel=2,
-                )
+                missing_return_schema.append(name)
 
             if safe_name != name:
                 sanitized_to_original[safe_name] = name
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
+        _warn_missing_return_schemas(missing_return_schema)
+        # Recorded only once warned, so a warning escalated to an error is raised again next time.
+        self._warned_deferred.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod

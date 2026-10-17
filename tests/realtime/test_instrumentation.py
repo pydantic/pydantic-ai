@@ -77,12 +77,11 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
-
-pytestmark = pytest.mark.anyio
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
@@ -121,16 +120,16 @@ def _span_tree(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
     return [render(root) for root in sorted(children.get(None, []), key=lambda span: span.start_time)]
 
 
-class _Connection(RealtimeConnection):
+class _Connection(InferredConnection):
     """Replays a fixed list of events; records nothing of interest for these tests."""
 
     def __init__(self, events: list[RealtimeCodecEvent]) -> None:
         self._events = events
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
 
@@ -457,8 +456,8 @@ async def test_session_and_tool_spans_with_usage() -> None:
     # Every span in a session tree carries the realtime marker — the tool span is created by the
     # shared `Instrumentation` capability, which marks it only when the active model is realtime.
     assert all(s.attributes is not None and s.attributes.get('pydantic_ai.realtime') is True for s in spans.values())
-    # The capability receives the raw call, matching the standard tool-manager path.
-    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city": "Paris"}'
+    # The capability receives the call's args as compact JSON, matching the standard tool-manager path.
+    assert tool.attributes['gen_ai.tool.call.arguments'] == '{"city":"Paris"}'
     assert tool.attributes['gen_ai.tool.call.result'] == 'sunny'
     # Both the `chat` span and the `execute_tool` span are children of the session span (siblings),
     # matching the classic agent-run tree where `execute_tool` follows `chat` rather than nesting in it.
@@ -470,6 +469,63 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_session_span_reports_its_own_usage_not_a_carried_total() -> None:
+    """A session handed a running total reports only what it added, like a classic agent-run span.
+
+    `usage=` accumulates into the object it is given, so `session.usage` is the conversation's total by
+    design. The span reporting that would count every earlier run again for anyone summing agent-run
+    spans; the per-turn `chat` spans already carry each response's own usage.
+    """
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    conn = _Connection([SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)), ResponseDone()])
+    async with agent.realtime(
+        _Model(conn), usage=RunUsage(requests=1, input_tokens=100, output_tokens=40)
+    ).session() as session:
+        _ = [e async for e in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent assistant')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    assert session.usage.input_tokens == 110
+
+
+async def test_session_span_leaves_a_delegates_usage_to_its_own_span() -> None:
+    """A run a tool starts with `usage=ctx.usage` adds to `session.usage`, but reports on its own span."""
+    settings, exporter = _settings()
+    sub = Agent(TestModel(), name='sub')
+    sub.instrument = settings
+
+    agent = Agent[None, str](name='assistant', deps_type=type(None))
+
+    @agent.tool
+    async def analyze(ctx: RunContext[None]) -> str:
+        result = await sub.run('hi', usage=ctx.usage)
+        return result.output
+
+    agent.instrument = settings
+    conn = _Connection(
+        [
+            ToolCall(tool_call_id='c', tool_name='analyze', args='{}'),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    sess = spans['invoke_agent assistant']
+    delegate = spans['invoke_agent sub']
+    assert sess.attributes is not None and delegate.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    assert delegate.attributes['gen_ai.aggregated_usage.input_tokens'] == snapshot(51)
+    assert session.usage.input_tokens == 10 + 51
 
 
 async def test_session_and_chat_spans_carry_request_config() -> None:
@@ -1294,6 +1350,36 @@ async def test_session_span_omits_conversation_id_when_unset() -> None:
     assert 'gen_ai.conversation.id' not in sess.attributes
 
 
+async def test_session_span_reports_a_conversation_id_the_session_minted() -> None:
+    # A session opened without a `conversation_id` mints one the first time `conversation` is taken,
+    # and every message it records from then on carries it. The session span has to report the same
+    # identity, or the span a conversation was spoken in can't be correlated with the text runs that
+    # continue it -- which is the whole reason the id is carried across modalities.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    async with session:
+        minted = session.conversation.conversation_id
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
+async def test_session_span_reports_a_conversation_id_minted_before_it_opened() -> None:
+    # The same identity, taken before the session was entered: there is no span to update yet, so the
+    # id has to be waiting for `start_session_span` to pick up instead.
+    settings, exporter = _settings()
+    conn = _Connection([ResponseDone()])
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime')
+    minted = session.conversation.conversation_id
+    async with session:
+        _ = [event async for event in session]
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.conversation.id'] == minted
+
+
 async def test_session_span_without_model_or_usage() -> None:
     settings, exporter = _settings()
     conn = _Connection([ResponseDone()])  # no model name, no Usage event
@@ -1420,6 +1506,21 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
     assert sess.attributes is not None
     assert sess.attributes['gen_ai.usage.input_tokens'] == 10
     assert 'gen_ai.aggregated_usage.input_tokens' not in sess.attributes
+
+
+async def test_session_span_reports_the_usage_the_provider_reports_as_its_session_ends() -> None:
+    """GPT-Live bills its last seconds only as the session ends, after the reading stopped; the span counts them too."""
+
+    class _EndingConnection(_Connection):
+        async def _end_session(self) -> AsyncIterator[SessionUsage]:
+            yield SessionUsage(RequestUsage(input_tokens=7), response_scoped=False)
+
+    settings, exporter = _settings(use_aggregated_usage_attribute_names=False)
+    async with RealtimeSession(_EndingConnection([]), _ok_runner, instrumentation=settings, model_name='gpt-live-1'):
+        pass
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.usage.input_tokens'] == 7
 
 
 async def test_chat_span_matches_instrumented_model_shape() -> None:
@@ -1677,12 +1778,12 @@ async def test_early_break_finishes_chat_span(caplog: pytest.LogCaptureFixture) 
 async def test_early_break_finishes_running_tool_span(caplog: pytest.LogCaptureFixture) -> None:
     """Owner exit cancels a running tool and finishes every span before returning."""
 
-    class _IdleAfterTool(RealtimeConnection):
+    class _IdleAfterTool(InferredConnection):
         # Tool is cancelled first.
-        async def send(self, content: RealtimeInput) -> None:  # pragma: no cover
+        async def send_input(self, content: RealtimeInput) -> None:  # pragma: no cover
             raise AssertionError
 
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}')
             await asyncio.Event().wait()
 

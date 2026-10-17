@@ -23,13 +23,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import GuardrailResult, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails import GuardrailError
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
     exporter = InMemorySpanExporter()

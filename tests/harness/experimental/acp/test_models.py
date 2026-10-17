@@ -18,8 +18,6 @@ from pydantic_ai_harness.experimental.acp import InMemorySessionStore, PydanticA
 from pydantic_ai_harness.experimental.acp._adapter import _all_known_model_names  # pyright: ignore[reportPrivateUsage]
 from tests.harness.experimental.acp._acp_clients import RecordingClient
 
-pytestmark = pytest.mark.anyio
-
 
 def test_all_known_model_names_are_strings() -> None:
     # Guards `models='all'` advertising only string model ids from Pydantic AI's public

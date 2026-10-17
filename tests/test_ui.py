@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
@@ -50,6 +50,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -65,9 +66,11 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
+from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
 
@@ -79,7 +82,6 @@ from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnComplet
 from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1427,9 +1429,21 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-async def test_adapter_dispatch_request():
-    agent = Agent(model=TestModel())
+async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
+    # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
+    # supply is a `UserError`, and this test is about the forwarding, not that failure.
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    workspace = WorkspaceRef(provider='fake', id='test')
+    captured_workspace: list[object] = []
+
+    run_stream_events = agent.run_stream_events
+
+    def capture_run_stream_events(**kwargs: Any) -> Any:
+        captured_workspace.append(kwargs['workspace'])
+        return run_stream_events(**kwargs)
+
+    monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -1451,7 +1465,11 @@ async def test_adapter_dispatch_request():
         captured_metadata.append(run_result.metadata)
 
     response = await DummyUIAdapter.dispatch_request(
-        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+        starlette_request,
+        agent=agent,
+        metadata={'ui': 'dispatch'},
+        on_complete=on_complete,
+        workspace=workspace,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1490,6 +1508,7 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+    assert captured_workspace == [workspace]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():
@@ -1759,6 +1778,145 @@ async def test_adapter_server_mode_with_deferred_agent_reinjector():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
+def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent whose first model turn calls a tool that enqueues a mid-run `SystemPromptPart`."""
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(parts=[ToolCallPart('steer', {}, tool_call_id='steer_call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_respond(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='steer', json_args='{}', tool_call_id='steer_call')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), system_prompt='Server prompt', **kwargs)
+
+    @agent.tool
+    def steer(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('Mid-run steering'))
+        return 'steered'
+
+    return agent, requests
+
+
+def _contents(messages: Sequence[ModelMessage]) -> list[str]:
+    """The text of each system and user prompt part in `messages`, in order."""
+    return [
+        part.content
+        for m in messages
+        if isinstance(m, ModelRequest)
+        for part in m.parts
+        if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+    ]
+
+
+async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
+    """`replace_existing=True` replaces the system prompts the run started with, not ones added during it."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Hi', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_keeps_summary_added_to_head_on_first_request():
+    """A summary a compaction capability folds into the head request on the run's first step is kept."""
+
+    @dataclass
+    class SummarizeHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            standing = [p for p in ctx.messages[0].parts if isinstance(p, SystemPromptPart)]
+            compacted: list[ModelMessage] = [
+                ModelRequest(parts=[*standing, SystemPromptPart('Summary of previous conversation')]),
+                ctx.messages[-1],
+            ]
+            ctx.messages[:] = compacted
+            request_context.messages = list(compacted)
+            return request_context
+
+    agent = Agent(TestModel(), system_prompt='Server prompt', capabilities=[SummarizeHistory()])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Summary of previous conversation', 'Go'])
+
+
+async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
+    """On a fresh conversation the agent's own system prompt is replaced, not doubled, on every step."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    result = await agent.run('Go')
+
+    assert [_contents(request) for request in requests] == snapshot(
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system>Mid-run steering</system>']]
+    )
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not_duplicate():
+    """A dynamic system prompt in the history is re-rendered as a new part before the first request, yet still replaced."""
+    agent = Agent(TestModel(), capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    @agent.system_prompt(dynamic=True)
+    def server_prompt() -> str:
+        return 'Dynamic server prompt'
+
+    # Not at the head, where the standing prompt would be replaced regardless.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(
+            parts=[UserPromptPart('Again'), SystemPromptPart('Stale', dynamic_ref=server_prompt.__qualname__)]
+        ),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert _contents(result.all_messages()) == snapshot(['Dynamic server prompt', 'Hi', 'Again', 'Go'])
+
+
+async def test_adapter_server_mode_keeps_mid_run_system_prompts():
+    """In `manage_system_prompt='server'` mode, a `SystemPromptPart` the server adds during the run survives."""
+    agent, requests = _steering_agent()
+    adapter = DummyUIAdapter(
+        agent,
+        DummyUIRunInput(messages=[ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Go')])]),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+    ]
+
+    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+        events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(run_result_event.result.all_messages()) == snapshot(
+        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+    )
+
+
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
@@ -1780,6 +1938,7 @@ def _make_dummy_adapter(
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
 ) -> DummyUIAdapter[None, str]:
     agent = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1788,6 +1947,7 @@ def _make_dummy_adapter(
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
         allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
     )
 
 
@@ -2134,6 +2294,27 @@ def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
 
     user_part = message_part(sanitized, UserPromptPart)
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
+
+
+@pytest.mark.parametrize('strip_workspace_refs', [True, False])
+def test_adapter_strip_workspace_refs(strip_workspace_refs: bool):
+    """The adapter resets client-submitted `workspace_ref`s unless `strip_workspace_refs=False`."""
+    ref = WorkspaceRef(provider='modal', id='env')
+    adapter = _make_dummy_adapter(
+        [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)],
+        strip_workspace_refs=strip_workspace_refs,
+    )
+
+    response = message(adapter.sanitize_messages(adapter.messages), ModelResponse)
+    assert response.workspace_ref == (None if strip_workspace_refs else ref)
+
+
+def test_strip_workspace_refs_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert from_request_parameters['strip_workspace_refs'].default is True
+    assert dispatch_request_parameters['strip_workspace_refs'].default is True
 
 
 def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():

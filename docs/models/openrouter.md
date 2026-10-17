@@ -101,14 +101,19 @@ agent = Agent(model, model_settings=settings)
 
 ## Forced tool choice
 
-Pydantic AI treats a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] as incompatible with [thinking](../capabilities/thinking.md) on every `anthropic/` model routed through OpenRouter. Pydantic AI is more conservative than [the direct Anthropic API](anthropic.md#forced-tool-choice), where adaptive thinking accepts forcing — the OpenRouter route hasn't been verified, and it fails quietly rather than loudly: where Anthropic rejects an incompatible combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. See [#7283](https://github.com/pydantic/pydantic-ai/issues/7283). With thinking enabled on an `anthropic/` model:
+Claude answers a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] without thinking, so on `anthropic/` models Pydantic AI follows the [direct Anthropic API's rules](anthropic.md#forced-tool-choice): while the request thinks, a `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back to `'auto'`, and a bare structured `output_type` uses [Native Output](../output.md#native-output). That includes requests without a thinking setting on models that think by default, like `anthropic/claude-opus-5`.
 
-- An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
-- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, so thinking is preserved. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+When you ask for thinking explicitly on an `anthropic/` model, an explicit `tool_choice='required'` (or a list of tool names) also raises a [`UserError`][pydantic_ai.exceptions.UserError], where the direct API would send it: OpenRouter doesn't reject that combination but silently drops the `reasoning` field from the request, so the response would come back with no thinking at all. Disable thinking or use `tool_choice='auto'` instead.
+
+If a resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
 
 ## Prompt Caching
 
-OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it. Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
+OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
+
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability): on Anthropic and Gemini downstream models, `cache=True` is equivalent to `openrouter_cache_instructions`, `openrouter_cache_tool_definitions` and `openrouter_cache_messages` below (Gemini takes no TTL, so a requested retention caches at its default). See [Caching](../capabilities/caching.md) for the cost trade-off. The provider-specific `openrouter_cache_*` settings take precedence when any is set.
+
+Pydantic AI's OpenRouter cache settings control explicit `cache_control` breakpoints for Anthropic and Gemini models:
 
 1. **Cache System Instructions**: Set [`OpenRouterModelSettings.openrouter_cache_instructions`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_instructions] to `True` or specify `'5m'` / `'1h'` directly
 2. **Cache the Last Message**: Set [`OpenRouterModelSettings.openrouter_cache_messages`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_cache_messages] to `True` to automatically cache the last message in the conversation
@@ -180,7 +185,7 @@ def search_docs(ctx: RunContext, query: str) -> str:
 ...
 ```
 
-Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` sends Anthropic's default `'5m'` TTL for Anthropic models; Gemini ignores TTL values and manages cache lifetime itself. Check `result.usage.cache_write_tokens` on initial writes and `result.usage.cache_read_tokens` on reuse, including subsequent calls with `message_history=result.all_messages()`.
+Each setting accepts `True` or an explicit `'5m'` / `'1h'` TTL value. `True` sends Anthropic's default `'5m'` TTL for Anthropic models; Gemini ignores TTL values and manages cache lifetime itself. Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one (it processes tools, then system instructions, then messages), so when a one-hour breakpoint follows five-minute ones on an Anthropic model, those earlier breakpoints are raised to one hour. Check `result.usage.cache_write_tokens` on initial writes and `result.usage.cache_read_tokens` on reuse, including subsequent calls with `message_history=result.all_messages()`.
 
 OpenRouter uses [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) after prompt-cached requests to improve cache locality. For cache-sensitive workflows that need stricter provider control or disabled fallbacks, also set [`openrouter_provider`][pydantic_ai.models.openrouter.OpenRouterModelSettings.openrouter_provider], for example with `{'order': ['anthropic'], 'allow_fallbacks': False}`.
 
@@ -204,6 +209,8 @@ prompt = [
 ```
 
 Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePoint()` marker is cached. You can place multiple markers for fine-grained control over cache boundaries.
+
+A `CachePoint` that opens a user message marks the end of the previous user message instead, keeping a longer TTL already there. Unlike on Anthropic, Bedrock and OpenAI, a tool result in between doesn't carry it, since OpenRouter doesn't document `cache_control` on tool results; with no earlier user message the breakpoint is dropped. One with nothing but system instructions before it (or nothing at all), or with nothing after it in its message, raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! warning "Anthropic cache-breakpoint ordering"
     Anthropic processes cache breakpoints in a fixed order — tool definitions, then system instructions, then messages — and rejects a `'1h'` breakpoint that appears *after* a `'5m'` one in that sequence. When mixing TTLs across `CachePoint` markers or the cache settings on an Anthropic model, place the longer (`'1h'`) breakpoints before the shorter (`'5m'`) ones. Anthropic also allows at most four explicit breakpoints per request; excess breakpoints are dropped (oldest first) before the request is sent.

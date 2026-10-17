@@ -4,7 +4,6 @@ import io
 import os
 from pathlib import Path
 
-import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -13,15 +12,8 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.input_history import input_history
-from pydantic_clai2.settings_store import SettingsStore
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt.input_history import input_history
 
 
 async def test_history_survives_reopening(tmp_path: Path) -> None:
@@ -41,7 +33,7 @@ async def test_chat_reuses_input_history(tmp_path: Path) -> None:
     input_history(path).append_string('/help')
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('\x1b[A\n/exit\n')
+        pipe.send_text('\x1b[A\r/exit\r')
         await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=store)
     assert 'Show commands' in output.getvalue()
     assert '/exit' in [text async for text in input_history(path).load()]
