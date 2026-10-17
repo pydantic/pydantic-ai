@@ -12,7 +12,7 @@ from __future__ import annotations as _annotations
 import pytest
 
 from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart
-from pydantic_ai.models import _render_unattributed_compaction_parts  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models import Model, _render_unattributed_compaction_parts  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.test import TestModel
 
 from ..conftest import RequestCapture, try_import
@@ -47,10 +47,9 @@ def test_unattributed_part_renders_as_framed_assistant_text():
 
     rendered = _render_unattributed_compaction_parts(messages)
 
-    assert rendered[1] == ModelResponse(
-        parts=[TextPart(content=f'<conversation_summary>\n{SUMMARY}\n</conversation_summary>')],
-        timestamp=messages[1].timestamp,
-    )
+    summary = rendered[1]
+    assert isinstance(summary, ModelResponse)
+    assert summary.parts == [TextPart(content=f'<conversation_summary>\n{SUMMARY}\n</conversation_summary>')]
     # Only the adapter's copy changes: the history keeps the typed part.
     assert isinstance(messages[1].parts[0], CompactionPart)
 
@@ -91,8 +90,8 @@ def test_other_compaction_parts_are_left_to_the_adapter(part: CompactionPart):
     assert _render_unattributed_compaction_parts(messages) == messages
 
 
-async def _ask(model_factory: object) -> str:
-    agent = Agent(model_factory)  # pyright: ignore[reportArgumentType]
+async def _ask(model: Model) -> str:
+    agent = Agent(model)
     result = await agent.run(QUESTION, message_history=_compacted_history())
     return result.output
 

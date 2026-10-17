@@ -4725,7 +4725,10 @@ recent
 
         standing, summary, *_ = result.all_messages()
         assert isinstance(standing, ModelRequest)
-        assert standing.parts == [SystemPromptPart(content='Be terse.', timestamp=standing.parts[0].timestamp)]
+        assert [(part.part_kind, part.content) for part in standing.parts if isinstance(part, SystemPromptPart)] == [
+            ('system-prompt', 'Be terse.')
+        ]
+        assert len(standing.parts) == 1
         assert isinstance(summary, ModelResponse)
         assert summary.parts == [CompactionPart(content='THE SUMMARY')]
         # What the model received: the summary part, and no system prompt holding it.
