@@ -83,11 +83,13 @@ def test_ollama_cloud_base_url_disables_json_schema_output(ollama_api_key: str) 
     assert profile.get('openai_supports_strict_tool_definition', True) is False
 
 
-def test_local_ollama_cloud_suffix_disables_json_schema_output(ollama_api_key: str) -> None:
-    """A local Ollama daemon forwards `-cloud` suffixed models to the same upstream that
-    the direct Cloud path hits, so the same capability downgrade must apply."""
+@pytest.mark.parametrize('model_name', ['gpt-oss:20b-cloud', 'glm-5.3:cloud'])
+def test_local_ollama_cloud_suffix_disables_json_schema_output(model_name: str, ollama_api_key: str) -> None:
+    """A local Ollama daemon forwards cloud-tagged models to the same upstream that the
+    direct Cloud path hits, so the same capability downgrade must apply. Models that also run
+    locally carry a size-qualified `-cloud` tag, while cloud-only models carry a bare `:cloud` tag."""
     provider = OllamaProvider(base_url=OLLAMA_LOCAL_BASE_URL, api_key=ollama_api_key)
-    model = OllamaModel('gpt-oss:20b-cloud', provider=provider)
+    model = OllamaModel(model_name, provider=provider)
 
     assert model.profile.get('supports_json_schema_output', False) is False
     assert model.profile.get('supports_json_object_output', False) is True
