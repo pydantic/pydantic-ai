@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Literal
 
 from pydantic_ai.durable_exec import (
@@ -13,6 +13,7 @@ from pydantic_ai.durable_exec import (
     OperationConfigRole,
 )
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import RunContext
 
 
@@ -77,8 +78,10 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         wrapped_toolset_kinds=frozenset(),
     )
 
-    def __init__(self, *, fail_operations: frozenset[str] = frozenset()) -> None:
-        super().__init__()
+    def __init__(
+        self, *, fail_operations: frozenset[str] = frozenset(), models: Mapping[str, Model] | None = None
+    ) -> None:
+        super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.fail_operations = fail_operations
 
