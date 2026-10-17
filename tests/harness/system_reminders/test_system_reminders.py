@@ -28,7 +28,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction import SlidingWindowCompaction
+from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.system_reminders import (
     DynamicReminder,
@@ -1023,6 +1023,41 @@ class TestEndToEnd:
         # The window trims every request after the second, and each one still carries its reminder.
         assert [len(messages) for messages in seen] == [1, 3, 3, 3]
         assert all('<system>stay focused</system>' in _all_text(messages) for messages in seen)
+
+    async def test_summary_leaves_out_reminders(self) -> None:
+        """A reminder kept in history applied to its own request only, so a summary doesn't carry it on."""
+        summary_prompts: list[str] = []
+
+        def summarizer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summary_prompts.append(_all_text(messages))
+            return ModelResponse(parts=[TextPart('summary')])
+
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{calls}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[
+                SystemReminders(reminders=[Reminder('stay focused', tag=None)]),
+                SummarizingCompaction(model=FunctionModel(summarizer), max_messages=3, keep_messages=1),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        assert summary_prompts
+        assert all('stay focused' not in prompt for prompt in summary_prompts)
+        assert 'stay focused' in _request_scoped_texts(result.all_messages())
 
     @pytest.mark.parametrize('reminders_first', [False, True])
     async def test_composes_with_planning(self, reminders_first: bool) -> None:

@@ -9,9 +9,10 @@ import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
 
 from pydantic_ai import Agent
+from pydantic_ai._utils import UNSET, Unset, is_set
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
@@ -36,10 +37,6 @@ _WARNED_RUNS_KEPT = 256
 """How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
 
 
-_TAG_UNSET: Any = object()
-"""`Reminder.tag` left unset: sends the raw content and warns that the default changed."""
-
-
 @dataclass
 class Reminder(Generic[AgentDepsT]):
     r"""A static reminder injected on a cadence during an agent run."""
@@ -62,7 +59,7 @@ class Reminder(Generic[AgentDepsT]):
     max_fires: int | None = None
     """Maximum number of times this reminder may fire within a run. `None` means no limit."""
 
-    tag: str | None = cast('str | None', _TAG_UNSET)
+    tag: str | None | Unset = UNSET
     r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
 
     `None` sends the raw content, which is what a reminder needs: it's already a system prompt, which
@@ -77,7 +74,7 @@ class Reminder(Generic[AgentDepsT]):
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
             raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
-        if self.tag is _TAG_UNSET:
+        if not is_set(self.tag):
             warn_default_changed(
                 owner='Reminder',
                 option='tag',
@@ -451,7 +448,8 @@ def _should_fire(reminder: Reminder[AgentDepsT], count: int) -> bool:
 
 def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     """Return `reminder`'s content, XML-wrapped when its `tag` is set."""
-    if reminder.tag is not None:
+    # `__post_init__` resolves an unset `tag` to `None`.
+    if isinstance(reminder.tag, str):
         return f'<{reminder.tag}>\n{reminder.content}\n</{reminder.tag}>'
     return reminder.content
 

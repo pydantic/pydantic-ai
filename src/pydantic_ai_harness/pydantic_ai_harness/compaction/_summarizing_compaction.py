@@ -211,8 +211,11 @@ def _format_messages(
             for part in msg.parts:
                 if isinstance(part, UserPromptPart):
                     lines.append(f'User: {_user_prompt_text(part)}')
-                elif isinstance(part, SystemPromptPart) and not (
-                    skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX)
+                elif (
+                    isinstance(part, SystemPromptPart)
+                    # A request-scoped prompt applied to its own request only, so it's no lasting context.
+                    and part.scope != 'request'
+                    and not (skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX))
                 ):
                     lines.append(f'System: {part.content}')
                 elif isinstance(part, ToolReturnPart):
