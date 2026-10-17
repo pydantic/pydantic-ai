@@ -35,7 +35,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_ai_harness.subagents import DelegationOutcome, is_task_report
 from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
@@ -867,7 +867,8 @@ def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
+                    if not is_task_report(part):
+                        items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
                 elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'

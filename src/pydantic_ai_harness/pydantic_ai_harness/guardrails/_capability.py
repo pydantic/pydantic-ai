@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._background_completion import get_background_completion
+from pydantic_ai_harness._task_report import is_task_output, is_task_report
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
@@ -101,14 +102,15 @@ def _extract_prompt(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage
     message history for the last [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]
     so that sub-agent calls or resumed runs without a fresh prompt still work.
     """
-    if ctx.prompt is not None:
+    # A `SubAgents` task report rides the user channel but is a child agent's output, not the prompt.
+    if ctx.prompt is not None and not is_task_output(ctx.prompt):
         completion = get_background_completion(ctx.prompt)
         if completion is not None:
             return completion.content
         return ctx.prompt if isinstance(ctx.prompt, str) else str(ctx.prompt)
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart):
+            if isinstance(part, UserPromptPart) and not is_task_report(part):
                 completion = get_background_completion(part.content)
                 if completion is not None:
                     return completion.content
@@ -128,7 +130,7 @@ def _replace_prompt(messages: Sequence[ModelMessage], new_content: str) -> bool:
     """
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart):
+            if isinstance(part, UserPromptPart) and not is_task_report(part):
                 if isinstance(part.content, str):
                     part.content = new_content
                     return True

@@ -365,9 +365,13 @@ SubAgent(
 opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
 delegate tool's schema, gives every child a stable conversation ID, and owns every
 worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's `SystemPromptPart` queue. The reports are
-explicitly automated, untrusted data, not user instructions or permission grants.
-No extra agent loop is implemented. Reports default to `priority='when_idle'`
+background reports through core's queued-message API. Each report is a short
+framework notice in a `SystemPromptPart`, then the child's output in a
+`UserPromptPart`, framed as `<task-output task_id="..." agent_name="..." outcome="...">`
+data. The output was written by a model, so it never enters system voice, and a
+closing tag inside it can't end the frame early. Use `is_task_report(part)` to
+recognize the output part, for example to keep it out of a transcript of what the
+user typed. No extra agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with

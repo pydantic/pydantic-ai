@@ -40,6 +40,8 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.subagents import DelegationTask
+from tests.harness.conftest import IsDatetime
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -371,6 +373,30 @@ class TestInputGuardrailRedaction:
         part = list(result.all_messages())[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my *** value'
+
+    async def test_subagent_task_report_is_not_the_prompt(self):
+        """A report-only continuation guards the user's prompt, not the child agent's output."""
+        record = DelegationTask(id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', outcome='ok')
+        record.output = 'child evidence'
+        report = list(record.report())
+        guard_calls: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            guard_calls.append(prompt)
+            return GuardrailResult.replace('[redacted]')
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('my secret')]),
+            ModelResponse(parts=[TextPart('launched')]),
+            ModelRequest(parts=report),
+        ]
+        agent = Agent(TestModel(custom_output_text='reviewed'), capabilities=[InputGuardrail(guard=guard)])
+        result = await agent.run(None, message_history=history)
+        assert result.output == 'reviewed'
+        assert guard_calls == ['my secret']
+        messages = result.all_messages()
+        assert messages[0].parts == [UserPromptPart('[redacted]', timestamp=IsDatetime())]
+        assert messages[2].parts == report
 
     async def test_replace_background_completion_preserves_metadata(self):
         guard_calls: list[str] = []
