@@ -12,11 +12,11 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, ValidationError
@@ -54,6 +54,8 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 ResultT = TypeVar('ResultT')
+MenuPath = Annotated[tuple[str, ...], Query(alias='menu')]
+"""`?menu=KEY`, once per row chosen from a declared settings menu to reach the menu that row opens."""
 
 
 class Guard:
@@ -145,6 +147,12 @@ class SwitchChoice(BaseModel):
     on: bool
 
 
+class Entered(BaseModel):
+    """What entering input did: `menu` names the bare command whose menu the page shows instead of running it."""
+
+    menu: str | None = None
+
+
 class Interrupted(BaseModel):
     """Whether something was running to interrupt."""
 
@@ -198,6 +206,7 @@ def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Pat
     _prompt(app, remote)
     _sessions(app, remote)
     _plugins(app, remote)
+    _commands(app, remote)
     _tasks(app, remote)
     _panels(app, remote)
     _workspaces(app, remote)
@@ -245,9 +254,9 @@ def _prompt(app: FastAPI, remote: Remote) -> None:
     async def state() -> Response:
         return Response(dump(remote.snapshot()), media_type='application/json')
 
-    @app.post('/api/input', status_code=204)
-    async def send(body: Input) -> None:
-        _run(lambda: remote.send(body.text))
+    @app.post('/api/input')
+    async def send(body: Input) -> Entered:
+        return Entered(menu=_run(lambda: remote.send(body.text)))
 
     @app.post('/api/interrupt')
     async def interrupt() -> Interrupted:
@@ -342,20 +351,36 @@ def _plugins(app: FastAPI, remote: Remote) -> None:
         _run(lambda: remote.open_plugin_menu(name))
 
     @app.get('/api/plugins/{name}/fields')
-    async def fields(name: str) -> MenuInfo:
-        return await _wait(remote.plugin_menu(name))
+    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
+        return await _wait(remote.plugin_menu(name, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}')
-    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
-        return await _wait(remote.edit_menu(name, key, body.value))
+    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(remote.edit_menu(name, key, body.value, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}/action')
-    async def run_action(name: str, key: str) -> MenuEdited:
-        return await _wait(remote.run_menu_action(name, key))
+    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(remote.run_menu_action(name, key, path=path))
 
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
         await _wait(remote.plugin_action(name, action))
+
+
+def _commands(app: FastAPI, remote: Remote) -> None:
+    """Commands' own menus, such as `/set`'s, shown in the page instead of the terminal."""
+
+    @app.get('/api/commands/{name}/fields')
+    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
+        return await _wait(remote.command_menu(name, path=path))
+
+    @app.post('/api/commands/{name}/fields/{key}')
+    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(remote.edit_command_menu(name, key, body.value, path=path))
+
+    @app.post('/api/commands/{name}/fields/{key}/action')
+    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(remote.run_command_menu_action(name, key, path=path))
 
 
 def _tasks(app: FastAPI, remote: Remote) -> None:

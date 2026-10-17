@@ -51,6 +51,8 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import UpdateProgress
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
+from pydantic_clai2.ui.menus.update_menu import VERSION, update_menu
+from tests.clai2.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.clai2.menu_script import make_context
 from tests.clai2.test_app_edges import inputs
 
@@ -774,3 +776,39 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     assert 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.' in text
     assert 'Goodbye.' not in text
     assert len(ran) == 1
+
+
+async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_confirmed(tmp_path: Path) -> None:
+    """`/update`'s declared menu, which the web UI shows as Settings > About."""
+    context, _ = make_context(tmp_path)
+    entered: list[str] = []
+    updates = Updates(
+        channel=lambda: context.settings.update_channel, current=Installed(version='1.2.3', commit='a' * 40)
+    )
+    menu = update_menu(context, updates, run=entered.append)
+    source = menu.source
+    version, channel = source.rows()
+    assert (version.key, source.current(version), version.default) == (
+        VERSION,
+        f'1.2.3 ({"a" * 9})',
+        source.current(version),
+    )
+    assert source.problem(version, '2.0') == 'The version is read-only; Update installs a newer one.'
+    with pytest.raises(ValueError, match='read-only'):
+        source.apply(version, '2.0')
+    assert source.reset(version) == 'The version has nothing to reset.'
+    assert source.problem(channel, 'nightly') is not None
+    assert source.apply(channel, 'main').startswith('Saved updates.channel')
+    assert source.current(channel) == 'main'
+    assert source.reset(channel).startswith('Reset updates.channel')
+    plain = update_menu(
+        context, Updates(channel=lambda: 'stable', current=Installed(version='1.2.3')), run=entered.append
+    )
+    assert plain.source.current(plain.source.rows()[0]) == '1.2.3'
+
+    update = menu.actions[VERSION]
+    assert await update(ScriptedDialogs([Back()])) == [] and entered == []
+    asked = ScriptedDialogs([Confirm(yes=True)])
+    assert await update(asked) == ['Running /update on the stable channel.']
+    assert entered == ['/update'], 'entered as typing it would, so it queues behind a running turn'
+    assert 'stable channel' in asked.asked[0].description

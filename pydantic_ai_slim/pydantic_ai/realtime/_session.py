@@ -86,6 +86,7 @@ from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._core import (
+    MAX_CUTTABLE_OUTPUT_ITEMS,
     AudioCleared,
     AudioSent,
     Closed,
@@ -348,8 +349,6 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
-_MAX_TRUNCATABLE_AUDIO_ITEMS = 32
-"""How many recent assistant audio parts a barge-in can still truncate: far more than can be queued for playback."""
 # How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
 # follow that response in history. The provider's terminal for a cut-off response normally arrives within
 # a second of the user starting to speak; past this, the turn is recorded where history stands instead of
@@ -478,42 +477,6 @@ class _AudioTap:
     def finish(self) -> None:
         self.ended = True
         self.progress.set()
-
-
-@dataclass(eq=False)
-class _ToolBatch:
-    """The tool calls one model response made, which the model answers with a single reply.
-
-    Gemini answers a tool-call frame once it has every result, and the OpenAI-protocol connection asks
-    for one response once every call of the calling response has its output, so the session counts one
-    reply per tool-calling response, not one per result. The reply is counted when the last result is
-    about to go out (a provider may start answering the moment it arrives), or, when every result went
-    out before the calling response was complete, once it is.
-    """
-
-    calls: set[str] = field(default_factory=set[str])
-    """Every call in the batch."""
-    running: set[str] = field(default_factory=set[str])
-    """Calls still executing."""
-    sending: int = 0
-    """Results on their way to the wire."""
-    closed: bool = False
-    """Whether the response making the calls has been finalized, so no further call can join."""
-    counted: bool = False
-    """Whether the reply that answers the batch has been counted."""
-    abandoned: bool = False
-    """Whether no reply will come: the provider cancelled one of the calls (a barge-in abandons the
-    turn) or lost the conversation they were made in, a tool raised, or a result failed to send."""
-
-    @property
-    def reply_due(self) -> bool:
-        """Every result is out or on its way and no call can still join, so the reply is still to count."""
-        return self.closed and not self.running and not self.counted and not self.abandoned
-
-    @property
-    def settled(self) -> bool:
-        """No call can still join, run, or put a result on the wire."""
-        return self.closed and not self.running and not self.sending
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -877,7 +840,6 @@ class RealtimeSession:
         self._seeded: list[ModelMessage] = list(message_history or [])
         self._history: list[ModelMessage] = []
         self._replayed_item_ids: set[str] = set()
-        self._replayed_tool_call_ids: set[str] = set()
 
         # In-flight assistant response being assembled. Parts finalize into `_response_parts`, which
         # becomes a `ModelResponse` at the turn boundary (or when a tool call splits the turn).
@@ -903,12 +865,7 @@ class RealtimeSession:
         # retained input is only ever consumed by a turn, never trimmed at one.
         self._provider_segments_input = False
         self._pending_response_usage = RequestUsage()
-        self._response_limit_checked = False
-        self._pending_response_requests = 0
-        # The requests this session recorded. What it reserves against `request_limit` is released when it
-        # records them, while the core counts them into `usage.requests` as their frames arrive, a moment
-        # earlier: the projection counts each by this session's clock, so none is counted twice in between.
-        self._requests_recorded = 0
+        self._response_begun = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
         # The provider id carried by the latest content of the response being assembled, for a reply
@@ -978,8 +935,6 @@ class RealtimeSession:
         # `_TRANSCRIPT_HOLD_SECONDS`).
         self._transcript_watchdogs: dict[str, asyncio.TimerHandle] = {}
         self._barge_in_watchdogs: dict[str, asyncio.TimerHandle] = {}
-        self._frame_response: str | None = None
-        """The response the frame being handled started, if it started one."""
         # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
         # buffer is no user turn.
         self._audio_uncommitted = False
@@ -1020,7 +975,10 @@ class RealtimeSession:
         # Where each recent assistant audio part begins in the emitted audio, with its provider output
         # item. Generation outruns playback, so the reply being heard is often not the last one
         # generated: a barge-in truncates the item actually playing (and later ones, never heard, at 0).
-        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=_MAX_TRUNCATABLE_AUDIO_ITEMS)
+        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=MAX_CUTTABLE_OUTPUT_ITEMS)
+        # Where the audio of the current connection began: a reconnect's fresh conversation holds the items
+        # before it only as replayed text, so a barge-in can't truncate them there, and history doesn't cut them.
+        self._connection_audio_start_bytes = 0
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -1048,12 +1006,6 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
-        # The batch the response being assembled is adding tool calls to, closed when that response is
-        # finalized; the batch of every call whose batch hasn't settled; and batches just closed, which
-        # the pump checks for a reply still to count. See `_ToolBatch`.
-        self._open_tool_batch: _ToolBatch | None = None
-        self._tool_call_batches: dict[str, _ToolBatch] = {}
-        self._closed_tool_batches: list[_ToolBatch] = []
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -1095,6 +1047,7 @@ class RealtimeSession:
             conversation_id=conversation_id,
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
+            answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=self._input_transcription_enabled,
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
@@ -1646,16 +1599,6 @@ class RealtimeSession:
                 return
             await self._exchange_progress.wait()
 
-    def _release_response_reservation(self) -> None:
-        """Give back a reservation for a response that will never arrive, waking any waiter.
-
-        Rolled back by every outbound call that reserved a response and then failed to send it. The
-        decrement and the wake belong together: a caller parked in `wait_for_reply()` on that single
-        reservation has nothing else coming to wake it.
-        """
-        self._pending_response_requests -= 1
-        self._exchange_progress.set()
-
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
         if len(self._audio_taps) != 1:
             raise UserError(
@@ -1750,7 +1693,27 @@ class RealtimeSession:
         What a tool's `RunContext.messages` and a chat span's input show: the core's history (`all_messages()`)
         records a response only once it is over.
         """
+        self._follow_cut_responses()
         return [*self._seeded, *self._history]
+
+    def _follow_cut_responses(self) -> None:
+        """Record a response the core marked cut off by a barge-in as cut off here too, once this record has it.
+
+        Swapped for a copy, as the core does, so a snapshot already handed out doesn't change.
+        """
+        if not (cut_responses := self._core.cut_responses):
+            return
+        for index, message in enumerate(self._history):
+            if isinstance(message, ModelResponse) and message.provider_response_id in cut_responses:
+                cut = cut_responses.pop(message.provider_response_id)
+                cut_speech = iter([part for part in cut.parts if isinstance(part, SpeechPart)])
+                parts = [
+                    replace(part, interrupted_at_ms=next(cut_speech, part).interrupted_at_ms)
+                    if isinstance(part, SpeechPart)
+                    else part
+                    for part in message.parts
+                ]
+                self._replace_recorded_message(index, replace(message, parts=parts, state=cut.state))
 
     def new_messages(self) -> list[ModelMessage]:
         """A snapshot of the messages created during this session (excluding the seeded history)."""
@@ -1855,15 +1818,11 @@ class RealtimeSession:
             assert_never(content)
 
     async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        if respond:
-            self._reserve_response_request()
         request = self._new_request([UserPromptPart(content=content)])
         self._record_sent_request(request)
         try:
             await self._send_frame(content if respond else TextContext(content), request=request)
         except BaseException:
-            if respond:
-                self._release_response_reservation()
             self._remove_sent_request(request)
             raise
         return request
@@ -1948,8 +1907,6 @@ class RealtimeSession:
                 )
         elif respond:
             self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
-        if respond:
-            self._reserve_response_request()
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1963,8 +1920,6 @@ class RealtimeSession:
             else:
                 await self._send_frame(image, request=request)
         except BaseException:
-            if respond:
-                self._release_response_reservation()
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
             if request is not None:
@@ -2156,12 +2111,7 @@ class RealtimeSession:
         """
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
-        self._reserve_response_request()
-        try:
-            await self._send_frame(CreateResponse())
-        except BaseException:
-            self._release_response_reservation()
-            raise
+        await self._send_frame(CreateResponse())
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...
@@ -2174,8 +2124,9 @@ class RealtimeSession:
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
         the provider's transcript to what was actually heard. Generation outruns playback, so the reply
-        being heard has often finished generating: the provider's copy is still truncated, while the
-        reply keeps its full transcript and `complete` state in history, which is append-only.
+        being heard has often finished generating: with `played_bytes`, the session still truncates it,
+        and history records it as interrupted where playback stopped (see
+        [Barge-in](../realtime/turns.md#barge-in)).
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -2293,11 +2244,20 @@ class RealtimeSession:
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
-        await self._send_frame(*self._truncations_at(playhead), *([CancelResponse()] if cancel else []))
-        # Only a response still being generated can record the position: history is append-only, so a
-        # finished one keeps what it recorded, and the position must not land on the next one instead.
+        truncations = self._truncations_at(playhead)
+        await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        # Only a response still being generated takes the position as a whole: a finished one is cut off by its
+        # item's truncation instead, and the position must not land on the next response.
         self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
-        self._apply_core(Interrupted(played_ms=played_ms))
+        on_this_connection = {
+            item_id for start, item_id in self._audio_items if start >= self._connection_audio_start_bytes
+        }
+        cuts = tuple(
+            (cut.item_id, cut.audio_end_ms)
+            for cut in truncations
+            if cut.item_id is not None and cut.item_id in on_this_connection
+        )
+        self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
 
@@ -2369,9 +2329,7 @@ class RealtimeSession:
             self._flush_tap(tap)
             self._interrupted_audio_part_index = self._audio_part_index
 
-    async def _send_frame(
-        self, *contents: RealtimeInput, request: ModelRequest | None = None, reply_asked: bool = True
-    ) -> None:
+    async def _send_frame(self, *contents: RealtimeInput, request: ModelRequest | None = None) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
 
         A single input can expand to several protocol frames (a `ToolResult` creates the conversation
@@ -2380,8 +2338,10 @@ class RealtimeSession:
         the cases where an interleaved frame would change what they mean.
 
         `request` is the history entry recording the first input, taken back if the provider later
-        reports that input's content as refused (see `_handle_input_rejected`). `reply_asked=False` says no
-        reply will be asked for them, as for a result of a tool batch that will get none.
+        reports that input's content as refused (see `_handle_input_rejected`).
+
+        An input that asks for a response (a text turn, a `CreateResponse`, a tool's result) is checked against
+        `request_limit` first, under the lock: what the core counts ahead then includes every input sent before it.
         """
         self._ensure_not_closed()
         self._start_pump()
@@ -2392,6 +2352,8 @@ class RealtimeSession:
         # parked failure out of `_send_tool_result` and the teardown `CancelResponse`, neither of
         # which is a caller that asked to send.
         async with self._send_lock:
+            if replies := sum(self._asks_reply(content) for content in contents):
+                self._check_request_limit(extra=replies)
             first_input = self._inputs_sent
             try:
                 for position, content in enumerate(contents):
@@ -2406,7 +2368,7 @@ class RealtimeSession:
                         InputSent(
                             input_id=input_index,
                             request=request if position == 0 else None,
-                            solicits=reply_asked and isinstance(content, (str, CreateResponse, ToolResult)),
+                            solicits=isinstance(content, (str, CreateResponse, ToolResult)),
                             tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
                         )
                     )
@@ -2433,6 +2395,12 @@ class RealtimeSession:
                     model_name=self._error_model_name,
                     message=f'Realtime connection failed while sending: {e}',
                 ) from e
+
+    def _asks_reply(self, content: RealtimeInput) -> bool:
+        """Whether sending `content` asks for a response the core doesn't count ahead yet (see `requests_ahead`)."""
+        if isinstance(content, ToolResult):
+            return self._core.result_asks_reply(content.tool_call_id)
+        return isinstance(content, (str, CreateResponse))
 
     @property
     def _error_model_name(self) -> str:
@@ -2474,7 +2442,7 @@ class RealtimeSession:
         self._parked_errors.append(error)
         self._queue_put(error)
         self._apply_core(ExchangeAbandoned())
-        if not self._response_limit_checked or any(isinstance(part, ToolCallPart) for part in self._response_parts):
+        if not self._response_begun or any(isinstance(part, ToolCallPart) for part in self._response_parts):
             # A tool that raised, or a usage limit tripped by the request its result would make, stops
             # the model from getting that result, so the exchange waiting on it is over: a caller in
             # `wait_for_reply()` is done waiting for it. Only that exchange: a reply already requested
@@ -2656,11 +2624,8 @@ class RealtimeSession:
         return [PartEndEvent(index=index, part=part)]
 
     def _count_recorded_response(self, response: ModelResponse) -> None:
-        """Price a response this session records, and count it as a request unless usage reports them."""
+        """Price a response this session records (the core counts it into `usage`, with its cost)."""
         fill_response_cost(response)
-        requests = int(self._responses_are_requests)
-        # (The core counts it into `usage`, with its cost.)
-        self._requests_recorded += requests
 
     def _finalize_response(
         self,
@@ -2718,7 +2683,7 @@ class RealtimeSession:
             self._session_instrumentation.end_chat_span(input_messages, None)
             self._response_parts = []
             self._native_tool_parts = []
-            self._response_limit_checked = False
+            self._response_begun = False
             return
         if response_occurred:
             response = ModelResponse(
@@ -2749,7 +2714,6 @@ class RealtimeSession:
                 # so audio from here on can be the user's next turn again.
                 self._anonymous_user_turn_awaiting_answer = False
             self._tool_run_step += 1
-            self._close_tool_batch()
             for part in parts:
                 if isinstance(part, ToolCallPart):
                     self._tool_calls_awaiting_usage.discard(part.tool_call_id)
@@ -2772,7 +2736,7 @@ class RealtimeSession:
         self._content_response_id = None
         self._pending_finish_reason = None
         self._pending_provider_details = None
-        self._response_limit_checked = False
+        self._response_begun = False
         if response is not None:
             self._check_response_boundary_limits()
 
@@ -3476,18 +3440,13 @@ class RealtimeSession:
         index = self._take_part_index()
         return [PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)]
 
-    def _is_replayed_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
-        """Whether a provider-generic resumption replay already exists in local history.
+    def _accept_item(self, item_id: str | None) -> bool:
+        """Return `False` for an item that belongs to a provider's resumption replay burst.
 
-        No built-in connection currently emits `ConversationItemCreated(replayed=True)`.
+        No built-in connection currently emits `ConversationItemCreated(replayed=True)`. (A replayed tool call is
+        refused by the core, which then gives it to no one to run: see `SessionCore.take_call`.)
         """
-        return (item_id is not None and item_id in self._replayed_item_ids) or (
-            tool_call_id is not None and tool_call_id in self._replayed_tool_call_ids
-        )
-
-    def _accept_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
-        """Return `False` for an item that belongs to a provider's resumption replay burst."""
-        return not self._is_replayed_item(item_id, tool_call_id)
+        return item_id is None or item_id not in self._replayed_item_ids
 
     def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
         """Settle any in-flight state the reconnect did not actually carry, and report restoration honestly.
@@ -3508,6 +3467,8 @@ class RealtimeSession:
         """
         if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
+        # The fresh conversation holds what came before only as replayed text, which a barge-in can't truncate.
+        self._connection_audio_start_bytes = self._emitted_audio_bytes
         lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
         events = self._finalize_lost_state()
         if lost_in_flight:
@@ -3553,21 +3514,25 @@ class RealtimeSession:
         # it), so a `commit_audio()` from here on commits nothing until more audio is sent.
         self._audio_uncommitted = False
 
-        # Tool batches go with the conversation the provider lost: the running calls are cancelled below,
-        # and no reply is counted for results it may never have received, even from a tool that swallows
-        # its cancellation and returns anyway. Marked before the in-flight response is settled, which
-        # would otherwise close its batch and count one.
-        for batch in {*self._tool_call_batches.values(), *self._closed_tool_batches}:
-            batch.abandoned = True
-            # No call can join it any more, so it retires once its running calls are cancelled below.
-            batch.closed = True
-        self._closed_tool_batches.clear()
-        self._open_tool_batch = None
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(interrupted=True)
-        for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
-            self._pending_tool_calls.pop(tool_call_id, None)
+        events.extend(self._stop_tool_calls(list(self._pending_tool_calls)))
+        return events
+
+    def _stop_tool_calls(self, tool_call_ids: Sequence[str]) -> list[RealtimeEvent]:
+        """Stop tool calls still running that the model no longer waits for, recording each as interrupted.
+
+        The provider cancelled them (a barge-in abandons the turn), lost the conversation they were made in, or the
+        session is closing. Each gets an interrupted return, so the call still has a matching return in history (kept
+        valid for a handoff), and no result goes back to the model: with one of its calls settled this way, the core
+        expects no reply to the calling response's results (see `SessionCore.requests_ahead`).
+        """
+        events: list[RealtimeEvent] = []
+        for tool_call_id in tool_call_ids:
+            if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
+                continue
+            task, call_part = pending
             task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
@@ -3606,24 +3571,18 @@ class RealtimeSession:
         return [event]
 
     def _handle_input_rejected(self, event: InputRejected) -> None:
-        """Take back what a send assumed, now that the provider refused it: the same rollback a failed send gets."""
-        if event.refused == 'response':
-            # Reservations are a count, not tied to a particular response, so the one to release is
-            # whichever is still pending. None is when a response the provider started on its own
-            # (server VAD) already took it: that response is then what the caller is waiting for.
-            if self._pending_response_requests:
-                self._release_response_reservation()
-        elif (request := self._input_requests.pop(event.input_index, None)) is not None:
+        """Take back what a send assumed, now that the provider refused it: the same rollback a failed send gets.
+
+        (A refused request for a response is settled by the core, from the lifecycle's `ResponseRequestRefused`.)
+        """
+        if event.refused == 'content' and (request := self._input_requests.pop(event.input_index, None)) is not None:
             self._remove_sent_request(request)
             self._retained_image_requests = [kept for kept in self._retained_image_requests if kept is not request]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
         """Remember IDs assigned to a provider's replay burst so related events are suppressed."""
-        if event.replayed:
-            if event.item_id is not None:
-                self._replayed_item_ids.add(event.item_id)
-            if event.tool_call_id is not None:
-                self._replayed_tool_call_ids.add(event.tool_call_id)
+        if event.replayed and event.item_id is not None:
+            self._replayed_item_ids.add(event.item_id)
 
     def _handle_input_speech_end(self, event: RealtimeInputSpeechEndEvent) -> list[RealtimeEvent]:
         """Segment input audio and preserve a placeholder while transcription is pending."""
@@ -3833,68 +3792,7 @@ class RealtimeSession:
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
         result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
-        if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
-            # A connection that answers each result (or a call dispatched outside the pump): the result is
-            # a reply of its own, as it always has been.
-            self._reserve_response_request()
-            try:
-                await self._send_frame(result)
-            except BaseException:
-                self._release_response_reservation()
-                raise
-            return
-        batch.running.discard(call_part.tool_call_id)
-        if batch.reply_due:
-            # The last result: counted before it goes out, since a provider may answer on its arrival.
-            self._count_tool_batch_reply(batch)
-        elif not batch.abandoned:
-            # Not known to be the last, so nothing is counted yet, but the reply it may complete is
-            # checked against `request_limit` before the result goes out: once out, the connection asks
-            # for that reply as soon as the calling response is done, before the session can refuse it.
-            self._check_request_limit()
-        batch.sending += 1
-        try:
-            await self._send_frame(result, reply_asked=not batch.abandoned)
-        except BaseException:
-            # A provider missing one of the batch's results won't answer it.
-            batch.abandoned = True
-            if batch.counted:
-                batch.counted = False
-                self._release_response_reservation()
-            raise
-        finally:
-            batch.sending -= 1
-            self._retire_tool_batch_if_settled(batch)
-
-    def _count_tool_batch_reply(self, batch: _ToolBatch) -> None:
-        batch.counted = True
-        self._reserve_response_request()
-
-    def _retire_tool_batch_if_settled(self, batch: _ToolBatch) -> None:
-        """Forget a batch whose calls can no longer run or send, so nothing else can reach it."""
-        if batch.settled:
-            for call_id in batch.calls:
-                self._tool_call_batches.pop(call_id, None)
-
-    def _close_tool_batch(self) -> None:
-        """Close the batch of the response just finalized: its calls are all in, so its reply may be due."""
-        if (batch := self._open_tool_batch) is None:
-            return
-        self._open_tool_batch = None
-        batch.closed = True
-        self._closed_tool_batches.append(batch)
-
-    def _count_closed_tool_batch_replies(self) -> None:
-        """Count the reply of closed batches whose results all went out before they closed.
-
-        Run by the pump once the event that closed them is fully handled: after that event's usage-limit
-        checks, so a response over its limit doesn't count the next one.
-        """
-        while self._closed_tool_batches:
-            batch = self._closed_tool_batches.pop(0)
-            self._retire_tool_batch_if_settled(batch)
-            if batch.reply_due:
-                self._count_tool_batch_reply(batch)
+        await self._send_frame(result)
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3928,7 +3826,7 @@ class RealtimeSession:
                 or self._response_parts
                 or self._native_tool_parts
                 or self._tool_calls_awaiting_usage
-                or (priority == 'when_idle' and self._response_limit_checked)
+                or (priority == 'when_idle' and self._response_begun)
             )
             if response_active:
                 if priority == 'asap':
@@ -3959,55 +3857,46 @@ class RealtimeSession:
         self._usage_limits.check_tokens(self.usage)
         self._usage_limits.check_cost(self.usage, warn_if_cost_unavailable=warn_if_cost_unavailable)
 
-    def _reserve_response_request(self) -> None:
-        """Claim the request budget for a response this session is about to solicit.
-
-        `usage.requests` only counts responses already finalized, so a reservation covers the ones
-        between: those solicited but not yet started, and the one in flight. Without them, sends
-        issued back-to-back would each see the same count and oversubscribe the budget.
-        """
-        self._check_request_limit()
-        self._pending_response_requests += 1
-
-    def _check_request_limit(self) -> None:
-        """Check `request_limit` against one more response than those finalized, reserved and in flight."""
+    def _check_request_limit(self, *, extra: int) -> None:
+        """Check `request_limit` against `extra` more requests than those counted, under way and asked for."""
         if self._usage_limits is not None and self._responses_are_requests:
-            in_flight = 1 if self._response_limit_checked else 0
-            self._usage_limits.check_before_request(
-                self._usage_as_recorded(ahead=self._pending_response_requests + in_flight)
-            )
+            self._usage_limits.check_before_request(self._usage_ahead(extra))
 
-    def _usage_as_recorded(self, *, ahead: int = 0) -> RunUsage:
-        """`usage`, with its requests counted as this session records them, plus `ahead` more.
+    def _usage_ahead(self, extra: int) -> RunUsage:
+        """`usage` with the requests under way and asked for, and `extra` more, counted, as `check_before_request` takes it.
 
-        The core counts a response into `usage.requests` as its terminal frame arrives, a moment before this
-        session records it and releases what it reserved for it: counted by this session's clock instead, no
-        request is counted twice in between.
+        That check counts the request it is made for on top of `usage.requests`, so the last of them is left to it.
         """
-        requests = self.usage.requests - self._core.requests + self._requests_recorded + ahead
-        return dataclasses.replace(self.usage, requests=requests)
+        return dataclasses.replace(self.usage, requests=self.usage.requests + self._core.requests_ahead() + extra - 1)
+
+    def _check_unasked_response(self, response_id: str) -> None:
+        """Check `request_limit` for a response that started unasked, before this session handles any of it.
+
+        With server-side voice activity detection the provider starts a response on its own, so there was no send to
+        check ahead of: the check happens as the frame that started it is handled. One that answers something the
+        session sent was checked as that went out.
+        """
+        if (
+            self._usage_limits is None
+            or not self._responses_are_requests
+            or not self._core.response_unasked(response_id)
+        ):
+            return
+        try:
+            # The core counts it already: as under way, or as a request if it ended in the frame that started it.
+            self._check_request_limit(extra=0)
+        except UsageLimitExceeded:
+            request_limit = self._usage_limits.request_limit
+            if request_limit is not None and self._usage_ahead(0).requests >= request_limit:
+                # The request it is would exceed `request_limit`: not one this session records, or counts.
+                self._apply_core(ResponseRefused(response_id=response_id))
+            raise
 
     def _begin_response(self) -> None:
-        """Take the reservation for the response that's starting, or make the check now if it has none.
-
-        With server-side voice activity detection the provider starts a response on its own, so there
-        was no send to check ahead of: the check happens here instead, at the response's first event,
-        before any of its content or usage is processed.
-        """
-        if self._response_limit_checked:
+        """Note that a response is being assembled."""
+        if self._response_begun:
             return
-        if self._pending_response_requests:
-            self._pending_response_requests -= 1
-        elif self._usage_limits is not None and self._responses_are_requests:
-            usage = self._usage_as_recorded()
-            try:
-                self._usage_limits.check_before_request(usage)
-            except UsageLimitExceeded:
-                if (request_limit := self._usage_limits.request_limit) is not None and usage.requests >= request_limit:
-                    # The request it is would exceed `request_limit`: not one this session records, or counts.
-                    self._apply_core(ResponseRefused(response_id=self._frame_response))
-                raise
-        self._response_limit_checked = True
+        self._response_begun = True
         # A response that is starting is not the one whose terminal is still to come. Gemini finalizes a
         # tool-call response through its usage with no terminal following, and a stale flag would read
         # the next response's terminal as that one's.
@@ -4033,8 +3922,7 @@ class RealtimeSession:
 
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
-        if event.context_window_used is not None:
-            self._reported_context_window_used = event.context_window_used
+        # (Its `context_window_used` was taken as its frame was applied, with the usage the core counted.)
         if event.response_scoped:
             self._begin_response()
         # (The core counts it into `usage`, with the request it is if responses aren't requests.)
@@ -4050,7 +3938,6 @@ class RealtimeSession:
         self._check_usage_limits(warn_if_cost_unavailable=False)
         if event.response_scoped and not self._responses_are_requests:
             self._check_reported_requests()
-        self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
@@ -4080,16 +3967,9 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
-            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
-                batch.running.discard(call_part.tool_call_id)
-                self._retire_tool_batch_if_settled(batch)
+            # Whatever cancelled it settled the call (see `_stop_tool_calls`).
             raise
         except BaseException as e:
-            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
-                # Its result will never go out, so the batch won't be answered.
-                batch.running.discard(call_part.tool_call_id)
-                batch.abandoned = True
-                self._retire_tool_batch_if_settled(batch)
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
@@ -4153,11 +4033,12 @@ class RealtimeSession:
         if isinstance(event, ToolCall):
             # The tool call a held response was waiting for joins it, so the hold is spent.
             self._deferred_response_finish_reason = None
-            if self._accept_item(event.item_id, event.tool_call_id):
+            if self._core.take_call(event.tool_call_id):
                 try:
                     await self._dispatch_tool_call(event)
                 except UsageLimitExceeded:
-                    # Tripped before the call joined the response, so it never runs or reaches history.
+                    # Tripped before the call ran: it is refused, so it stays out of history (or, if its response is
+                    # recorded already, gets an interrupted return).
                     self._apply_core(ToolCallRefused(tool_call_id=event.tool_call_id))
                     raise
             return False
@@ -4176,15 +4057,6 @@ class RealtimeSession:
         if reserves_budget:
             self._check_tool_call_limit()
             self._tool_calls_in_flight += 1
-        # Joined before the call is folded into the response below, which finalizes a response whose
-        # usage doesn't follow and so closes the batch with this call in it.
-        if self._connection._answers_tool_calls_per_response:  # pyright: ignore[reportPrivateUsage]
-            batch = self._open_tool_batch
-            if batch is None:
-                batch = self._open_tool_batch = _ToolBatch()
-            batch.calls.add(event.tool_call_id)
-            batch.running.add(event.tool_call_id)
-            self._tool_call_batches[event.tool_call_id] = batch
         # Captured at dispatch so every call from one response runs at the step in effect when the
         # response produced them, the way a graph run's whole batch shares the step advanced before
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
@@ -4275,29 +4147,10 @@ class RealtimeSession:
             self._handle_input_rejected(event)
             return False
         if isinstance(event, ToolCallCancelled):
-            for tool_call_id in event.tool_call_ids:
-                if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
-                    # A cancelled call means the model abandoned the turn (usually a barge-in): its
-                    # siblings' results still go out, but no reply is counted for them, since the
-                    # interruption starts the next one.
-                    batch.abandoned = True
-                    batch.running.discard(tool_call_id)
-                    self._retire_tool_batch_if_settled(batch)
-                if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
-                    continue
-                task, call_part = pending
-                task.cancel()
-                # Record a cancelled result so the call still has a matching return in history (kept
-                # valid for a handoff), and deliberately don't send a `ToolResult` back to the model —
-                # it abandoned the call.
-                cancelled_part = ToolReturnPart(
-                    tool_name=call_part.tool_name,
-                    content=INTERRUPTED_TOOL_RETURN_CONTENT,
-                    tool_call_id=call_part.tool_call_id,
-                    outcome='interrupted',
-                )
-                for out in self._complete_tool_call(call_part, cancelled_part):
-                    self._queue_put(out)
+            # The model abandoned the calls (usually a barge-in): their siblings' results still go out, but no
+            # reply comes for them, since the interruption starts the next one.
+            for out in self._stop_tool_calls(event.tool_call_ids):
+                self._queue_put(out)
             return False
         if isinstance(event, SessionUsage):
             # Only part and response boundaries come out of a usage report, never a speech-start
@@ -4313,7 +4166,6 @@ class RealtimeSession:
                 # barge-in rather than racing the session to handle it.
                 await self._auto_barge_in(out)
             self._queue_put(out)
-        self._count_closed_tool_batch_replies()
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
@@ -4325,14 +4177,8 @@ class RealtimeSession:
         core_events = self._core_events(self._core)
         try:
             async for event in core_events:
-                if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
-                    # Requests the connection answered with a response it was already asking for: none of
-                    # them gets one of its own.
-                    self._pending_response_requests = max(0, self._pending_response_requests - merged)
-                    self._exchange_progress.set()
                 if await self._handle_pump_event(event):
                     return  # a usage limit tripped: stop reading the upstream
-                self._count_closed_tool_batch_replies()
                 self._drop_audio_the_core_keeps()
         except Exception as e:
             self._pump_error = e
@@ -4395,10 +4241,11 @@ class RealtimeSession:
                 for event in frame:
                     if not isinstance(event, StaleEvent):
                         core.apply(event)
-                # (A response this session refuses as it handles the frame can have ended in it already.)
-                self._frame_response = next(
-                    (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted)), None
-                )
+                    report = event.event if isinstance(event, StaleEvent) else event
+                    if isinstance(report, SessionUsage) and report.context_window_used is not None:
+                        # Taken as the frame is applied, with the usage the core counts. (A stale report too: it is
+                        # still the provider's latest reading of its context, though its usage isn't counted.)
+                        self._reported_context_window_used = report.context_window_used
                 self._core_advanced(core)
                 codec = [
                     event.event if isinstance(event, StaleEvent) else event
@@ -4407,6 +4254,9 @@ class RealtimeSession:
                 ]
                 handled = 0
                 try:
+                    started = (event.response_id for event in reversed(frame) if isinstance(event, ResponseStarted))
+                    if (response_id := next(started, None)) is not None:
+                        self._check_unasked_response(response_id)
                     for event in codec:
                         handled += 1
                         yield event
