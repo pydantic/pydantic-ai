@@ -198,6 +198,7 @@ class AcpTerminalToolset(FunctionToolset[AgentDepsT]):
             self.run_command,
             name='run_command',
             metadata={
+                'code_mode_native': True,
                 'code_arg_name': 'command',
                 'code_arg_language': 'shell',
                 'temporal': {'start_to_close_timeout': timedelta(hours=1)},

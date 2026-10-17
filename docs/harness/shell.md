@@ -85,6 +85,10 @@ line on non-zero exit. When it exceeds `max_output_chars` the **tail** is kept
 which all land at the end -- survive truncation. Background command status and
 exit metadata follow the captured output so they remain in the retained tail.
 
+With [Code Mode](code-mode.md#keeping-tools-native), every `Shell`
+tool stays a regular tool call beside `run_code`, so the model never quotes a command line inside
+generated Python and a background command is started, checked, and stopped the same way.
+
 ## Command controls
 
 Two mutually exclusive lists decide which executables may run, plus filters for
