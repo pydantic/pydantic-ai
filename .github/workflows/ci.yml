@@ -1546,8 +1546,8 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        # Google's cache of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: mirror.gcr.io/library/mongo:8
+        # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
+        image: quay.io/mongodb/mongodb-community-server:8.3-ubuntu2204
         ports:
           - 27017:27017
         options: >-
