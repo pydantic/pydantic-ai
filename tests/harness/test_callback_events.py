@@ -132,7 +132,7 @@ def test_new_construction_paths_do_not_warn() -> None:
         warnings.simplefilter('error', HarnessDeprecationWarning)
         SpendLimits()
         ReportContextUsage()
-        SystemReminders(reminders=[Reminder('focus')])
+        SystemReminders(reminders=[Reminder('focus', tag=None)])
         InMemoryPlanStore()
 
 

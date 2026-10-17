@@ -293,7 +293,7 @@ def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
 async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
     """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
 
-    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    That is where a tail reminder (such as `Planning`'s) puts its breakpoint once a tool loop
     is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
     """
     mock_client = MockOpenAI.create_mock(chat_completion())

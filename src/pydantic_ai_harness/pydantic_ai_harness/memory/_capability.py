@@ -412,7 +412,7 @@ def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) ->
 
     A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
     The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
-    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
+    `Planning` add request-only user parts before this hook runs. Hooks that rewrite history,
     such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
     the snapshot falls back to the last message.
     """

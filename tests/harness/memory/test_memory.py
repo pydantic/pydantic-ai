@@ -50,7 +50,7 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
-from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem, Planning
 from tests.harness._recording_durability import RecordingDurability
 
 
@@ -1073,8 +1073,8 @@ class TestInjection:
             assert contexts[0].endswith('\n</memory>')
             assert stored in contexts[0]
 
-    @pytest.mark.parametrize('with_reminders', [False, True])
-    async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_reminders: bool) -> None:
+    @pytest.mark.parametrize('with_plan_reminder', [False, True])
+    async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_plan_reminder: bool) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
         captured: list[list[ModelMessage]] = []
@@ -1088,10 +1088,12 @@ class TestInjection:
         def lookup() -> str:
             return 'found'
 
-        # `SystemReminders` adds a request-only user part to the tool-result request before `Memory` runs.
+        # `Planning` adds a request-only user part to the tool-result request before `Memory` runs.
         capabilities: list[AbstractCapability[None]] = [Memory(store=store)]
-        if with_reminders:
-            capabilities.insert(0, SystemReminders(reminders=[Reminder('stay on task', interval=1)]))
+        if with_plan_reminder:
+            plan_store = InMemoryPlanStore()
+            await plan_store.set_items([PlanItem(content='stay on task')])
+            capabilities.insert(0, Planning(store=plan_store))
         agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
         agent.tool_plain(lookup)
         await agent.run('what do I like?')
