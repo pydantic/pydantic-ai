@@ -119,6 +119,14 @@ async def _default_model(
     return await models.resolve(saved) if isinstance(saved, str) else fallback
 
 
+async def _default_model_name(*, store: SettingsStore, fallback: Model | str | None) -> str | None:
+    """The name of the model a new session starts with, as `/model` shows it; nothing is built or signed in."""
+    saved = (await to_thread.run_sync(store.overrides)).get('model')
+    if isinstance(saved, str):
+        return saved
+    return fallback if fallback is None or isinstance(fallback, str) else fallback.model_name
+
+
 def _refuse_restart(args: list[str]) -> str:
     raise ValueError('/reload and /update restart CLAI. Enter them in the session CLAI started with.')
 
@@ -428,6 +436,7 @@ def create_shell(
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
+        default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed

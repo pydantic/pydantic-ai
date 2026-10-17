@@ -26,15 +26,18 @@ after its main checkout's folder), then by worktree (each checkout, labelled wit
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed; an older session from a removed folder is placed by
-where it was, or listed under Removed folders. Click one to switch to it, or use its menu to
-rename, fork, archive, or delete it. Archiving hides a session from the sidebar and `/resume`
-without deleting anything; the archive button beside the search lists archived sessions too, muted,
-and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
-be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
-directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
-terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts, Cmd/Ctrl+K searches sessions,
-Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
+run turns: each session you open stays live and keeps working while you look at another. A dot by
+a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
+waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
+it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
+button beside the search lists archived sessions too, muted, and searches them, each with
+**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
+archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
+session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
+from a terminal, a session saved in another directory, since the terminal works where it started.
+Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
+other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
@@ -57,7 +60,9 @@ reload. **General** holds the settings `/set` changes, grouped as their keys are
 Sessions, ...): each change is checked, saved, and applied at once, and the terminal prints what it
 saved; a change made in the terminal shows here too. `/set` or `/settings` typed in the composer
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
-in the terminal.
+in the terminal. A command's menu (`/model`, `/effort`, `/keys`, ...) acts on the session the page
+shows, as the command typed there would: picking a model in session B leaves session A's model as it
+was. Settings every session shares, such as `/set display.*`, still change them all.
 
 <!-- From #10456 -->
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for

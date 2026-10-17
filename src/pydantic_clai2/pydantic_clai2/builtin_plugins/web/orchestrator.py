@@ -154,14 +154,19 @@ class Orchestrator:
         return configured(self.host.plugins) is not None
 
     async def state(self) -> OrchestratorState:
-        return self._state((await self.load()).messages)
+        saved = await self.load()
+        return self._state(saved.messages, await self.host.default_model_name())
 
-    def _state(self, messages: Sequence[ModelMessage]) -> OrchestratorState:
+    def _state(self, messages: Sequence[ModelMessage], model: str | None) -> OrchestratorState:
         items = history_items(messages)
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
+            enabled=self.enabled(),
+            running=self.running,
+            model=model,
+            items=items,
+            questions=self.answerer.questions,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -212,7 +217,7 @@ class Orchestrator:
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
         # The history this turn starts from, which another CLAI may have changed since the page loaded.
-        self._send(self._state(saved.messages))
+        self._send(self._state(saved.messages, await self.host.default_model_name()))
         messages = saved.messages
         outcome: TurnOutcome = 'failed'
         error: str | None = None
