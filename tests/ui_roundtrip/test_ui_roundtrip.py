@@ -10,12 +10,12 @@ and the protocol's real JavaScript client (see `conftest.py`), on two paths:
 
 Three properties must hold on each path:
 
-1. **Load after dump**: `load_messages()` of what a hydrated client sends back projects identically to the
-   history it was hydrated with.
-2. **Load after stream**: `load_messages()` of what a streaming client sends back projects identically to the
-   server's `all_messages()` for the turn.
-3. **Wire request**: every provider request the agent makes through the client equals the one a server
-   keeping its own history makes.
+1. **Load after dump** (`test_load`): `load_messages()` of what a hydrated client sends back projects
+   identically to the history it was hydrated with.
+2. **Load after stream** (`test_load`): `load_messages()` of what a streaming client sends back projects
+   identically to the server's `all_messages()` for the turn.
+3. **Wire request** (`test_wire_request`): every provider request the agent makes through the client equals
+   the one a server keeping its own history makes.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection keeps only fields
@@ -46,11 +46,13 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturn,
+    ToolReturnPart,
     UserPromptPart,
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
 )
@@ -139,7 +141,11 @@ def project(messages: Sequence[ModelMessage]) -> list[tuple[str, list[dict[str, 
         if isinstance(message, ModelResponse):
             call_order = {part.tool_call_id: i for i, part in enumerate(parts) if isinstance(part, ToolCallPart)}
         else:
-            parts.sort(key=lambda part: call_order.get(getattr(part, 'tool_call_id', None) or '', len(call_order)))
+            parts.sort(
+                key=lambda part: call_order.get(
+                    part.tool_call_id if isinstance(part, ToolReturnPart | RetryPromptPart) else '', len(call_order)
+                )
+            )
         projected.append((message.kind, [_project_part(part) for part in parts]))
     return projected
 
@@ -165,7 +171,7 @@ def _results_since_question(messages: list[ModelMessage]) -> int:
                 for part in message.parts
             ):
                 break
-            count += sum(part.part_kind in ('tool-return', 'retry-prompt') for part in message.parts)
+            count += sum(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts)
     return count
 
 
@@ -648,10 +654,10 @@ async def run_client(scenario: Scenario, client: Client, path: Path) -> list[Tur
     return turns
 
 
-def _params(prop: Property, paths: Sequence[Path]) -> list[Any]:
+def _params(prop: Property) -> list[Any]:
     params: list[Any] = []
     for scenario in SCENARIOS:
-        for path in paths:
+        for path in PATHS:
             for protocol in PROTOCOLS:
                 gap = scenario.gaps.get((prop, path, protocol))
                 params.append(
@@ -659,7 +665,7 @@ def _params(prop: Property, paths: Sequence[Path]) -> list[Any]:
                         scenario,
                         path,
                         protocol,
-                        id=f'{scenario.id}-{path}-{protocol}' if len(paths) > 1 else f'{scenario.id}-{protocol}',
+                        id=f'{scenario.id}-{path}-{protocol}',
                         marks=[pytest.mark.xfail(reason=gap, strict=True)] if gap else [],
                     )
                 )
@@ -694,23 +700,18 @@ async def provider_requests(call: ModelCall) -> dict[str, str]:
 # --- Properties ---------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('load', ['dump']))
-async def test_load_after_dump(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
-    """`load_messages()` of what a hydrated client sends back projects identically to the hydrated history."""
+@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('load'))
+async def test_load(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
+    """`load_messages()` of what the client sends back projects identically to the history it should hold.
+
+    That's the history it was hydrated with on the dump path, and the server's `all_messages()` on the stream path.
+    """
     client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}', scenario.adapter_kwargs)
     for turn in await run_client(scenario, client, path):
         assert project(turn.sent) == project(turn.expected)
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('load', ['stream']))
-async def test_load_after_stream(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
-    """`load_messages()` of what a streaming client sends back projects identically to `all_messages()`."""
-    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}', scenario.adapter_kwargs)
-    for turn in await run_client(scenario, client, path):
-        assert project(turn.sent) == project(turn.expected)
-
-
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('wire', PATHS))
+@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('wire'))
 async def test_wire_request(
     scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver, allow_model_requests: None
 ) -> None:
