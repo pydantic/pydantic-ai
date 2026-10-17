@@ -262,7 +262,13 @@ KNOWN: dict[str, tuple[Known, ...]] = {
     'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
     'RepoContext': (Known('prefix', f'{_PULLS}8188', match='<context-file path=\\"AGENTS.md\\">'),),
     'Skills': (Known('ids', f'{_PULLS}8188', match='The following capabilities are deferred'),),
-    'WarnNearLimits': (Known('prefix', f'{_PULLS}9752 (closed; no open fix)', match='[WarnNearLimits]'),),
+    'WarnNearLimits': (
+        Known(
+            'prefix',
+            f'{_PULLS}10561 (whichever of #10552 and #10561 merges second drops this entry)',
+            match='[WarnNearLimits]',
+        ),
+    ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
