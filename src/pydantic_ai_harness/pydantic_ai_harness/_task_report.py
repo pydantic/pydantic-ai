@@ -1,0 +1,39 @@
+"""Private helpers for `SubAgents` background task report provenance.
+
+Kept outside `subagents` so that `guardrails` can recognize a report without importing the capability.
+"""
+
+from __future__ import annotations
+
+import html
+import re
+from collections.abc import Sequence
+from typing import TypeGuard
+
+from pydantic_ai.messages import ModelRequestPart, TextContent, UserContent, UserPromptPart
+from pydantic_ai_harness._provenance import tagged_text
+
+_TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
+"""The `origin` in the metadata of the `TextContent` that carries a background task's output."""
+
+# TODO: switch to `pydantic_ai._framing.wrap()` once it lands; this matches its escaping.
+_CLOSING_TASK_OUTPUT_TAG = re.compile(r'</(task-output)\s*>', re.IGNORECASE)
+
+
+def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
+    """Frame `body` as `<task-output>` data that can't close its own element, with escaped attributes."""
+    attributes = {'task_id': task_id, 'agent_name': agent_name, 'outcome': outcome}
+    attrs = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
+    body = _CLOSING_TASK_OUTPUT_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', body)
+    metadata = {'origin': _TASK_REPORT_ORIGIN, 'task_id': task_id, 'generation': generation}
+    return UserPromptPart([TextContent(f'<task-output{attrs}>\n{body}\n</task-output>', metadata=metadata)])
+
+
+def is_task_output(content: str | Sequence[UserContent] | None) -> bool:
+    """Whether user content is a background task's output rather than something a user wrote."""
+    return tagged_text(content, _TASK_REPORT_ORIGIN) is not None
+
+
+def is_task_report(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
+    """Whether `part` carries a background task's output, as delivered by `DelegationReports`."""
+    return isinstance(part, UserPromptPart) and is_task_output(part.content)

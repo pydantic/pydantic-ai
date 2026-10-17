@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._task_report import is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._disk import AgentOverride
@@ -16,13 +17,7 @@ from pydantic_ai_harness.subagents._events import (
     DelegationStartEvent,
 )
 from pydantic_ai_harness.subagents._models import ModelOption
-from pydantic_ai_harness.subagents._tasks import (
-    DelegationReports,
-    DelegationTask,
-    DelegationTaskEvent,
-    DelegationTasks,
-    is_task_report,
-)
+from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTaskEvent, DelegationTasks
 from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
 
 if TYPE_CHECKING:
