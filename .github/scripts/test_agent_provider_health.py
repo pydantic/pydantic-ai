@@ -763,24 +763,55 @@ def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None
 
 
 def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None:
-    """Two distinct terminal records from matched artifact names do not select an authority."""
-    for name, attempt in [('agent/one.json', 1), ('c84aadcc-agent/two.json', 2)]:
-        result_file = tmp_path / name
-        result_file.parent.mkdir(parents=True, exist_ok=True)
-        result_file.write_text(
-            json.dumps(
-                {
-                    'type': 'result',
-                    'provider_health': {
-                        'workflow': 'nightly-sweep',
-                        'task_key': 'task-1',
-                        'trigger_event': 'schedule',
-                        'run_attempt': attempt,
-                    },
-                }
-            )
+    """Two distinct terminal records from eligible agent logs do not select an authority."""
+    first_log = tmp_path / 'agent' / 'agent-stdio.log'
+    second_log = tmp_path / 'c84aadcc-agent' / 'agent-stdio.log'
+    first_log.parent.mkdir(parents=True)
+    second_log.parent.mkdir(parents=True)
+    first_log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'nightly-sweep',
+                    'task_key': 'task-1',
+                    'trigger_event': 'schedule',
+                    'run_attempt': 1,
+                },
+            }
         )
+    )
+    assert health.parse_run_result(tmp_path) == health.RunResult('nightly-sweep', 'task-1', 'schedule', 1, None)
 
+    first_log.unlink()
+    second_log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'nightly-sweep',
+                    'task_key': 'task-1',
+                    'trigger_event': 'schedule',
+                    'run_attempt': 2,
+                },
+            }
+        )
+    )
+    assert health.parse_run_result(tmp_path) == health.RunResult('nightly-sweep', 'task-1', 'schedule', 2, None)
+
+    first_log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'nightly-sweep',
+                    'task_key': 'task-1',
+                    'trigger_event': 'schedule',
+                    'run_attempt': 1,
+                },
+            }
+        )
+    )
     assert health.parse_run_result(tmp_path) is None
 
 
@@ -1222,6 +1253,46 @@ def test_monitor_rejects_health_artifact_from_different_run_attempt(
             )
         )
     assert client.posts == []
+
+
+def test_monitor_rejects_health_artifact_from_different_run_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A health artifact from another run is rejected before incident writes."""
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            'nightly-sweep',
+            'stable-task-key',
+            'schedule',
+            2,
+            False,
+            'Z.ai quota is exhausted',
+            '2026-10-01T12:00:00Z',
+            health.Quota('exhausted'),
+            run_id='83',
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    with pytest.raises(ValueError, match='does not match the triggering workflow_run'):
+        _monitor_command(
+            argparse.Namespace(
+                repository=None,
+                run_id=84,
+                run_attempt=2,
+                conclusion='failure',
+                health_artifact=health_artifact,
+                agent_artifact=None,
+                dry_run=False,
+                recover_issue=None,
+            )
+        )
+    assert client.posts == []
+    assert client.comments == []
+    assert client.closed == []
 
 
 @pytest.mark.parametrize(
@@ -1975,6 +2046,7 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
             'Provider health check passed',
             '2026-10-01T12:00:00Z',
             health.Quota('healthy'),
+            run_id='42',
         ),
     )
     client = FakeGitHub()
