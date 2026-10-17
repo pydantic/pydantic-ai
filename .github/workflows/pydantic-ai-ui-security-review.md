@@ -84,6 +84,8 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -94,7 +96,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/security-findings.md
 pre-agent-steps:

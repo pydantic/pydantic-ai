@@ -72,6 +72,7 @@ AGENTS.override.md
 !.claude/skills/testing-skill/SKILL.md
 !.claude/skills/testing-skill/parse_cassette.py
 .github/.review-context/
+.github/.issue-context/
 /.cursor/
 /.devcontainer/
 .claude/plans/

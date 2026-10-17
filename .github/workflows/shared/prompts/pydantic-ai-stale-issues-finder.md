@@ -41,16 +41,17 @@ issue, or if it looks only partially fixed, skip it.
    AWF firewall blocks gh CLI access.
 
    Available local inputs:
-   - `/tmp/gh-aw/agent/open-issues.tsv`
+   - `.github/.issue-context/open-issues.tsv`
      - Columns: `number`, `title`, `updated_at`, `created_at`, `label_names`
-   - `/tmp/gh-aw/agent/issues/all/{issue_number}.json`
+   - `.github/.issue-context/issues/all/{issue_number}.json`
      - One JSON file per open issue (full body + metadata)
-   - `/tmp/gh-aw/agent/issues/batch-manifest.tsv`
+   - `.github/.issue-context/issues/batch-manifest.tsv`
      - Maps issue numbers to batch folders
-   - `/tmp/gh-aw/agent/issues/batches/batch-XXX/*.json`
+   - `.github/.issue-context/issues/batches/batch-XXX/*.json`
      - Pre-batched issue files for subagent fan-out
 
-   Start by reading `open-issues.tsv` and `batch-manifest.tsv`.
+   Start by reading `.github/.issue-context/open-issues.tsv` and
+   `.github/.issue-context/issues/batch-manifest.tsv`.
 
 1. **Review all open issues every run**
 
@@ -64,7 +65,7 @@ issue, or if it looks only partially fixed, skip it.
    2 small folders if needed). Use local files only for first-pass triage.
 
    Subagents must NOT call GitHub search/list/read APIs for this first pass;
-   they should operate from `/tmp/gh-aw/agent/issues/batches/*` files and the
+   they should operate from `.github/.issue-context/issues/batches/*` files and the
    local repository code.
 
    Each subagent should, for each issue file in its batch:
@@ -202,7 +203,7 @@ overlap this run — grep the on-disk issue list for the `[stale-finder]` title
 prefix (no live GitHub call needed):
 
 ```
-grep -F '[stale-finder]' /tmp/gh-aw/agent/open-issues.tsv
+grep -F '[stale-finder]' $GITHUB_WORKSPACE/.github/.issue-context/open-issues.tsv
 ```
 
 Do not skip this run just because a previous report exists. You are reviewing
@@ -218,7 +219,8 @@ the full corpus every run. If no candidates qualify this run, call
 - Use the native `Grep` and `Glob` tools for codebase search.
 - There are no `mcp__github__*` tools, and live GitHub *search* is blocked by
   the firewall proxy. Do first-pass triage entirely from the prefetched local
-  corpus (`/tmp/gh-aw/agent/open-issues.tsv` and `issues/all/{number}.json`) —
+  corpus (`.github/.issue-context/open-issues.tsv` and
+  `.github/.issue-context/issues/all/{number}.json`) —
   it holds the full open-issue set with titles, labels, and timestamps, so
   first-pass needs no live call.
 - The corpus does NOT include comments. For the second-pass shortlist only,

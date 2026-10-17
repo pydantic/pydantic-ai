@@ -103,6 +103,8 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -113,7 +115,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
@@ -194,7 +195,7 @@ pre-agent-steps:
       fi
       [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
       msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
-      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+      if mkdir -p "$(dirname "$SAFE_OUTPUTS")" && jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
         echo "$msg" >> "$GITHUB_STEP_SUMMARY"
       else
         echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
@@ -238,7 +239,7 @@ jobs:
           RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
-          REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
+          REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
         run: |
           set -euo pipefail
 
@@ -357,9 +358,12 @@ jobs:
           # not the bot account: every gh-aw reviewer here posts as
           # `github-actions[bot]`, so an actor match would let a UI Security Review
           # on this head suppress this review entirely.
+          # Accept both footer encodings to deduplicate across compiler versions.
           ALREADY=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
-              '[add[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
+            | jq --arg sha "$HEAD_SHA" --arg caller "$REVIEW_CALL_ID" '
+              [add[] | select(.commit_id == $sha) | select((.body // "") |
+                contains("<!-- gh-aw-workflow-call-id: \($caller) -->") or
+                contains("[gh-aw-workflow-call-id]: # \"\($caller | @uri)\""))] | length')
           [ "$ALREADY" -eq 0 ] || skip "already reviewed ${HEAD_SHA}"
 
           {
