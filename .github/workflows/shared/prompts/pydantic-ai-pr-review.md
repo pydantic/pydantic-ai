@@ -56,7 +56,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every PR that touches message history:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -73,6 +73,15 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   out real sleeps, timeouts or poll intervals instead of injecting them, or that
   feed one huge input to prove a complexity bound. Calibration is Example 5 in
   `.review-context/review-instructions.md`. Cap at **MEDIUM**.
+- **Message history and prompt cache.** When the diff enqueues or edits
+  messages, contributes instructions or tools, renders history in a model
+  adapter, wraps content in tags, or converts history to or from a UI protocol,
+  check it against the rules in `agent_docs/message-history-and-caching.md`:
+  no rewrite of earlier history outside compaction, no untrusted content in
+  system voice, no framework voice sent as a user string, no unescaped wrapper
+  payload, no framework record found by its text, and the same history always
+  renders to the same bytes. Calibration is Example 6 in
+  `.review-context/review-instructions.md`.
 
 ## Review process
 
