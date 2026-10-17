@@ -56,7 +56,7 @@ Do **not** run `gh issue list`, `gh pr list`, `gh search`, or a paginated/list
 `gh api` request from inside the agent. Narrow per-item reads may still be used
 after the local corpus identifies a specific issue or PR. PR reviewers instead
 use `$GITHUB_WORKSPACE/.review-context/`; the stale-issues workflow uses
-`$GITHUB_WORKSPACE/.github/.issue-context/open-issues.tsv` and `$GITHUB_WORKSPACE/.github/.issue-context/issues/`.
+`.github/.issue-context/open-issues.tsv` and `.github/.issue-context/issues/`.
 If required prefetched context is missing or unreadable, call
 `mcp__safeoutputs__noop` and report that missing data instead of attempting a
 list request through `gh-proxy`.
