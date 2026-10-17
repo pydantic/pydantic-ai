@@ -177,7 +177,7 @@ Native/prompted/image output (`output_type` uses `NativeOutput`, `PromptedOutput
 
 Plain text output (`output_type=str` / `TextOutput`, incl. a `str` fallback) is treated differently: the model isn't told its text is the final result, so text alongside a tool call is usually preamble, not an answer. Plain text never preempts a co-emitted function tool — the tool runs under `'early'` exactly as under `'graceful'`. (Streaming still commits the first text as it streams, regardless of `end_strategy`.)
 
-To run a whole run's tools serially, use `with agent.parallel_tool_call_execution_mode('sequential'):` or set `parallel_tool_calls=False` on model settings.
+To run a whole run's tools serially, use `with agent.parallel_tool_call_execution_mode('sequential'):`. Setting [`parallel_tool_calls=False`](https://pydantic.dev/docs/ai/api/settings/#pydantic_ai.settings.ModelSettings.parallel_tool_calls) asks the model not to return parallel tool calls; it is sent only to the model classes listed for that field and does not control tool execution.
 
 See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/output/#parallel-output-tool-calls) and [tools-advanced docs](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency).
 
