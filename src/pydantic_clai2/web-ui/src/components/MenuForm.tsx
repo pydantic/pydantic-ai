@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
-import { SessionContext, type MenuTarget } from '../api'
+import { SessionContext, type MenuTarget, type SessionApi } from '../api'
 import type { MenuEdited, MenuField, MenuInfo } from '../protocol'
 import { Draft } from './SettingsForm'
 import { CheckIcon, ChevronIcon } from './icons'
@@ -61,6 +61,9 @@ export function MenuForm({
 
   // A command's menu acts on the shown session, so `/model` picks its model, not another session's.
   const session = useContext(SessionContext)
+  // The session shown now: an edit answered after a switch must not show the last session's rows.
+  const shown = useRef(session)
+  shown.current = session
 
   const load = useCallback(async () => {
     const id = ++request.current
@@ -80,9 +83,11 @@ export function MenuForm({
     void load()
   }, [load, version])
 
-  const edited = (key: string, result: MenuEdited) => {
-    ++request.current
-    setMenu(result.menu)
+  const edited = (key: string, result: MenuEdited, owner: SessionApi) => {
+    if (owner === shown.current) {
+      ++request.current
+      setMenu(result.menu)
+    }
     setErrors((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== key)))
     const text = result.messages.filter(Boolean).join('\n')
     // An action the user backed out of says nothing, and saved nothing.
@@ -94,8 +99,9 @@ export function MenuForm({
 
   const run = async (key: string, edit: () => Promise<MenuEdited>, inline: boolean) => {
     setBusy(key)
+    const owner = session
     try {
-      edited(key, await edit())
+      edited(key, await edit(), owner)
     } catch (error) {
       // A value the menu rejects shows by its row; anything else, such as a failed sign-in, as a toast.
       if (inline) setErrors((current) => ({ ...current, [key]: message(error) }))

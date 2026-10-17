@@ -46,6 +46,9 @@ export function McpSection({
 
   // A command's menu acts on the shown session, so `/model` picks its model, not another session's.
   const session = useContext(SessionContext)
+  // The session shown now: an action answered after a switch must not show the last session's servers.
+  const shown = useRef(session)
+  shown.current = session
 
   const load = useCallback(async () => {
     const id = ++request.current
@@ -63,10 +66,13 @@ export function McpSection({
 
   const act = async (key: string) => {
     setBusy(key)
+    const owner = session
     try {
-      const result = await session.runAction(TARGET, key)
-      ++request.current
-      setMenu(result.menu)
+      const result = await owner.runAction(TARGET, key)
+      if (owner === shown.current) {
+        ++request.current
+        setMenu(result.menu)
+      }
       const text = result.messages.filter(Boolean).join('\n')
       if (text) onNotice(text)
     } catch (error) {
