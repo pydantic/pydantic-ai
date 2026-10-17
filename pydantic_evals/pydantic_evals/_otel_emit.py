@@ -16,8 +16,9 @@ supplied, so they appear nested under the original function call in the trace.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry import baggage, trace
 from opentelemetry._logs import LogRecord, SeverityNumber, get_logger
@@ -31,7 +32,13 @@ if TYPE_CHECKING:
     # Imported only for type annotations; `online` imports from this module at runtime.
     from .online import SpanReference
 
-__all__ = ('build_parent_context', 'emit_otel_events')
+__all__ = ('EvaluationContextKind', 'build_parent_context', 'emit_otel_events')
+
+EvaluationContextKind = Literal['online', 'experiment']
+"""Where an evaluation result was produced, written to `logfire.evaluation.context`.
+
+Logfire's hosted scorers additionally emit `'hosted'`; pydantic-evals never does.
+"""
 
 
 # --- Attribute name constants -------------------------------------------------
@@ -49,6 +56,19 @@ _ATTR_ERROR_TYPE = 'error.type'
 _ATTR_TARGET = 'gen_ai.evaluation.target'
 _ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
 _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
+# Unique per emitted event, so consumers can dedupe re-delivered records. Matches
+# the attribute Logfire's hosted scorers already emit.
+_ATTR_EVAL_ID = 'gen_ai.evaluation.id'
+
+# Logfire-specific extensions that make the record lossless and groupable. These
+# have no semconv analogue, so they live in the `logfire.evaluation.*` namespace.
+_LOGFIRE_EVAL_PREFIX = 'logfire.evaluation.'
+_ATTR_KIND = 'logfire.evaluation.kind'
+_ATTR_CONTEXT = 'logfire.evaluation.context'
+_ATTR_SCORING_RUN_ID = 'logfire.evaluation.scoring_run_id'
+_ATTR_SCHEMA_VERSION = 'logfire.evaluation.schema_version'
+# Bump when the meaning or shape of the attributes above changes incompatibly.
+_SCHEMA_VERSION = 1
 
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
@@ -71,6 +91,8 @@ def emit_otel_events(
     results: Sequence[EvaluationResult],
     failures: Sequence[EvaluatorFailure],
     target: str,
+    scoring_run_id: str,
+    context: EvaluationContextKind = 'online',
     include_baggage: bool = True,
 ) -> None:
     """Emit one `gen_ai.evaluation.result` OTel event per result/failure.
@@ -88,26 +110,32 @@ def emit_otel_events(
             `evaluator_version` is written to `gen_ai.evaluation.evaluator.version`.
         target: Name of the function/agent being evaluated. Written to
             `gen_ai.evaluation.target`.
+        scoring_run_id: Identifier shared by every result produced by one scoring
+            pass over one target call. Written to `logfire.evaluation.scoring_run_id`.
+        context: Where the evaluation ran. Written to `logfire.evaluation.context`.
         include_baggage: When True (the default), each emitted event also carries
             every key from the current OTel baggage as an attribute. Standard
-            `gen_ai.*` and `error.type` attributes always win on conflict.
+            `gen_ai.*` and `error.type` attributes always win on conflict, and
+            baggage keys in the reserved `logfire.evaluation.*` namespace are dropped.
     """
     if not results and not failures:
         return
 
-    baggage_attrs = _baggage_attrs() if include_baggage else None
+    # Apply baggage first so standard attributes always win on conflict.
+    shared_attrs = _baggage_attrs() if include_baggage else {}
+    shared_attrs[_ATTR_CONTEXT] = context
+    shared_attrs[_ATTR_SCORING_RUN_ID] = scoring_run_id
+    shared_attrs[_ATTR_SCHEMA_VERSION] = _SCHEMA_VERSION
+    shared_attrs[_ATTR_TARGET] = target
     for result in results:
-        _emit_result(result, target, baggage_attrs)
+        _emit_result(result, shared_attrs)
     for failure in failures:
-        _emit_failure(failure, target, baggage_attrs)
+        _emit_failure(failure, shared_attrs)
 
 
-def _baggage_attrs() -> Mapping[str, Any] | None:
-    """Snapshot the current OTel baggage as a flat attribute mapping, or `None` if empty."""
-    bag = baggage.get_all()
-    if not bag:
-        return None
-    return {str(k): v for k, v in bag.items()}
+def _baggage_attrs() -> dict[str, Any]:
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.evaluation.*` keys."""
+    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_EVAL_PREFIX)}
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
@@ -132,24 +160,16 @@ def build_parent_context(span_reference: SpanReference | None) -> Context | None
 # --- emission helpers ---------------------------------------------------------
 
 
-def _emit_result(
-    result: EvaluationResult,
-    target: str,
-    baggage_attrs: Mapping[str, Any] | None,
-) -> None:
-    attrs = _base_attrs(target, result.name, result.source, result.evaluator_version, baggage_attrs)
+def _emit_result(result: EvaluationResult, shared_attrs: Mapping[str, Any]) -> None:
+    attrs = _base_attrs(shared_attrs, result.name, result.source, result.evaluator_version)
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
     _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
 
 
-def _emit_failure(
-    failure: EvaluatorFailure,
-    target: str,
-    baggage_attrs: Mapping[str, Any] | None,
-) -> None:
-    attrs = _base_attrs(target, failure.name, failure.source, failure.evaluator_version, baggage_attrs)
+def _emit_failure(failure: EvaluatorFailure, shared_attrs: Mapping[str, Any]) -> None:
+    attrs = _base_attrs(shared_attrs, failure.name, failure.source, failure.evaluator_version)
     # Prefer the actual raising exception class when available; fall back to the
     # generic marker for legacy `EvaluatorFailure` instances constructed without it.
     attrs[_ATTR_ERROR_TYPE] = failure.error_type or 'pydantic_evals.EvaluatorFailure'
@@ -166,15 +186,13 @@ def _emit_failure(
 
 
 def _base_attrs(
-    target: str,
+    shared_attrs: Mapping[str, Any],
     name: str,
     source: EvaluatorSpec,
     evaluator_version: str | None,
-    baggage_attrs: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    # Apply baggage first so standard attributes always win on conflict.
-    attrs: dict[str, Any] = dict(baggage_attrs) if baggage_attrs else {}
-    attrs[_ATTR_TARGET] = target
+    attrs = dict(shared_attrs)
+    attrs[_ATTR_EVAL_ID] = str(uuid.uuid4())
     attrs[_ATTR_EVAL_NAME] = name
     attrs[_ATTR_EVALUATOR_SOURCE] = _serialize_evaluator_source(source)
     if evaluator_version is not None:
@@ -216,20 +234,24 @@ def _format_score(value: Any) -> str:
 
 
 def _set_score_attrs(attrs: dict[str, Any], value: Any) -> None:
-    """Populate `score.value` and/or `score.label` from a pydantic-evals scalar.
+    """Populate `score.value`, `score.label` and `logfire.evaluation.kind` from a pydantic-evals scalar.
 
     - bool → both: `score.value` = 0.0/1.0, `score.label` = `"pass"`/`"fail"`.
-      Dual representation so numeric queries and categorical queries both work.
-    - int/float → `score.value` only.
-    - str → `score.label` only (evaluator returned a categorical tag).
+      Dual representation so numeric queries and categorical queries both work;
+      `kind = 'assertion'` keeps it distinguishable from a numeric or string result.
+    - int/float → `score.value` only, `kind = 'score'`.
+    - str → `score.label` only (evaluator returned a categorical tag), `kind = 'label'`.
     """
     if isinstance(value, bool):
         attrs[_ATTR_SCORE_VALUE] = 1.0 if value else 0.0
         attrs[_ATTR_SCORE_LABEL] = 'pass' if value else 'fail'
+        attrs[_ATTR_KIND] = 'assertion'
     elif isinstance(value, (int, float)):
         attrs[_ATTR_SCORE_VALUE] = float(value)
+        attrs[_ATTR_KIND] = 'score'
     elif isinstance(value, str):
         attrs[_ATTR_SCORE_LABEL] = value
+        attrs[_ATTR_KIND] = 'label'
 
 
 def _serialize_evaluator_source(source: EvaluatorSpec) -> str:
