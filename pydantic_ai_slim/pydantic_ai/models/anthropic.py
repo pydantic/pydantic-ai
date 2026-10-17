@@ -298,10 +298,12 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
-# `AsyncAnthropicBedrockMantle` uses the Messages API and supports automatic prompt caching (unlike the
-# legacy `AsyncAnthropicBedrock` InvokeModel API), so it's not in `_NON_AUTOMATIC_CACHING_CLIENTS`. Fast
-# mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
-_NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex)
+# Automatic prompt caching (the top-level `cache_control` parameter) is documented on every platform except the
+# legacy Amazon Bedrock InvokeModel integration, which rejects it with a 400:
+# https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
+# `AsyncAnthropicBedrockMantle` (the Bedrock Messages API) and `AsyncAnthropicVertex` support it. Fast mode is
+# not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
+_NON_AUTOMATIC_CACHING_CLIENTS = (AsyncAnthropicBedrock,)
 
 _CACHE_SETTINGS_KEYS = (
     'anthropic_cache',
@@ -589,7 +591,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Passes a top-level `cache_control` parameter so the server automatically applies a
     cache breakpoint to the last cacheable block and moves it forward as conversations grow.
 
-    On Bedrock and Vertex, automatic caching is not yet supported, so this falls back to
+    On the legacy `AsyncAnthropicBedrock` client, automatic caching is not supported, so this falls back to
     per-block caching on the last user message. If the last content block already has
     `cache_control` from an explicit `CachePoint`, it is preserved.
 
@@ -1115,7 +1117,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and supports_inline_system_prompts,
                 anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
                 and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
-                # The Bedrock and Vertex SDK clients don't support the top-level automatic caching parameter,
+                # The legacy Bedrock SDK client doesn't support the top-level automatic caching parameter,
                 # so the unified `cache` setting places breakpoints there instead.
                 supports_auto_cache=_profile.get('supports_auto_cache', False)
                 and not isinstance(client, _NON_AUTOMATIC_CACHING_CLIENTS),
@@ -2967,7 +2969,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         precedence in `prepare_request`). The static instructions and tool definitions always get
         breakpoints, since Anthropic only reads cache entries written at a breakpoint and a new
         conversation can only share that prefix. The conversation is cached with automatic caching
-        where the client supports it, and with a breakpoint on its last block on Bedrock and Vertex.
+        where the client supports it, and with a breakpoint on its last block on the legacy Bedrock client.
         """
         retention, messages = split_cache_setting(cache)
         ttl: Literal['5m', '1h'] = retention if retention in ('5m', '1h') else '5m'
@@ -3002,11 +3004,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None, None
 
         ttl: Literal['5m', '1h'] = '5m' if auto_cache is True else auto_cache
-        # Bedrock and Vertex do not support the top-level cache_control parameter
+        # The legacy Bedrock client does not support the top-level cache_control parameter
         # (automatic caching). Per-block fallback is handled by _apply_per_block_caching_fallback.
-        # Bedrock: https://github.com/anthropics/anthropic-sdk-python/issues/939
-        # Vertex: https://github.com/anthropics/anthropic-sdk-python/issues/653
-        # Foundry supports automatic caching: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching
+        # https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching
         if isinstance(self.client, _NON_AUTOMATIC_CACHING_CLIENTS):
             return None, ttl
         return self._build_cache_control(ttl), ttl
@@ -3019,7 +3019,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> None:
         """Apply per-block message caching where `anthropic_cache`'s automatic breakpoint can't be relied on.
 
-        Bedrock and Vertex do not support the top-level `cache_control` parameter used by
+        The legacy Bedrock client does not support the top-level `cache_control` parameter used by
         `anthropic_cache` for automatic caching. As a fallback, this applies per-block
         `cache_control` to the last content block of the last message.
 
