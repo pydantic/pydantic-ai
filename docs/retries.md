@@ -546,7 +546,7 @@ Because retries stay in the history, [reusing that history](message-history.md) 
 
 ### Auditing rejected tool calls
 
-A retried result also records why the call has to be made again, in its [`cause`][pydantic_ai.messages.ToolReturnPart.cause]: `'validation_error'`, `'model_retry'`, or, for a call the framework rejects before any tool runs, `'unknown_tool'` (the model invented the name) or `'unavailable_tool'` (the tool exists but can't be called at this step). No tool hook sees those last two, since there's no resolved tool to hand it, so match the recorded part instead. `cause` is never sent to the model, so recording it doesn't change the request.
+A retried result also records why the call has to be made again, in its [`cause`][pydantic_ai.messages.ToolReturnPart.cause] (a [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause]): `'validation_error'`, `'model_retry'`, or, for a call the framework rejects before any tool runs, `'unknown_tool'` (the model invented the name) or `'unavailable_tool'` (the tool exists but can't be called at this step). No tool hook sees those last two, since there's no resolved tool to hand it, so match the recorded part instead. `cause` is never sent to the model, so recording it doesn't change the request.
 
 A capability can collect them from each request the run builds in [`after_node_run`](capabilities/custom.md#hooking-into-the-lifecycle), which doesn't move the run onto the streaming path the way [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] does:
 
@@ -566,12 +566,13 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
+from pydantic_ai.messages import ToolRetryCause
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
 @dataclass
 class AuditRejectedCalls(AbstractCapability[object]):
-    rejected: list[tuple[str, str | None]] = field(default_factory=list)
+    rejected: list[tuple[str, ToolRetryCause | None]] = field(default_factory=list)
 
     async def after_node_run(
         self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]

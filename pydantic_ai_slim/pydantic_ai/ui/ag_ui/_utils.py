@@ -12,7 +12,14 @@ from typing import Any, Final, Literal, Required
 from typing_extensions import TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import RetryFeedbackPart, ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from ...messages import (
+    RetryFeedbackPart,
+    ThinkingPart,
+    ToolPartKind,
+    ToolRetryCause,
+    parse_tool_kind,
+    tool_return_content_ta,
+)
 from .._adapter import parse_retry_cause, retry_feedback_from_payload, retry_feedback_payload
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
@@ -168,7 +175,7 @@ def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
 def tool_kind_encrypted_value(
     tool_kind: ToolPartKind | None,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
-    cause: Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None = None,
+    cause: ToolRetryCause | None = None,
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -211,7 +218,7 @@ def tool_kind_encrypted_value_kwargs(
     *,
     supported: bool,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
-    cause: Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None = None,
+    cause: ToolRetryCause | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
@@ -312,7 +319,7 @@ def parse_encrypted_outcome(
 
 def parse_encrypted_retry_cause(
     encrypted_value: str | None,
-) -> Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None:
+) -> ToolRetryCause | None:
     """Read a retried tool return's `cause` claim from the `pydantic_ai` namespace of an `encrypted_value` blob."""
     namespaced = _parse_encrypted_namespace(encrypted_value)
     return None if namespaced is None else parse_retry_cause(namespaced.get('cause'))

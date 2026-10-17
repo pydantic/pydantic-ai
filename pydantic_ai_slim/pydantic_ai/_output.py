@@ -127,7 +127,7 @@ def build_retried_tool_return(
     *,
     tool_name: str,
     tool_call_id: str | None = None,
-    cause: Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None = None,
+    cause: _messages.ToolRetryCause | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
 

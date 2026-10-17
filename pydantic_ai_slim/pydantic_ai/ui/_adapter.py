@@ -16,6 +16,7 @@ from typing import (
     Protocol,
     Self,
     cast,
+    get_args,
     runtime_checkable,
 )
 
@@ -35,6 +36,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -284,17 +286,12 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json', exclude={'content': {'__all__': {'ctx'}}})
 
 
-_RETRY_CAUSES: tuple[Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'], ...] = (
-    'validation_error',
-    'model_retry',
-    'unknown_tool',
-    'unavailable_tool',
-)
+_RETRY_CAUSES: tuple[ToolRetryCause, ...] = get_args(ToolRetryCause)
 
 
 def parse_retry_cause(
     value: object,
-) -> Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool'] | None:
+) -> ToolRetryCause | None:
     """Read a retried tool return's `cause` claim from a client-echoed metadata channel.
 
     The claim is untrusted coming back in, so anything that isn't one of the known causes reads as
