@@ -378,8 +378,10 @@ jobs:
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
-          # 156 s, so 200 keeps the same headroom.
-          PYRIGHT_TIME_BUDGET: "200"
+          # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
+          # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
+          # still fails a regression like #8077's.
+          PYRIGHT_TIME_BUDGET: "260"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -1544,8 +1546,8 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/mongo:8
+        # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
+        image: quay.io/mongodb/mongodb-community-server:8.3-ubuntu2204
         ports:
           - 27017:27017
         options: >-
