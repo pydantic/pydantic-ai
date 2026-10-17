@@ -205,7 +205,10 @@ def _substitute(
 
 def _identity(item: _File, run_id: str | None) -> str:
     """What makes two items one file within this request: the reuse key, or for a URL with no run, the URL."""
-    return _reuse_key(item, run_id) or f'url:{item.url}'
+    if (key := _reuse_key(item, run_id)) is not None:
+        return key
+    assert not isinstance(item, BinaryContent), 'bytes always have a reuse key'
+    return f'url:{item.url}'
 
 
 def _reuse_key(item: _File, run_id: str | None) -> str | None:
