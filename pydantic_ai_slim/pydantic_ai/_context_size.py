@@ -1,9 +1,10 @@
-"""The context size of a model response, which its usage overstates when a provider SDK merged it from several requests.
+"""The context size of a model response, which its usage overstates when it sums several model requests.
 
-google-genai continues a long decode in further requests, each sending the output so far back as input, and sums their
-usage. That sum is what the requests cost, but overstates the context the model was given. The model stamps the first
-request's input tokens on the response, and context-size readers (`RunContext.context_window_used`, the per-request
-input token limit, harness compaction) read them back here.
+Some responses sum the usage of several requests to the model: google-genai continues a long decode in further
+requests, each sending the output so far back as input, and Anthropic samples the model once per round of a
+server-side tool loop and once more for a compaction. That sum is what the requests cost, but overstates the context
+the model was given. The model stamps the context size on the response, and context-size readers
+(`RunContext.context_window_used`, the per-request input token limit, harness compaction) read it back here.
 """
 
 from __future__ import annotations
@@ -19,30 +20,42 @@ from .messages import (
 if TYPE_CHECKING:
     from .models import StreamedResponse
 
-__all__ = ('context_input_tokens', 'context_tokens', 'mark_initial_input_tokens')
+__all__ = ('context_input_tokens', 'context_tokens', 'mark_context_input_tokens', 'marked_context_input_tokens')
 
 # Unlike the continuation replace marker in `models/_continuation.py`, this one persists into history, where
 # context-size estimates read it back.
+_CONTEXT_INPUT_TOKENS_KEY = 'context_input_tokens'
+# The key v2.56.0 stamped Google long decodes with, still read from the histories it saved.
 _INITIAL_INPUT_TOKENS_KEY = 'initial_input_tokens'
 
 
-def mark_initial_input_tokens(response: ModelResponse | StreamedResponse, input_tokens: int) -> None:
-    """Record the input tokens of the first of the requests a provider SDK merged `response` from."""
+def mark_context_input_tokens(response: ModelResponse | StreamedResponse, input_tokens: int) -> None:
+    """Record the input tokens that measure the context of `response`, when its usage sums several model requests."""
     metadata = response.metadata or {}
-    metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[_INITIAL_INPUT_TOKENS_KEY] = input_tokens
+    metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[_CONTEXT_INPUT_TOKENS_KEY] = input_tokens
     response.metadata = metadata
+
+
+def marked_context_input_tokens(response: ModelResponse | StreamedResponse) -> int | None:
+    """The input tokens `mark_context_input_tokens` recorded on `response`, or `None` if it has none."""
+    namespace = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(namespace):
+        return None
+    for key in (_CONTEXT_INPUT_TOKENS_KEY, _INITIAL_INPUT_TOKENS_KEY):
+        if isinstance(input_tokens := namespace.get(key), int):
+            return input_tokens
+    return None
 
 
 def context_input_tokens(response: ModelResponse) -> int:
     """The input tokens of `response` as a measure of context size, for context-window checks rather than cost.
 
-    That is `usage.input_tokens`, except for a response a provider SDK merged from several requests (see
-    `mark_initial_input_tokens`), where it is the input tokens of the first request.
+    That is `usage.input_tokens`, except for a response whose usage sums several model requests (see
+    `mark_context_input_tokens`): the first request's input tokens for a Google long decode, the last sampling pass's
+    for an Anthropic response that reported its passes.
     """
-    namespace = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-    if _utils.is_str_dict(namespace) and isinstance(input_tokens := namespace.get(_INITIAL_INPUT_TOKENS_KEY), int):
-        return input_tokens
-    return response.usage.input_tokens
+    marked = marked_context_input_tokens(response)
+    return response.usage.input_tokens if marked is None else marked
 
 
 def context_tokens(response: ModelResponse) -> int:

@@ -113,10 +113,12 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
-including its instructions, tool definitions, and `FilePart` payloads. A response a provider
-continued across several requests ([Google long decode](../models/google.md#long-decode)) anchors on
-its first request's input tokens plus its output, since its billed input re-counts the earlier
-requests' output. For the suffix after the
+including its instructions, tool definitions, and `FilePart` payloads. A response whose billed usage
+sums several model requests anchors on the input tokens of the one that measures its context, plus
+its output: the first request of a [Google long decode](../models/google.md#long-decode), whose
+billed input re-counts the earlier requests' output, or the last sampling pass of an
+[Anthropic response that reports its passes](../models/anthropic.md#server-side-tool-loops), whose
+billed input re-counts the context of each pass. For the suffix after the
 anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
 or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads, and
 counts a file inside a tool return as the `See file <identifier>.` reference that stands in for it.
@@ -132,10 +134,12 @@ The retained tail is measured per message with `estimate_message_tokens`, so `ke
 tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
-exactly what the provider counted for them. A response a provider continued across several requests
-([Google long decode](../models/google.md#long-decode))
-enters that difference with its first request's input tokens, since its billed `input_tokens`
-re-count the earlier requests' output. Before the first such response, after the last, and
+exactly what the provider counted for them. A response whose billed usage sums several model
+requests enters that difference with the input tokens of the one that measures its context: the
+first request of a [Google long decode](../models/google.md#long-decode), or the last sampling pass
+of an [Anthropic response that reports its passes](../models/anthropic.md#server-side-tool-loops).
+That last pass also read the response's own earlier passes, so the difference credits them to the
+messages before it, and the tail measures high. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
