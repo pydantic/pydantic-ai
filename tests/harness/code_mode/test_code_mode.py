@@ -3838,7 +3838,7 @@ class TestDynamicCatalog:
         [request] = ctx.pending_messages[0].messages
         assert isinstance(request, ModelRequest)
         model = FunctionModel(
-            lambda _messages, _info: ModelResponse(parts=[TextPart('unused')]),  # pragma: no cover
+            lambda _messages, _info: ModelResponse(parts=[TextPart('unused')]),
             profile=ModelProfile(supports_inline_system_prompts=False),
         )
         prepared = model.prepare_messages(
