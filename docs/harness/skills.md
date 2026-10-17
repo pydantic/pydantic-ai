@@ -218,7 +218,8 @@ skills = Skills(
   exist, instead of failing the run. A path that is a file, or that holds a
   `SKILL.md` itself (a skill package rather than a library of them), is left
   out with a `UserWarning`, so one a model creates mid-session doesn't fail
-  every later run.
+  every later run. So is a library directory that can't be read, such as one
+  whose permissions changed mid-session.
 - `duplicate_names='keep_first'` keeps the skill from the earlier directory when
   two valid skills with different `SKILL.md` files share a name, and skips the
   other with a `UserWarning`. An invalid `SKILL.md` is skipped first, so it does
@@ -263,7 +264,8 @@ disallowed-tools, effort, hooks, model, paths, shell, tools, when_to_use
 ```
 
 If a selected skill uses any of these fields, the run emits one aggregated
-`UserWarning` at its start. Fields such as `license`, `compatibility`, and `metadata` are
+`UserWarning` at its start, and `load` returns the same message in the catalog's
+`advice`. Fields such as `license`, `compatibility`, and `metadata` are
 accepted without changing runtime behavior. Other unknown, non-behavioral fields
 are also accepted.
 
@@ -293,6 +295,15 @@ a `reason`, and the `message` a run would warn with, for the host to show:
 | `'duplicate_name'` | A `SKILL.md` named like a skill found earlier, with `duplicate_names='keep_first'` |
 | `'not_a_directory'` | A library path that is a file, with `missing_directories='skip'` |
 | `'skill_package'` | A library path that holds a `SKILL.md` itself, with `missing_directories='skip'` |
+| `'unreadable'` | A library directory that can't be read, such as one without permission, with `missing_directories='skip'` |
+
+A skipped library path leaves out every skill it holds, so `SkippedSkill`
+covers library paths as well as single `SKILL.md` files.
+
+The catalog's `advice` holds the other messages a run warns with, about skills
+that did load: descriptions over the 1,024-character limit, and frontmatter
+fields whose behavior isn't implemented. A host that hides warnings, such as a
+terminal client, can show them instead.
 
 Each `SkillDefinition` has the skill's `name`, `description`, `body`, `path`,
 `directory`, `in_run_workspace`, `model_invocable`, and `user_invocable`. The
@@ -378,7 +389,7 @@ Skills(
 - `workspace` reads the libraries from this backend instead of the run's workspace.
 
 Pass at least one library directory, not the path of an individual skill
-package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
+package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, library paths that are files or skill packages, and unreadable libraries, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
 
 Two `Skills` on one agent combine into one catalog.
 

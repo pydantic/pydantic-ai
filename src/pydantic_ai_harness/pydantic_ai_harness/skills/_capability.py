@@ -155,9 +155,9 @@ class Skills(AbstractCapability[AgentDepsT]):
             include: Exact names to expose. Omit to expose all discovered skills.
             exclude: Exact names to omit. Cannot be combined with `include`.
             missing_directories: `'error'` (the default) fails the run when a library path does not
-                exist, is not a directory, or is itself a skill package. `'skip'` leaves such a path out,
-                for conventional locations such as `.agents/skills` that a project may not have: one
-                that does not exist quietly, any other with a warning.
+                exist, is not a directory, is itself a skill package, or cannot be read. `'skip'` leaves
+                such a path out, for conventional locations such as `.agents/skills` that a project may
+                not have: one that does not exist quietly, any other with a warning.
             duplicate_names: `'error'` (the default) fails the run when two different `SKILL.md` files
                 share a name. `'keep_first'` keeps the one from the earlier directory and skips the
                 other with a warning, the way coding agents layer project skills over personal ones.
@@ -253,7 +253,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         catalog = await self._load(ctx.workspace)
-        for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
+        for message in (*(skipped.message for skipped in catalog.skipped), *catalog.advice):
             warnings.warn(message, UserWarning, stacklevel=2)
         offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]
         return CombinedCapability(offered) if offered else self
@@ -263,8 +263,8 @@ class Skills(AbstractCapability[AgentDepsT]):
 
         For a host that offers skills to a person as well as to the model, such as a `/code-review`
         command that sends `skill.render(arguments)` as a prompt. The catalog includes skills the model
-        may not load (`model_invocable`), and its `skipped` entries say which `SKILL.md` files and
-        library paths were left out, for the host to show.
+        may not load (`model_invocable`). Its `skipped` entries say which `SKILL.md` files and library
+        paths were left out, and its `advice` holds what a run would also warn about, for the host to show.
 
         Args:
             workspace: Where libraries without their own `workspace=` live, as the run's workspace
@@ -310,10 +310,11 @@ class Skills(AbstractCapability[AgentDepsT]):
                     messages.append(
                         skip_duplicate_name(skill.name, previous_skill.path, skill.path, source.duplicate_names)
                     )
-        return SkillCatalog(skills=tuple(skill for _, skill in by_name.values()), skipped=tuple(messages))
+        skills = tuple(skill for _, skill in by_name.values())
+        return SkillCatalog(skills=skills, skipped=tuple(messages), advice=self._advice(skills))
 
     @staticmethod
-    def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:
+    def _advice(definitions: tuple[SkillDefinition, ...]) -> tuple[str, ...]:
         advice: list[str] = []
         overlong_descriptions = [
             f'{skill.name} ({len(skill.description):,} characters)'
@@ -332,4 +333,4 @@ class Skills(AbstractCapability[AgentDepsT]):
         ]
         if ignored:
             advice.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
-        return advice
+        return tuple(advice)

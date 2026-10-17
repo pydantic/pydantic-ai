@@ -162,19 +162,25 @@ class SkillDefinition:
         return f'{heading}\n\n{body}' if body else heading
 
 
-SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 'skill_package']
+SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 'skill_package', 'unreadable']
 """Why `Skills` left a path out of the catalog.
 
 - `'invalid'`: a `SKILL.md` with malformed frontmatter, invalid UTF-8, or an invalid or mismatched name.
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
+- `'unreadable'`: a library directory that cannot be read, such as one without permission, with
+  `missing_directories='skip'`.
 """
 
 
 @dataclass(frozen=True, kw_only=True)
 class SkippedSkill:
-    """A `SKILL.md` or skill library path that `Skills` left out, and why."""
+    """A `SKILL.md` or skill library path that `Skills` left out, and why.
+
+    A skipped library path, such as one that is not a directory, skips every skill it would have
+    held, so it is an entry too, with the library's `path`.
+    """
 
     path: str
     """Absolute workspace path of the skipped `SKILL.md`, or of the skipped library."""
@@ -191,11 +197,7 @@ class SkippedSkill:
 
 @dataclass(frozen=True, kw_only=True)
 class SkillCatalog:
-    """The skills `Skills.load` read, and each `SKILL.md` or library it left out.
-
-    Run-time advice, such as frontmatter fields whose behavior is not implemented, is not included:
-    a run emits it as a `UserWarning`, and each skill's `ignored_behavioral_fields` lists its own.
-    """
+    """The skills `Skills.load` read, each `SKILL.md` or library it left out, and advice about the skills it read."""
 
     skills: tuple[SkillDefinition, ...]
     """The selected, valid skills, in catalog order, including those the model may not load."""
@@ -204,6 +206,13 @@ class SkillCatalog:
     """Each `SKILL.md` or library path left out, in the order it was found.
 
     A run emits each `message` as a `UserWarning`; a host showing skills to a person can show them instead.
+    """
+
+    advice: tuple[str, ...] = ()
+    """Advice about the skills read, such as descriptions over the Agent Skills length limit or frontmatter
+    fields whose behavior is not implemented.
+
+    A run emits each as a `UserWarning`; a host that hides warnings can show them instead.
     """
 
 
@@ -281,11 +290,13 @@ async def _is_file(workspace: Workspace, path: str) -> bool:
     return entry is not None and not entry.is_dir
 
 
-async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> list[tuple[str, str]]:
+async def _discover_skills(
+    workspace: Workspace, libraries: Sequence[tuple[str, Sequence[FileEntry]]]
+) -> list[tuple[str, str]]:
     discovered: list[tuple[str, str]] = []
-    for library in libraries:
+    for library, children in libraries:
         # Sorted by name so the catalog, and so the instructions, are the same for every run over the same files.
-        for child in sorted(await workspace.list_dir(library), key=lambda entry: entry.name):
+        for child in sorted(children, key=lambda entry: entry.name):
             if not child.is_dir:
                 continue
             skill_file = posixpath.join(library, child.name, 'SKILL.md')
@@ -296,9 +307,9 @@ async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> li
 
 async def _libraries(
     workspace: Workspace, directories: Sequence[str | Path], missing_directories: MissingDirectories
-) -> tuple[list[str], list[SkippedSkill]]:
-    """The configured libraries that exist, in order, each listed once, and the paths skipped as not libraries."""
-    libraries: list[str] = []
+) -> tuple[list[tuple[str, Sequence[FileEntry]]], list[SkippedSkill]]:
+    """The configured libraries that exist, in order, each listed once with its entries, and the paths skipped."""
+    libraries: list[tuple[str, Sequence[FileEntry]]] = []
     skipped: list[SkippedSkill] = []
     seen: set[str] = set()
     for configured in directories:
@@ -306,13 +317,28 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        entry = await _stat(workspace, library)
+        children: Sequence[FileEntry] | None = None
+        try:
+            entry = await _stat(workspace, library)
+            if (
+                entry is not None
+                and entry.is_dir
+                and not await _is_file(workspace, posixpath.join(library, 'SKILL.md'))
+            ):
+                children = await workspace.list_dir(library)
+        except PermissionError:
+            # Permissions can change mid-session, so with 'skip' it must not fail every later run.
+            if missing_directories == 'error':
+                raise
+            message = f'Skipping {library}: it is not readable.'
+            skipped.append(SkippedSkill(path=library, reason='unreadable', message=message))
+            continue
         if entry is None:
             if missing_directories == 'skip':
                 continue
             raise ValueError(f'Skill library directory does not exist in the workspace: {configured}')
-        if entry.is_dir and not await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
-            libraries.append(library)
+        if children is not None:
+            libraries.append((library, children))
             continue
         # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
         if missing_directories == 'skip':
