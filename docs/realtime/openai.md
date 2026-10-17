@@ -388,7 +388,8 @@ The API keeps the whole conversation server-side and bills each response for all
 agent pays again for every earlier tool call and result on every later response. Set
 [`openai_prune_tool_items`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_prune_tool_items]
 to delete a tool round's items once the model has answered it: when a response completes without calling a
-tool, the session deletes each answered call together with its output. Pass a set of tool names instead of
+tool, the session deletes each answered call together with its output, and any content the tool returned besides
+it. Pass a set of tool names instead of
 `True` to keep those tools' items, for results the model may need to refer back to:
 
 ```python

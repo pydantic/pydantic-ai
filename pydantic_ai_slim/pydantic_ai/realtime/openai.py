@@ -258,7 +258,8 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     The OpenAI Realtime API bills every response for the whole conversation it keeps, so a tool-heavy agent pays
     for every earlier `function_call` and `function_call_output` item again on each later response. With this set,
     once a response completes without calling a tool, the session deletes the items of the calls the model has
-    answered (each call with its output, never one without the other), so later responses no longer read them.
+    answered (each call with its output and any content the tool returned besides it, never one without the other),
+    so later responses no longer read them.
     `True` prunes every tool's items; a set of tool names prunes all but those tools', whose results the model may
     need again. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps everything, and a
     reconnect's replay leaves the pruned items out. Off by default.
@@ -438,6 +439,16 @@ class _ToolCallBatch:
     """Whether the response is done, so no further call can join."""
 
 
+@dataclass
+class _ToolItems:
+    """A tool call's items in the server conversation: what `openai_prune_tool_items` deletes together."""
+
+    call: str
+    output: str | None = None
+    content: list[str] = field(default_factory=list[str])
+    """User message items with content the tool returned besides its output."""
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
@@ -466,8 +477,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._ws = ws
         # See `OpenAIRealtimeModelSettings.openai_prune_tool_items`.
         self._prune_tool_items = prune_tool_items
-        # The items of each tool call in the server conversation, by call id: the call, and its output.
-        self._tool_items: dict[str, list[str]] = {}
+        # The items of each tool call in the server conversation, by call id, while pruning (see `_track_tool_item`).
+        self._tool_items: dict[str, _ToolItems] = {}
         self._interrupts_response_on_speech = interrupts_response_on_speech
         self._model_name = model_name
         self._model_name_getter = model_name_getter
@@ -694,29 +705,40 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if len(self._output_items) > _MAX_TRACKED_OUTPUT_ITEMS:
             del self._output_items[next(iter(self._output_items))]
 
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        return bool(self._prune_tool_items)
+
+    @property
+    def _kept_tools(self) -> AbstractSet[str]:
+        """The tools whose items `openai_prune_tool_items` keeps."""
+        return self._prune_tool_items if isinstance(self._prune_tool_items, AbstractSet) else frozenset()
+
     def _track_tool_item(self, data: dict[str, Any]) -> None:
-        """Remember the id of a tool call's item, or its output's, as it joins the server conversation."""
+        """Remember the id of a tool call's item, or its output's, as it joins the server conversation, to prune it."""
         item = data.get('item')
         if (
-            is_str_dict(item)
-            and item.get('type') in ('function_call', 'function_call_output')
-            and isinstance(call_id := item.get('call_id'), str)
-            and isinstance(item_id := item.get('id'), str)
+            not self._prunes_tool_calls
+            or not is_str_dict(item)
+            or not isinstance(call_id := item.get('call_id'), str)
+            or not isinstance(item_id := item.get('id'), str)
         ):
-            self._tool_items.setdefault(call_id, []).append(item_id)
+            return
+        if item.get('type') == 'function_call':
+            if item.get('name') not in self._kept_tools:
+                self._tool_items[call_id] = _ToolItems(call=item_id)
+        elif item.get('type') == 'function_call_output' and (items := self._tool_items.get(call_id)) is not None:
+            items.output = item_id
 
     async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
-        if not self._prune_tool_items:
-            return ()
-        kept = self._prune_tool_items if isinstance(self._prune_tool_items, AbstractSet) else frozenset[str]()
         pruned: list[str] = []
         for call in calls:
-            items = self._tool_items.get(call.tool_call_id, [])
-            if call.tool_name in kept or len(items) < 2:
-                # A tool whose items stay, or a call whose items this conversation doesn't hold both of.
+            items = self._tool_items.get(call.tool_call_id)
+            if items is None or items.output is None:
+                # A kept tool's, or a call this conversation doesn't hold both the call and the output of.
                 continue
             del self._tool_items[call.tool_call_id]
-            for item_id in items:
+            for item_id in (items.call, items.output, *items.content):
                 await self._send_event({'type': CONVERSATION_ITEM_DELETE_EVENT, 'item_id': item_id})
             pruned.append(call.tool_call_id)
         return pruned
@@ -746,6 +768,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             }
         )
         if item:
+            if (items := self._tool_items.get(content.tool_call_id)) is not None:
+                # Content the tool returned besides its output (an image, say) is pruned with the call it followed.
+                item['id'] = item_id = f'pydantic_ai_content_{input_index}'
+                items.content.append(item_id)
             self._lifecycle.message_sent(None)
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
         if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:

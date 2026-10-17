@@ -16,7 +16,6 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ..exceptions import UserError
-from ..messages import ToolCallPart
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
@@ -511,10 +510,11 @@ class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return _map_voice_live_event(data)
 
-    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+    @property
+    def _prunes_tool_calls(self) -> bool:
         # Voice Live's beta protocol isn't known to take `conversation.item.delete`: `openai_prune_tool_items` is
         # one of the settings it ignores.
-        return ()
+        return False
 
 
 @dataclass(init=False)

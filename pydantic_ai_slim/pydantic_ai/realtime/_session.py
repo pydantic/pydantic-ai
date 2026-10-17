@@ -838,6 +838,7 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=self._input_transcription_enabled,
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
@@ -2816,13 +2817,13 @@ class RealtimeSession:
             try:
                 pruned = await self._connection._prune_tool_calls(calls)  # pyright: ignore[reportPrivateUsage]
             except self._connection.transport_errors:
-                # The link dropped: what went out is the provider's to have deleted, and a reconnect replays the rest.
+                # The link dropped: nothing is taken as pruned, so a reconnect replays these calls, and they are
+                # pruned from the new conversation once the next frame is handled.
+                self._tool_rounds_over[:0] = calls
                 return
         if pruned:
             self._apply_core(ToolCallsPruned(tool_call_ids=tuple(pruned)))
-            self._session_instrumentation.record_lifecycle(
-                'prune tool items', **{'pydantic_ai.realtime.pruned_tool_call_ids': list(pruned)}
-            )
+            self._session_instrumentation.record_lifecycle('prune tool items', tool_call_ids=list(pruned))
 
     def _end_chat_spans_left_open(self) -> None:
         """End the `chat` spans of responses that ended while their close wasn't streamed (receiving stopped mid-frame)."""

@@ -12211,15 +12211,25 @@ async def test_a_stale_usage_report_still_moves_the_context_window_used() -> Non
 
 
 class _PrunesToolItems(FakeRealtimeConnection):
-    """Answers a tool's result, and deletes the tool rounds the session says are over (or fails to, on a dead link)."""
+    """Answers a tool's result, and deletes the tool rounds the session says are over.
+
+    With `link_drops`, the first attempt hits a dead link; another frame comes once `more` is set.
+    """
 
     transport_errors = (ConnectionResetError,)
 
-    def __init__(self, *, link_drops: bool = False) -> None:
+    def __init__(self, *, link_drops: bool = False, keeps: bool = False) -> None:
         super().__init__([])
         self.link_drops = link_drops
+        self.keeps = keeps
+        self.attempts = 0
         self.pruned: list[str] = []
         self.result_sent = asyncio.Event()
+        self.more = asyncio.Event()
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        return True
 
     async def send_input(self, content: RealtimeInput) -> None:
         await super().send_input(content)
@@ -12231,21 +12241,33 @@ class _PrunesToolItems(FakeRealtimeConnection):
         await self.result_sent.wait()
         yield OutputTranscript(text='Done.', is_final=True)
         yield ResponseDone()
+        await self.more.wait()
+        yield SessionUsage(RequestUsage(input_tokens=1), response_scoped=False)
         await asyncio.Event().wait()
 
     async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
-        if self.link_drops:
+        self.attempts += 1
+        if self.link_drops and self.attempts == 1:
             raise ConnectionResetError('connection reset by peer')
+        if self.keeps:
+            return []
         self.pruned.extend(call.tool_call_id for call in calls)
         return [call.tool_call_id for call in calls]
 
 
 @pytest.mark.parametrize('link_drops', [False, True])
 async def test_tool_rounds_the_connection_prunes_leave_the_replay(link_drops: bool) -> None:
-    """Once the answer completes, the connection is asked to prune the round: what it deleted, a replay leaves out."""
+    """Once the answer completes, the connection is asked to prune the round: what it deleted, a replay leaves out.
+
+    A link that drops as it deletes prunes nothing: the round stays in the replay, and is pruned once the next frame
+    is handled (from the conversation the reconnect replayed it into).
+    """
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'done'
+
+    def calls(messages: list[ModelMessage]) -> list[str]:
+        return [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
 
     conn = _PrunesToolItems(link_drops=link_drops)
     session = RealtimeSession(conn, runner)
@@ -12254,11 +12276,26 @@ async def test_tool_rounds_the_connection_prunes_leave_the_replay(link_drops: bo
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
-        await session.wait_for_reply()
-
-    def calls(messages: list[ModelMessage]) -> list[str]:
-        return [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
+            await _until(lambda: conn.attempts == 1)
+        assert calls(session._core.replayable_messages()) == ([] if not link_drops else ['c1'])  # pyright: ignore[reportPrivateUsage]
+        conn.more.set()
+        await _until(lambda: conn.pruned == ['c1'])
+        assert calls(session._core.replayable_messages()) == []  # pyright: ignore[reportPrivateUsage]
 
     assert calls(session.all_messages()) == ['c1']
-    assert calls(session._core.replayable_messages()) == ([] if not link_drops else ['c1'])  # pyright: ignore[reportPrivateUsage]
-    assert conn.pruned == ([] if link_drops else ['c1'])
+
+
+async def test_tool_rounds_the_connection_keeps_stay_in_the_replay() -> None:
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    conn = _PrunesToolItems(keeps=True)
+    session = RealtimeSession(conn, runner)
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await _until(lambda: conn.attempts == 1)
+        replayed = session._core.replayable_messages()  # pyright: ignore[reportPrivateUsage]
+        assert any(isinstance(part, ToolCallPart) for message in replayed for part in message.parts)

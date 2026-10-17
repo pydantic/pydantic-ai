@@ -418,6 +418,7 @@ class SessionCore:
         run_id: str | None,
         responses_are_requests: bool = True,
         answers_tool_calls_per_response: bool = False,
+        tracks_tool_rounds: bool = False,
         input_transcription_enabled: bool = True,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
@@ -435,6 +436,8 @@ class SessionCore:
         self._run_id = run_id
         self._responses_are_requests = responses_are_requests
         self._answers_per_response = answers_tool_calls_per_response
+        self._tracks_tool_rounds = tracks_tool_rounds
+        """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
         """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
@@ -510,8 +513,8 @@ class SessionCore:
         """What was owed when an exchange was abandoned: no waiter waits for it again."""
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
-        self._rounds_over: set[str] = set()
-        """Calls a `ToolRoundsOver` named already."""
+        self._unrounded: dict[str, list[str]] = {}
+        """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
         self._pruned_calls: set[str] = set()
         """Calls the connection deleted from the provider's conversation (see `ToolCallsPruned`)."""
         """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
@@ -967,24 +970,36 @@ class SessionCore:
         self._effects.append(ResponseClosed(response.id, event.status, message, self._history_before(response)))
         if event.status != 'lost' and not response.refused:
             self._exchange_ending = event.status == 'cancelled'
-        if event.status == 'completed' and message is not None and not response.tool_calls:
-            self._tool_rounds_over()
+        if self._tracks_tool_rounds:
+            if message is not None and response.tool_calls:
+                self._unrounded[response.id] = list(response.tool_calls)
+            elif event.status == 'completed' and message is not None:
+                self._tool_rounds_over()
 
     def _tool_rounds_over(self) -> None:
-        """The tool rounds before a response that called no tool are over: name their answered calls once."""
+        """The tool rounds before a response that called no tool are over: name their answered calls, once.
+
+        A call whose result didn't go out (or wasn't answered) never will be: it isn't named, and isn't kept.
+        """
         calls: list[ToolCallPart] = []
-        for response in self._responses.values():
-            if response.message is None:
-                continue
-            for part in response.message.parts:
-                if (
-                    isinstance(part, ToolCallPart)
-                    and part.tool_call_id not in self._rounds_over
-                    and (result := self._result_input.get(part.tool_call_id)) is not None
-                    and self._obligations.get(result) == 'answered'
-                ):
-                    self._rounds_over.add(part.tool_call_id)
-                    calls.append(part)
+        for response_id, call_ids in list(self._unrounded.items()):
+            message = self._responses[response_id].message
+            waiting: list[str] = []
+            for call_id in call_ids:
+                result = self._result_input.get(call_id)
+                outcome = self._obligations.get(result) if result is not None else None
+                if outcome == 'answered' and message is not None:
+                    calls.extend(
+                        part
+                        for part in message.parts
+                        if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+                    )
+                elif outcome == 'pending' or (result is None and call_id not in self._settled_calls):
+                    waiting.append(call_id)
+            if waiting:
+                self._unrounded[response_id] = waiting
+            else:
+                del self._unrounded[response_id]
         if calls:
             self._effects.append(ToolRoundsOver(tuple(calls)))
 
@@ -1420,7 +1435,11 @@ class SessionCore:
         return [kept for message in messages if (kept := self._without_pruned_calls(message)) is not None]
 
     def _without_pruned_calls(self, message: ModelMessage) -> ModelMessage | None:
-        """`message` without the pruned tool calls, or their results, it holds: `None` if that leaves nothing."""
+        """`message` without the pruned tool calls it holds, or `None` if that leaves nothing.
+
+        A pruned call's result goes whole, with the content that followed it (an image the tool returned, say),
+        which the connection deleted with it.
+        """
         pruned = self._pruned_calls
 
         def is_pruned(part: Any) -> bool:
@@ -1428,11 +1447,10 @@ class SessionCore:
 
         if not any(is_pruned(part) for part in message.parts):
             return message
-        if isinstance(message, ModelResponse):
-            parts = [part for part in message.parts if not is_pruned(part)]
-            return replace(message, parts=parts) if parts else None
-        request_parts = [part for part in message.parts if not is_pruned(part)]
-        return replace(message, parts=request_parts) if request_parts else None
+        if isinstance(message, ModelRequest):
+            return None
+        parts = [part for part in message.parts if not is_pruned(part)]
+        return replace(message, parts=parts) if parts else None
 
     def _held_from(self) -> int:
         """Where history is held back: the first entity not final yet (a response under way, a turn untranscribed)."""

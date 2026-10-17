@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
@@ -833,5 +832,4 @@ def test_infer_provider_with_v1_endpoint_env(monkeypatch: pytest.MonkeyPatch) ->
 async def test_voice_live_ignores_tool_item_pruning() -> None:
     """Voice Live's beta protocol isn't known to delete items, so `openai_prune_tool_items` is one it ignores."""
     connection = _VoiceLiveRealtimeConnection(cast(Any, None), prune_tool_items=True)
-    call = ToolCallPart(tool_name='lookup', args='{}', tool_call_id='c1')
-    assert await connection._prune_tool_calls([call]) == ()  # pyright: ignore[reportPrivateUsage]
+    assert not connection._prunes_tool_calls  # pyright: ignore[reportPrivateUsage]

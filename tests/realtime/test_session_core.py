@@ -1435,7 +1435,7 @@ def test_stripping_a_message_without_tracked_audio_frees_nothing() -> None:
 
 def test_a_response_that_calls_no_tool_ends_the_tool_rounds_before_it() -> None:
     """Once a response completes without calling a tool, the answered calls before it are named, once; pruned ones
-    stay in history, and leave the replay."""
+    stay in history, and leave the replay with the content their result carried."""
     returned = ModelRequest(
         parts=[
             ToolReturnPart(tool_name='photo', content='Taken.', tool_call_id='c1'),
@@ -1443,7 +1443,7 @@ def test_a_response_that_calls_no_tool_ends_the_tool_rounds_before_it() -> None:
         ]
     )
     session_core = feed(
-        core(),
+        core(tracks_tool_rounds=True),
         started('r1'),
         said('r1', 'Let me look.', 'item_1'),
         ToolCall(tool_call_id='c1', tool_name='photo', args='{}', response_id='r1'),
@@ -1462,7 +1462,6 @@ def test_a_response_that_calls_no_tool_ends_the_tool_rounds_before_it() -> None:
     assert summary(session_core.replayable_messages()) == snapshot(
         [
             'r1 [assistant:Let me look.] complete stop',
-            '{prompt:(photo)}',
             'r2 [assistant:A kiwi.] complete stop',
             'r3 [assistant:Anything else?] complete stop',
         ]
@@ -1480,7 +1479,7 @@ def test_a_response_that_calls_no_tool_ends_the_tool_rounds_before_it() -> None:
 def test_a_pruned_round_with_nothing_else_said_leaves_the_replay_entirely() -> None:
     returned = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='Found.', tool_call_id='c1')])
     session_core = feed(
-        core(),
+        core(tracks_tool_rounds=True),
         started('r1'),
         ToolCall(tool_call_id='c1', tool_name='lookup', args='{}', response_id='r1'),
         ended('r1'),
@@ -1492,3 +1491,42 @@ def test_a_pruned_round_with_nothing_else_said_leaves_the_replay_entirely() -> N
         ToolCallsPruned(tool_call_ids=('c1',)),
     )
     assert summary(session_core.replayable_messages()) == snapshot(['r2 [assistant:Found it.] complete stop'])
+
+
+def test_a_round_still_running_or_unanswered_waits_and_one_without_a_result_is_never_named() -> None:
+    def returned(call_id: str) -> ModelRequest:
+        return ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id=call_id)])
+
+    session_core = feed(
+        core(tracks_tool_rounds=True),
+        started('r1'),
+        ToolCall(tool_call_id='c1', tool_name='t', args='{}', response_id='r1'),
+        ToolCall(tool_call_id='c2', tool_name='t', args='{}', response_id='r1'),
+        ToolCall(tool_call_id='c3', tool_name='t', args='{}', response_id='r1'),
+        ended('r1'),
+        InputSent(input_id=0, solicits=True, tool_call_id='c1'),
+        ToolReturned(tool_call_id='c1', request=returned('c1')),
+        # c3 settles without its result going out (the tool raised, say).
+        ToolReturned(tool_call_id='c3', request=returned('c3')),
+        started('r2', 0),
+        ended('r2'),
+    )
+
+    def named() -> list[list[str]]:
+        return [
+            [call.tool_call_id for call in effect.calls]
+            for effect in session_core.take_effects()
+            if isinstance(effect, ToolRoundsOver)
+        ]
+
+    assert named() == [['c1']]
+    feed(
+        session_core,
+        InputSent(input_id=1, solicits=True, tool_call_id='c2'),
+        ToolReturned(tool_call_id='c2', request=returned('c2')),
+        started('r3'),
+        ended('r3'),
+    )
+    assert named() == []  # (c2's result isn't answered yet)
+    feed(session_core, started('r4', 1), ended('r4'))
+    assert named() == [['c2']]
