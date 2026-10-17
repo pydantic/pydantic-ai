@@ -8,8 +8,6 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from typing_extensions import TypeIs
-
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -56,9 +54,10 @@ from pydantic_ai_harness.compaction._shared import (
     tool_return_text,
     validate_token_trigger,
 )
+from pydantic_ai_harness.compaction._summary import is_summary_part
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, ModelResponsePart, UserContent
+    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, UserContent
     from pydantic_ai.models import AbstractModel, ModelRequestContext
 
 _DEFAULT_SUMMARY_PROMPT = """\
@@ -233,7 +232,7 @@ def _format_messages(
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     elements.append(_message_element('assistant', part.content))
-                elif _is_summary_part(part) and part.content and not skip_previous_summary:
+                elif is_summary_part(part) and part.content and not skip_previous_summary:
                     elements.append(_message_element('summary', part.content))
                 elif isinstance(part, ToolCallPart):
                     elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
@@ -317,16 +316,11 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """
     for msg in messages:
         for part in msg.parts:
-            if _is_summary_part(part) and part.content:
+            if is_summary_part(part) and part.content:
                 return _without_bridge_prefix(part.content)
             if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
                 return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
     return None
-
-
-def _is_summary_part(part: ModelRequestPart | ModelResponsePart) -> TypeIs[CompactionPart]:
-    """Whether *part* is a compaction summary written outside any provider, like this capability's own."""
-    return isinstance(part, CompactionPart) and part.provider_name is None
 
 
 def _is_legacy_summary(part: SystemPromptPart) -> bool:
@@ -349,7 +343,7 @@ def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessag
     if any(message is retained for retained in kept):
         return True
     if isinstance(message, ModelResponse):
-        return all(_is_summary_part(part) for part in message.parts)
+        return all(is_summary_part(part) for part in message.parts)
     return all(isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts)
 
 

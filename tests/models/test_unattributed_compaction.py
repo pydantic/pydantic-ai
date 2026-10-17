@@ -147,6 +147,9 @@ async def test_anthropic_reads_the_summary(
 
     assert 'Bluefin' in output
     [body] = request_capture.bodies()
+    # A summary the application wrote doesn't switch on Anthropic's server-side compaction.
+    assert 'context_management' not in body
+    assert 'compact-2026-01-12' not in request_capture.headers[0].get('anthropic-beta', '')
     assert body['messages'] == [
         {
             'role': 'assistant',

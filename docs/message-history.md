@@ -1052,7 +1052,7 @@ Whether the processor wants a [`RunContext`][pydantic_ai.tools.RunContext] is de
 Use an LLM to summarize older messages to preserve context while reducing tokens. This is one of several ways to keep a conversation within the context window — see [Compaction](capabilities/compaction.md) for the full picture, including provider-native compaction and ready-made strategies from [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/compaction/).
 
 ```python {title="summarize_old_messages.py"}
-from pydantic_ai import Agent, ModelMessage
+from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelResponse
 from pydantic_ai.capabilities import ProcessHistory
 
 # Use a cheaper model to summarize old messages.
@@ -1070,8 +1070,8 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     if len(messages) > 10:
         oldest_messages = messages[:10]
         summary = await summarize_agent.run(message_history=oldest_messages)
-        # Return the last message and the summary
-        return summary.new_messages() + messages[-1:]
+        # Replace them with the summary, which every model receives as assistant text
+        return [ModelResponse(parts=[CompactionPart(content=summary.output)]), *messages[-1:]]
 
     return messages
 

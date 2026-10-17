@@ -49,7 +49,7 @@ interactions:
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1190
+      - gfet4t7; dur=1208
       transfer-encoding:
       - chunked
       vary:
@@ -64,19 +64,19 @@ interactions:
             parts:
             - text: Bluefin
               thoughtSignature: >-
-                Es0CCsoCAWkUfRPebdY5wmuddxzMaTT7siF/Fqkad9NR1c/fwkiiypi0vtevh3fy0RvO7MzT6unpIB8uvhoyapiV9AmzhLJNYRa3bjvZqZKICXOZswRb2rKWvr6pcvYQ2z8/4gUxloRjUH1QkDPhh4Bn+HxxQL87OvZa7HNcE33YzqwzuUclxBzCy1+QBJPYdjXMv4ssiBXoPv7DG33JqoJn26A13FfvE+cMzO3s/JqRC+BEtVTLw1GiX6/qLPTiDbdH/NPsL54p6LuMSjmfocgQynOgXVnS55l68yXCQLpyIZorbOiVg5pVoeLOcA3qHVqsmwL1zU7a6OZ1kyZV2p20Ye+ODNpQ07uuEfJmmWjjY8J6KGTjp6pVrPWtfYBlETxfaeedpyQgKeAlWyQ5Sg5d4SbX8kONCpcZ9VBQ6fBjorG+ifCGCxMDFR9Vw0Mn
+                Ev4CCvsCAWkUfRMqN7/udW1IyfSWa1C4sTLgTQ0kIdCDJoydp1uyP1Bg5Zum2rtgH9y9D3UPGLXxKTVlCCo7Du+wv3FHPJx2dEIsQX0vxzk2IbqzgiaihnsZ7tFKI3kuwPN/tfaGQaDRS/o0nLW7U0ekbgq/c1qRQIR/LkvZWpDXLbpjNtJNzKMqWR61Debd25ZuZmm+y4MfbUr3kC1Fiv4tsnXBtdUqyyjkKXkkNAd7fyYdt2oHzQ96B9alfsl77+mOPr6ZbDLd7xjrEb8++WUom9P6qmMq8ALtFFA2l40E3PmWg4JTheBIWUBGpd8FGGXkVgGzmyMxKxjs5Lzh6ESai4pPAZKJ21faWqE+VKcH/2hViNrruFgF1Q90l0Tsa/WilGmaSY5gJfE255xS8zJxAAkfPxq7b0ZOT5GhY/aUP38YOPk5d0T/H73jofR4XXI9//sZqY0LHxCjnsOv2NOqYdtefWkgb1TEV8yl65sxvHrh+YMgUCbzyoVLA1idZg==
             role: model
           finishReason: STOP
           index: 0
         usageMetadata:
           promptTokenCount: 58
           candidatesTokenCount: 2
-          totalTokenCount: 114
+          totalTokenCount: 128
           promptTokensDetails:
           - modality: TEXT
             tokenCount: 58
-          thoughtsTokenCount: 54
+          thoughtsTokenCount: 68
           serviceTier: standard
         modelVersion: gemini-3-flash-preview
-        responseId: 7tfSapbUNLKJz7IP09a68QQ
-  recorded_at: 2026-10-17T02:05:35.858502+00:00
+        responseId: nQrTarKIMbDtz7IPxsGFsQ8
+  recorded_at: 2026-10-17T05:41:50.934097+00:00

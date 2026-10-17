@@ -23,7 +23,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
-from typing_extensions import TypeAliasType, TypedDict, deprecated
+from typing_extensions import TypeAliasType, TypedDict, TypeIs, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
@@ -2540,8 +2540,8 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
             message = replace(
                 message,
                 parts=[
-                    TextPart(content=_conversation_summary_text(part.content))
-                    if isinstance(part, CompactionPart) and part.provider_name is None and part.content
+                    TextPart(content=_conversation_summary_text(part.content or ''))
+                    if _is_unattributed_summary(part)
                     else part
                     for part in message.parts
                 ],
@@ -2550,14 +2550,14 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
     return new_messages
 
 
-def _is_unattributed_summary(part: ModelResponsePart) -> bool:
+def _is_unattributed_summary(part: ModelResponsePart) -> TypeIs[CompactionPart]:
     """Whether *part* is a compaction summary no provider produced, which every adapter renders as text."""
     return isinstance(part, CompactionPart) and part.provider_name is None and bool(part.content)
 
 
 def _conversation_summary_text(content: str) -> str:
     """*content* framed as a summary of the conversation it replaced."""
-    # TODO: switch to the core `wrap()` framing helper once it lands.
+    # TODO(#10547): switch to `_framing.wrap()` once it lands.
     body = _CONVERSATION_SUMMARY_CLOSING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
     return f'<conversation_summary>\n{body}\n</conversation_summary>'
 

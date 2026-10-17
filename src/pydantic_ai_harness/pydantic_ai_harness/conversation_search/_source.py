@@ -25,13 +25,13 @@ from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
-    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import is_summary_part
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
 SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
@@ -143,7 +143,7 @@ def is_summary_artifact(message: ModelMessage) -> bool:
     `SummarizingCompaction` wrote one, a request carrying its prefixed summary system prompt.
     """
     if isinstance(message, ModelResponse):
-        return any(isinstance(part, CompactionPart) and part.provider_name is None for part in message.parts)
+        return any(is_summary_part(part) for part in message.parts)
     return any(isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts)
 
 
