@@ -1,9 +1,9 @@
-"""`clai2 --web`'s session directory: each session runs in its own, moved to between turns.
+"""`clai2 --web`'s session directories: each live session works in its own, moved to between turns.
 
-The terminal shell stays in the directory it started in. `clai2 --web` has no terminal and holds one
-live session at a time, so it records that session's directory as the session's workspace, then loads
-the plugins again there: the coding tools, `repo_context`, skills, and MCP project files read it
-through `PluginHost.workspace`. The process's working directory stays where CLAI started.
+The terminal shell stays in the directory it started in. Under `clai2 --web`, a session that moves
+records its new directory as its workspace, then loads its plugins again there: the coding tools,
+`repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
+working directory stays where CLAI started, as other live sessions work in other directories.
 """
 
 from collections.abc import Callable
