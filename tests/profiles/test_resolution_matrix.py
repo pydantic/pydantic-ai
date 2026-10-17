@@ -1997,7 +1997,8 @@ def test_vllm_gemma_video_is_up_to_the_model_class():
 
     The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
     """
-    assert VLLMProvider.model_profile('google/gemma-3-27b-it')['supports_video_input'] is True
+    family = VLLMProvider.model_profile('google/gemma-3-27b-it')
+    assert family is not None and family.get('supports_video_input') is True
     provider = VLLMProvider(base_url='http://localhost:8000/v1', api_key='test')
     chat = OpenAIChatModel('google/gemma-3-27b-it', provider=provider)
     responses = OpenAIResponsesModel('google/gemma-3-27b-it', provider=provider)
