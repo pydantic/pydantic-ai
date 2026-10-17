@@ -6064,6 +6064,136 @@ async def test_get_output_after_stream_output():
     )
 
 
+async def test_run_stream_early_exit_in_cancelled_scope_closes_model_stream():
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope still closes the model stream before it exits.
+
+    The cancelled scope re-cancels the consumer at every checkpoint of the teardown; none of those cancels may cut short
+    the stream's shielded close. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    stream_closed = False
+
+    async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+        nonlocal stream_closed
+        try:
+            while True:
+                yield 'chunk '
+        finally:
+            stream_closed = True
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        with anyio.CancelScope() as scope:
+            async with agent.run_stream('hello') as result:
+                stream = result.stream_text(delta=True, debounce_by=None)
+                assert await anext(stream)
+                scope.cancel()
+
+    assert stream_closed
+
+
+@dataclass
+class _ModelRequestCleanup(AbstractCapability[None]):
+    """Cleanup in `wrap_model_request` that starts once its handler returns, and finishes once `permitted` is set."""
+
+    shielded: bool
+    started: anyio.Event = field(default_factory=anyio.Event)
+    permitted: anyio.Event = field(default_factory=anyio.Event)
+    finished: anyio.Event = field(default_factory=anyio.Event)
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        finally:
+            with anyio.CancelScope(shield=self.shielded):
+                self.started.set()
+                await self.permitted.wait()
+                self.finished.set()
+
+
+@pytest.mark.parametrize('shielded', [True, False])
+async def test_run_stream_early_exit_in_cancelled_scope_cancels_model_request_cleanup_like_the_scope(shielded: bool):
+    """Leaving `run_stream()` early inside a cancelled `anyio` scope lets `wrap_model_request` cleanup finish only if it
+    shields it. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup = _ModelRequestCleanup(shielded=shielded)
+
+    async def permit_cleanup() -> None:
+        await cleanup.started.wait()
+        # Leave the teardown a few loop cycles in which the cancelled scope could reach the cleanup.
+        for _ in range(3):
+            await anyio.lowlevel.checkpoint()
+        cleanup.permitted.set()
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[cleanup])
+    # Native, unlike `anyio.fail_after`, so it also bounds the teardown's shielded wait.
+    async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(permit_cleanup)
+            with anyio.CancelScope() as scope:
+                async with agent.run_stream('hello') as result:
+                    assert await anext(result.stream_text(delta=True, debounce_by=None))
+                    scope.cancel()
+
+    assert cleanup.finished.is_set() is shielded
+
+
+@pytest.mark.parametrize('cancellation', ['native', 'anyio'])
+async def test_run_stream_records_response_returned_after_absorbing_cancellation(
+    cancellation: Literal['native', 'anyio'],
+):
+    """A response `wrap_model_request` returns after absorbing a cancellation is recorded before the run is cancelled,
+    as for any step that absorbs one. Not a VCR test: no recorded response can trigger the cancellation.
+    """
+    cleanup_started = anyio.Event()
+    run_usages: list[RunUsage] = []
+
+    class AbsorbCancellation(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            run_usages.append(ctx.usage)
+            response = await handler(request_context)
+            cleanup_started.set()
+            try:
+                await anyio.Event().wait()
+            except asyncio.CancelledError:
+                pass
+            return response
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[AbsorbCancellation()])
+    messages: list[ModelMessage] = []
+    scope = anyio.CancelScope()
+
+    async def drive() -> None:
+        nonlocal messages
+        with capture_run_messages() as messages, scope:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):
+                    pass
+
+    task = asyncio.create_task(drive())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    if cancellation == 'native':
+        task.cancel()
+    else:
+        scope.cancel()
+    await asyncio.wait((task,), timeout=READINESS_WAIT_TIMEOUT)
+
+    if cancellation == 'native':
+        with pytest.raises(asyncio.CancelledError):
+            task.result()
+    else:
+        task.result()
+        assert scope.cancelled_caught
+    assert [type(message) for message in messages] == [ModelRequest, ModelResponse]
+    # The run's live usage counts the response's tokens once (the stream handler recorded them) and the request once
+    # (recording the response counted it).
+    assert run_usages == snapshot([RunUsage(output_tokens=4, input_tokens=51, requests=1)])
+
+
 @pytest.mark.parametrize('delta', [True, False])
 @pytest.mark.parametrize('debounce_by', [None, 0.1])
 async def test_stream_text_early_break_cleanup(delta: bool, debounce_by: float | None):
