@@ -4611,7 +4611,7 @@ async def test_adapter_dispatch_request_timeout():
             {'type': 'text-start', 'id': IsStr()},
             {'type': 'text-delta', 'delta': 'partial', 'id': IsStr()},
             {'type': 'text-end', 'id': IsStr()},
-            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'abort', 'reason': 'The agent run timed out.'},
             {'type': 'finish-step'},
             '[DONE]',
         ]
