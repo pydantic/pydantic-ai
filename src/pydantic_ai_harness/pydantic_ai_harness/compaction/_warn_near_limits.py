@@ -46,9 +46,7 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
 
     Each warning is enqueued as a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope]
     system prompt: the model sees it for the request it's part of only, and it stays in the
-    message history, so the cached prefix and the model's earlier reasoning stay valid. On
-    Anthropic models that support it, it's sent as a turn-scoped `clear_at` system message that
-    costs nothing once its request has been answered; elsewhere it's sent with its own request only.
+    message history, so the cached prefix and the model's earlier reasoning stay valid.
 
     Older versions sent the warning as a user prompt marked with metadata instead. Those are
     stripped from the request when a history still holds them; a user prompt that quotes a
