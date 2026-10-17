@@ -710,7 +710,7 @@ def create_shell(
                 'Select any model or fallback chain, or open the picker; also /model add [NAME], '
                 '/model settings [NAME], and /model chains'
             ),
-            handler=lambda args: model_command(context, args),
+            handler=lambda args: model_command(context, args, console=console),
             complete=lambda args: model_completions(context, args),
             during_turn=True,
             during_turn_subcommands=MODEL_SUBCOMMANDS,
@@ -722,7 +722,7 @@ def create_shell(
         Command(
             name='add_model',
             description='Deprecated: use /model add',
-            handler=lambda args: model_command(context, ['add', *args]),
+            handler=lambda args: model_command(context, ['add', *args], console=console),
             complete=lambda args: model_completions(context, ['add', *args]),
             during_turn=True,
         )
@@ -731,7 +731,7 @@ def create_shell(
         Command(
             name='model_settings',
             description='Deprecated: use /model settings',
-            handler=lambda args: model_command(context, ['settings', *args]),
+            handler=lambda args: model_command(context, ['settings', *args], console=console),
             complete=lambda args: model_completions(context, ['settings', *args]),
             during_turn=True,
         )
@@ -740,7 +740,7 @@ def create_shell(
         Command(
             name='chain',
             description='Alias of /model chains: fallback chains live in the /model picker',
-            handler=lambda args: model_command(context, ['chains', *args]),
+            handler=lambda args: model_command(context, ['chains', *args], console=console),
             during_turn=True,
         )
     )
