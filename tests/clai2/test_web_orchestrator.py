@@ -227,6 +227,10 @@ def test_its_state_names_the_saved_default_model_not_the_sessions(make_web: Make
     web_.shell.process.store.set('model', 'test')
     assert web_.get('/api/state').json()['status']['model'] == 'agent default'
     assert web_.get('/api/orchestrator/state').json()['model'] == 'test'
+    # Named, not built: a saved chain since deleted still shows, and the page still connects.
+    web_.shell.process.store.set('model', 'chain:gone')
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        assert opened(socket).model == 'chain:gone'
 
 
 def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> None:
