@@ -378,6 +378,14 @@ agent = Agent(model)
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
 
+### Tsubasa
+
+For text requests to [Tsubasa](https://tsubasa.sh/), configure [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider]
+with `base_url='https://api.tsubasa.sh/v1'` and pass the value of your
+`TSUBASA_API_KEY` environment variable as `api_key`. Use this provider with
+[`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], selecting
+`tsubasa-fast` or `tsubasa-pro` as the model name.
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
