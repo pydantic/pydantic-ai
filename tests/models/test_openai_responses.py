@@ -4421,7 +4421,9 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
+    response_id = result.response.provider_response_id
+    assert response_id is not None
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=response_id)
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -7830,7 +7832,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                             details={'reasoning_tokens': 448},
                             output_reasoning_tokens=448,
                             requests=1,
-                            cost=Decimal('0.00475625'),
+                            cost=Decimal('0.002378125'),
                         )
                     )
                     # The run counts the step once its response is committed, after the stream.
@@ -7842,7 +7844,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                         details={'reasoning_tokens': 448},
                         output_reasoning_tokens=448,
                         requests=1,
-                        cost=Decimal('0.00475625'),
+                        cost=Decimal('0.002378125'),
                     )
                 )
     assert run.usage == snapshot(
@@ -7852,7 +7854,7 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
             details={'reasoning_tokens': 448},
             output_reasoning_tokens=448,
             requests=1,
-            cost=Decimal('0.00475625'),
+            cost=Decimal('0.002378125'),
         )
     )
 
@@ -14453,6 +14455,64 @@ async def test_response_error_event_first_falls_back(allow_model_requests: None)
     assert output == 'from fallback'
 
 
+_OVERLOADED_FAILED_EVENT: dict[str, Any] = {
+    'type': 'response.failed',
+    'response': _failed_response_json(
+        {'code': 'server_is_overloaded', 'message': 'Our servers are currently overloaded.'}
+    ),
+    'sequence_number': 2,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    'events',
+    [
+        pytest.param([_CREATED_EVENT, _OVERLOADED_FAILED_EVENT], id='created-failed'),
+        pytest.param(
+            [
+                _CREATED_EVENT,
+                {
+                    'type': 'response.in_progress',
+                    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+                    'sequence_number': 1,
+                },
+                _OVERLOADED_FAILED_EVENT,
+            ],
+            id='created-in-progress-failed',
+        ),
+    ],
+)
+async def test_response_failed_before_output_falls_back(allow_model_requests: None, events: list[dict[str, Any]]):
+    """A `response.failed` after lifecycle events that carry no output fires `FallbackModel`'s default `fallback_on`.
+
+    https://github.com/pydantic/pydantic-ai/issues/10123
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(*events), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+        assert output == 'from fallback'
+
+        # Without `FallbackModel`, the stream still opens and the failure is raised while it's consumed.
+        async with primary.request_stream(
+            [ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters()
+        ) as streamed_response:
+            with pytest.raises(ModelAPIError, match='server_is_overloaded'):
+                async for _ in streamed_response:
+                    pass  # pragma: no cover
+
+
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize('call', ['request', 'retrieve', 'count_tokens', 'compact'])
 async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None, call: str):
@@ -18618,4 +18678,92 @@ async def test_responses_provider_details_hook_builtin_wins_collisions(allow_mod
     assert model_response.provider_details == {
         'finish_reason': 'completed',
         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+    }
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_azure_responses_provider_details_hook_content_filters(
+    allow_model_requests: None, azure_api_key: str, stream: bool
+):
+    """VCR test: one `_process_provider_details` override reads Azure's `content_filters`, streamed or not.
+
+    Azure reports `content_filters` on the complete response; in a stream, only the terminal
+    `response.completed` event carries them (`response.created` and `response.in_progress` report `null`).
+    """
+
+    class ContentFiltersModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'content_filters': (response.model_extra or {}).get('content_filters')}
+
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=ContentFiltersModel('gpt-5.4', provider=provider))
+
+    prompt = 'What is the capital of France? Answer in one word.'
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            output = await result.get_output()
+        messages = result.all_messages()
+    else:
+        run_result = await agent.run(prompt)
+        output = run_result.output
+        messages = run_result.all_messages()
+
+    assert 'Paris' in output
+    model_response = messages[-1]
+    assert isinstance(model_response, ModelResponse)
+    assert model_response.provider_details is not None
+    content_filters = model_response.provider_details['content_filters']
+    assert [content_filter['source_type'] for content_filter in content_filters] == snapshot(['prompt', 'completion'])
+    assert content_filters[0]['content_filter_results']['jailbreak'] == snapshot({'detected': False, 'filtered': False})
+
+
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
+    allow_model_requests: None, resumed: bool
+):
+    """When streaming, built-in provider details win over colliding keys returned by the hook, as without streaming.
+
+    A stream resumed with `starting_after` has no `response.created`, so its built-in `timestamp` only comes from the
+    terminal response, which must still win over the hook's.
+
+    Mocked: no real response makes a hook collide with a built-in key.
+    """
+
+    class CollidingModel(OpenAIResponsesModel):
+        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
+            return {'finish_reason': 'custom', 'timestamp': 'custom', 'custom': response.id}
+
+    response = response_message([])
+    first_event: resp.ResponseStreamEvent = (
+        resp.ResponseInProgressEvent(response=response, type='response.in_progress', sequence_number=0)
+        if resumed
+        else resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0)
+    )
+    stream = [
+        first_event,
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=1,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = CollidingModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='hello')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as streamed:
+        async for _ in streamed:
+            pass
+
+    # A resumed stream is only ever a background job's, so it's also stamped as one.
+    assert streamed.get().provider_details == {
+        'finish_reason': 'completed',
+        'custom': '123',
+        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+        **({'background': True} if resumed else {}),
     }

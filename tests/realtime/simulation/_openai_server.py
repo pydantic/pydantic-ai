@@ -127,6 +127,10 @@ class ServerSession:
     """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
     conversation: set[str] = field(default_factory=set[str])
     """What this session's conversation holds, as `conversation_fingerprint`s: a re-dial starts empty."""
+    truncated_items: set[str] = field(default_factory=set[str])
+    """Assistant items a truncation cut: the server deletes their transcript, keeping only the audio heard."""
+    item_fingerprints: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint each finished assistant item added to `conversation`."""
     restoration_checked: bool = False
 
     @property
@@ -541,6 +545,11 @@ class OpenAIServer:
             )
             return
         self.truth.truncations.append((item_id, audio_end_ms))
+        # "Truncating audio will delete the server-side text transcript to ensure there is not text in the
+        # context that hasn't been heard by the user" (the API reference).
+        session.truncated_items.add(item_id)
+        if (fingerprint := session.item_fingerprints.pop(item_id, None)) is not None:
+            session.conversation.discard(fingerprint)
         self._emit(session, {'type': 'conversation.item.truncated', 'item_id': item_id, 'audio_end_ms': audio_end_ms})
 
     def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
@@ -689,7 +698,9 @@ class OpenAIServer:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
         transcript = item['content'][0]['transcript']
-        session.conversation.add(f'assistant:{transcript}')
+        if active.message_item not in session.truncated_items:
+            session.conversation.add(fingerprint := f'assistant:{transcript}')
+            session.item_fingerprints[active.message_item] = fingerprint
         self._emit(
             session,
             {
@@ -739,6 +750,8 @@ class OpenAIServer:
             )
             session.item_audio_ms[active.message_item] = 0
             active.audio_ms = 0
+            truth.items[active.message_item] = []
+            self.truth.item_responses[active.message_item] = truth
         item = active.output[-1]
         common = {
             'response_id': truth.key,
@@ -755,6 +768,7 @@ class OpenAIServer:
         truth.words.append(word)
         self.truth.word_seq[word] = self.truth.tick()
         active.message_words.append(word)
+        truth.items[active.message_item].append(word)
         item['content'][0]['transcript'] = ' '.join(active.message_words)
         self._emit(
             session,

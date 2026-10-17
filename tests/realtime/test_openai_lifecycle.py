@@ -15,7 +15,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
     InputLost,
     LifecycleEvent,
@@ -23,12 +22,13 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
 
 from ..conftest import try_import
+from ..realtime_connections import lifecycle_events
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import BinaryAudio
@@ -39,14 +39,12 @@ with try_import() as imports_successful:
         CommitAudio,
         CreateResponse,
         RealtimeCodecEvent,
-        ResponseDone,
         TextContext,
         ToolResult,
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
     from .test_openai import FakeWebSocket
-    from .test_session import FakeRealtimeConnection
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -95,7 +93,7 @@ def frames(*frames: dict[str, Any]) -> list[str]:
 
 def describe(event: RealtimeCodecEvent | LifecycleEvent) -> LifecycleEvent | str:
     """A lifecycle event as itself, and a codec event as the name of its type."""
-    return event if isinstance(event, LIFECYCLE_EVENT_TYPES) else type(event).__name__
+    return event if isinstance(event, LifecycleEvent) else type(event).__name__
 
 
 async def codec(connection: OpenAIRealtimeConnection) -> list[RealtimeCodecEvent]:
@@ -109,7 +107,7 @@ class Stream:
     def __init__(self, *incoming: dict[str, Any], **kwargs: Any) -> None:
         self.ws = FakeWebSocket(frames(*incoming))
         self.connection = OpenAIRealtimeConnection(self.ws, **kwargs)  # pyright: ignore[reportArgumentType]
-        self._events = aiter(self.connection._lifecycle_events())  # pyright: ignore[reportPrivateUsage]
+        self._events = aiter(lifecycle_events(self.connection))
 
     def feed(self, *incoming: dict[str, Any]) -> None:
         """More frames from the server, read after those already scripted."""
@@ -231,7 +229,7 @@ async def test_a_push_to_talk_commit_starts_and_ends_its_turn_and_a_clear_discar
             UserTurnEnded(turn_id='item_u1'),
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u2'),
-            UserTurnDiscarded(turn_id='item_u2'),
+            UserTurnClosed(turn_id='item_u2'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -402,6 +400,28 @@ async def test_an_unreadable_terminal_still_ends_the_response_it_closed() -> Non
     )
 
 
+async def test_an_unreadable_terminal_ends_a_response_created_without_an_id() -> None:
+    stream = Stream(
+        created(None),
+        {'type': 'response.done', 'response': 'garbled'},
+        created('resp_2'),
+        done('resp_2'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1'),
+            ResponseEnded(response_id='pydantic_ai_response_1', status='lost'),
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_2'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
 async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     stream = Stream({'type': 'input_audio_buffer.committed'}, created('resp_1'), done('resp_1'))
     assert await stream.rest() == snapshot(
@@ -526,7 +546,7 @@ async def test_a_closed_connection_loses_what_was_open() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u1'),
             ResponseEnded(response_id='resp_1', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -589,7 +609,7 @@ async def test_a_reconnect_settles_what_the_new_socket_will_never_answer() -> No
             InputAdded(input_id=2),
             InputLost(input_ids=(1,)),
             ResponseEnded(response_id='resp_2', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionReconnectEvent',
             InputLost(input_ids=(3,)),
             'RealtimeSessionErrorEvent',
@@ -634,10 +654,8 @@ async def test_a_reconnect_ends_the_spoken_turns_whose_transcript_it_loses(trans
         reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
         **kwargs,
     )
-    events = [event for event in await stream.rest() if isinstance(event, UserTurnDiscarded)]
-    assert events == (
-        [UserTurnDiscarded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u2')] if transcribes else []
-    )
+    events = [event for event in await stream.rest() if isinstance(event, UserTurnClosed)]
+    assert events == ([UserTurnClosed(turn_id='item_u1'), UserTurnClosed(turn_id='item_u2')] if transcribes else [])
 
 
 async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> None:
@@ -658,12 +676,6 @@ async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> 
         ]
     )
     assert replacement.sent == []
-
-
-async def test_a_version_1_connection_yields_its_codec_events_as_its_lifecycle_stream() -> None:
-    connection = FakeRealtimeConnection([ResponseDone()])
-    assert connection._lifecycle_version == 1  # pyright: ignore[reportPrivateUsage]
-    assert [event async for event in connection._lifecycle_events()] == [ResponseDone()]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_response_request_metadata() -> None:
@@ -714,7 +726,7 @@ async def test_speech_starts_that_never_stopped_merge_into_the_next() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_a'),
             'RealtimeInputSpeechStartEvent',
-            UserTurnDiscarded(turn_id='item_a'),
+            UserTurnClosed(turn_id='item_a'),
             UserTurnStarted(turn_id='item_b'),
             'RealtimeInputSpeechEndEvent',
             UserTurnEnded(turn_id='item_b'),
@@ -740,7 +752,7 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
             UserTurnStarted(turn_id='item_u1'),
             UserTurnEnded(turn_id='item_u1', still_speaking=True),
             ResponseStarted(response_id='resp_1', user_turn_id='item_u1'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeInputSpeechEndEvent',
             'RealtimeInputSpeechEndEvent',
             'ResponseDone',
@@ -918,11 +930,7 @@ async def test_a_commit_that_fails_to_go_out_places_nothing() -> None:
     await connection.send('First.')
     with pytest.raises(OSError):
         await connection.send(CommitAudio())
-    events = [
-        event
-        async for event in connection._lifecycle_events()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(event, (InputAdded, UserTurnEnded))
-    ]
+    events = [event async for event in lifecycle_events(connection) if isinstance(event, (InputAdded, UserTurnEnded))]
     assert events == snapshot([UserTurnEnded(turn_id='item_u1')])
 
 
@@ -941,7 +949,7 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
         {'type': 'input_audio_buffer.committed', 'item_id': 'item_idle', 'previous_item_id': None},
     )
     events = [event for event in await stream.rest() if not isinstance(event, str)]
-    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')])
+    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnClosed(turn_id='item_u1')])
     assert stream.connection._lifecycle._idle_items == set()  # pyright: ignore[reportPrivateUsage]
 
 

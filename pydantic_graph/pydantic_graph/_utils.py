@@ -261,7 +261,7 @@ def infer_obj_name(obj: Any, *, depth: int) -> str | None:
     """
     target_frame = inspect.currentframe()
     if target_frame is None:
-        return None  # pragma: no cover
+        return None
     for _ in range(depth):
         target_frame = target_frame.f_back
         if target_frame is None:

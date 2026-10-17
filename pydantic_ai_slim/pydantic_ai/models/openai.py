@@ -127,6 +127,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import split_cache_setting
+from ._sdk_retries import with_max_retries
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -722,6 +723,9 @@ def _move_leading_cache_breakpoints(
     output. A string body becomes a single text part so it can carry the marker; the text is
     unchanged. Responses assistant output (`output_text`, `refusal`) can't carry a breakpoint, so
     those items are skipped. Raises `UserError` when there's no earlier content at all, as Anthropic does.
+
+    `OpenRouterModel._move_leading_cache_controls` does the same for OpenRouter's `cache_control`, with
+    different rules; check it when changing this.
     """
     index = 0
     while index < len(items):
@@ -1307,6 +1311,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
+        return native_tool.restricting_settings
+
     @cached_property
     def profile(self) -> OpenAIModelProfile:
         """The model profile.
@@ -1454,7 +1462,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
                 max_tokens = model_settings.get('max_tokens', OMIT)
                 supports_max_completion_tokens = profile.get('openai_chat_supports_max_completion_tokens', True)
-                return await self.client.chat.completions.create(
+                return await with_max_retries(self.client, model_settings).chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
                     parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
@@ -1967,7 +1975,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _CHAT_FINISH_REASON_MAP.get(key)
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self,
         messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
@@ -1977,10 +1985,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
-        # DeepSeek-style `'field'` providers 400 on a tool-calling assistant turn that omits their
-        # thinking field while the run is reasoning. The framework-synthesized deferred-capability
-        # tool-search turn is the common trigger (it carries no thinking), but the backfill below
-        # deliberately covers any such turn missing the field. Resolve the field name to set empty below.
+        # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
+        # the run is reasoning. A turn another model or provider produced can lack it: a `FallbackModel`
+        # step, or a foreign native tool search that `prepare_messages` splits into a synthesized
+        # `search_tools` turn. `'field'` mode sets the configured field empty on every such turn; `'auto'`
+        # mode is handled after mapping, below.
+        send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
             for message in messages
@@ -1989,7 +1999,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         backfill_field = (
             profile.get('openai_chat_thinking_field', None)
-            if thinking_active and profile.get('openai_chat_send_back_thinking_parts', 'auto') == 'field'
+            if thinking_active and send_back_thinking == 'field'
             else None
         )
         for message in messages:
@@ -2008,6 +2018,30 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
+        if send_back_thinking == 'auto':
+            # `'auto'` learns the field only from the mapped messages, so it backfills only when they carry
+            # exactly one of the names `_process_thinking` reads: a server that rejects unknown fields has
+            # already accepted that one. DeepSeek's guide asks for the field on every turn of a request with
+            # tools, but in practice it rejected a current-turn tool call without it and accepted an
+            # earlier-turn one (`test_deepseek_auto_mode_thinking_backfill` records the accepted requests),
+            # so earlier turns go out unchanged. A message backfilled here goes out without the field again
+            # once a newer user message follows it.
+            custom_field = profile.get('openai_chat_thinking_field', None)
+            sent_fields = {
+                name
+                for message in openai_messages
+                if message['role'] == 'assistant'
+                for name in (custom_field, 'reasoning', 'reasoning_content')
+                if name and name in message
+            }
+            if len(sent_fields) == 1:
+                (sent_field,) = sent_fields
+                last_user_index = max(
+                    (i for i, message in enumerate(openai_messages) if message['role'] == 'user'), default=-1
+                )
+                for message in openai_messages[last_user_index + 1 :]:
+                    if message['role'] == 'assistant' and message.get('tool_calls') and sent_field not in message:
+                        message[sent_field] = ''
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
@@ -2477,6 +2511,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
         )
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+        return frozenset()
+
     async def compact_messages(
         self,
         request_context: ModelRequestContext,
@@ -2571,7 +2611,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         try:
             with map_decode_errors(self.model_name):
-                return await self.client.responses.compact(
+                return await with_max_retries(self.client, model_settings).responses.compact(
                     input=openai_messages,
                     model=self.model_name,
                     instructions=instructions,
@@ -2671,7 +2711,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         extra_headers, timeout = self._build_request_options(settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            response = await self.client.responses.input_tokens.count(
+            response = await with_max_retries(self.client, settings).responses.input_tokens.count(
                 model=request_params.model,
                 input=request_params.input,
                 instructions=request_params.instructions,
@@ -2749,8 +2789,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
         """Map a complete Responses API response object to provider details.
 
-        Subclasses may override this hook. It handles complete response objects, not live response event streams.
-        Built-in provider details take precedence on key collisions.
+        Subclasses may override this hook. It's called with the complete response, and when streaming, with the
+        complete response carried by the terminal event that ends the stream. Built-in provider details take
+        precedence on key collisions.
         """
         return None
 
@@ -2979,6 +3020,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
+            _process_provider_details=self._process_provider_details,
         )
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
@@ -3259,7 +3301,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.create(
+                return await with_max_retries(self.client, model_settings).responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -3387,7 +3429,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.retrieve(
+                return await with_max_retries(self.client, model_settings).responses.retrieve(
                     response_id=response_id,
                     include=include or OMIT,
                     starting_after=starting_after if starting_after is not None else OMIT,
@@ -4778,6 +4820,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
+    _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
@@ -4820,6 +4863,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+        # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
+        # the stream, like `finish_reason`, do too.
+        if hook_provider_details := self._process_provider_details(response):
+            self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     async def close_stream(self) -> None:
         await self._response.source.close()
