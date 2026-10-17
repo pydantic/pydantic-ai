@@ -2456,6 +2456,7 @@ def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch
     monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', '/path/that/does/not/exist')
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
+    monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'pr-123')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
