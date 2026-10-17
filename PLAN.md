@@ -20,18 +20,18 @@ Pin the OS label for this pilot. The [announced migration](https://github.com/ac
 
 ## Implementation after agreement
 
-1. Run a hosted comparison on fresh `ubuntu-24.04` x64 runners: current Docker PostgreSQL 16 versus the preinstalled server. Record runner image, server version, startup/health time and image bytes transferred. Use repeated trials with both full and harness-only shard selection.
+1. Run a hosted comparison on fresh `ubuntu-24.04` x64 runners: current Docker PostgreSQL 16 versus the preinstalled server. Record runner image, server version, startup/health time and image bytes transferred. Run at least ten independent fresh-runner trials per strategy in the same comparison batch, covering both full and harness-only shard selection.
 2. Configure native PostgreSQL for the existing localhost URL, database, user and password. Assert major version 16 and successful authenticated SQL before tests. Preserve `ABSURD_REQUIRE_LIVE`, `PGTASK_REQUIRE_LIVE`, all Python versions, shards, test selections and coverage collection.
 3. Exercise the actual Absurd/pgtask suites and complete all-extras jobs on Python 3.11–3.15. Compare selected test identities and pass/skip outcomes with the container control. Check migrations, schema cleanup, concurrency, locale/encoding and authentication defaults.
-4. If correctness and timing gates pass, replace only `test-all-extras.services.postgres` with a native startup step before the tests. Keep shard selection unchanged. Fail clearly if the expected server is missing; do not hide image drift with an unmeasured install/pull fallback.
+4. If correctness and timing gates pass, set `test-all-extras.runs-on` to `ubuntu-24.04` and replace its `services.postgres` declaration with a native startup step before the tests. Keep shard selection unchanged. Fail clearly if the expected server is missing; do not hide image drift with an unmeasured install/pull fallback.
 5. Keep PostgreSQL 17, MongoDB and Redis integration jobs, their path filters and tag coverage. Incorporate the separately merged registry repair before implementing.
 6. In a separately reviewable change, pin remaining service images by digest and add a verified weekly refresh mechanism that opens update PRs. Keep the supported major/minor policy explicit, test refreshes before promotion and report stale/failed updates. Do not add pins without an updater.
 
 ## Acceptance gates
 
 - Native and container controls execute the same selected PostgreSQL tests across the existing Python matrix, with no new skips.
-- Each native trial makes zero PostgreSQL image pulls or package downloads.
-- Startup timing does not regress against contemporaneous container controls; publish raw trials and median/tail comparisons.
+- Each native trial makes zero PostgreSQL image pulls or PostgreSQL package downloads.
+- With at least ten fresh trials per strategy, native startup median and nearest-rank 95th percentile must each be no greater than the container control in the same batch. Publish every trial; retain containers if either gate fails.
 - PRs from forks and Dependabot need no database/registry secret.
 - The dedicated PostgreSQL 17/MongoDB/Redis suites still run on tags and relevant changes.
 - Runner/server version drift fails visibly. Rollback restores the existing PostgreSQL 16 service declaration.
