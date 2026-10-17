@@ -914,6 +914,191 @@ def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None
     )
     assert health.parse_run_result(tmp_path) is None
 
+    second_log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'nightly-sweep',
+                    'task_key': 'task-1',
+                    'trigger_event': 'schedule',
+                    'run_attempt': 1,
+                    'failure': {'kind': 'timeout'},
+                },
+            }
+        )
+    )
+    assert health.parse_run_result(tmp_path, expected_attempt=1) is None
+
+    second_log.unlink()
+    second_log.write_text(
+        '\n'.join(
+            [
+                json.dumps(
+                    {
+                        'type': 'result',
+                        'provider_health': {
+                            'workflow': 'nightly-sweep',
+                            'task_key': 'task-1',
+                            'trigger_event': 'schedule',
+                            'run_attempt': 1,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        'type': 'result',
+                        'provider_health': {
+                            'workflow': 'nightly-sweep',
+                            'task_key': 'task-1',
+                            'trigger_event': 'schedule',
+                            'run_attempt': 1,
+                            'failure': {'kind': 'timeout'},
+                        },
+                    }
+                ),
+            ]
+        )
+    )
+    assert health.parse_run_result(second_log, expected_attempt=1) is None
+
+
+@pytest.mark.parametrize(
+    ('failure', 'expected_scope', 'expected_kind'),
+    [
+        ({'kind': 'timeout'}, None, None),
+        ({'kind': 'rate_limit', 'http_status': 429}, 'provider', 'rate_limit'),
+    ],
+)
+def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
+    failure: dict[str, object] | None,
+    expected_scope: health.Scope | None,
+    expected_kind: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older terminal artifact cannot hide the triggering attempt's typed result."""
+    workflow = 'CI Review'
+    task_key = 'CI Review:workflow_run:pr-123:head-a1b2'
+    artifacts = tmp_path / 'downloaded-agent-artifacts'
+    for prefix, attempt, artifact_failure in (
+        ('a1b2c3d4', 1, {'kind': 'rate_limit', 'http_status': 429}),
+        ('e5f6a7b8', 2, failure),
+    ):
+        artifact_dir = artifacts / f'{prefix}-agent'
+        artifact_dir.mkdir(parents=True)
+        provider_health: dict[str, object] = {
+            'workflow': workflow,
+            'task_key': task_key,
+            'trigger_event': 'workflow_run',
+            'run_attempt': attempt,
+        }
+        if artifact_failure is not None:
+            provider_health['failure'] = artifact_failure
+        (artifact_dir / 'agent-stdio.log').write_text(
+            json.dumps({'type': 'result', 'provider_health': provider_health})
+        )
+
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            'workflow_run',
+            2,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    assert (
+        _monitor_command(
+            argparse.Namespace(
+                repository=None,
+                run_id=85,
+                run_attempt=2,
+                conclusion='failure',
+                health_artifact=health_artifact,
+                agent_artifact=artifacts,
+                dry_run=False,
+                recover_issue=None,
+            )
+        )
+        == 0
+    )
+
+    if expected_scope is None:
+        assert client.posts == []
+        assert client.issues == []
+    else:
+        assert expected_kind is not None
+        [issue] = client.issues
+        assert _marker_from_body(issue.body) == health.IncidentMarker(
+            expected_scope, 'zai', expected_kind, '85', None, run_attempt=2
+        )
+
+
+def test_monitor_rejects_current_attempt_artifact_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal result from another task cannot be trusted for the triggering run."""
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            'CI Review',
+            'current-task',
+            'workflow_run',
+            2,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    agent_log = tmp_path / 'agent-stdio.log'
+    agent_log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'CI Review',
+                    'task_key': 'different-task',
+                    'trigger_event': 'workflow_run',
+                    'run_attempt': 2,
+                    'failure': {'kind': 'rate_limit', 'http_status': 429},
+                },
+            }
+        )
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=86,
+            run_attempt=2,
+            conclusion='failure',
+            health_artifact=health_artifact,
+            agent_artifact=agent_log,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    assert client.posts == []
+    assert client.issues == []
+
 
 def test_result_parser_does_not_treat_session_result_as_terminal_authority(tmp_path: Path) -> None:
     """An engine session result cannot stand in for the authenticated wrapper terminal record."""

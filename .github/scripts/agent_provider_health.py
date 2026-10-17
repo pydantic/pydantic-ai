@@ -742,7 +742,7 @@ def _json_values(path: Path) -> list[object]:
     return values
 
 
-def parse_run_result(path: Path) -> RunResult | None:
+def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResult | None:
     """Return one unambiguous terminal record from downloaded agent artifacts."""
     if not path.exists():
         return None
@@ -755,13 +755,28 @@ def parse_run_result(path: Path) -> RunResult | None:
             if file.is_file()
             and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
         )
-        if len(eligible) != 1:
-            return None
-        path = eligible[0]
+        if expected_attempt is None:
+            if len(eligible) != 1:
+                return None
+            path = eligible[0]
+        else:
+            results_by_artifact: list[set[RunResult]] = []
+            for artifact in eligible:
+                results = {
+                    result
+                    for value in _json_values(artifact)
+                    if (result := _run_result_from(value)) is not None and result.run_attempt == expected_attempt
+                }
+                if results:
+                    results_by_artifact.append(results)
+            if len(results_by_artifact) != 1:
+                return None
+            results = results_by_artifact[0]
+            return next(iter(results)) if len(results) == 1 else None
     results: set[RunResult] = set()
     for value in _json_values(path):
         result = _run_result_from(value)
-        if result is not None:
+        if result is not None and (expected_attempt is None or result.run_attempt == expected_attempt):
             results.add(result)
     return next(iter(results)) if len(results) == 1 else None
 
@@ -1133,7 +1148,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
     if health.run_id is not None and health.run_id != str(args.run_id):
         raise ValueError('provider-health artifact run id does not match the triggering workflow_run')
-    result = parse_run_result(args.agent_artifact) if args.agent_artifact is not None else None
+    result = parse_run_result(args.agent_artifact, run_attempt) if args.agent_artifact is not None else None
     if result is not None and (
         result.workflow != health.workflow
         or result.task_key != health.task_key
