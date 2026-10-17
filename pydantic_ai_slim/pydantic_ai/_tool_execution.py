@@ -20,7 +20,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
-from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
+from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
@@ -396,12 +396,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     final_result: result.FinalResult[NodeRunEndT] | None
 
     # Derived from the inputs in `__post_init__`.
-    call_kinds: list[ToolKind | Literal['unknown']] = dataclasses.field(init=False)
-    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
+    call_kinds: list[ToolDefinitionKind | Literal['unknown']] = dataclasses.field(init=False)
+    tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
     calls_to_run_results: dict[str, DeferredToolResult] = dataclasses.field(init=False)
-    executable_function_kinds: tuple[ToolKind | Literal['unknown'], ...] = dataclasses.field(init=False)
+    executable_function_kinds: tuple[ToolDefinitionKind | Literal['unknown'], ...] = dataclasses.field(init=False)
     function_indices: list[int] = dataclasses.field(init=False)
     output_indices: list[int] = dataclasses.field(init=False)
     schema: _output.OutputSchema[NodeRunEndT] = dataclasses.field(init=False)
@@ -430,8 +430,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.deferred_metadata = {}
 
         # Classify each call once, preserving emission order for the per-index views below.
-        tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
-        call_kinds: list[ToolKind | Literal['unknown']] = []
+        tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(
+            list
+        )
+        call_kinds: list[ToolDefinitionKind | Literal['unknown']] = []
         for call in self.tool_calls:
             tool_def = self.tool_manager.get_tool_def(call.tool_name)
             kind = tool_def.kind if tool_def else 'unknown'
@@ -981,7 +983,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Retry-wins and deferred resolution ---------------------------------
 
-    def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
+    def _is_retry_wins_trigger(
+        self, part: _messages.ModelRequestPart, *, kind: ToolDefinitionKind | Literal['unknown']
+    ) -> bool:
         """Whether a settled tool part triggers retry-wins.
 
         A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function

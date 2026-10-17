@@ -11,10 +11,10 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeGuard
 from urllib.parse import urlsplit
 
-from pydantic import Field, TypeAdapter
+from pydantic import TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     InstructionPart,
     ToolCallPart,
+    ToolPartKind,
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
@@ -60,6 +61,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 
 if TYPE_CHECKING:
@@ -323,19 +325,14 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
     }
 
 
-class _RunCodeArguments(TypedDict):
-    code: Annotated[str, Field(description='The Python code to execute in the sandbox.')]
-    restart: NotRequired[
-        Annotated[
-            bool,
-            Field(
-                description='Set to true to reset REPL state. When false (default), state is preserved between calls.'
-            ),
-        ]
-    ]
+class _RunCodeArguments(RunCodeArgs):
+    # Keeps the schema title the model has always been sent; the fields come from `RunCodeArgs`.
+    pass
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
+_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
+"""Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
@@ -638,9 +635,14 @@ class NestedCallOutcome:
     denied_message: str | None = None
     """Set when a handler denied the call, so the history records `outcome='denied'`."""
 
+    tool_kind: ToolPartKind | None = None
+    """The called tool's `tool_kind`, so the history records the same typed parts a direct call would."""
+
 
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
+    tool_def = tool_manager.get_tool_def(call_part.tool_name)
+    tool_kind = tool_def.tool_kind if tool_def is not None else None
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
     except (CallDeferred, ApprovalRequired) as e:
@@ -653,9 +655,9 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             'be resolved inline.'
         )
         error.__cause__ = e
-        return NestedCallOutcome(error=error)
+        return NestedCallOutcome(error=error, tool_kind=tool_kind)
     except Exception as e:
-        return NestedCallOutcome(error=e)
+        return NestedCallOutcome(error=e, tool_kind=tool_kind)
 
     if isinstance(result, ToolDenied):
         # Surfacing `ToolDenied` to the user's script would let it masquerade as a string tool
@@ -663,13 +665,14 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         return NestedCallOutcome(
             error=RuntimeError(f'Tool {call_part.tool_name!r} call denied: {result.message}'),
             denied_message=result.message,
+            tool_kind=tool_kind,
         )
 
     metadata: Any = None
     if isinstance(result, ToolReturn):
         metadata = result.metadata
         result = result.return_value
-    return NestedCallOutcome(content=result, metadata=metadata)
+    return NestedCallOutcome(content=result, metadata=metadata, tool_kind=tool_kind)
 
 
 @dataclass
@@ -702,20 +705,26 @@ class RunCodeExecution:
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
         tool_call_id = call_part.tool_call_id
+        tool_kind = outcome.tool_kind
+        self.nested_calls[tool_call_id] = ToolCallPart.narrow_type(call_part, tool_kind=tool_kind)
         if outcome.denied_message is not None:
             self.nested_returns[tool_call_id] = ToolReturnPart(
                 tool_name=call_part.tool_name,
                 content=outcome.denied_message,
                 tool_call_id=tool_call_id,
                 outcome='denied',
+                tool_kind=tool_kind,
             )
         if outcome.error is not None:
             raise outcome.error
-        self.nested_returns[tool_call_id] = ToolReturnPart(
-            tool_name=call_part.tool_name,
-            content=outcome.content,
-            tool_call_id=tool_call_id,
-            metadata=outcome.metadata,
+        self.nested_returns[tool_call_id] = ToolReturnPart.narrow_type(
+            ToolReturnPart(
+                tool_name=call_part.tool_name,
+                content=outcome.content,
+                tool_call_id=tool_call_id,
+                metadata=outcome.metadata,
+                tool_kind=tool_kind,
+            )
         )
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
@@ -754,7 +763,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Some tools always stay native rather than being sandboxed:
 
-    - Framework control tools (`tool_kind` set: tool search, capability loading).
+    - Framework control tools (`tool_kind` of `'tool-search'` or `'capability-load'`).
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
@@ -951,9 +960,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in wrapped_tools.items():
             # Framework control tools (tool search, capability loading) stay native to
-            # drive protocol-level flows. `tool_kind` is the framework's discriminator
-            # for them; pydantic-ai has set it on `search_tools` since 1.95.0.
-            if tool.tool_def.tool_kind is not None:
+            # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
+            if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
                 native_tools[name] = tool
             elif not ctx.is_tool_available(tool.tool_def):
                 # Use the run's public availability predicate so Tool Search and deferred
@@ -1028,6 +1036,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                 sequential=True,
+                tool_kind=RUN_CODE_KIND,
                 capability_id=self._capability_id(ctx),
             ),
             max_retries=self.max_retries,
