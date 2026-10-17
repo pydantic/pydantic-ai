@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { api, type MenuTarget } from '../api'
+import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
+import { SessionContext, type MenuTarget } from '../api'
 import type { MenuEdited, MenuField, MenuInfo } from '../protocol'
 import { Draft } from './SettingsForm'
 import { CheckIcon, ChevronIcon } from './icons'
@@ -59,10 +59,13 @@ export function MenuForm({
   const request = useRef(0)
   const path = target.path?.join('\u0000')
 
+  // A command's menu acts on the shown session, so `/model` picks its model, not another session's.
+  const session = useContext(SessionContext)
+
   const load = useCallback(async () => {
     const id = ++request.current
     try {
-      const found = await api.menu(target)
+      const found = await session.menu(target)
       if (id !== request.current) return
       setMenu(found)
       const first = opened?.(found)
@@ -71,7 +74,7 @@ export function MenuForm({
       onError(message(error))
     }
     // A fresh target each render names the same menu.
-  }, [target.kind, target.name, path, onError])
+  }, [session, target.kind, target.name, path, onError])
 
   useEffect(() => {
     void load()
@@ -113,8 +116,8 @@ export function MenuForm({
       state={busy === field.key ? 'saving' : saved === field.key ? 'saved' : null}
       disabled={busy !== null}
       open={open === field.key}
-      onSet={(value) => void run(field.key, () => api.setField(target, field.key, value), true)}
-      onAction={() => void run(field.key, () => api.runAction(target, field.key), false)}
+      onSet={(value) => void run(field.key, () => session.setField(target, field.key, value), true)}
+      onAction={() => void run(field.key, () => session.runAction(target, field.key), false)}
       onOpen={() => setOpen((current) => (current === field.key ? '' : field.key))}
     >
       {field.menu && open === field.key && (

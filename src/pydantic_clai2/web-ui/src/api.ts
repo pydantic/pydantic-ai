@@ -78,7 +78,9 @@ export interface MenuTarget {
   path?: readonly string[]
 }
 
-const fieldsPath = (target: MenuTarget) => `/api/${target.kind}/${encodeURIComponent(target.name)}/fields`
+/** A plugin's menu is page-wide; a command's acts on the session it is typed in, at `base`. */
+const fieldsPath = (base: string, target: MenuTarget) =>
+  `${target.kind === 'plugins' ? '/api' : base}/${target.kind}/${encodeURIComponent(target.name)}/fields`
 const menuQuery = (target: MenuTarget) =>
   target.path?.length ? `?${target.path.map((key) => `menu=${encodeURIComponent(key)}`).join('&')}` : ''
 
@@ -94,12 +96,18 @@ export function sessionApi(id: string | null) {
       call<void>('POST', `${base}/questions/${request}`, { answers }),
     /** Flip a run switch as `/set` typed in the session does; a running turn keeps the tools it started with. */
     setSwitch: (key: Switch, on: boolean) => call<void>('POST', `${base}/switch`, { key, on }),
+    /** A command's settings menu as this session sees it, such as `/model`'s; a plugin's is page-wide. */
+    menu: (target: MenuTarget) => call<MenuInfo>('GET', `${fieldsPath(base, target)}${menuQuery(target)}`),
+    setField: (target: MenuTarget, key: string, value: string | null) =>
+      call<MenuEdited>('POST', `${fieldsPath(base, target)}/${encodeURIComponent(key)}${menuQuery(target)}`, { value }),
+    runAction: (target: MenuTarget, key: string) =>
+      call<MenuEdited>('POST', `${fieldsPath(base, target)}/${encodeURIComponent(key)}/action${menuQuery(target)}`),
   }
 }
 
 export type SessionApi = ReturnType<typeof sessionApi>
 
-/** The routes of the session the main pane shows, for the composer, its questions, and Monty. */
+/** The routes of the session the main pane shows, for the composer, its questions, Monty, and command menus. */
 export const SessionContext = createContext<SessionApi>(sessionApi(null))
 
 export const api = {
@@ -131,11 +139,6 @@ export const api = {
   task: (id: string) => call<TaskTranscript>('GET', `/api/tasks/${id}`),
   taskAction: (id: string, action: 'stop' | 'background' | 'resume') => call<void>('POST', `/api/tasks/${id}/${action}`),
   steer: (id: string, text: string) => call<{ steered: boolean }>('POST', `/api/tasks/${id}/steer`, { text }),
-  menu: (target: MenuTarget) => call<MenuInfo>('GET', `${fieldsPath(target)}${menuQuery(target)}`),
-  setField: (target: MenuTarget, key: string, value: string | null) =>
-    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}${menuQuery(target)}`, { value }),
-  runAction: (target: MenuTarget, key: string) =>
-    call<MenuEdited>('POST', `${fieldsPath(target)}/${encodeURIComponent(key)}/action${menuQuery(target)}`),
   panels: () => call<PanelInfo[]>('GET', '/api/panels'),
   workspaces: () => call<WorkspacesInfo>('GET', '/api/workspaces'),
   openWorkspace: (id: string) => call<{ url: string }>('POST', `/api/workspaces/${encodeURIComponent(id)}/open`),

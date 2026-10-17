@@ -60,7 +60,9 @@ reload. **General** holds the settings `/set` changes, grouped as their keys are
 Sessions, ...): each change is checked, saved, and applied at once, and the terminal prints what it
 saved; a change made in the terminal shows here too. `/set` or `/settings` typed in the composer
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
-in the terminal.
+in the terminal. A command's menu (`/model`, `/effort`, `/keys`, ...) acts on the session the page
+shows, as the command typed there would: picking a model in session B leaves session A's model as it
+was. Settings every session shares, such as `/set display.*`, still change them all.
 
 <!-- From #10456 -->
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
