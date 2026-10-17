@@ -397,7 +397,7 @@ def _parse_zai_quota(value: object) -> Quota:
         return _unknown_quota('invalid_response' if quota_data is None else 'invalid_limits')
 
     quota_rows: list[object] = limits  # pyright: ignore[reportUnknownVariableType]
-    windows: dict[int, tuple[float, str, int]] = {}
+    windows: dict[int, tuple[float, str | None, int | None]] = {}
     for item in quota_rows:
         entry = _mapping(item)
         if entry is None:
@@ -422,19 +422,24 @@ def _parse_zai_quota(value: object) -> Quota:
         ):
             return _unknown_quota('invalid_percentage')
         reset_millis = entry.get('nextResetTime')
-        if isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
+        if reset_millis is None and consumed_value == 0:
+            reset = None
+            reset_millis_value = None
+        elif isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
             return _unknown_quota('invalid_reset_time')
-        reset = _timestamp_from_millis(reset_millis)
-        if reset is None:
-            return _unknown_quota('invalid_reset_time')
-        windows[unit] = (100 - float(consumed_value), reset, reset_millis)
+        else:
+            reset = _timestamp_from_millis(reset_millis)
+            if reset is None:
+                return _unknown_quota('invalid_reset_time')
+            reset_millis_value = reset_millis
+        windows[unit] = (100 - float(consumed_value), reset, reset_millis_value)
 
     if set(windows) != {3, 6}:
         return _unknown_quota('missing_windows')
     interval_remaining, interval_reset, _ = windows[3]
     weekly_remaining, weekly_reset, _ = windows[6]
-    exhausted_resets: list[tuple[int, str]] = [
-        (reset_millis, reset) for remaining, reset, reset_millis in (windows[3], windows[6]) if remaining == 0
+    exhausted_resets: list[tuple[int | None, str | None]] = [
+        (reset_millis, reset) for remaining, reset, reset_millis in windows.values() if remaining == 0
     ]
     status: QuotaStatus = 'exhausted' if exhausted_resets else 'healthy'
     reset_at = max(exhausted_resets)[1] if exhausted_resets else None

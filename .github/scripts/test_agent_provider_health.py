@@ -218,6 +218,81 @@ def test_zai_quota_parses_observed_windows_and_ignores_mcp_limit() -> None:
     assert quota.reset_at is None
 
 
+def test_zai_quota_exact_null_reset_probe_round_trips_exhausted_weekly_health(tmp_path: Path) -> None:
+    """The observed idle interval and exhausted weekly row retain known quota state."""
+    payload = {
+        'code': 200,
+        'success': True,
+        'data': {
+            'limits': [
+                {
+                    'type': 'TOKENS_LIMIT',
+                    'unit': 3,
+                    'number': 5,
+                    'percentage': 0,
+                    'nextResetTime': None,
+                },
+                {
+                    'type': 'TOKENS_LIMIT',
+                    'unit': 6,
+                    'number': 1,
+                    'percentage': 100,
+                    'nextResetTime': 1_792_517_882_984,
+                },
+            ]
+        },
+    }
+
+    quota = _parse_zai_quota(payload)
+    decision = health.check_health('nightly-sweep', 'task-1', 'schedule', 1, quota, [])
+    path = tmp_path / 'provider-health.json'
+    _write_health(path, decision)
+    result = _health_from_json(json.loads(path.read_text()))
+
+    assert not result.ready
+    assert result.quota.status == 'exhausted'
+    assert result.quota.interval_remaining_percent == 100
+    assert result.quota.interval_reset_at is None
+    assert result.quota.weekly_remaining_percent == 0
+    assert result.quota.weekly_reset_at == '2026-10-20T17:38:02Z'
+    assert result.quota.reset_at == '2026-10-20T17:38:02Z'
+
+
+def test_zai_quota_idle_interval_with_remaining_weekly_quota_is_healthy() -> None:
+    """An idle interval without a reset does not invalidate a non-exhausted weekly quota."""
+    quota = _parse_zai_quota(_quota_response(interval_percentage=0, weekly_percentage=16, interval_reset=None))
+    decision = health.check_health('nightly-sweep', 'task-1', 'schedule', 1, quota, [])
+
+    assert quota.status == 'healthy'
+    assert quota.interval_remaining_percent == 100
+    assert quota.interval_reset_at is None
+    assert quota.weekly_remaining_percent == 84
+    assert quota.weekly_reset_at == '2026-10-08T14:54:29Z'
+    assert decision.ready
+
+
+def test_zai_quota_null_reset_on_consumed_window_stays_invalid() -> None:
+    """A consumed or exhausted token window still requires a valid reset timestamp."""
+    for percentage in (1, 100):
+        quota = _parse_zai_quota(_quota_response(interval_percentage=percentage, interval_reset=None))
+        assert quota.status == 'unknown'
+        assert quota.diagnostic == 'invalid_reset_time'
+
+
+def test_zai_quota_exhausted_weekly_window_keeps_its_reset_with_idle_interval() -> None:
+    """An idle window without a reset does not erase an exhausted weekly window's reset."""
+    quota = _parse_zai_quota(_quota_response(interval_percentage=0, weekly_percentage=100, interval_reset=None))
+    decision = health.check_health('nightly-sweep', 'task-1', 'schedule', 1, quota, [])
+
+    assert quota.status == 'exhausted'
+    assert quota.interval_remaining_percent == 100
+    assert quota.interval_reset_at is None
+    assert quota.weekly_remaining_percent == 0
+    assert quota.weekly_reset_at == '2026-10-08T14:54:29Z'
+    assert not decision.ready
+    assert decision.quota.reset_at == '2026-10-08T14:54:29Z'
+
+
 @pytest.mark.parametrize(
     ('interval_percentage', 'weekly_percentage', 'expected_reset'),
     [
