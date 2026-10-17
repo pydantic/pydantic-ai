@@ -382,6 +382,8 @@ class ProtocolConversationItem(BaseModel):
     type: str
     role: str | None = None
     call_id: str | None = None
+    name: str | None = None
+    """The tool a function call item calls."""
     content: list[_ProtocolItemContent] | None = None
 
 

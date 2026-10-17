@@ -6118,6 +6118,8 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         ),
         # An output of a call this connection didn't see.
         added('function_call_output', 'c4', 'item_o4'),
+        # Malformed: ignored here.
+        json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
     ]
     ws = FakeWebSocket(frames)
     conn = OpenAIRealtimeConnection(ws, prune_tool_items={'keep_me'})  # type: ignore[arg-type]

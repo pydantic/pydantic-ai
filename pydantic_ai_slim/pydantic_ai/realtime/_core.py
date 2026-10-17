@@ -42,6 +42,7 @@ from ..messages import (
     FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     PartDeltaEvent,
@@ -436,9 +437,9 @@ class SessionCore:
         self._run_id = run_id
         self._responses_are_requests = responses_are_requests
         self._answers_per_response = answers_tool_calls_per_response
+        """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._tracks_tool_rounds = tracks_tool_rounds
         """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
-        """Whether one reply answers all the tool results of a response, rather than one per result."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
@@ -513,11 +514,11 @@ class SessionCore:
         """What was owed when an exchange was abandoned: no waiter waits for it again."""
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
+        """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
         self._unrounded: dict[str, list[str]] = {}
         """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
         self._pruned_calls: set[str] = set()
         """Calls the connection deleted from the provider's conversation (see `ToolCallsPruned`)."""
-        """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
         self._next_index = 0
         """The stream index of the next part to start: one counter for the session, as both speakers' parts stream at
         once, so an index names a part in the event stream rather than a slot in a message."""
@@ -1442,7 +1443,7 @@ class SessionCore:
         """
         pruned = self._pruned_calls
 
-        def is_pruned(part: Any) -> bool:
+        def is_pruned(part: ModelRequestPart | ModelResponsePart) -> bool:
             return isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) and part.tool_call_id in pruned
 
         if not any(is_pruned(part) for part in message.parts):

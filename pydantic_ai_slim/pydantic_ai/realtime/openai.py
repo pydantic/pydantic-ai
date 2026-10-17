@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 
 from .._http import AsyncHTTPClient
 from .._instrumentation import get_instructions
-from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..messages import (
     BinaryAudio,
@@ -73,6 +72,7 @@ from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, 
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
+    CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_CREATE_EVENT,
     CONVERSATION_ITEM_DELETE_EVENT,
     CONVERSATION_ITEM_TRUNCATE_EVENT,
@@ -716,19 +716,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     def _track_tool_item(self, data: dict[str, Any]) -> None:
         """Remember the id of a tool call's item, or its output's, as it joins the server conversation, to prune it."""
-        item = data.get('item')
-        if (
-            not self._prunes_tool_calls
-            or not is_str_dict(item)
-            or not isinstance(call_id := item.get('call_id'), str)
-            or not isinstance(item_id := item.get('id'), str)
-        ):
+        if not self._prunes_tool_calls:
             return
-        if item.get('type') == 'function_call':
-            if item.get('name') not in self._kept_tools:
-                self._tool_items[call_id] = _ToolItems(call=item_id)
-        elif item.get('type') == 'function_call_output' and (items := self._tool_items.get(call_id)) is not None:
-            items.output = item_id
+        # (The protocol's own item model: the SDK's union rejects the shapes clones send, as `item_added` notes.)
+        try:
+            item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
+        except ValueError:
+            return  # (malformed: the lifecycle reports it, as it reads the same frame)
+        if item.call_id is None or item.id is None:
+            return
+        if item.type == 'function_call':
+            if item.name not in self._kept_tools:
+                self._tool_items[item.call_id] = _ToolItems(call=item.id)
+        elif item.type == 'function_call_output' and (items := self._tool_items.get(item.call_id)) is not None:
+            items.output = item.id
 
     async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
         pruned: list[str] = []

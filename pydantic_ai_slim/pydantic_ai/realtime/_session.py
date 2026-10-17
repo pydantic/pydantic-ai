@@ -697,10 +697,6 @@ class RealtimeSession:
         # refused. Weak, so an image evicted from history by the retention cap isn't kept alive here.
         self._inputs_sent = 0
         self._input_requests: weakref.WeakValueDictionary[int, ModelRequest] = weakref.WeakValueDictionary()
-        # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
-        # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
-        # at the turn boundary (see `_finalize_untranscribed_user`).
-        self._input_transcription_enabled = connection.input_transcription_enabled
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
@@ -839,7 +835,7 @@ class RealtimeSession:
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
             tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
-            input_transcription_enabled=self._input_transcription_enabled,
+            input_transcription_enabled=connection.input_transcription_enabled,
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
             retain_audio_max_seconds=retain_audio_max_seconds,
