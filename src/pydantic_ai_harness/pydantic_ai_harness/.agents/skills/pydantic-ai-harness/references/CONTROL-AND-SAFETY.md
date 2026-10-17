@@ -149,7 +149,9 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,

@@ -31,12 +31,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, assert_never
 
 import anyio
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation, WrapModelRequestHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CapabilityOrdering,
+    Instrumentation,
+    WrapModelRequestHandler,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -184,10 +190,11 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     path. The model call is cancelled the moment the guard reports a
     violation. Trade-off: sequential mode never calls the model on a blocked
     prompt, whereas parallel mode has already started it — if the guard trips
-    only after the model has responded, those tokens were still spent. Prefer
-    sequential for fast local guards. `replace` (redaction) is incompatible
-    with `parallel=True`, since the model call has already started with the
-    original prompt.
+    only after the model has responded, those tokens were still spent. Tool
+    calls still wait for the verdict, including the nested ones `CodeMode`
+    starts while the model streams. Prefer sequential for fast local guards.
+    `replace` (redaction) is incompatible with `parallel=True`, since the
+    model call has already started with the original prompt.
 
     Scope: the guard runs exactly once per run — on the first model request —
     and evaluates the original user prompt. Subsequent model requests in the
@@ -210,6 +217,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     parallel: bool = False
     """Run the guard concurrently with the model request and cancel the model call on failure."""
 
+    _parallel_verdict: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Exclude a callable policy from YAML and JSON agent specifications."""
@@ -218,6 +227,10 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         """Sit innermost so message-morphing capabilities run first and the guard sees the final prompt."""
         return CapabilityOrdering(position='innermost')
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> InputGuardrail[AgentDepsT]:
+        """Return a fresh instance for a parallel guard so concurrent runs don't share a pending verdict."""
+        return replace(self) if self.parallel else self
 
     async def _run_guard(
         self,
@@ -296,19 +309,16 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             return await handler(request_context)
 
         guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, request_context, prompt))
+        self._parallel_verdict = guard_task
         handler_task: asyncio.Task[ModelResponse] = asyncio.create_task(run_handler())
         try:
-            done, _ = await asyncio.wait(
-                {guard_task, handler_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if guard_task in done:
-                await guard_task
-                return await handler_task
-
-            response = await handler_task
+            # The verdict comes first, even when the handler finished or raised before it: a
+            # `ModelRetry`, a `SkipModelRequest` or an error an outer capability recovers from would
+            # otherwise continue the run without one. `asyncio.wait` rather than `await`, so a
+            # cancellation of this call reaches the guard only through the drain below.
+            await asyncio.wait({guard_task})
             await guard_task
-            return response
+            return await handler_task
         finally:
             for task in (guard_task, handler_task):
                 if not task.done():
@@ -334,6 +344,29 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             # reaching pydantic-ai unwrapped.
             with anyio.CancelScope(shield=True):
                 await asyncio.gather(guard_task, handler_task, return_exceptions=True)
+
+
+async def input_guardrails_allow(ctx: RunContext[object]) -> bool:
+    """Wait for this run's pending parallel `InputGuardrail` verdicts and report whether they allowed the prompt.
+
+    Tool calls normally run only after `wrap_model_request` has awaited a parallel guard's verdict.
+    Work that runs tools while the model is still streaming awaits the same verdict here first.
+    """
+    for capability in ctx.capabilities.values():
+        # A guard returned from a `CapabilityFunc` or given `prefix_tools()` is registered as its wrapper.
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        verdict = capability._parallel_verdict if isinstance(capability, InputGuardrail) else None  # pyright: ignore[reportPrivateUsage]
+        if verdict is None:
+            continue
+        if not verdict.done():
+            # `asyncio.wait` rather than `await`: cancelling this waiter must not cancel the guard.
+            await asyncio.wait({verdict})
+        # A guard cancelled before it decided, as when the stream fails while a call waits, never
+        # allowed the prompt.
+        if verdict.cancelled() or verdict.exception() is not None:
+            return False
+    return True
 
 
 @dataclass

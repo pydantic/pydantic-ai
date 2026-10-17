@@ -290,6 +290,8 @@ InputGuardrail(guard=slow_async_classifier, parallel=True)
 
 Parallel mode trades tokens for latency: sequential mode never calls the model when the guard blocks, but parallel mode has already started the model call -- if the guard trips only after the model has responded, those tokens were spent. For fast local checks (regex, keyword lookup) sequential is the better default. `replace` is not available under `parallel=True`.
 
+Normal tool dispatch starts after the model request, which the guard holds until it decides. That includes a request that raises before the guard decides, such as a `ModelRetry` from an `after_model_request` hook or a model error raised before the response streams: the exception waits for the verdict, and a block takes its place. In a streamed run, a block that lands after the whole response has streamed, as after a `ModelRetry` from `after_model_request`, is raised as `SkipModelRequest` (see [Streaming](#streaming)). [`CodeMode`](code-mode.md#eager-execution) with `eager=True` or `speculate` starts nested tool calls while the model is still streaming, so each of those calls waits for the verdict before it runs: a blocked prompt runs none of them, and an allowed one releases them as soon as the guard decides.
+
 ## Hard-fail path
 
 `block` is the graceful path. To make the caller see an exception instead, raise from the guard:
