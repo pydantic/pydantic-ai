@@ -238,7 +238,7 @@ def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | 
         return None
     try:
         data = json.loads(encrypted_value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
     if not is_str_dict(data):
         return None

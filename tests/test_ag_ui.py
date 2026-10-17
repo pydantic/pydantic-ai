@@ -9421,3 +9421,21 @@ def test_allowed_content_types_visible_in_ag_ui_adapter_signatures():
 
     assert 'allowed_content_types' in from_request_parameters
     assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+
+@requires_ag_ui('0.1.11')
+def test_load_messages_deeply_nested_encrypted_value_recursion_error():
+    """Test that deeply nested JSON in ReasoningMessage.encrypted_value does not raise RecursionError (#10538)."""
+    from ag_ui.core import ReasoningMessage
+
+    nested_json = '[' * 100_000 + ']' * 100_000
+    messages = [
+        ReasoningMessage(
+            id='1',
+            content='thinking...',
+            encrypted_value=nested_json,
+        )
+    ]
+    loaded = AGUIAdapter.load_messages(messages)
+    assert len(loaded) == 1
+    assert loaded[0].parts[0].content == 'thinking...'

@@ -603,7 +603,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):
                         metadata = {}
                     builder.add(
                         ThinkingPart(
