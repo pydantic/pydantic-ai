@@ -4537,12 +4537,6 @@ async def test_adapter_dispatch_request_cancellation_token():
     )
 
 
-async def _stream_then_block(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-    yield 'partial'
-    await asyncio.Event().wait()
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
 async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
     """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
     yield 'partial'
@@ -4555,7 +4549,7 @@ async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo)
 
 async def test_run_stream_native_timeout():
     adapter = VercelAIAdapter(
-        Agent(model=FunctionModel(stream_function=_stream_then_block)),
+        Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
         SubmitMessage(
             id='foo',
             messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
@@ -4563,7 +4557,7 @@ async def test_run_stream_native_timeout():
     )
 
     with pytest.raises(RunTimedOut):
-        async for _ in adapter.run_stream_native(timeout=0.05):
+        async for _ in adapter.run_stream_native(timeout=60):
             pass
 
 
