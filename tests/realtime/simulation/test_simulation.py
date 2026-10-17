@@ -147,6 +147,28 @@ def test_raising_tool_ends_the_exchange() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
+def test_pruned_tool_round_leaves_the_server_conversation_and_stays_in_history() -> None:
+    """With `openai_prune_tool_items`, an answered tool round is deleted from the server conversation, not history.
+
+    A reconnect after it replays the conversation without the round, and nothing it deleted was still needed.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.settle()  # (the server answers the result)
+        assert sim.truth.pruned, 'the round was deleted from the server conversation'
+        sim.drop()
+        sim.settle()  # (reconnected)
+        session = sim.server.session
+        assert session is not None and not set(sim.truth.pruned) & session.conversation, 'the replay leaves them out'
+        sim.send_text()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(prune_tool_items=True)), scenario)
+
+
 @known('SIM-10')
 def test_known_late_cancel_drops_a_finished_reply() -> None:
     """The reply finished on the server before the cancel reached it, but the client hadn't read it yet."""

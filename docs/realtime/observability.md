@@ -94,7 +94,9 @@ counting anything twice. Nested provider-response spans have the OpenTelemetry n
 `chat {model}` but display as `response {model}` in Logfire. A response span's input is the conversation ahead of the
 response, with any [retained audio](history.md#retaining-audio). `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
-spans mark those boundaries. A tool round can produce several response spans within one turn.
+spans mark those boundaries. On OpenAI and Azure OpenAI with
+[`openai_prune_tool_items`](openai.md#pruning-tool-items) set, a `prune tool items` span marks each deletion of
+answered tool rounds from the server conversation, with the pruned call ids in its `tool_call_ids` attribute. A tool round can produce several response spans within one turn.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
 That's normal on OpenAI server VAD: the provider starts a response for each detected speech segment,

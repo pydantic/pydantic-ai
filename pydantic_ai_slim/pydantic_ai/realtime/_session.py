@@ -98,7 +98,9 @@ from ._core import (
     ResponseRefused,
     SessionCore,
     ToolCallRefused,
+    ToolCallsPruned,
     ToolReturned,
+    ToolRoundsOver,
     TranscriptOverdue,
     UsageCounted,
 )
@@ -731,6 +733,9 @@ class RealtimeSession:
         self._exchange_progress = asyncio.Event()
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
+        # Answered calls of tool rounds that are over, which the connection may delete from the provider's
+        # conversation once the frame is handled (see `RealtimeConnection._prune_tool_calls`).
+        self._tool_rounds_over: list[ToolCallPart] = []
         # With the session core: the timer of each spoken turn waiting for its transcript (see
         # `_TRANSCRIPT_HOLD_SECONDS`), and of each response holding back user turns (see
         # `_BARGE_IN_TURN_HOLD_SECONDS`).
@@ -829,6 +834,7 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
@@ -2734,7 +2740,10 @@ class RealtimeSession:
                     if await self._handle_pump_event(event):
                         return  # a usage limit tripped: stop reading the upstream
                     continue
-                # The frame is handled. Queued messages waiting for a reply to be over go out now.
+                # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
+                # messages waiting for a reply to be over go out now.
+                if self._tool_rounds_over:
+                    await self._prune_tool_calls()
                 if response_done:
                     await self._drain_pending_messages('asap')
                     await self._drain_pending_messages('when_idle')
@@ -2775,6 +2784,8 @@ class RealtimeSession:
                 self._session_instrumentation.ensure_chat_span(effect.response_id)
             elif isinstance(effect, ResponseClosed):
                 self._response_closed(effect)
+            elif isinstance(effect, ToolRoundsOver):
+                self._tool_rounds_over.extend(effect.calls)
             elif isinstance(effect, UsageCounted):
                 if self._usage_limits is not None:
                     self._usage_limits.check_per_request_input_tokens(effect.usage.input_tokens)
@@ -2794,6 +2805,21 @@ class RealtimeSession:
             else:
                 self._publish_taps(effect)
                 self._queue_put(effect)
+
+    async def _prune_tool_calls(self) -> None:
+        """Let the connection delete the provider's copy of tool rounds that are over (`_prune_tool_calls` on it)."""
+        calls, self._tool_rounds_over = self._tool_rounds_over, []
+        async with self._send_lock:
+            try:
+                pruned = await self._connection._prune_tool_calls(calls)  # pyright: ignore[reportPrivateUsage]
+            except self._connection.transport_errors:
+                # The link dropped: nothing is taken as pruned, so a reconnect replays these calls, and they are
+                # pruned from the new conversation once the next frame is handled.
+                self._tool_rounds_over[:0] = calls
+                return
+        if pruned:
+            self._apply_core(ToolCallsPruned(tool_call_ids=tuple(pruned)))
+            self._session_instrumentation.record_lifecycle('prune tool items', tool_call_ids=list(pruned))
 
     def _end_chat_spans_left_open(self) -> None:
         """End the `chat` spans of responses that ended while their close wasn't streamed (receiving stopped mid-frame)."""

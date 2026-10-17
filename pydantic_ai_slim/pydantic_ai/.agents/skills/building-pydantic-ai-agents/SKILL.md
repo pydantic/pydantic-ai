@@ -247,7 +247,9 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 session: when text of an output item's transcript arrives after a later item started, the session streams that part
 again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange
 boundary: it comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included). This is not always the end of audible speech:
-on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
+on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. On OpenAI Realtime and Azure OpenAI, a tool-heavy agent can set
+`openai_prune_tool_items` to delete answered tool rounds from the server conversation, which otherwise bills every
+later response for them (history keeps them). Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
