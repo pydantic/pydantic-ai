@@ -26,6 +26,7 @@ capability-internals	Shared capability APIs and mechanics: lifecycle, loading, s
 capability-solveable	Addressable as a userland capability or via hooks — no core change required
 cerebras	Cerebras provider
 chore
+ci-review-failed
 ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
@@ -48,6 +49,7 @@ docs	Improvements or additions to documentation
 docs-drift
 documentation
 douwebot	reviews the PR that gets labeled and removes the label at the end
+douwebot:review-agent-config	One-head, one-run maintainer request to review protected agent-config changes.
 duplicate	This issue or pull request already exists
 durable exec
 embeddings
@@ -173,7 +175,7 @@ tools
 tracking	waiting for something that needs to happen to take the next step
 triage:legitimate
 trigger:ci-duration-report	Trigger a CI duration report comment.
-trigger:docs	Trigger a documentation preview.
+trigger:docs-preview	Trigger a documentation preview.
 typesafe	TypeSafe/Jev provider integration, configuration, and model support.
 unplanned	This will not be worked on
 usage

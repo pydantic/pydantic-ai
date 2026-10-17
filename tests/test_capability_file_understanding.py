@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -18,14 +19,20 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.capabilities import FileUnderstanding, file_understanding
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 
 pytestmark = pytest.mark.anyio
+
+READINESS_WAIT_TIMEOUT = 10
 
 
 class Describer:
@@ -315,13 +322,61 @@ async def test_a_url_is_not_described_twice_within_a_run():
 
 
 async def test_a_url_is_described_every_time_without_a_run_id():
-    """With no run to scope it to, a URL's description is not kept at all rather than kept too widely."""
+    """With no run to scope it to, a URL's description is not kept across requests, only shared within one."""
     describer = Describer()
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_model=FunctionModel(describer))
-    profile = ModelProfile(supports_image_input=False)
     item = ImageUrl('https://example.com/cat.png')
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    request_context = ModelRequestContext(
+        model=TestModel(profile=ModelProfile(supports_image_input=False)),
+        messages=[ModelRequest(parts=[UserPromptPart([item, 'and again:', item])])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
     for _ in range(2):
-        await capability._describe_if_unsupported(item, profile, None)  # pyright: ignore[reportPrivateUsage]
+        await capability.before_model_request(ctx, request_context)
+    assert describer.calls == 2, 'the same URL twice in one request is described once, and again in the next'
+    assert ctx.usage.requests == 2
+
+
+async def test_describing_counts_toward_the_runs_usage_and_limits():
+    """The describing requests are the agent run's own spend: they show in its usage and its limits bound them."""
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    result = await agent.run([_png('first'), _png('second')], usage_limits=UsageLimits(request_limit=3))
     assert describer.calls == 2
-    assert capability._descriptions == {}  # pyright: ignore[reportPrivateUsage]
+    # Two describing requests and the agent's own.
+    assert result.usage.requests == 3
+
+    # Two files would fit under the limit, but not with the agent's own request after them, so neither is sent.
+    with pytest.raises(UsageLimitExceeded, match='request_limit of 2'):
+        await agent.run([_png('third'), _png('fourth')], usage_limits=UsageLimits(request_limit=2))
+    assert describer.calls == 2
+
+
+async def test_distinct_files_are_described_concurrently():
+    """Each distinct file is described once, and all of them at the same time rather than one after another."""
+    started = {'first': anyio.Event(), 'second': anyio.Event()}
+    described: list[str] = []
+
+    async def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        part = messages[-1].parts[-1]
+        assert isinstance(part, UserPromptPart)
+        [item] = part.content
+        assert isinstance(item, BinaryContent)
+        described.append(item.identifier)
+        started[item.identifier].set()
+        # Each call waits for the other one to start, which it can only do if both are in flight at once.
+        other = 'second' if item.identifier == 'first' else 'first'
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await started[other].wait()
+        return ModelResponse(parts=[TextPart(f'A description of {item.identifier}.')])
+
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))])
+    await agent.run([_png('first'), _png('second'), 'and the first again:', _png('first')])
+
+    assert sorted(described) == ['first', 'second']

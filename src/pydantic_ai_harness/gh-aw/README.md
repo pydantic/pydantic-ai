@@ -58,11 +58,18 @@ OpenAI-shaped and use Chat Completions.
 
 ## What actually runs
 
+The engine first reads the safe-outputs file gh-aw names in `GH_AW_SAFE_OUTPUTS`. If a
+`steps:` or `pre-agent-steps:` entry already wrote a `noop` there, the engine exits with
+status 0 without starting CLAI 2, as gh-aw's built-in engines do; gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. A missing or unreadable file, and lines that are not JSON, do not
+count as a `noop`.
+
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
-`pydantic-clai2==0.55.0`, `pydantic-ai-harness==0.55.0`, and
+`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing

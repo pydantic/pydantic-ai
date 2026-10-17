@@ -3,6 +3,7 @@
 import copy
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -19,8 +20,10 @@ from pydantic_ai import (
     TextPartDelta,
     _utils,
 )
+from pydantic_ai._context_size import context_tokens
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import FunctionToolCallEvent, ModelResponse
+from pydantic_ai.messages import FunctionToolCallEvent, ModelMessage, ModelResponse, ToolReturnPart
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
@@ -32,6 +35,7 @@ from pydantic_ai_harness.subagents import (
     SubAgent,
     SubAgents,
 )
+from pydantic_clai2.plugins import TaskEvent, TaskInfo
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -94,8 +98,19 @@ def task_row(event: AgentStreamEvent) -> Text | None:
     return None
 
 
+def resume_prompt(record: DelegationTask) -> str:
+    """What asks the agent to resume a task, once the user has allowed it to."""
+    return (
+        f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
+        f'resume={record.id!r}. Continue from its saved history and report the result.'
+    )
+
+
 class Tasks:
-    """One shell's task display. Execution and histories belong to the harness owner."""
+    """One shell's task display, and the `TaskCatalog` plugins reach as `host.tasks`.
+
+    Execution and histories belong to the harness owner.
+    """
 
     def __init__(
         self,
@@ -104,10 +119,20 @@ class Tasks:
         conversation_id: Callable[[], str],
         directory: Path | None,
         step_store: StepStore | None = None,
+        fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
+        listening: Callable[[], bool] = lambda: True,
+        send_input: Callable[[str], None] | None = None,
     ) -> None:
+        """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
+
+        `send_input` enters `resume`'s prompt.
+        """
         self.presentation = TaskPresentation()
         self.console = console
         self.conversation_id = conversation_id
+        self.fire = fire
+        self.listening = listening
+        self.send_input = send_input
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
         self.progress: dict[str, Status] = {}
@@ -140,7 +165,7 @@ class Tasks:
             progress.model, progress.context_window = update.model_name, update.context_window
         for message in reversed(record.messages):
             if isinstance(message, ModelResponse) and message.usage.input_tokens:
-                progress.context_tokens = message.usage.total_tokens
+                progress.context_tokens = context_tokens(message)
                 break
         if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
             self.partial[record.id] = event.part.content
@@ -154,6 +179,9 @@ class Tasks:
             self.partial_truncated.add(record.id)
         if event is not None:
             progress.observe(event)
+        # It runs for every event of the child's stream, so build nothing that no plugin reads.
+        if self.fire is not None and record.conversation_id == self.conversation_id() and self.listening():
+            await self.fire(TaskEvent(task=self.info(record), event=event))
         if (
             record.status == 'finished'
             and record.background
@@ -259,6 +287,70 @@ class Tasks:
                     text = '[Live preview tail; full text is available when this response settles.]\n' + text
                 record.messages.append(ModelResponse(parts=[TextPart(text)]))
         return records
+
+    def info(self, record: DelegationTask) -> TaskInfo:
+        """A task as plugins see it."""
+        progress = self.progress.get(record.id)
+        usage = RunUsage()
+        for message in record.messages:
+            if isinstance(message, ModelResponse):
+                usage.incr(message.usage)
+                usage.requests += 1
+            else:
+                # As a run counts them: the calls that returned, not those retried or still waiting.
+                usage.tool_calls += sum(isinstance(part, ToolReturnPart) for part in message.parts)
+        return TaskInfo(
+            id=record.id,
+            parent_id=record.parent_id,
+            agent=_display_name(record.agent_name),
+            model=progress.model if progress is not None and progress.model else record.model,
+            prompt=record.prompt,
+            status=record.status,
+            outcome=record.outcome,
+            started_at=datetime.fromtimestamp(record.started_at, UTC),
+            finished_at=None if record.finished_at is None else datetime.fromtimestamp(record.finished_at, UTC),
+            background=record.background,
+            resumable=record.resumable,
+            activity=progress.activity if progress is not None else 'starting',
+            usage=usage,
+        )
+
+    def listing(self) -> list[TaskInfo]:
+        return [self.info(record) for _, record in task_tree(self.records())]
+
+    def history(self, task_id: str) -> list[ModelMessage]:
+        return self.owner.history(self._record(task_id).id)
+
+    async def stop(self, task_id: str) -> None:
+        record = self._record(task_id)
+        await self.owner.cancel(record.id)
+        await self.owner.save(record)
+
+    def background(self, task_id: str) -> None:
+        self.owner.background(self._record(task_id).id)
+
+    async def resume(self, task_id: str) -> None:
+        record = self._record(task_id)
+        if self.send_input is None:
+            raise RuntimeError('This CLAI has no prompt to ask the agent to resume a task at.')
+        stopped = record.user_stopped
+        await self.owner.allow_resume(record.id)
+        try:
+            self.send_input(resume_prompt(record))
+        except RuntimeError:
+            # The shell's line-mode prompt takes no input: the user's stop still holds.
+            record.user_stopped = stopped
+            await self.owner.save(record)
+            raise
+
+    def steer(self, task_id: str, text: str) -> bool:
+        return self.owner.steer(self._record(task_id).id, text)
+
+    def _record(self, task_id: str) -> DelegationTask:
+        record = self.owner.records.get(task_id)
+        if record is None or record.conversation_id != self.conversation_id():
+            raise LookupError(f'No task {task_id!r} in this conversation.')
+        return record
 
     def resolve(self, prefix: str) -> DelegationTask:
         matches = [record for record in self.records() if record.id.startswith(prefix)]

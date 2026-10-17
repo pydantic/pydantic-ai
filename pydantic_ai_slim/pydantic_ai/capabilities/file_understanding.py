@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
 from pydantic_ai._file_input import SendableFile, unsupported_file_input
-from pydantic_ai._utils import format_inlined_text_file, is_text_like_media_type
+from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -18,6 +19,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, download_item
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import RunUsage
 
 from .abstract import AbstractCapability
 from .durable_operation import durable_operation
@@ -66,7 +68,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     same file into every request costs one description. Binary content is reused for as long as the capability
     lives, since the bytes are their own identity; a file given by URL is reused only within the run that fetched
     it, because the same URL can serve different bytes to different callers and stop resolving once a signature
-    expires.
+    expires. Run ids come from the caller when one is passed to `run(..., run_id=...)`, so a caller that passes
+    the same `run_id` to two runs gets the first run's description of a URL in the second, without the URL being
+    fetched again.
+
+    The distinct files a request needs described are described concurrently. Each describing call is a run of its
+    own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
+    the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any is sent, as if the describing
+    requests were the run's next ones.
     """
 
     fallback_model: Model | KnownModelName | str
@@ -96,62 +105,111 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         except NotImplementedError:
             # A `FallbackModel` has no profile of its own; which model answers is not known yet.
             return request_context
-        messages = [
-            await self._replace_unsupported_files(message, profile, ctx.run_id) for message in request_context.messages
-        ]
-        return replace(request_context, messages=messages)
 
-    async def _replace_unsupported_files(
-        self, message: ModelMessage, profile: ModelProfile, run_id: str | None
-    ) -> ModelMessage:
-        if not isinstance(message, ModelRequest):
-            return message
+        # Every file is found first, so the distinct ones can be described at once rather than one after another.
+        descriptions: dict[str, str] = {}
+        pending: dict[str, SendableFile] = {}
+        for item in _file_content(request_context.messages):
+            if not _needs_describing(item, profile):
+                continue
+            identity = _identity(item, ctx.run_id)
+            if identity in descriptions or identity in pending:
+                continue
+            if (cached := self._descriptions.get(identity)) is not None:
+                descriptions[identity] = cached
+            else:
+                pending[identity] = item
+        if not pending:
+            return request_context
 
-        original_parts = list(message.parts)
-        parts: list[ModelRequestPart] = []
-        for part in original_parts:
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-                part = replace(
-                    part,
-                    content=[await self._describe_if_unsupported(item, profile, run_id) for item in part.content],
-                )
-            elif isinstance(part, ToolReturnPart) and part.files:
-                items = [await self._describe_if_unsupported(item, profile, run_id) for item in part.content_items()]
-                part = replace(part, content=items if isinstance(part.content, list) else items[0])
-            parts.append(part)
-        return replace(message, parts=parts) if parts != original_parts else message
+        if (usage_limits := ctx.usage_limits) is not None:
+            # The run checked its limits for this step's request before this hook, so the describing requests go
+            # in front of it: a limit without room for all of them and the request itself stops the run before
+            # any is sent.
+            requests = sum(1 for item in pending.values() if not is_text_like_media_type(item.media_type))
+            if requests:
+                usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
-    async def _describe_if_unsupported(self, item: _T, profile: ModelProfile, run_id: str | None) -> _T | str:
-        if not isinstance(item, SendableFile) or unsupported_file_input(item, profile) is None:
-            return item
-        key = _reuse_key(item, run_id)
-        description = self._descriptions.get(key) if key is not None else None
-        if description is None:
-            description = await self._describe(item)
-            if key is not None:
+        results = await gather(*(self._describe(item) for item in pending.values()))
+        for (identity, item), (description, usage) in zip(pending.items(), results):
+            # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
+            ctx.usage.incr(usage)
+            descriptions[identity] = description
+            if _reuse_key(item, ctx.run_id) is not None:
                 if len(self._descriptions) >= _MAX_DESCRIPTIONS:
                     del self._descriptions[next(iter(self._descriptions))]
-                self._descriptions[key] = description
-        # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
-        # inlined as its own content instead of described, and that one keeps the media type it came with.
-        media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
-        return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
+                self._descriptions[identity] = description
+
+        messages = [_substitute(message, profile, descriptions, ctx.run_id) for message in request_context.messages]
+        return replace(request_context, messages=messages)
 
     @durable_operation(name='describe')
-    async def _describe(self, item: SendableFile) -> str:
-        """The file as text: a text-like document's own content, anything else as `fallback_model` describes it."""
+    async def _describe(self, item: SendableFile) -> tuple[str, RunUsage]:
+        """The file as text, with the usage it cost.
+
+        A text-like document is its own content, at no cost; anything else is described by `fallback_model`. The
+        usage is returned rather than added to the run's here, so it reaches the run whether this runs in place or
+        under a durable engine, and the caller adds it.
+        """
         from pydantic_ai.agent import Agent
 
         if isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type):
-            return item.data.decode('utf-8')
+            return item.data.decode('utf-8'), RunUsage()
         if isinstance(item, DocumentUrl) and is_text_like_media_type(item.media_type):
-            return (await download_item(item, data_format='text'))['data']
+            return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
             self.fallback_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
         )
         result = await agent.run([item])
-        return result.output
+        return result.output, result.usage
+
+
+def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
+    """The items of every user prompt and of every tool result that carries files."""
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+                    yield from part.content
+                elif isinstance(part, ToolReturnPart) and part.files:
+                    yield from part.content_items()
+
+
+def _needs_describing(item: object, profile: ModelProfile) -> TypeGuard[SendableFile]:
+    return isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None
+
+
+def _substitute(
+    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], run_id: str | None
+) -> ModelMessage:
+    if not isinstance(message, ModelRequest):
+        return message
+
+    def text_for(item: _T) -> _T | str:
+        if not _needs_describing(item, profile):
+            return item
+        # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
+        # inlined as its own content instead of described, and that one keeps the media type it came with.
+        media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
+        description = descriptions[_identity(item, run_id)]
+        return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
+
+    original_parts = list(message.parts)
+    parts: list[ModelRequestPart] = []
+    for part in original_parts:
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+            part = replace(part, content=[text_for(item) for item in part.content])
+        elif isinstance(part, ToolReturnPart) and part.files:
+            items = [text_for(item) for item in part.content_items()]
+            part = replace(part, content=items if isinstance(part.content, list) else items[0])
+        parts.append(part)
+    return replace(message, parts=parts) if parts != original_parts else message
+
+
+def _identity(item: SendableFile, run_id: str | None) -> str:
+    """What makes two items one file within this request: the reuse key, or for a URL with no run, the URL."""
+    return _reuse_key(item, run_id) or f'url:{item.url}'
 
 
 def _reuse_key(item: SendableFile, run_id: str | None) -> str | None:

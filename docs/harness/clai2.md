@@ -291,7 +291,7 @@ start, a built-in editor opens instead. Changes apply from your next prompt.
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
 mistyped name fails on the next prompt with the provider's error. Model names normally
-start with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+start with a provider (`{{ openai:medium }}`), so no real model is called `add` or `settings`.
 
 | Command | What it does |
 | --- | --- |
@@ -398,7 +398,7 @@ from pydantic_clai2 import open_stock_agent
 
 
 async def main() -> None:
-    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
+    async with open_stock_agent(workspace=Path.cwd(), model='{{ anthropic:large }}') as agent:
         result = await agent.run('Summarize this repository in one paragraph.')
         print(result.output)
 
@@ -630,7 +630,8 @@ any dependencies in CLAI's Python environment first. See
 [where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
 for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Plugins are trusted code running as you.
+reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Plugins are trusted code running as you.
 
 Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observability`
 sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command

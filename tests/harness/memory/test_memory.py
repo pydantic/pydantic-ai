@@ -13,8 +13,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 
-from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, ModelRetry, RunContext
-from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, DeferredToolResults, ModelRetry, RunContext
+from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -49,6 +50,7 @@ from pydantic_ai_harness.memory import (
     MemoryToolset,
     SqliteMemoryStore,
 )
+from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
 from tests.harness._recording_durability import RecordingDurability
 
 
@@ -133,6 +135,10 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
         for content in part.content
         if isinstance(content, TextContent) and content.content.startswith('<memory>\n')
     ]
+
+
+def _memory_request_indexes(messages: list[ModelMessage]) -> list[int]:
+    return [index for index, message in enumerate(messages) if _memory_contexts([message])]
 
 
 def _latest_memory_context(messages: list[ModelMessage]) -> str:
@@ -1066,6 +1072,106 @@ class TestInjection:
             assert contexts[0].startswith('<memory>\n')
             assert contexts[0].endswith('\n</memory>')
             assert stored in contexts[0]
+
+    @pytest.mark.parametrize('with_reminders', [False, True])
+    async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_reminders: bool) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        # `SystemReminders` adds a request-only user part to the tool-result request before `Memory` runs.
+        capabilities: list[AbstractCapability[None]] = [Memory(store=store)]
+        if with_reminders:
+            capabilities.insert(0, SystemReminders(reminders=[Reminder('stay on task', interval=1)]))
+        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
+        agent.tool_plain(lookup)
+        await agent.run('what do I like?')
+
+        assert len(captured) == 2
+        assert _memory_request_indexes(captured[1]) == [0]
+        assert 'what do I like?' in _user_text(captured[1][:1])
+        assert isinstance(captured[1][2], ModelRequest)
+        assert any(isinstance(part, ToolReturnPart) for part in captured[1][2].parts)
+
+    async def test_snapshot_stays_with_user_prompt_when_approved_tool_resumes(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)], output_type=[str, DeferredToolRequests])
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        assert isinstance(first.output, DeferredToolRequests)
+
+        await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        assert len(captured) == 2
+        assert _memory_request_indexes(captured[1]) == [0]
+        assert 'what do I like?' in _user_text(captured[1][:1])
+
+    async def test_snapshot_without_user_prompt_goes_to_last_request(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(FunctionModel(model), capabilities=[Memory(store=store)]).run()
+
+        assert _memory_request_indexes(captured[0]) == [len(captured[0]) - 1]
+
+    async def test_snapshot_goes_to_last_request_when_request_list_diverges_from_history(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        @dataclass
+        class SendLatestRequestOnly(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                return replace(request_context, messages=request_context.messages[-1:])
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        capabilities: list[AbstractCapability[None]] = [SendLatestRequestOnly(), Memory(store=store)]
+        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
+        agent.tool_plain(lookup)
+        await agent.run('what do I like?')
+
+        # The persisted prompt's index holds the tool results here, so the snapshot uses the last request.
+        assert len(captured[1]) == 1
+        assert _memory_request_indexes(captured[1]) == [0]
 
     async def test_continued_and_serialized_history_refreshes_request_only_memory_context(self) -> None:
         store = InMemoryStore()

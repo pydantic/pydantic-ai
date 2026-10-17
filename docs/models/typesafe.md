@@ -140,7 +140,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from compact_when_window_fills import compact_when_window_fills
 
 agent = Agent(
-    FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
+    FallbackModel('typesafe:jev-latest', '{{ openai:medium }}'),
     output_type=bool,
     instructions='Does the customer want a refund?',
     capabilities=[ProcessHistory(compact_when_window_fills)],
@@ -199,7 +199,7 @@ class DocumentSubject(StrEnum):
 agent = Agent(
     'typesafe:jev-latest',
     output_type=DocumentSubject,
-    capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+    capabilities=[FileUnderstanding(fallback_model='{{ openai:medium }}')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output.value)
@@ -261,7 +261,7 @@ print(result.output)
 #> True
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
+To change only the count for a model, agent or run, set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) instead. The request then uses the SDK's default `RetryPolicy` with that count, in place of the client's. See [Provider SDK retries](../retries.md#provider-sdk-retries) for how this interacts with Pydantic AI's own retries.
 
 ## Model settings
 
