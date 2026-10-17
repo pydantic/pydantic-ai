@@ -207,62 +207,76 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
-def safe_output_pending() -> bool:
-    """Whether this is a gh-aw run whose safe-outputs sink is still empty."""
+def _safe_output_status() -> tuple[bool, list[int] | None]:
+    """Return whether the sink is empty and any Attention candidate IDs still missing decisions."""
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        return False
+        return False, None
     sink = pathlib.Path(path)
-    return not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    if os.environ.get('GITHUB_WORKFLOW') != ATTENTION_WORKFLOW or sink_empty:
+        return sink_empty, None
+
+    workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+    snapshot_path = workspace / 'attention-candidates.json'
+    if not snapshot_path.is_file():
+        return sink_empty, None
+
+    snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+    candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+    candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+        [candidate['number'] for candidate in candidate_rows]
+    )
+    if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+        raise ValueError('Attention snapshot contains too many or duplicate candidates')
+    candidates = set(candidate_numbers)
+    if not candidates:
+        return sink_empty, []
+
+    recorded: set[int] = set()
+    entry_adapter = TypeAdapter(dict[str, object])
+    for line in sink.read_text(encoding='utf-8').splitlines():
+        try:
+            entry = entry_adapter.validate_json(line)
+        except ValidationError:
+            continue
+        item_number = entry.get('item_number')
+        if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+            try:
+                parsed_number = int(item_number)
+            except ValueError:
+                continue
+            if parsed_number > 0 and str(parsed_number) == item_number:
+                recorded.add(parsed_number)
+    return sink_empty, sorted(candidates - recorded)
+
+
+def safe_output_pending() -> bool:
+    """Whether a gh-aw run is missing safe output or Attention decisions."""
+    try:
+        sink_empty, missing_attention_ids = _safe_output_status()
+    except (KeyError, OSError, ValueError):
+        if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+            return True
+        raise
+    if sink_empty:
+        return True
+    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+        return missing_attention_ids is None or bool(missing_attention_ids)
+    return False
 
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    output_pending = safe_output_pending()
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
-        workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
-        snapshot_path = workspace / 'attention-candidates.json'
-        sink_env = os.environ.get('GH_AW_SAFE_OUTPUTS')
-        if sink_env and snapshot_path.is_file():
-            sink_path = pathlib.Path(sink_env)
-        else:
-            sink_path = None
-        if sink_path is not None and sink_path.is_file():
-            snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
-            candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
-            candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
-                [candidate['number'] for candidate in candidate_rows]
-            )
-            if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
-                raise ValueError('Attention snapshot contains too many or duplicate candidates')
-            candidates = set(candidate_numbers)
-            if candidates:
-                recorded: set[int] = set()
-                entry_adapter = TypeAdapter(dict[str, object])
-                for line in sink_path.read_text(encoding='utf-8').splitlines():
-                    try:
-                        entry = entry_adapter.validate_json(line)
-                    except ValidationError:
-                        continue
-                    item_number = entry.get('item_number')
-                    if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
-                        try:
-                            parsed_number = int(item_number)
-                        except ValueError:
-                            continue
-                        if parsed_number > 0 and str(parsed_number) == item_number:
-                            recorded.add(parsed_number)
-                missing = sorted(candidates - recorded)
-                if missing:
-                    missing_ids = ', '.join(str(number) for number in missing)
-                    logger.warning(
-                        'attention decisions missing for candidate IDs %s; requesting completion', missing_ids
-                    )
-                    raise ModelRetry(
-                        'Record an attention decision for each missing candidate ID: '
-                        f'{missing_ids}. Keep the decisions already recorded and call '
-                        '`record_attention_decision` only for these missing IDs.'
-                    )
+    output_pending, missing = _safe_output_status()
+    if missing:
+        missing_ids = ', '.join(str(number) for number in missing)
+        logger.warning('attention decisions missing for candidate IDs %s; requesting completion', missing_ids)
+        raise ModelRetry(
+            'Record an attention decision for each missing candidate ID: '
+            f'{missing_ids}. Keep the decisions already recorded and call '
+            '`record_attention_decision` only for these missing IDs.'
+        )
     if not output_pending:
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
