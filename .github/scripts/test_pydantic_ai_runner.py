@@ -1036,7 +1036,11 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
             prompt='review the PR',
             model=FunctionModel(respond, stream_function=_stream),
             label='test-model',
-            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+            claude_code_toolset=shim.select_claude_code_toolset(
+                None,
+                None,
+                task=None if os.environ.get('GITHUB_WORKFLOW') == shim.ATTENTION_WORKFLOW else shim.task,
+            ),
             mcp_servers=[_safe_outputs_toolset(sink)],
             session_id='test-session',
         )
@@ -1109,6 +1113,57 @@ def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: p
     assert outputs.count(existing_decision) == 1
     assert outputs.count(missing_decision) == 1
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def test_attention_agent_cannot_shrink_candidates_to_hide_a_missing_decision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    candidates = [{'number': number, 'updated_at': '2026-10-16T00:00:00Z'} for number in range(1040, 1050)]
+    snapshot.write_text(json.dumps({'candidates': candidates}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(
+        ''.join(
+            json.dumps({'type': 'record_attention_decision', 'item_number': str(candidate['number'])}) + '\n'
+            for candidate in candidates[:-1]
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda _obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    retries: list[str] = []
+    available_tools: list[set[str]] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_tools.append({tool.name for tool in info.function_tools})
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, RetryPromptPart):
+                    retries.append(str(part.content))
+        if not available_tools[:-1]:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'Write',
+                        {
+                            'file_path': str(snapshot),
+                            'content': json.dumps({'candidates': candidates[:-1]}),
+                        },
+                    )
+                ]
+            )
+        if any('1049' in retry for retry in retries):
+            with sink.open('a', encoding='utf-8') as output:
+                output.write(json.dumps({'type': 'record_attention_decision', 'item_number': '1049'}) + '\n')
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    assert json.loads(snapshot.read_text(encoding='utf-8'))['candidates'] == candidates
+    assert {'Write', 'Edit', 'MultiEdit', 'Bash'}.isdisjoint(available_tools[0])
+    assert 'Task' not in available_tools[0]
+    assert any('1049' in retry for retry in retries)
 
 
 def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

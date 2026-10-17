@@ -109,7 +109,7 @@ def _marker_from_payload(payload: object) -> health.IncidentMarker | None:
     return _marker_from_body(body)
 
 
-@pytest.mark.parametrize('stage', ['setup', 'validation', 'publication', 'queue'])
+@pytest.mark.parametrize('stage', ['setup', 'validation', 'publication', 'queue', 'inference'])
 def test_host_stage_incident_body_points_to_stage_logs(stage: health.Stage):
     """Point trusted host-stage incidents to their logs without changing recovery metadata."""
     marker = health.IncidentMarker('task', 'nightly-sweep:pr-45', 'host_failure', '43', None, stage, 2)

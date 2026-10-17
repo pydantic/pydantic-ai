@@ -930,14 +930,15 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 
 
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
-    """Allow-list + `plan`-mode filter for the Claude Code toolset."""
+    """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
+    attention_read_only = os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
-        if plan and name in MUTATING_TOOLS:
+        if (plan or attention_read_only) and name in MUTATING_TOOLS:
             return False
         return True
 
