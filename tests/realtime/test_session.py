@@ -12233,8 +12233,8 @@ class _PrunesToolItems(FakeRealtimeConnection):
 
     async def send_input(self, content: RealtimeInput) -> None:
         await super().send_input(content)
-        if isinstance(content, ToolResult):
-            self.result_sent.set()
+        # (The tool's result is all the session sends.)
+        self.result_sent.set()
 
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='c1', tool_name='noop', args='{}')
