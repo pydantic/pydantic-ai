@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.metadata
 import inspect
 import json
@@ -43,6 +44,8 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    RunCancelled,
+    RunTimedOut,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -61,7 +64,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
@@ -8480,6 +8483,46 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     )
     assert 'outcome' not in events[-1]
     assert 'RUN_ERROR' not in event_types
+
+
+async def test_run_timeout_finishes_like_cancellation() -> None:
+    """A run that outlives `timeout=` ends like a first-party cancellation: a bare `RUN_FINISHED`, and `on_cancel` gets the `RunTimedOut`."""
+
+    async def stream_then_time_out(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+        yield 'partial'
+        ctx = get_current_run_context()
+        assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+        ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_then_time_out))
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='m1', content='hi')))
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream(timeout=60, on_cancel=cancelled.append))
+    ]
+
+    assert [event['type'] for event in events] == snapshot(
+        ['RUN_STARTED', 'TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END', 'RUN_FINISHED']
+    )
+    assert 'outcome' not in events[-1]
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='partial')],
+            usage=RequestUsage(output_tokens=1, input_tokens=50),
+            model_name='function::stream_then_time_out',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
 
 
 @pytestmark_interrupts
