@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         RoleBasedOperationConfig,
     )
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
+    from ._run_context import SerializedRunContext
     from ._spec import DurabilityEngineSpec
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     'OperationConfigRole',
     'RegisteredOperationBackend',
     'RoleBasedOperationConfig',
+    'SerializedRunContext',
     'ToolsetKind',
     'ToolsetValidateToolArgumentsId',
 ]
@@ -92,6 +94,7 @@ _exports = {
     'RoleBasedOperationConfig': ('._operation_backend', 'RoleBasedOperationConfig'),
     'DurableOperationNamer': ('._operation_names', 'DurableOperationNamer'),
     'JournalOperationNamer': ('._operation_names', 'JournalOperationNamer'),
+    'SerializedRunContext': ('._run_context', 'SerializedRunContext'),
 }
 
 
