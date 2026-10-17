@@ -77,6 +77,8 @@ _KW_ONLY_ALLOWLIST: frozenset[str] = frozenset(
         # and the hazard this gate exists for cannot reach it. Listed only because the walk used to
         # be blind to `*args` and so never surfaced it.
         'pydantic_ai.models.fallback.FallbackModel',
+        # The capability counterpart, variadic for the same reason: `Fallback(m1, m2)`.
+        'pydantic_ai.capabilities.fallback.Fallback',
         'pydantic_ai.models.function.DeltaToolCall',
         'pydantic_ai.models.instrumented.InstrumentedModel',
         'pydantic_ai.output.OutputContext',

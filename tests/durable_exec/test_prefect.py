@@ -66,6 +66,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     DynamicCapability,
+    Fallback,
     Hooks,
     Instrumentation,
     ProcessEventStream,
@@ -3883,7 +3884,7 @@ def test_prefect_durability_get_ordering() -> None:
     """PrefectDurability declares innermost ordering."""
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
-    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost')
+    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
 
 
 def test_prefect_durability_get_serialization_name() -> None:
