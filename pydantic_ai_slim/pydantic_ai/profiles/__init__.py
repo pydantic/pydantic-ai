@@ -107,6 +107,11 @@ class ModelProfile(TypedDict, total=False):
 
     Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], which describes in text
     what the model cannot read. A model that accepts none is refused the file at request time either way.
+
+    Shipped profiles turn this off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    The same holds for `supports_document_input` and `supports_video_input`.
     """
 
     supports_document_input: bool

@@ -29,8 +29,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 READINESS_WAIT_TIMEOUT = 10
 
 
@@ -240,24 +238,22 @@ async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     assert describer.calls == 4, 'the oldest was evicted'
 
 
-async def test_a_url_description_is_not_reused_by_another_run():
-    """A URL is not its content, so one run's description of it is never handed to the next.
+async def test_a_url_description_is_not_reused_by_another_conversation():
+    """A URL is not its content, so one conversation's description of it is not handed to another.
 
     The same URL can serve different bytes to different callers and stop resolving once a signature expires,
-    so reusing a description across runs would hand one caller a description of what another caller fetched.
+    so reusing a description across conversations would hand one caller a description of what another fetched.
     """
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
 
-    # `media_type` is explicit because inferring it from a URL with a query string works on 3.11+ but not
-    # on 3.10; what this test is about is the signature, not the inference.
-    signed = ImageUrl('https://example.com/receipt.png?signature=abc', media_type='image/png')
+    signed = ImageUrl('https://example.com/receipt.png?signature=abc')
     await agent.run([signed])
     await agent.run([signed])
     assert describer.calls == 2
 
-    # Bytes are their own identity, so those are reused across runs.
+    # Bytes are their own identity, so those are reused across conversations.
     await agent.run([_png('chart')])
     await agent.run([_png('chart')])
     assert describer.calls == 3
@@ -304,8 +300,11 @@ async def test_a_url_is_not_described_twice_within_a_run():
     assert describer.calls == 1
 
 
-async def test_a_url_is_described_every_time_without_a_run_id():
-    """With no run to scope it to, a URL's description is not kept across requests, only shared within one."""
+async def test_a_url_is_described_every_time_without_a_conversation_id():
+    """With no conversation to scope it to, a URL's description is not kept across requests, only within one.
+
+    An agent run always has a conversation id, so this calls the hook directly with a bare `RunContext`.
+    """
     describer = Describer()
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_model=FunctionModel(describer))
     item = ImageUrl('https://example.com/cat.png')
@@ -363,3 +362,15 @@ async def test_distinct_files_are_described_concurrently():
     await agent.run([_png('first'), _png('second'), 'and the first again:', _png('first')])
 
     assert sorted(described) == ['first', 'second']
+
+
+async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
+    """Each turn of a chat is a run of its own, but continues the conversation, so the URL is described once."""
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+
+    first = await agent.run([DocumentUrl('https://example.com/report.pdf'), 'What is this?'])
+    second = await agent.run('And who wrote it?', message_history=first.all_messages())
+    assert second.conversation_id == first.conversation_id
+    assert describer.calls == 1

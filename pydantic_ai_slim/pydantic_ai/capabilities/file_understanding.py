@@ -66,11 +66,12 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     A file is described once and the description reused for the steps that follow, so a history that carries the
     same file into every request costs one description. Binary content is reused for as long as the capability
-    lives, since the bytes are their own identity; a file given by URL is reused only within the run that fetched
-    it, because the same URL can serve different bytes to different callers and stop resolving once a signature
-    expires. Run ids come from the caller when one is passed to `run(..., run_id=...)`, so a caller that passes
-    the same `run_id` to two runs gets the first run's description of a URL in the second, without the URL being
-    fetched again.
+    lives, since the bytes are their own identity; a file given by URL is reused only within the conversation
+    that fetched it, because the same URL can serve different bytes to different callers and stop resolving once
+    a signature expires. A run continues the conversation of the `message_history` it is given, so the turns of
+    one chat share their URL descriptions. The conversation id comes from the caller when one is passed to
+    `run(..., conversation_id=...)`, so a caller that passes the same id to two unrelated runs gets the first
+    run's description of a URL in the second, without the URL being fetched again.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
@@ -116,7 +117,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if _accepted(item, profile):
                 continue
             assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
-            identity = _identity(item, ctx.run_id)
+            identity = _identity(item, ctx.conversation_id)
             if identity in descriptions or identity in pending:
                 continue
             if (cached := self._descriptions.get(identity)) is not None:
@@ -139,12 +140,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
             descriptions[identity] = description
-            if _reuse_key(item, ctx.run_id) is not None:
+            if _reuse_key(item, ctx.conversation_id) is not None:
                 if len(self._descriptions) >= _MAX_DESCRIPTIONS:
                     del self._descriptions[next(iter(self._descriptions))]
                 self._descriptions[identity] = description
 
-        messages = [_substitute(message, profile, descriptions, ctx.run_id) for message in request_context.messages]
+        messages = [
+            _substitute(message, profile, descriptions, ctx.conversation_id) for message in request_context.messages
+        ]
         return replace(request_context, messages=messages)
 
     @durable_operation(name='describe')
@@ -178,7 +181,7 @@ def _user_content(messages: list[ModelMessage]) -> Iterator[UserContent]:
 
 
 def _substitute(
-    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], run_id: str | None
+    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], conversation_id: str | None
 ) -> ModelMessage:
     if not isinstance(message, ModelRequest):
         return message
@@ -190,7 +193,7 @@ def _substitute(
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
         # inlined as its own content instead of described, and that one keeps the media type it came with.
         media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
-        description = descriptions[_identity(item, run_id)]
+        description = descriptions[_identity(item, conversation_id)]
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
@@ -203,27 +206,27 @@ def _substitute(
     return replace(message, parts=parts) if parts != original_parts else message
 
 
-def _identity(item: _File, run_id: str | None) -> str:
-    """What makes two items one file within this request: the reuse key, or for a URL with no run, the URL."""
-    if (key := _reuse_key(item, run_id)) is not None:
+def _identity(item: _File, conversation_id: str | None) -> str:
+    """What makes two items one file within this request: the reuse key, or for a URL with no conversation, the URL."""
+    if (key := _reuse_key(item, conversation_id)) is not None:
         return key
     assert not isinstance(item, BinaryContent), 'bytes always have a reuse key'
     return f'url:{item.url}'
 
 
-def _reuse_key(item: _File, run_id: str | None) -> str | None:
+def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
     """What identifies this file for reuse, or `None` when its description must not be reused.
 
     Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
     not its content: it can serve different bytes to different callers and stop resolving once a signature
-    expires, so a description of one is kept only for the run that fetched it, and not at all for a run with no
-    id to scope it to.
+    expires, so a description of one is kept only for the conversation that fetched it, and not at all without a
+    conversation id to scope it to.
     """
     if isinstance(item, BinaryContent):
         # The media type is part of the identity, not a label on it: the same bytes are described when they
         # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
         return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
-    return f'{run_id}:{item.url}' if run_id is not None else None
+    return f'{conversation_id}:{item.url}' if conversation_id is not None else None
 
 
 def _accepted(item: UserContent, profile: ModelProfile) -> bool:
