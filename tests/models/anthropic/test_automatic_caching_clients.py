@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import httpx2
 import pytest
@@ -68,7 +68,7 @@ class Case:
     client: str
     expected: Callable[[_CacheControl], _Breakpoints]
     model_name: str = 'claude-sonnet-4-5'
-    profile: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    profile: AnthropicModelProfile | Callable[[ModelProfile], ModelProfile] | None = None
 
 
 CASES = [
@@ -87,7 +87,7 @@ CASES = [
         'bedrock',
         _automatic,
         model_name='us.anthropic.claude-sonnet-4-6',
-        profile={'supports_auto_cache': True},
+        profile=AnthropicModelProfile(supports_auto_cache=True),
     ),
     Case(
         'bedrock-callable-profile-on',
@@ -104,7 +104,7 @@ CASES = [
         model_name='us.anthropic.claude-sonnet-4-6',
         profile=lambda default: default,
     ),
-    Case('api-profile-off', 'api', _last_block, profile={'supports_auto_cache': False}),
+    Case('api-profile-off', 'api', _last_block, profile=AnthropicModelProfile(supports_auto_cache=False)),
     Case(
         'api-callable-profile-off',
         'api',
@@ -147,7 +147,7 @@ async def test_automatic_caching_by_client(allow_model_requests: None, case: Cas
         model = AnthropicModel(
             case.model_name,
             provider=AnthropicProvider(anthropic_client=clients[case.client]()),
-            profile=cast('AnthropicModelProfile | Callable[[ModelProfile], ModelProfile] | None', case.profile),
+            profile=case.profile,
         )
         await Agent(model, model_settings=settings).run('Hello')
 

@@ -1221,6 +1221,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
+          3b. Defaults for this model instance from `_instance_profile_defaults()`, such as narrowing that
+             depends on the provider's SDK client. Unlike narrowing in a subclass's `profile` override,
+             which runs after the user's layer, the user's `profile=` can still override these.
           4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
