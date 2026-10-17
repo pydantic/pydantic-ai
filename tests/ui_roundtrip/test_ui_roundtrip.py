@@ -510,7 +510,6 @@ class Client:
     """A conversation through one protocol's real JavaScript client."""
 
     protocol: Protocol
-    adapter_type: type[UIAdapter[Any, Any, Any, Any, Any]]
 
     def __init__(self, driver: JSDriver, session: str, adapter_kwargs: dict[str, Any]) -> None:
         self.driver = driver
@@ -554,6 +553,10 @@ class Client:
         sent = self.adapter_type.load_messages(adapter.run_input.messages[:-1])
         return Turn(sent=self.sanitize(adapter, sent), expected=self.sanitize(adapter, expected), history=[], calls=[])
 
+    @property
+    def adapter_type(self) -> type[UIAdapter[Any, Any, Any, Any, Any]]:
+        raise NotImplementedError
+
     def user_message(self, prompt: str) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -566,7 +569,10 @@ class Client:
 
 class VercelClient(Client):
     protocol = 'vercel'
-    adapter_type = VercelAIAdapter
+
+    @property
+    def adapter_type(self) -> type[UIAdapter[Any, Any, Any, Any, Any]]:
+        return VercelAIAdapter
 
     def user_message(self, prompt: str) -> dict[str, Any]:
         return {'text': prompt}
@@ -580,7 +586,10 @@ class VercelClient(Client):
 
 class AGUIClient(Client):
     protocol = 'agui'
-    adapter_type = AGUIAdapter
+
+    @property
+    def adapter_type(self) -> type[UIAdapter[Any, Any, Any, Any, Any]]:
+        return AGUIAdapter
 
     def __init__(self, driver: JSDriver, session: str, adapter_kwargs: dict[str, Any]) -> None:
         super().__init__(driver, session, adapter_kwargs)
