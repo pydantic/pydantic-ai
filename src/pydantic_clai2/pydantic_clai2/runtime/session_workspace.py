@@ -1,12 +1,11 @@
-"""`clai2 --web`'s working directory: each session runs in its own, moved to between turns.
+"""`clai2 --web`'s session directory: each session runs in its own, moved to between turns.
 
 The terminal shell stays in the directory it started in. `clai2 --web` has no terminal and holds one
-live session at a time, so it changes the process's working directory to that session's, then loads
-the plugins again there: the coding tools, `repo_context`, skills, MCP project files, and a plugin's
-relative paths all read it, as they read the checkout `--worktree` changes into before startup.
+live session at a time, so it records that session's directory as the session's workspace, then loads
+the plugins again there: the coding tools, `repo_context`, skills, and MCP project files read it
+through `PluginHost.workspace`. The process's working directory stays where CLAI started.
 """
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,7 +74,6 @@ class SessionWorkspace:
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = load_project_settings(directory)
         settings = self.settings(project)
-        os.chdir(directory)
         self.session.workspace = self.status.workspace = str(directory)
         self.context.use_project(project, settings)
         await self.loader.restart(project=project.plugins, keep=self.keep)

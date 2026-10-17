@@ -71,9 +71,9 @@ class MCPPlugin(Plugin[MCPSettings]):
     """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
 
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
-        """`store` defaults to the user's `mcp.json`; tests pass their own."""
+        """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""
         super().__init__(host, settings)
-        self.servers = MCPServers(store or MCPStore(), settings.servers)
+        self.servers = MCPServers(store or MCPStore(workspace=host.workspace), settings.servers)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),)

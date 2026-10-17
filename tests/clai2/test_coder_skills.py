@@ -301,6 +301,26 @@ class TestSkillFoldersAboveTheLaunchDirectory:
         assert [command.name for command in loaded.commands] == ['review', 'release']
         assert 'Root review' not in output.getvalue()
 
+    async def test_the_sessions_directory_is_searched_not_the_processs(
+        self, tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Skills come from `host.workspace` and the repository around it, wherever the process is."""
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'release')
+        (project / 'src').mkdir()
+        write_skill(tmp_path / 'elsewhere' / '.agents' / 'skills', 'stray')
+        monkeypatch.chdir(tmp_path / 'elsewhere')
+        host = PluginHost[None](
+            name='coder',
+            console=Console(file=io.StringIO()),
+            settings={'repo_context': False, 'sub_agents': False, 'skill_folders': ['.agents/skills']},
+            workspace=lambda: project / 'src',
+        )
+        plugin = CoderPlugin[None].from_host(host)
+        await plugin.prepare()
+
+        assert [command.name for command in collect(plugin).commands] == ['release']
+
     async def test_the_walk_stops_at_the_git_root(self, tmp_path: Path, project: Path) -> None:
         write_skill(tmp_path / '.agents' / 'skills', 'outside')
         (project / '.git').mkdir()

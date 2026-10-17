@@ -109,7 +109,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
                 return '\n'.join(describe(workspace) for workspace in listing)
             case ['create', kind, *rest] if len(rest) <= 2:
                 repo, ref = (*rest, '', '')[:2]
-                workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref)
+                workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
                 return (
                     f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}. '
                     f'Start its CLAI with /workspaces open {workspace.id}.'

@@ -127,7 +127,10 @@ async def main(root: Path, mode: str) -> None:
                         app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
                         app.write_text(
-                            updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
+                            updated.replace(
+                                '    commands = Commands(workspace=lambda: Path(session.workspace))',
+                                '    raise RuntimeError("bad build")',
+                            )
                         )
             return text
 
