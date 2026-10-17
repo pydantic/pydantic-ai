@@ -134,6 +134,11 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
     return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
 
 
+def render_context_file_path(label: str) -> str:
+    """Name a file without its contents, as an empty `<context-file>` tag with the label attribute-escaped."""
+    return f'<context-file path="{html.escape(label)}" />'
+
+
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:
     """Render discovered files as labeled blocks in precedence order."""
     blocks = [render_context_file(file, label=_label(file.path, relative_to)) for file in files]

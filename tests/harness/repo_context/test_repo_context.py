@@ -67,11 +67,7 @@ def _repo_notes(messages: list[ModelMessage]) -> list[str]:
     notes: list[str] = []
     for message in messages:
         for part in message.parts:
-            if (
-                isinstance(part, UserPromptPart)
-                and isinstance(part.content, str)
-                and ('This directory has ' in part.content or '<context-file ' in part.content)
-            ):
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<context-file ' in part.content:
                 notes.append(part.content)
     return notes
 
@@ -459,11 +455,17 @@ class TestNestedTraversal:
             result = await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
             return [message for message in result.all_messages() if isinstance(message, ModelRequest)]
 
-        pointer = [
-            part for request in await run('pointer') for part in request.parts if isinstance(part, SystemPromptPart)
-        ]
-        assert [part.content for part in pointer] == [
-            'This directory has AGENTS.md (vendor/pkg&quot;&gt;&lt;x/AGENTS.md). Read it if relevant to your task.'
+        pointer = [part for request in await run('pointer') for part in request.parts]
+        assert [
+            (type(part), part.content) for part in pointer if isinstance(part, SystemPromptPart | UserPromptPart)
+        ] == [
+            (UserPromptPart, 'go'),
+            (
+                SystemPromptPart,
+                'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
+                '`<context-file>` tag that follows. Read the file if it is relevant to your task.',
+            ),
+            (UserPromptPart, '<context-file path="vendor/pkg&quot;&gt;&lt;x/AGENTS.md" />'),
         ]
 
         contents = [
@@ -489,7 +491,7 @@ class TestNestedTraversal:
             else:
                 notes = _repo_notes(messages)
                 assert len(notes) == 1
-                assert '(sub/AGENTS.md)' in notes[0]
+                assert 'path="sub/AGENTS.md"' in notes[0]
                 yield 'done'
 
         await Agent(
