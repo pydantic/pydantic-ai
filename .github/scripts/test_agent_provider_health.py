@@ -2270,6 +2270,41 @@ def test_attempt_stage_uses_real_setup_and_no_step_job_shapes(
     assert health._stage_from_attempt_jobs(jobs) == expected  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize('job_name', ['pre_activation', 'unrelated_job'])
+def test_monitor_records_trusted_pre_activation_setup_failure(job_name: str) -> None:
+    """Recognize the compiled pre-activation setup step without classifying arbitrary jobs."""
+    client = FakeGitHub()
+    client.jobs[('42', 1)] = [
+        {'name': job_name, 'conclusion': 'failure', 'steps': [{'name': 'Setup Scripts', 'conclusion': 'failure'}]}
+    ]
+    gate = health.Health(
+        'Pydantic AI Attention Triage',
+        'task-1',
+        'schedule',
+        1,
+        True,
+        'Provider health check passed',
+        '2026-10-17T00:00:00Z',
+        health.Quota('healthy'),
+        run_id='42',
+    )
+
+    assert (
+        _monitor_workflow_outcome(
+            client, argparse.Namespace(run_id=42, conclusion='failure', dry_run=False), gate, 1, None, 'org/repo'
+        )
+        == 0
+    )
+
+    if job_name == 'pre_activation':
+        assert len(client.posts) == 1
+        assert _marker_from_payload(client.posts[0]) == health.IncidentMarker(
+            'workflow', gate.workflow, 'setup', '42', None, 'setup', 1
+        )
+    else:
+        assert client.posts == []
+
+
 @pytest.mark.parametrize(
     'name', ['Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine']
 )

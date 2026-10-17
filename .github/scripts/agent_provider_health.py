@@ -827,7 +827,9 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
         for index in failures:
             step = parsed[index]
             name = _string(step.get('name')) if step is not None else None
-            if name == 'Restore full history and tags for dynamic versioning':
+            if name == 'Restore full history and tags for dynamic versioning' or (
+                _string(job.get('name')) == 'pre_activation' and name == 'Setup Scripts'
+            ):
                 return 'setup'
             if name == 'Restore exact candidate allowlist':
                 if _string(job.get('name')) == 'record_attention_decision':
