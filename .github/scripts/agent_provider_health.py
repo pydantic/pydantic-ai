@@ -29,6 +29,7 @@ _RETIRED_PROVIDER_REASON = (
 )
 
 Scope = Literal['provider', 'workflow', 'task']
+# Externally verified incident markers may use queue; attempt-job evidence cannot classify it.
 Stage = Literal['setup', 'inference', 'validation', 'publication', 'queue']
 QuotaStatus = Literal['healthy', 'exhausted', 'unknown']
 QuotaDiagnostic = Literal[
@@ -87,9 +88,7 @@ class Health:
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
             raise ValueError('run_attempt must be a positive integer')
-        if self.run_id is not None and (
-            not self.run_id.isascii() or not self.run_id.isdecimal() or int(self.run_id) < 1
-        ):
+        if self.run_id is not None and _positive_int_string(self.run_id) is None:
             raise ValueError('run_id must be a positive integer string')
         if self.recovery_issue is not None and _positive_attempt(self.recovery_issue) is None:
             raise ValueError('recovery_issue must be a positive integer')
@@ -168,12 +167,20 @@ def _positive_attempt(value: object) -> int | None:
     return value
 
 
+def _positive_int_string(value: object) -> int | None:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        return None
+    try:
+        result = int(value)
+    except ValueError:
+        return None
+    return result if result > 0 else None
+
+
 def _run_attempt_from_env() -> int:
     value = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
-    if value is None or not value.isascii() or not value.isdecimal():
-        raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
-    attempt = int(value)
-    if attempt < 1:
+    attempt = _positive_int_string(value)
+    if attempt is None:
         raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
     return attempt
 
@@ -290,10 +297,7 @@ def _health_from_json(value: object) -> Health:
         or reason is None
         or checked_at is None
         or not isinstance(ready, bool)
-        or (
-            run_id_value is not None
-            and (run_id is None or not run_id.isascii() or not run_id.isdecimal() or int(run_id) < 1)
-        )
+        or (run_id_value is not None and (run_id is None or _positive_int_string(run_id) is None))
         or (recovery_issue_value is not None and recovery_issue is None)
         or (quota_data.get('reset_at') is not None and reset_at is None)
         or (quota_data.get('interval_reset_at') is not None and interval_reset_at is None)
@@ -907,8 +911,8 @@ def _monitor_workflow_outcome(
     if result.failure is not None and (result.failure.kind == 'timeout' or result.failure.http_status == 529):
         print('Transient request failure remains local to this attempt')
         return 0
-    if failed_stage == 'queue' or (args.conclusion in ('cancelled', 'timed_out') and failed_stage == 'inference'):
-        print('Transient queue or deadline failure remains local to this attempt')
+    if args.conclusion in ('cancelled', 'timed_out') and failed_stage == 'inference':
+        print('Transient deadline failure remains local to this attempt')
         return 0
     if result.failure is None and failed_stage is None:
         print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
@@ -1070,20 +1074,13 @@ def _check_command(args: argparse.Namespace) -> int:
         client = GitHubClient(repo, token)
         recovery_issue = None
         raw_issue = os.environ.get('PYDANTIC_AI_RECOVERY_ISSUE')
-        if (
-            os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-            and raw_issue is not None
-            and raw_issue.isascii()
-            and raw_issue.isdecimal()
-        ):
-            try:
-                requested_issue = int(raw_issue)
-            except ValueError:
-                requested_issue = 0
-            if requested_issue > 0:
-                default_branch = client.default_branch()
-                if default_branch is not None and os.environ.get('GITHUB_REF') == f'refs/heads/{default_branch}':
-                    recovery_issue = requested_issue
+        requested_issue = _positive_int_string(raw_issue)
+        if requested_issue is not None and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+            default_branch = client.default_branch()
+            if default_branch is not None and os.environ.get('GITHUB_REF') == f'refs/heads/{default_branch}':
+                recovery_issue = requested_issue
+        if raw_issue and recovery_issue is None:
+            print('Recovery input ignored; use a positive issue number on a default-branch workflow_dispatch.')
         health = check_health(
             workflow or 'unknown',
             task_key or 'unknown',

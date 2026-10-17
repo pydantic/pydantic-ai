@@ -1699,28 +1699,30 @@ def test_fresh_dispatch_task_key_runs_without_recovery_issue(tmp_path: Path, mon
 
 
 @pytest.mark.parametrize(
-    ('event_name', 'raw_issue'),
+    ('event_name', 'raw_issue', 'ref', 'lookup_default_branch'),
     [
-        ('workflow_dispatch', None),
-        ('workflow_dispatch', ''),
-        ('workflow_dispatch', '0'),
-        ('workflow_dispatch', '-7'),
-        ('workflow_dispatch', 'bad'),
-        ('workflow_dispatch', '７'),
-        ('workflow_dispatch', '7' * 5000),
-        ('workflow_run', '7'),
+        ('workflow_dispatch', None, 'refs/heads/main', False),
+        ('workflow_dispatch', '', 'refs/heads/main', False),
+        ('workflow_dispatch', '0', 'refs/heads/main', False),
+        ('workflow_dispatch', '-7', 'refs/heads/main', False),
+        ('workflow_dispatch', 'bad', 'refs/heads/main', False),
+        ('workflow_dispatch', '７', 'refs/heads/main', False),
+        ('workflow_dispatch', '7' * 5000, 'refs/heads/main', False),
+        ('workflow_run', '7', 'refs/heads/main', False),
+        ('workflow_dispatch', '7', 'refs/heads/topic', True),
     ],
 )
-def test_check_command_skips_default_branch_lookup_without_valid_manual_recovery(
-    event_name: str, raw_issue: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_check_command_rejects_invalid_manual_recovery_without_leaking_input(
+    event_name: str,
+    raw_issue: str | None,
+    ref: str,
+    lookup_default_branch: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Runs without valid manual recovery input never need the repository default branch."""
-
-    class NoDefaultBranchLookupGitHub(FakeGitHub):
-        def default_branch(self) -> str | None:
-            raise AssertionError('default_branch must not be called')
-
-    client = NoDefaultBranchLookupGitHub()
+    """Only a positive manual recovery issue on the default branch is admitted."""
+    client = FakeGitHub()
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
@@ -1731,7 +1733,7 @@ def test_check_command_skips_default_branch_lookup_without_valid_manual_recovery
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
     monkeypatch.setenv('GITHUB_EVENT_NAME', event_name)
-    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('GITHUB_REF', ref)
     monkeypatch.setenv('GITHUB_RUN_ID', '101')
     if raw_issue is None:
         monkeypatch.delenv('PYDANTIC_AI_RECOVERY_ISSUE', raising=False)
@@ -1743,6 +1745,45 @@ def test_check_command_skips_default_branch_lookup_without_valid_manual_recovery
     decision = _health_from_json(json.loads(output.read_text()))
     assert decision.recovery_issue is None
     assert decision.ready
+    assert client.default_branch_calls == int(lookup_default_branch)
+    captured = capsys.readouterr().out
+    if raw_issue:
+        assert 'Recovery input ignored; use a positive issue number on a default-branch workflow_dispatch.' in captured
+        assert raw_issue not in captured
+    else:
+        assert 'Recovery input ignored' not in captured
+
+
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [
+        ('run_id', 7),
+        ('run_id', ''),
+        ('run_id', '0'),
+        ('run_id', '７'),
+        ('run_id', '7' * 5000),
+        ('recovery_issue', '7'),
+        ('recovery_issue', True),
+        ('recovery_issue', 0),
+    ],
+)
+def test_health_artifact_rejects_malformed_present_optional_identity_fields(field: str, value: object) -> None:
+    """Present malformed identity metadata remains a DTO validation error."""
+    payload: dict[str, object] = {
+        'version': 1,
+        'workflow': 'nightly-sweep',
+        'task_key': 'task-1',
+        'trigger_event': 'schedule',
+        'run_attempt': 1,
+        'ready': True,
+        'reason': 'Provider health check passed',
+        'checked_at': '2026-10-01T12:00:00Z',
+        'quota': {'status': 'healthy'},
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match='missing required validated fields'):
+        _health_from_json(payload)
 
 
 def test_check_and_incident_outputs_keep_hostile_provider_data_out(

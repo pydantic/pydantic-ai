@@ -1246,6 +1246,14 @@ def test_attention_validator_fails_when_safe_output_sink_is_not_configured(
         shim.require_safe_output('done')
 
 
+def test_ordinary_workflow_accepts_unconfigured_safe_output_sink(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+
+    assert not shim.safe_output_pending()
+    assert shim.require_safe_output('done') == 'done'
+
+
 @pytest.mark.parametrize('sink_configured', [True, False])
 def test_attention_run_fails_when_immutable_completion_artifact_is_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sink_configured: bool

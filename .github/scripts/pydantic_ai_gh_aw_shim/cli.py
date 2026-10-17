@@ -171,9 +171,13 @@ SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
+def _is_attention_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+
+
 def run_request_limit() -> int:
     """Return the workflow-specific cap on model requests."""
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+    if _is_attention_run():
         return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
 
@@ -208,15 +212,16 @@ NO_SAFE_OUTPUT_RETRIES = 3
 
 
 def _safe_output_status() -> tuple[bool, list[int] | None]:
-    """Return whether the sink is empty and any Attention candidate IDs still missing decisions."""
+    """Return whether output is pending and any Attention candidate IDs still missing decisions."""
+    is_attention = _is_attention_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+        if is_attention:
             raise ValueError('Attention safe-output sink is not configured')
         return False, None
     sink = pathlib.Path(path)
     sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
-    if os.environ.get('GITHUB_WORKFLOW') != ATTENTION_WORKFLOW or sink_empty:
+    if not is_attention or sink_empty:
         return sink_empty, None
 
     workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
@@ -250,22 +255,19 @@ def _safe_output_status() -> tuple[bool, list[int] | None]:
                 continue
             if parsed_number > 0 and str(parsed_number) == item_number:
                 recorded.add(parsed_number)
-    return sink_empty, sorted(candidates - recorded)
+    missing = sorted(candidates - recorded)
+    return bool(missing), missing
 
 
 def safe_output_pending() -> bool:
     """Whether a gh-aw run is missing safe output or Attention decisions."""
     try:
-        sink_empty, missing_attention_ids = _safe_output_status()
+        output_pending, _ = _safe_output_status()
     except (KeyError, OSError, ValueError):
-        if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+        if _is_attention_run():
             return True
         raise
-    if sink_empty:
-        return True
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
-        return missing_attention_ids is None or bool(missing_attention_ids)
-    return False
+    return output_pending
 
 
 def require_safe_output(output: str) -> str:
@@ -932,7 +934,7 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
     """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
-    attention_read_only = os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+    attention_read_only = _is_attention_run()
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
@@ -1348,7 +1350,7 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        task_tool = None if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW else task
+        task_tool = None if _is_attention_run() else task
         claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(
