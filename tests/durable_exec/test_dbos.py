@@ -5018,8 +5018,8 @@ async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
     # Recovery re-executes the workflow function: the start-time step replays, so the tool, which runs in
     # the workflow, sees the same deadline even though time has moved on.
     await asyncio.sleep(0.01)
-    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
-    assert await asyncio.to_thread(handle.get_result) == '{"record_deadline":"ok"}'
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == '{"record_deadline":"ok"}'
     assert deadline_seen == [deadline, deadline]
 
 
