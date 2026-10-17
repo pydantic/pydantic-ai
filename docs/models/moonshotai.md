@@ -41,3 +41,19 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+### Custom base URL
+
+`MoonshotAIProvider` uses `https://api.moonshot.ai/v1` by default. To use the Chinese endpoint,
+set `MOONSHOTAI_BASE_URL` and an API key from the [Chinese console](https://platform.kimi.com/console/api-keys):
+
+```bash
+export MOONSHOTAI_API_KEY="your-moonshot-api-key"
+export MOONSHOTAI_BASE_URL="https://api.moonshot.cn/v1"
+```
+
+You can then use the model-string configuration shown above.
+
+Alternatively, pass `base_url='https://api.moonshot.cn/v1'` to
+[`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider].
+An explicit `base_url` overrides `MOONSHOTAI_BASE_URL`.
