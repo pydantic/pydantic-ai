@@ -3945,7 +3945,8 @@ class TestDynamicCatalog:
 
         def weather(city: str) -> str:
             """Get the weather."""
-            return f'sunny in {city}'  # pragma: no cover — only the signature matters.
+            # Only the signature matters here; the body is never invoked.
+            return f'sunny in {city}'  # pragma: no cover
 
         agent: Agent[object, str] = Agent(
             FunctionModel(model_fn),
