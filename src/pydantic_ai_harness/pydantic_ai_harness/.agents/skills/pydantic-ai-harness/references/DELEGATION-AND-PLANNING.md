@@ -155,10 +155,10 @@ Gotchas:
 - Children receive the parent's `deps` (same `AgentDepsT`) and run in the parent's workspace.
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
-- Timeout, own-budget exhaustion, and `max_calls` exhaustion are soft: a steering message comes back as
-  the tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`, and so
-  does a child run that ends with `DeferredToolRequests` (the parent cannot resume it); `on_failure`
-  softens both. Other crashes abort the parent unless `contain_errors=True`.
+- Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
+  `DeferredToolRequests` (the parent cannot resume it) are soft: a steering message comes back as the
+  tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+  crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).

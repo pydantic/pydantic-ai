@@ -192,10 +192,8 @@ class _Ended:
     outcome: DelegationOutcome
     output: str
     """What the parent model receives: the child's output, or a steering or retry message."""
-    retry: bool = False
-    """Whether `output` is raised to the parent as a `ModelRetry` rather than returned."""
     cause: Exception | None = None
-    """The exception behind a retry, when there is one."""
+    """Set when `output` is raised to the parent as a `ModelRetry` rather than returned."""
 
 
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
@@ -591,7 +589,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     duration_seconds=time.perf_counter() - started,
                 )
             )
-        if ended.retry:
+        if ended.cause is not None:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
 
@@ -666,22 +664,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if sub_agent.on_failure is not None:
                 return _Ended(outcome='failed', output=sub_agent.on_failure)
             # Soft sub-agent failures come back to the parent as a retry it can react to.
-            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', retry=True, cause=exc)
+            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', cause=exc)
         except _ALWAYS_PROPAGATE:
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
         if (reason := resumable_output_reason(result.output)) is not None:
-            # The parent cannot resume the child run, so it ends like a soft child failure.
-            if sub_agent.on_failure is not None:
-                return _Ended(outcome='failed', output=sub_agent.on_failure)
+            # The parent cannot resume the child run, and delegating the same task again would most
+            # likely stop the same way, so this is a soft outcome rather than a retry.
             return _Ended(
                 outcome='failed',
-                output=(
+                output=self._steer(
+                    sub_agent.on_failure,
                     f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
-                    'Do the task another way, or without this sub-agent.'
+                    'Do the task another way, or without this sub-agent.',
                 ),
-                retry=True,
             )
         return _Ended(outcome='ok', output=str(result.output))
 
@@ -700,7 +697,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 f'Sub-agent {agent_name!r} crashed: {type(exc).__name__}: {exc}. '
                 f'Treat this as a recoverable failure and decide from existing evidence.'
             ),
-            retry=True,
             cause=exc,
         )
 
