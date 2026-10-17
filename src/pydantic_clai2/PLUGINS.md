@@ -1247,7 +1247,10 @@ starts in that session's directory. A new session from the browser runs where th
 sent as `/workspace DIRECTORY` (an existing absolute path), which only `clai2 --web` has. Nothing
 moves while a turn, a background `/fork`, or a delegated task runs. A session whose directory is
 gone opens read-only, and so does, with `/web` from a terminal, a session saved in another
-directory, which `/resume ID` refuses there. Shell lines (`!`) run only in the terminal. A bare
+directory, which `/resume ID` refuses there. With `/web` from a terminal, the browser opens
+sessions beside the terminal's, and the terminal shows one live session at a time: `/resume ID`
+there of a session live in the browser shows that session, even mid-turn, instead of copying it,
+and the session shown before stays live. Shell lines (`!`) run only in the terminal. A bare
 command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
 opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
 window's General section, `/system_prompt` its System prompt section, `/update` its About section,
@@ -1374,6 +1377,9 @@ restarts as a terminal session with the web UI running, though the browser does 
 The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
 you can read and CLAI removes before anything else runs, never on its command line, which `ps`
 shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
+In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
+the restart would end, and in a session from another folder the terminal shows, as CLAI
+restarts in the folder it started in.
 
 `clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable

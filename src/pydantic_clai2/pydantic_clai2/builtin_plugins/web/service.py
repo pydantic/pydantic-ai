@@ -261,7 +261,7 @@ class WebService:
     async def open(self, conversation_id: str) -> str:
         """Make a saved session live, resumed in a session of its own unless one holds it; its conversation ID.
 
-        A CLAI that opens no other sessions, as with `/web` from a terminal, resumes it in the default
+        A host that cannot open other sessions (its live sessions have no `build`) resumes it in the default
         session instead: the ID is then the default session's, whose watchers get the resumed one next.
         """
         try:
