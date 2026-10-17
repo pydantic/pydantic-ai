@@ -1912,6 +1912,19 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             ],
             'setup',
         ),
+        (
+            [
+                {
+                    'name': 'agent',
+                    'conclusion': 'failure',
+                    'steps': [
+                        {'name': 'Download activation artifact', 'conclusion': 'failure'},
+                        {'name': 'Execute Pydantic AI CLI', 'conclusion': 'skipped'},
+                    ],
+                }
+            ],
+            'setup',
+        ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
         (
@@ -1933,13 +1946,30 @@ def test_attempt_stage_uses_real_setup_and_no_step_job_shapes(
     assert health._stage_from_attempt_jobs(jobs) == expected  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.parametrize('name', ['Execute Claude Code CLI', 'Run agent', 'Run legacy engine'])
+@pytest.mark.parametrize(
+    'name', ['Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine']
+)
 def test_failed_execution_step_is_inference(name: str) -> None:
     """Recognized execution anchors classify a failed execution step as inference."""
     jobs: list[dict[str, object]] = [
         {'name': 'agent', 'conclusion': 'failure', 'steps': [{'name': name, 'conclusion': 'failure'}]}
     ]
     assert health._stage_from_attempt_jobs(jobs) == 'inference'  # pyright: ignore[reportPrivateUsage]
+
+
+def test_failed_post_execution_step_is_publication() -> None:
+    """A failure after Pydantic AI CLI execution is classified as publication."""
+    jobs: list[dict[str, object]] = [
+        {
+            'name': 'agent',
+            'conclusion': 'failure',
+            'steps': [
+                {'name': 'Execute Pydantic AI CLI', 'conclusion': 'success'},
+                {'name': 'Collect execution diagnostics', 'conclusion': 'failure'},
+            ],
+        }
+    ]
+    assert health._stage_from_attempt_jobs(jobs) == 'publication'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_attempt_jobs_paginates_exact_attempt_and_uses_raw_page_length(monkeypatch: pytest.MonkeyPatch) -> None:

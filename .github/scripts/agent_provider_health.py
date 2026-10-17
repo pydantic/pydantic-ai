@@ -795,7 +795,8 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
                 i
                 for i, item in enumerate(parsed)
                 if item is not None
-                and _string(item.get('name')) in ('Execute Claude Code CLI', 'Run agent', 'Run legacy engine')
+                and _string(item.get('name'))
+                in ('Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine')
             ),
             None,
         )
@@ -817,7 +818,7 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
                 return 'validation'
             if any(word in low for word in ('publish', 'output', 'post agent', 'ingest')):
                 return 'publication'
-            if name in ('Execute Claude Code CLI', 'Run agent', 'Run legacy engine'):
+            if name in ('Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine'):
                 return 'inference'
             if execution is not None and index > execution:
                 return 'publication'
