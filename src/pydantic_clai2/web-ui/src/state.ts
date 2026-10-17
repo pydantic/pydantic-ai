@@ -389,20 +389,23 @@ export function reduce(state: State, action: Action): State {
 export interface OrchestratorView {
   /** Whether the `workspaces` plugin is on, which the orchestrator needs; `null` until the server says. */
   enabled: boolean | null
+  /** The saved default model, which the orchestrator runs on; `null` when there is none. */
+  model: string | null
   chat: Chat
 }
 
-export const initialOrchestrator: OrchestratorView = { enabled: null, chat: initialChat }
+export const initialOrchestrator: OrchestratorView = { enabled: null, model: null, chat: initialChat }
 
-/** What the orchestrator chat gets on the WebSocket, or `enabled` from asking the server again. */
-export type OrchestratorAction = OrchestratorEvent | { type: 'enabled'; enabled: boolean }
+/** What the orchestrator chat gets on the WebSocket, or `enabled` and `model` from asking the server again. */
+export type OrchestratorAction = OrchestratorEvent | { type: 'refreshed'; enabled: boolean; model: string | null }
 
 export function reduceOrchestrator(view: OrchestratorView, action: OrchestratorAction): OrchestratorView {
-  if (action.type === 'enabled') return { ...view, enabled: action.enabled }
+  if (action.type === 'refreshed') return { ...view, enabled: action.enabled, model: action.model }
   if (action.type !== 'orchestrator_state') return { ...view, chat: reduceChat(view.chat, action) }
   const chat = view.chat
   return {
     enabled: action.enabled,
+    model: action.model,
     chat: {
       ...chat,
       entries: action.items,

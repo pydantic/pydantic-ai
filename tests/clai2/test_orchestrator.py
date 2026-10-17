@@ -231,7 +231,7 @@ async def parent(
 ) -> AsyncGenerator[Parent]:
     """A shell with `web`, and `workspaces` unless told otherwise, whose launcher serves `child`.
 
-    `model` is the session's, which the orchestrator uses too.
+    `model` is the agent's own, which the orchestrator uses too while no default model is saved.
     """
     processes = InProcess(child)
     launcher = Launcher(processes=processes, python='python', interval=0.01, startup_timeout=10, stop_timeout=5)

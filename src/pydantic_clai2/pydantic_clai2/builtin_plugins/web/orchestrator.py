@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, AgentStreamEvent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, repair_messages
+from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer
@@ -154,14 +155,19 @@ class Orchestrator:
         return configured(self.host.plugins) is not None
 
     async def state(self) -> OrchestratorState:
-        return self._state((await self.load()).messages)
+        saved = await self.load()
+        return self._state(saved.messages, await self.host.default_model())
 
-    def _state(self, messages: Sequence[ModelMessage]) -> OrchestratorState:
+    def _state(self, messages: Sequence[ModelMessage], model: Model | str | None) -> OrchestratorState:
         items = history_items(messages)
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
+            enabled=self.enabled(),
+            running=self.running,
+            model=model if model is None or isinstance(model, str) else model.model_name,
+            items=items,
+            questions=self.answerer.questions,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -211,8 +217,6 @@ class Orchestrator:
         self._turn.clear()
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
-        # The history this turn starts from, which another CLAI may have changed since the page loaded.
-        self._send(self._state(saved.messages))
         messages = saved.messages
         outcome: TurnOutcome = 'failed'
         error: str | None = None
@@ -220,6 +224,8 @@ class Orchestrator:
         try:
             # The saved default, as a new session starts with, never one session's own choice.
             model = await self.host.default_model()
+            # The history this turn starts from, which another CLAI may have changed since the page loaded.
+            self._send(self._state(saved.messages, model))
             if model is None:
                 raise RuntimeError('Choose a model with /model first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:

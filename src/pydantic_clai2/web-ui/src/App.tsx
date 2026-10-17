@@ -164,15 +164,17 @@ export function App() {
   useEffect(() => localStorage.setItem('clai-monty', monty ? 'open' : 'closed'), [monty])
   useEffect(() => localStorage.setItem('clai-pane', pane), [pane])
 
-  // A command or the plugins panel may have turned `workspaces` on or off, which the orchestrator needs.
+  // A command or the plugins panel may have turned `workspaces` on or off, which the orchestrator needs, or
+  // saved another default model, which it runs on.
   const pluginsVersion = state.pluginsVersion
+  const settingsVersion = state.settingsVersion
   useEffect(() => {
-    if (pluginsVersion === 0) return
+    if (pluginsVersion === 0 && settingsVersion === 0) return
     void orchestrator
       .state()
-      .then((found) => dispatchOrchestrator({ type: 'enabled', enabled: found.enabled }))
+      .then((found) => dispatchOrchestrator({ type: 'refreshed', enabled: found.enabled, model: found.model }))
       .catch(() => undefined)
-  }, [pluginsVersion])
+  }, [pluginsVersion, settingsVersion])
   useEffect(() => {
     if (sidePanel) localStorage.setItem('clai-side-panel', sidePanel)
     else localStorage.removeItem('clai-side-panel')
@@ -519,7 +521,7 @@ export function App() {
         {orchestrating ? (
           <OrchestratorPane
             view={orchestration}
-            model={status?.model ?? '…'}
+            model={orchestration.model ?? 'no model'}
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
             onError={showError}
