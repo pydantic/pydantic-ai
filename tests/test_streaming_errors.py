@@ -58,10 +58,12 @@ with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
 
 with try_import() as bedrock_imports:
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import ClientError, EventStreamError
     from botocore.hooks import HierarchicalEmitter
 
+    from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.profiles import DEFAULT_PROFILE
     from pydantic_ai.providers import Provider
 
@@ -120,6 +122,25 @@ with try_import() as bedrock_imports:
         return BedrockConverseModel(
             'us.amazon.nova-micro-v1:0',
             provider=_StubBedrockProvider(_StubBedrockStreamClient(error)),
+        )
+
+    class _StubBedrockFirstEventErrorClient:
+        """Bedrock client that returns a stream which raises as its first event."""
+
+        def __init__(self, error: ClientError):
+            self._error = error
+            self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+        def converse_stream(self, **_: Any) -> dict[str, Any]:
+            def _stream():
+                raise self._error
+
+            return {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    def _bedrock_model_with_first_event_error(error: ClientError) -> BedrockConverseModel:
+        return BedrockConverseModel(
+            'us.amazon.nova-micro-v1:0',
+            provider=_StubBedrockProvider(_StubBedrockFirstEventErrorClient(error)),
         )
 
 
@@ -731,6 +752,24 @@ async def test_bedrock_midstream_error(
     if check_status is not None:
         assert isinstance(exc_info.value, ModelHTTPError)
         assert exc_info.value.status_code == check_status
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='botocore not installed')
+async def test_bedrock_peek_error_triggers_fallback(allow_model_requests: None):
+    """FallbackModel falls back when the error arrives as the first stream event rather than at opening."""
+    model = _bedrock_model_with_first_event_error(
+        EventStreamError({'Error': {'Code': 'throttlingException', 'Message': 'slow down'}}, 'ConverseStream')
+    )
+
+    async def backup_stream(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        yield 'from the fallback'
+
+    agent = Agent(FallbackModel(model, FunctionModel(stream_function=backup_stream)))
+
+    async with agent.run_stream('hi') as result:
+        text = await result.get_output()
+
+    assert text == 'from the fallback'
 
 
 GatewayStreamProvider = Literal['openai-chat', 'openai-responses', 'anthropic', 'google', 'groq', 'bedrock']
