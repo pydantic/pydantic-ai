@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelTimeoutError,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -660,7 +661,8 @@ async def test_model_transport_error(allow_model_requests: None) -> None:
         with pytest.raises(ModelAPIError) as exc_info:
             await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'timed out'
     assert isinstance(exc_info.value.__cause__, httpx.ReadTimeout)
 

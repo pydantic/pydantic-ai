@@ -9,7 +9,16 @@ import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelConnectionError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
@@ -515,8 +524,43 @@ async def test_connection_error(allow_model_requests: None):
         raise httpx2.ConnectError('Connection refused')
 
     agent = Agent(mock_model(handler), output_type=Ticket)
-    with pytest.raises(ModelAPIError, match='ConnectError: Connection refused'):
+    with pytest.raises(ModelConnectionError, match='ConnectError: Connection refused') as exc_info:
         await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'connect'
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    agent = Agent(mock_model(handler), output_type=Ticket)
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await agent.run('Charged twice.')
+    assert exc_info.value.phase == 'read'
+
+
+@pytest.mark.parametrize(
+    ('response', 'category'),
+    [
+        (httpx2.Response(429, json={'detail': 'slow down'}), ModelRateLimitError),
+        (httpx2.Response(503, text='overloaded, try again'), ModelOverloadedError),
+        (httpx2.Response(503, text='warming up'), ModelUnavailableError),
+        (httpx2.Response(502, text='embedder unreachable'), ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    response: httpx2.Response,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit or outage is raised in its error category, as for any other provider."""
+    agent = Agent(mock_model(lambda _: response), output_type=Ticket)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Charged twice.')
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    expected = ModelHTTPError.for_category(category, status_code=response.status_code, model_name='clm-latest')
+    assert type(exc_info.value) is type(expected)
+    assert exc_info.value.status_code == response.status_code
 
 
 async def test_server_error_falls_back(allow_model_requests: None):
