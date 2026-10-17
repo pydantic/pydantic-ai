@@ -68,6 +68,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Worktree,
     history_items,
     usage_info,
+    usage_report,
     user_text,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
@@ -93,6 +94,7 @@ from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.session_workspace import workspace_directory
+from pydantic_clai2.ui.rendering.usage_report import session_usage
 
 THEME = 'display.theme'
 CODE_MODE = 'run.code_mode'
@@ -102,6 +104,8 @@ Switch = Literal['run.code_mode', 'run.speculative_code_mode']
 PluginAction = Literal['enable', 'disable', 'reload']
 TaskAction = Literal['stop', 'background', 'resume']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
+USAGE_COMMANDS = frozenset({'/usage', '/cost'})
+"""Commands whose notice carries the figures they report, for the page's usage card."""
 
 VIEW_TIMEOUT = 10.0
 """Seconds a side panel's view may take before the panel says it did not answer, so one cannot hold up the rest."""
@@ -280,7 +284,9 @@ class Remote:
         if event.error is not None:
             self.hub.publish(Notice(text=str(event.error), level='error', command=event.text))
         elif event.output:
-            self.hub.publish(Notice(text=event.output, command=event.text))
+            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
+            usage = usage_report(session_usage(self.host.conversation.messages)) if reports else None
+            self.hub.publish(Notice(text=event.output, command=event.text, usage=usage))
         self._settings_changed()
         # `/plugins`, or a plugin's own command such as `/grain`, may have changed a plugin or its settings.
         self.hub.publish(PluginsChanged())
@@ -498,8 +504,8 @@ class Remote:
         self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
     ) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
-        menu = await to_thread.run_sync(self._command_menu, name)
         async with self._command_edits:
+            menu = await to_thread.run_sync(self._command_menu, name)
             try:
                 messages = await edit(menu)
             finally:
@@ -784,6 +790,7 @@ def _menu_info(menu: SettingsMenu, path: Sequence[str]) -> MenuInfo:
                 note=row.note,
                 action=row.key in menu.actions,
                 menu=row.key in menu.menus,
+                button=row.button,
             )
             for row in source.rows()
         ],

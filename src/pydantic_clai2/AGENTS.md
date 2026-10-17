@@ -245,7 +245,8 @@ one that is not.
 - Multi-line text goes through `text_editor.edit_text`: `$VISUAL` or `$EDITOR`
   on a temporary file, else (on Windows, unset, or failing to start) a built-in
   prompt_toolkit editor, since termflow has no multi-line input. Call it from a
-  menu worker between widgets. Do not write another editor.
+  menu worker between widgets, or ask with `Dialogs.text(multiline=True)` from a
+  settings menu action, which the web UI shows as a text area. Do not write another editor.
 - Widget runners are a `Runners` value passed into the loops; tests pass
   scripted ones (`tests/menu_script.py`). Only the real `widget.run()`
   one-liners are `no cover`. Code that asks through `Dialogs` (settings menu
