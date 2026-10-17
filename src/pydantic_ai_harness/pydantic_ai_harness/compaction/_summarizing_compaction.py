@@ -6,7 +6,7 @@ import html
 import re
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -233,6 +233,9 @@ def _format_messages(
     return '\n'.join(elements)
 
 
+_TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return']
+"""The `role` of a `<message>` element in the summarizer transcript."""
+
 _TRANSCRIPT_TAG = re.compile(r'<(/?)(messages?|previous-summary)\b', re.IGNORECASE)
 """An opening or closing tag of the summarizer transcript's own markup, in any case."""
 
@@ -246,7 +249,7 @@ def _neutralize_transcript_tags(content: str) -> str:
     return _TRANSCRIPT_TAG.sub(lambda match: f'&lt;{match.group(1)}{match.group(2)}', content)
 
 
-def _message_element(role: str, content: str, *, name: str | None = None) -> str:
+def _message_element(role: _TranscriptRole, content: str, *, name: str | None = None) -> str:
     """One transcript entry: *content* in a `<message>` element tagged with its *role* and, for tools, *name*."""
     name_attr = f' name="{html.escape(name)}"' if name is not None else ''
     return f'<message role="{role}"{name_attr}>\n{_neutralize_transcript_tags(content)}\n</message>'
