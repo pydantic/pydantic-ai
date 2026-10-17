@@ -3,19 +3,18 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
+from pydantic_ai._file_input import SendableFile, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    UserContent,
+    ToolReturnPart,
     UserPromptPart,
-    VideoUrl,
 )
 from pydantic_ai.models import KnownModelName, Model, download_item
 from pydantic_ai.profiles import ModelProfile
@@ -28,7 +27,7 @@ from .durable_operation import durable_operation
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-_File: TypeAlias = ImageUrl | DocumentUrl | VideoUrl | BinaryContent
+_T = TypeVar('_T')
 
 _MAX_DESCRIPTIONS = 256
 """Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
@@ -43,10 +42,11 @@ _DEFAULT_INSTRUCTIONS = (
 class FileUnderstanding(AbstractCapability[AgentDepsT]):
     """Describe the files the agent's model cannot read, with a model that can.
 
-    Before each request, every image, document or video in a user prompt that the model's
-    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a text
-    description of it, written by `fallback_model`. The agent's model sees the description in the file's
-    place; files it accepts are sent as they are.
+    Before each request, every image, document, audio file or video in a user prompt or a tool result that
+    the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
+    text description of it, written by `fallback_model`. The agent's model sees the description in the
+    file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
+    that the model cannot read is replaced by a note saying so instead.
 
     ```python
     from pydantic_ai import Agent, DocumentUrl
@@ -76,9 +76,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
     the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any is sent, as if the describing
     requests were the run's next ones.
-
-    Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
-    is about realtime speech history and is not set per model, so it cannot say which models read audio files.
     """
 
     fallback_model: Model | KnownModelName | str
@@ -111,11 +108,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         descriptions: dict[str, str] = {}
-        pending: dict[str, _File] = {}
-        for item in _user_content(request_context.messages):
-            if _accepted(item, profile):
+        pending: dict[str, SendableFile] = {}
+        for item in _file_content(request_context.messages):
+            if not _needs_describing(item, profile):
                 continue
-            assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
             identity = _identity(item, ctx.run_id)
             if identity in descriptions or identity in pending:
                 continue
@@ -148,7 +144,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return replace(request_context, messages=messages)
 
     @durable_operation(name='describe')
-    async def _describe(self, item: _File) -> tuple[str, RunUsage]:
+    async def _describe(self, item: SendableFile) -> tuple[str, RunUsage]:
         """The file as text, with the usage it cost.
 
         A text-like document is its own content, at no cost; anything else is described by `fallback_model`. The
@@ -169,12 +165,19 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return result.output, result.usage
 
 
-def _user_content(messages: list[ModelMessage]) -> Iterator[UserContent]:
+def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
+    """The items of every user prompt and of every tool result that carries files."""
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                     yield from part.content
+                elif isinstance(part, ToolReturnPart) and part.files:
+                    yield from part.content_items()
+
+
+def _needs_describing(item: object, profile: ModelProfile) -> TypeGuard[SendableFile]:
+    return isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None
 
 
 def _substitute(
@@ -183,10 +186,9 @@ def _substitute(
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(item: UserContent) -> UserContent:
-        if _accepted(item, profile):
+    def text_for(item: _T) -> _T | str:
+        if not _needs_describing(item, profile):
             return item
-        assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
         # inlined as its own content instead of described, and that one keeps the media type it came with.
         media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
@@ -194,16 +196,18 @@ def _substitute(
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
-    parts: list[ModelRequestPart] = [
-        replace(part, content=[text_for(item) for item in part.content])
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        else part
-        for part in original_parts
-    ]
+    parts: list[ModelRequestPart] = []
+    for part in original_parts:
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+            part = replace(part, content=[text_for(item) for item in part.content])
+        elif isinstance(part, ToolReturnPart) and part.files:
+            items = [text_for(item) for item in part.content_items()]
+            part = replace(part, content=items if isinstance(part.content, list) else items[0])
+        parts.append(part)
     return replace(message, parts=parts) if parts != original_parts else message
 
 
-def _identity(item: _File, run_id: str | None) -> str:
+def _identity(item: SendableFile, run_id: str | None) -> str:
     """What makes two items one file within this request: the reuse key, or for a URL with no run, the URL."""
     if (key := _reuse_key(item, run_id)) is not None:
         return key
@@ -211,7 +215,7 @@ def _identity(item: _File, run_id: str | None) -> str:
     return f'url:{item.url}'
 
 
-def _reuse_key(item: _File, run_id: str | None) -> str | None:
+def _reuse_key(item: SendableFile, run_id: str | None) -> str | None:
     """What identifies this file for reuse, or `None` when its description must not be reused.
 
     Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
@@ -224,14 +228,3 @@ def _reuse_key(item: _File, run_id: str | None) -> str | None:
         # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
         return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
     return f'{run_id}:{item.url}' if run_id is not None else None
-
-
-def _accepted(item: UserContent, profile: ModelProfile) -> bool:
-    """Whether the model takes this item as it is; text and anything but a file is left alone."""
-    if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
-        return profile.get('supports_image_input', True)
-    if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
-        return profile.get('supports_document_input', True)
-    if isinstance(item, VideoUrl) or (isinstance(item, BinaryContent) and item.is_video):
-        return profile.get('supports_video_input', False)
-    return True

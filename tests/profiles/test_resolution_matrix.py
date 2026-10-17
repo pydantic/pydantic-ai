@@ -789,9 +789,7 @@ def test_mistral_small_latest():
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
 def test_cohere_command_r_plus():
     profile = CohereProvider.model_profile('command-r-plus')
-    assert _normalize(profile) == snapshot(
-        {'supports_image_input': False, 'supports_document_input': False, 'supports_inline_system_prompts': True}
-    )
+    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -1793,8 +1791,6 @@ def test_groq_moonshotai_kimi():
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
             'supports_json_schema_output': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1809,8 +1805,6 @@ def test_groq_meta_llama4_maverick():
     assert _normalize(profile) == snapshot(
         {
             'supports_thinking': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
@@ -1827,8 +1821,6 @@ def test_groq_meta_llama3_no_overlay():
     assert _normalize(profile) == snapshot(
         {
             'groq_supports_reasoning_disable': False,
-            'supports_document_input': False,
-            'supports_video_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
@@ -1844,8 +1836,6 @@ def test_groq_deepseek():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
-            'supports_document_input': False,
-            'supports_video_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1869,8 +1859,6 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -2604,12 +2592,7 @@ def test_huggingface_bare_name_returns_none():
 def test_huggingface_meta_llama():
     profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot(
-        {
-            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
-        }
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
     )
 
 
@@ -2622,8 +2605,6 @@ def test_huggingface_deepseek():
             'thinking_always_enabled': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
         }
     )
 
@@ -2636,8 +2617,6 @@ def test_huggingface_qwen():
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
         }
     )
 
@@ -2646,12 +2625,7 @@ def test_huggingface_qwen():
 def test_huggingface_moonshotai():
     profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot(
-        {
-            'ignore_streamed_leading_whitespace': True,
-            'supports_inline_system_prompts': True,
-            'supports_document_input': False,
-            'supports_video_input': False,
-        }
+        {'ignore_streamed_leading_whitespace': True, 'supports_inline_system_prompts': True}
     )
 
 

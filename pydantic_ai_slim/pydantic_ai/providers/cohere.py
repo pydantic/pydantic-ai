@@ -45,14 +45,7 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
-        # `CohereModel` sends text only, whatever the model reads: a fact about this adapter, not the Cohere
-        # family, whose vision models other providers serve.
-        return merge_profile(
-            cohere_model_profile(model_name),
-            ModelProfile(
-                supports_inline_system_prompts=True, supports_image_input=False, supports_document_input=False
-            ),
-        )
+        return merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
 
     def __init__(
         self,

@@ -11,6 +11,7 @@ import pydantic_core
 from pydantic import JsonValue
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .._file_input import TEXT_DOCUMENT_MEDIA_TYPES
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -198,6 +199,10 @@ class MistralModel(Model[Mistral]):
     """
 
     json_mode_schema_prompt: str
+
+    # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
