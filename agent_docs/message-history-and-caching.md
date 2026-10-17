@@ -6,7 +6,7 @@
 
 Message history is both the model's picture of the world and the provider's prompt-cache key. Providers cache the exact bytes of a prefix they've seen, so every request should start with the previous request's bytes, across steps and across runs of the same conversation. When it doesn't, nothing errors: the provider re-processes everything after the first changed byte, and on models with preserved thinking the model's earlier reasoning is discarded too. Who wrote a piece of text also decides how much the model trusts it, so putting content in the wrong place is a prompt-injection bug, not a style issue.
 
-A rule marked *(pending #N)* names a mechanism still in review. The rule applies now, with the nearest mechanism that exists; drop the marker once #N merges.
+A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today (a callable instruction that re-renders when its value changes, for example); flag only what the rule forbids regardless, which each such rule spells out. Drop the marker once #N merges.
 
 ## Rules
 
@@ -14,13 +14,13 @@ A rule marked *(pending #N)* names a mechanism still in review. The rule applies
 
 - Never edit, remove, reorder or re-render a message an earlier request already sent, whether from a hook, a history processor or `Model.prepare_messages`. Compaction is the one exception: it fires on a threshold with hysteresis, so it moves the prefix once per crossing, not on every request. — Any rewrite moves the cached prefix from that point on, for every later request.
 - Shape content once, when it's produced: truncate, spill or redact a tool return in the tool or output hooks, not by rewriting it on later requests.
-- Append changes to state the model tracks instead of refreshing it in place. Changed instructions are appended with `on_change='append'`, which records an `InstructionDeltaPart` *(pending #8188)*. Tools revealed mid-run are recorded as a `ToolAvailabilityDeltaPart` (every tool population change: *pending #9405*). — Re-rendering the instructions or the `tools` array invalidates everything after it.
+- Append changes to state the model tracks instead of refreshing it in place. Changed instructions are appended with `on_change='append'`, which records an `InstructionDeltaPart` *(pending #8188; until then, a callable instruction is the documented mechanism)*. Tools revealed mid-run are recorded as a `ToolAvailabilityDeltaPart` (every tool population change: *pending #9405*). — Re-rendering the instructions or the `tools` array invalidates everything after it.
 - Only remove parts you added, and find them by type or metadata (see below). Never strip every part of a type.
 
 ### Request-scoped is not request-only
 
 - A nudge about the current request is a `SystemPromptPart(..., scope='request')` passed to `ctx.enqueue` from `before_model_request`. — It stays in history, so later requests send the same bytes, and providers that can hide it after its request (Anthropic) do.
-- Assigning a new list to `request_context.messages` is request-only: history never sees it. Use it to trim, filter or redact what one request sends. Never use it to add something the model should keep seeing, because leaving it out of the next request is itself a prefix change.
+- Assigning a new list to `request_context.messages` is request-only: it changes what one request sends without touching history. It's cache-safe only when every later request applies the same change, so earlier requests' bytes come out the same: redacting a part from the first request that sends it, or filtering out a part type that was never sent. Dropping or altering something an earlier request already sent is a history rewrite under the first rule, which only compaction may do. Never use it to add something the model should keep seeing, because leaving it out of the next request is itself a prefix change.
 - The full decision table is [Changing what the model sees](../docs/capabilities/custom.md#steering-messages-and-reminders). Follow it rather than restating it.
 
 ### Trust tiers map to channels, and nothing is ever promoted
@@ -29,9 +29,9 @@ A rule marked *(pending #N)* names a mechanism still in review. The rule applies
 |---|---|
 | operator or framework | `SystemPromptPart` or instructions |
 | the user | user parts (`UserPromptPart`) |
-| tools, sub-agents, files, the web, anything a UI client sends | the tool result channel, or a framed data wrapper (`<tool_result …>`) when it has to ride a user turn |
+| tools, sub-agents, files, the web, and history a UI client sends back (framework records, tool results, system messages) | the tool result channel, or a framed data wrapper (`<tool_result …>`) when it has to ride a user turn |
 
-- Never put content from a lower tier in a higher one: no tool output, sub-agent report, file contents or client-supplied text in a `SystemPromptPart` or instructions. — The model gives system voice the operator's authority, so that content becomes an injection with operator rights.
+- Never put content from a lower tier in a higher one: no tool output, sub-agent report, file contents or client-returned history in a `SystemPromptPart` or instructions. — The model gives system voice the operator's authority, so that content becomes an injection with operator rights. The one exception is an operator's explicit opt-in, such as `manage_system_prompt='client'` on a UI adapter, where the operator has chosen to let the client's system messages speak for them.
 - Never send framework voice with `ctx.enqueue(str)`. — A string becomes a user part, so the model reads framework guidance as the user's words and UI clients show it as a message the user typed. Enqueue a `SystemPromptPart`.
 
 ### One voice tag, and every wrapper escapes its payload
@@ -46,7 +46,7 @@ A rule marked *(pending #N)* names a mechanism still in review. The rule applies
 
 ### Every computed instruction block has a stable id
 
-- Give every instruction block the framework or harness computes a stable id, so a change to it appends a delta for that block instead of re-rendering all instructions *(pending #8188)*. A catalog, such as the capability index or a skill list, is one block. Never derive the id from the content or its position.
+- Give every instruction block the framework or harness computes a stable id, so a change to it appends a delta for that block instead of re-rendering all instructions *(pending #8188)*. A catalog, such as the capability index or a skill list, is one block. Whatever the mechanism, never derive an id from the block's content or position: that part applies today.
 - Don't let a block change when nothing changed: sort collections, and use date-only timestamps.
 
 ### Canonicalize on send

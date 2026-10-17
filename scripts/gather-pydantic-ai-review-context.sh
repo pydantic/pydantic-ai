@@ -640,8 +640,10 @@ async def before_model_request(self, ctx, request_context):
 ```
 *Why:* Fixed framework text in system voice, request-scoped, and added to
 history, so later requests send the same bytes. Also don't flag compaction
-moving the prefix once when it crosses its threshold, or assigning a new list
-to `request_context.messages` to trim or redact what one request sends.
+moving the prefix once when it crosses its threshold, a request-only change
+to `request_context.messages` that every later request applies the same way
+(redacting a part from the first request that sends it), or code using today's
+mechanism where a rule is marked *(pending #N)*.
 
 ## Sub-agent finding format
 
