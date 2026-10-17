@@ -67,7 +67,6 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
-    sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
@@ -11761,43 +11760,6 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
     assert deltas(loaded) == deltas(server_history)
 
 
-def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> UIMessage:
-    """The assistant message the AI SDK's `processUIMessageStream` builds from these chunks.
-
-    A minimal port covering the chunk types the enqueued-messages tests produce: text, tool input and
-    output, step boundaries and non-transient data parts, each appended at its stream position.
-    """
-    parts: list[dict[str, Any]] = []
-    texts: dict[str, dict[str, Any]] = {}
-    tools: dict[str, dict[str, Any]] = {}
-    for chunk in chunks:
-        match chunk['type']:
-            case 'start-step':
-                parts.append({'type': 'step-start'})
-            case 'text-start':
-                texts[chunk['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
-                parts.append(texts[chunk['id']])
-            case 'text-delta':
-                texts[chunk['id']]['text'] += chunk['delta']
-            case 'text-end':
-                texts[chunk['id']]['state'] = 'done'
-            case 'tool-input-available':
-                tools[chunk['toolCallId']] = {
-                    'type': f'tool-{chunk["toolName"]}',
-                    'toolCallId': chunk['toolCallId'],
-                    'state': 'input-available',
-                    'input': chunk['input'],
-                }
-                parts.append(tools[chunk['toolCallId']])
-            case 'tool-output-available':
-                tools[chunk['toolCallId']].update(state='output-available', output=chunk['output'])
-            case str(data_type) if data_type.startswith('data-') and not chunk.get('transient'):
-                parts.append({'type': data_type, 'id': chunk.get('id'), 'data': chunk['data']})
-            case _:
-                pass
-    return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
-
-
 def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
     """Message boundaries, part kinds and content, without the IDs and timestamps a reload re-mints."""
     return [
@@ -11847,13 +11809,13 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
 
 
 @pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
-async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+async def test_enqueued_messages_stream(manage_system_prompt: Literal['server', 'client']) -> None:
     """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
 
     They ride in a `data-enqueued-messages` part, which the AI SDK keeps on the assistant message without
-    rendering it, and load back as their own requests at the position they were delivered in. An enqueued
-    system prompt is only sent when the frontend owns the system prompt, since it would otherwise be
-    stripped on the way back in.
+    rendering it. An enqueued system prompt is only sent when the frontend owns the system prompt, since it
+    would otherwise be stripped on the way back in. That they load back as their own requests, at the
+    position they were delivered in, is checked with the real AI SDK client in `tests/ui_roundtrip`.
     """
 
     async def stream_function(
@@ -11880,12 +11842,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
         sdk_version=6,
         manage_system_prompt=manage_system_prompt,
     )
-    server_history: list[ModelMessage] = []
     chunks = [
         json.loads(encoded.removeprefix('data: '))
-        async for encoded in adapter.encode_stream(
-            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
-        )
+        async for encoded in adapter.encode_stream(adapter.run_stream())
         if '[DONE]' not in encoded
     ]
 
@@ -11924,32 +11883,6 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
     types = [chunk['type'] for chunk in chunks]
     assert types.index('tool-output-available') < types.index('data-enqueued-messages') < types.index('text-start')
 
-    client_ui = [user, _reduce_assistant_message(chunks, 'assistant-1')]
-    reloaded = VercelAIAdapter(
-        agent,
-        SubmitMessage(id='chat-1', messages=client_ui),
-        manage_system_prompt=manage_system_prompt,
-    )
-    loaded = reloaded.sanitize_messages(reloaded.messages)
-    if manage_system_prompt == 'server':
-        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
-        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
-            expected = sanitize_messages(server_history)
-    else:
-        expected = sanitize_messages(server_history, strip_system_prompts=False)
-    assert _model_visible(loaded) == _model_visible(expected)
-    assert _model_visible(loaded) == [
-        ('request', [('user-prompt', 'Go')]),
-        ('response', [('tool-call', {})]),
-        ('request', [('tool-return', 'started')]),
-        ('request', [('user-prompt', 'Background result: 42')]),
-        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
-        # An enqueued response stays its own message: the model's next text doesn't extend it.
-        ('response', [('text', 'Synthetic reply')]),
-        ('request', [('user-prompt', 'Synthetic follow-up')]),
-        ('response', [('text', 'done')]),
-    ]
-
 
 async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> None:
     """A standalone stream defaults to a server-owned system prompt and keeps it off the wire.
@@ -11970,6 +11903,40 @@ async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> 
         for chunk in chunks
         if isinstance(chunk, DataChunk)
     ] == [[('assistant', 'synthetic'), ('user', 'visible')]]
+
+
+def test_enqueued_messages_after_tool_result_load_after_it() -> None:
+    """Enqueued messages the stream delivered after a step's tool result load after that result.
+
+    This is the shape the AI SDK builds from the stream; `tests/ui_roundtrip` checks it with the real client.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')]),
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                StepStartUIPart(),
+                ToolOutputAvailablePart(type='tool-work', tool_call_id='work-1', input={}, output='started'),
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [{'id': 'bg', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Background'}]}]
+                    },
+                ),
+                StepStartUIPart(),
+                TextUIPart(text='done'),
+            ],
+        ),
+    ]
+
+    assert _model_visible(VercelAIAdapter.load_messages(ui_messages)) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background')]),
+        ('response', [('text', 'done')]),
+    ]
 
 
 def test_enqueued_messages_keep_their_own_message_ids() -> None:
