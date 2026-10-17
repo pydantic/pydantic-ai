@@ -42,6 +42,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
 | [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
+| [Cloudflare Workers AI](cloudflare.md) | [Decision models](decision.md): Clef and Clef Flash | `cloudflare:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |

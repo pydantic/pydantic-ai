@@ -94,4 +94,6 @@
 
 ::: pydantic_ai.providers.system_one.SystemOneProvider
 
+::: pydantic_ai.providers.cloudflare.CloudflareProvider
+
 ::: pydantic_ai.providers.zai.ZaiProvider

@@ -284,6 +284,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
     """
 
@@ -533,6 +534,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
     """
 
@@ -669,6 +671,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe
     * System One
+    * Cloudflare Clef
     * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
