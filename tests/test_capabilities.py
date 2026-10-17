@@ -3301,6 +3301,21 @@ def test_ordering_mixed_positions_in_nested():
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
+def test_ordering_named_nested_combined_is_one_unit():
+    """A nested `CombinedCapability` with an `id` is kept whole and sorted by its members' merged ordering."""
+    plain = PlainCapA()
+    named = CombinedCapability([PlainCapB(), OutermostCap()], id='group')
+    combined = CombinedCapability([plain, named])
+    assert list(combined.capabilities) == [named, plain]
+
+    visited: list[AbstractCapability[Any]] = []
+    combined.apply(visited.append)
+    assert visited == [named, *named.capabilities, plain]
+
+    with pytest.raises(UserError, match='Conflicting positions among nested leaves'):
+        CombinedCapability([CombinedCapability([OutermostCap(), InnermostCap()], id='group'), PlainCapA()])
+
+
 def test_ordering_conflicting_positions_in_custom_nested_capability():
     """A custom capability tree cannot collapse outermost and innermost leaves into one ordered group."""
 

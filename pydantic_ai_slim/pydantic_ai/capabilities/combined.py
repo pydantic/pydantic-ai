@@ -41,6 +41,7 @@ from .abstract import (
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
+    _combination_roots,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -57,6 +58,11 @@ if TYPE_CHECKING:
 class CombinedCapability(AbstractCapability[AgentDepsT]):
     """A capability that combines multiple capabilities.
 
+    Give it an `id` to make the group a capability in its own right: it can then be deferred with
+    `defer_loading=True` (loading it activates every child at once) and replaced by a run-level
+    capability with the same `id`. Without an `id`, a nested `CombinedCapability` is only a grouping,
+    and its children are merged into the enclosing one.
+
     When any child returns a fresh instance from
     [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
     [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the container is rebound
@@ -69,7 +75,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     """
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    # Combined capabilities are flattened for hook/tool ordering, but public instruction overrides
+    # Unnamed combined capabilities are flattened for hook/tool ordering, but public instruction overrides
     # belong to the container itself and therefore need a composition view that retains it.
     _instruction_sources: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
@@ -80,6 +86,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             if (
                 isinstance(capability, CombinedCapability)
+                and not capability._registers_itself
                 and type(capability).get_instructions is CombinedCapability.get_instructions
             ):
                 # Its own view, not its `capabilities`: those have already been flattened, so any
@@ -92,6 +99,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 instruction_sources.append(capability)
         self._instruction_sources = instruction_sources
         self.__normalize_capabilities()
+
+    @property
+    def _registers_itself(self) -> bool:
+        """Whether this container is a capability in its own right rather than a plain grouping.
+
+        A container with an `id` can be loaded, replaced and addressed as a whole, so it is
+        registered itself and an enclosing container keeps it as one child instead of flattening
+        its children into its own list. A deferred one is kept too even without an `id`, so the
+        run rejects the missing `id` rather than silently merging its children in, undeferred.
+        """
+        return self.id is not None or self.defer_loading is True
 
     def _rebound(
         self,
@@ -160,21 +178,22 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
     def __normalize_capabilities(self) -> None:
-        # Splat any nested `CombinedCapability` so leaves participate as siblings in the
-        # outer ordering pass. Without this, a nested `CombinedCapability` whose leaves
-        # span both `outermost` and `innermost` tiers would force `_effective_ordering`
-        # to merge them into a single position and raise `Conflicting positions`.
+        # Splat any nested plain grouping so leaves participate as siblings in the outer
+        # ordering pass. Without this, a nested `CombinedCapability` whose leaves span both
+        # `outermost` and `innermost` tiers would force `_effective_ordering` to merge them
+        # into a single position and raise `Conflicting positions`. A container that registers
+        # itself is kept whole and ordered as one, as a wrapper is.
         flat: list[AbstractCapability[AgentDepsT]] = []
         for cap in self.capabilities:
-            if isinstance(cap, CombinedCapability):
-                flat.extend(cap.capabilities)
-            else:
-                flat.append(cap)
+            flat.extend(_combination_roots(cap))
         self.capabilities = flat
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        # Like a wrapper, it is registered itself, ahead of its children.
+        if self._registers_itself:
+            visitor(self)
         for cap in self.capabilities:
             cap.apply(visitor)
 
@@ -188,6 +207,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
         for the tree-walking contract.
         """
+        if self._registers_itself and (replacement := visitor(self)) is not self:
+            # Replacing or removing it takes its children with it, as for a wrapper.
+            return replacement
         new_caps: list[AbstractCapability[AgentDepsT]] = []
         # `_rebound` needs to know which children were removed, not just which survived, so the
         # composition view can drop them too; a positional pairing can't express a removal.
