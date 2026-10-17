@@ -289,9 +289,7 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
 _RETRY_CAUSES: tuple[ToolRetryCause, ...] = get_args(ToolRetryCause)
 
 
-def parse_retry_cause(
-    value: object,
-) -> ToolRetryCause | None:
+def parse_retry_cause(value: object) -> ToolRetryCause | None:
     """Read a retried tool return's `cause` claim from a client-echoed metadata channel.
 
     The claim is untrusted coming back in, so anything that isn't one of the known causes reads as
