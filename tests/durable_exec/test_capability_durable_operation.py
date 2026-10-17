@@ -2263,7 +2263,9 @@ async def test_file_understanding_describes_through_the_engine() -> None:
         capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe)), RecordingDurability()],
     )
 
-    await agent.run([DocumentUrl('https://example.com/guide.pdf')])
+    result = await agent.run([DocumentUrl('https://example.com/guide.pdf')])
+    # The describing request crossed the durable boundary and still counts toward the run's usage.
+    assert result.usage.requests == 2
 
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None

@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, assert_never, cast, get_args, overload
+from typing import Any, ClassVar, Literal, Never, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -1231,6 +1231,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
+    _sends_video_input: ClassVar[bool] = False
+    """Whether this class's prompt mapping sends video. Chat Completions has no video part, so a model's own
+    `supports_video_input` (Gemma's, say, served through vLLM) is overridden unless a subclass maps one."""
+
     def __init__(
         self,
         model_name: OpenAIModelName,
@@ -1329,6 +1333,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_document_input', True):
             # So that `FileUnderstanding` and other readers of the generic flag see the same answer.
             _profile = merge_profile(_profile, ModelProfile(supports_document_input=False))
+        if not self._sends_video_input:
+            _profile = merge_profile(_profile, ModelProfile(supports_video_input=False))
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
@@ -2499,7 +2505,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:
-        profile = cast(OpenAIModelProfile, super().profile)
+        # The Responses API has no video input, so a model family's own `supports_video_input` doesn't hold here.
+        profile = cast(OpenAIModelProfile, merge_profile(super().profile, ModelProfile(supports_video_input=False)))
         # A model can be more capable on the Responses API than on Chat Completions, and the two
         # share one profile: DeepSeek honors `text.format` of type `json_schema` here while its
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.

@@ -75,6 +75,8 @@ with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -1068,9 +1070,7 @@ def test_bedrock_amazon_titan():
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_cohere_command():
     profile = BedrockProvider.model_profile('cohere.command-r-plus-v1:0')
-    assert _normalize(profile) == snapshot(
-        {'supports_image_input': False, 'supports_document_input': False, 'supported_native_tools': frozenset()}
-    )
+    assert _normalize(profile) == snapshot({'supported_native_tools': frozenset()})
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
@@ -1751,8 +1751,6 @@ def test_azure_cohere_prefix():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_image_input': False,
-            'supports_document_input': False,
             'openai_chat_supports_document_input': False,
         }
     )
@@ -1788,6 +1786,7 @@ def test_groq_moonshotai_kimi():
             'groq_supports_graded_reasoning_effort': False,
             'supports_json_schema_output': True,
             'supports_document_input': False,
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1803,6 +1802,7 @@ def test_groq_meta_llama4_maverick():
         {
             'supports_thinking': True,
             'supports_document_input': False,
+            'supports_video_input': False,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'groq_supports_graded_reasoning_effort': False,
@@ -1820,6 +1820,7 @@ def test_groq_meta_llama3_no_overlay():
         {
             'groq_supports_reasoning_disable': False,
             'supports_document_input': False,
+            'supports_video_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
@@ -1836,6 +1837,7 @@ def test_groq_deepseek():
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
             'supports_document_input': False,
+            'supports_video_input': False,
             'groq_supports_graded_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supports_inline_system_prompts': True,
@@ -1860,6 +1862,7 @@ def test_groq_gpt_oss():
             ),
             'supports_inline_system_prompts': True,
             'supports_document_input': False,
+            'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
         }
@@ -1978,6 +1981,24 @@ def test_vllm_qwen_hf_namespace():
             'native_output_requires_schema_in_instructions': True,
         }
     )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_gemma_video_is_up_to_the_model_class():
+    """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
+
+    The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
+    """
+    assert VLLMProvider.model_profile('google/gemma-3-27b-it')['supports_video_input'] is True
+    provider = VLLMProvider(base_url='http://localhost:8000/v1', api_key='test')
+    chat = OpenAIChatModel('google/gemma-3-27b-it', provider=provider)
+    responses = OpenAIResponsesModel('google/gemma-3-27b-it', provider=provider)
+    openrouter = OpenRouterModel('google/gemma-3-27b-it', provider=OpenRouterProvider(api_key='test'))
+    assert {
+        'chat': chat.profile.get('supports_video_input'),
+        'responses': responses.profile.get('supports_video_input'),
+        'openrouter': openrouter.profile.get('supports_video_input'),
+    } == snapshot({'chat': False, 'responses': False, 'openrouter': True})
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -2391,7 +2412,6 @@ def test_vercel_groq_gpt_oss():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_document_input': False,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'groq_supports_reasoning_disable': False,
