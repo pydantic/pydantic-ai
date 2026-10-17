@@ -6112,6 +6112,10 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         added('function_call', 'c2', 'item_c2', 'keep_me'),
         added('function_call_output', 'c2', 'item_o2'),
         added('function_call', 'c3', 'item_c3', 'drop_me'),
+        # The beta protocol's acknowledgement counts too.
+        json.dumps(
+            {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
+        ),
         # An output of a call this connection didn't see.
         added('function_call_output', 'c4', 'item_o4'),
     ]
@@ -6133,6 +6137,7 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         {'type': 'conversation.item.delete', 'item_id': content_item['id']},
     ]
     assert conn._prunes_tool_calls  # pyright: ignore[reportPrivateUsage]
+    assert 'c5' in conn._tool_items  # pyright: ignore[reportPrivateUsage]
     off = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
     await collect_codec_events(off)
     assert not off._prunes_tool_calls  # pyright: ignore[reportPrivateUsage]

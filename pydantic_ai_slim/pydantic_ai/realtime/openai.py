@@ -1021,7 +1021,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
-        if event_type == 'conversation.item.added':
+        if event_type in ('conversation.item.added', 'conversation.item.created'):
+            # (The beta protocol, which Azure's preview deployments speak, acknowledges items as created.)
             self._track_tool_item(data)
         self._lifecycle.before_frame(event_type, data)
         try:
