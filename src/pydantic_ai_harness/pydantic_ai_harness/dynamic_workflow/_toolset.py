@@ -722,7 +722,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
                 message = f'{message}: {exc}'
             raise RuntimeError(message) from exc
-        raise RuntimeError(f'sub-agent {agent_name!r} {reason}; a workflow script cannot resume it')
+        raise RuntimeError(
+            f'sub-agent {agent_name!r} {reason}; a workflow script cannot resume it, '
+            'so do the task another way, or without this sub-agent'
+        )
 
     def _build_type_check_stubs(self) -> str:
         """Render sub-agent signatures as stubs for Monty's static type checker.

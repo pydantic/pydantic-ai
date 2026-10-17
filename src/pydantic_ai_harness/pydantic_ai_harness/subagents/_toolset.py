@@ -158,8 +158,8 @@ class SubAgent(Generic[AgentDepsT]):
 
     on_failure: str | None = None
     """Steering message returned to the parent for any soft degradation of this
-    delegate (timeout, child failure, usage budget reached, call budget
-    exhausted), in place of the built-in default. Setting it also makes child
+    delegate (timeout, child failure, a child run ending with `DeferredToolRequests`,
+    usage budget reached, call budget exhausted), in place of the built-in default. Setting it also makes child
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
 
@@ -627,8 +627,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
-        Soft outcomes become a steering message the parent reads as a normal tool
-        result; a child's soft failure or contained crash becomes a `ModelRetry`
+        Soft outcomes (timeout, own usage budget, a child run that ended with
+        `DeferredToolRequests`) become a steering message the parent reads as a normal
+        tool result; a child's soft failure or contained crash becomes a `ModelRetry`
         the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds

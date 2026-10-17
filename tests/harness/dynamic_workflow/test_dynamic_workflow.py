@@ -1188,7 +1188,8 @@ async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> 
         await _run_script(ts, "await approver(task='x')")
     assert (
         "RuntimeError: sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval "
-        'or deferred tool results; a workflow script cannot resume it'
+        'or deferred tool results; a workflow script cannot resume it, so do the task another way, or without '
+        'this sub-agent'
     ) in str(exc_info.value)
 
 
@@ -1197,7 +1198,7 @@ async def test_sub_agent_ending_with_deferred_tool_requests_can_be_caught_in_san
     code = "try:\n    await approver(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
     assert await _run_script(ts, code) == snapshot(
         "sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or deferred tool "
-        'results; a workflow script cannot resume it'
+        'results; a workflow script cannot resume it, so do the task another way, or without this sub-agent'
     )
 
 
