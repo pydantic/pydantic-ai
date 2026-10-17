@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import base64
 import dataclasses
 import hashlib
-import html
 import mimetypes
 import os
 import warnings
@@ -53,6 +52,7 @@ from ._event_registry import (
     shadowed_envelope_fields as _shadowed_envelope_fields,
     undecorated_field_base as _undecorated_field_base,
 )
+from ._framing import TOOL_RESULT_TAG, close_tag, open_tag
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -1472,9 +1472,8 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     that accepts media in its tool result channel sends it there and never renders these at all.
     """
     return (
-        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}"'
-        f' file_id="{html.escape(file_identifier)}">',
-        '</tool_result>',
+        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier),
+        close_tag(TOOL_RESULT_TAG),
     )
 
 
