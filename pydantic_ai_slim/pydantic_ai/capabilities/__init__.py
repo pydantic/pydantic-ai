@@ -41,6 +41,7 @@ from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
+from .file_understanding import FileUnderstanding
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
@@ -79,6 +80,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         NativeTool,
         Caching,
         RaiseContentFilterError,
+        FileUnderstanding,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
@@ -134,6 +136,7 @@ __all__ = [
     'Caching',
     'Capability',
     'CAPABILITY_TYPES',
+    'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',

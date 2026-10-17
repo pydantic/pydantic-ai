@@ -98,7 +98,11 @@ class GroqProvider(Provider[AsyncGroq]):
         return merge_profile(
             profile,
             groq_model_profile(model_name),
-            ModelProfile(supports_inline_system_prompts=True),
+            # `GroqModel` refuses documents and video whatever the model reads: a fact about this adapter, not
+            # about the families above, which providers that do send them share.
+            ModelProfile(
+                supports_inline_system_prompts=True, supports_document_input=False, supports_video_input=False
+            ),
         )
 
     @overload
