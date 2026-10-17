@@ -30,7 +30,6 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -68,7 +67,7 @@ class Case:
     client: str
     expected: Callable[[_CacheControl], _Breakpoints]
     model_name: str = 'claude-sonnet-4-5'
-    profile: AnthropicModelProfile | Callable[[ModelProfile], ModelProfile] | None = None
+    profile: ModelProfile | Callable[[ModelProfile], ModelProfile] | None = None
 
 
 CASES = [
@@ -87,7 +86,7 @@ CASES = [
         'bedrock',
         _automatic,
         model_name='us.anthropic.claude-sonnet-4-6',
-        profile=AnthropicModelProfile(supports_auto_cache=True),
+        profile=ModelProfile(supports_auto_cache=True),
     ),
     Case(
         'bedrock-callable-profile-on',
@@ -104,7 +103,7 @@ CASES = [
         model_name='us.anthropic.claude-sonnet-4-6',
         profile=lambda default: default,
     ),
-    Case('api-profile-off', 'api', _last_block, profile=AnthropicModelProfile(supports_auto_cache=False)),
+    Case('api-profile-off', 'api', _last_block, profile=ModelProfile(supports_auto_cache=False)),
     Case(
         'api-callable-profile-off',
         'api',
