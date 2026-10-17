@@ -654,6 +654,8 @@ class Remote:
             items=history_items(saved.messages),
             openable=openable,
             missing=self.catalog.follows_workspace and not openable,
+            # As in the sidebar, checking another process can spawn a program.
+            busy=saved.summary.outcome == 'running' and await to_thread.run_sync(_busy, saved.summary),
         )
 
     def _continuable(self, workspace: str) -> bool:
