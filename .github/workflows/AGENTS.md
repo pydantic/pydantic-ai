@@ -7,7 +7,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
@@ -232,8 +232,10 @@ with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
 `TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
 window, and unit `6` / number `1` is the weekly window. `percentage` is the
 percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. A missing or malformed required window makes health unknown
-and keeps agent workflows gated. No quota-resource repository variable is needed.
+epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
+a missing reset field or a null reset with consumed quota is invalid. A missing
+or malformed required window makes health unknown and keeps agent workflows
+gated. No quota-resource repository variable is needed.
 
 Unknown quota results may include one of these fixed diagnostic categories:
 `missing_api_key`, `invalid_request`, `http_error`, `timeout`, `tls_error`, `network_error`,
@@ -276,8 +278,8 @@ Resolve closed-PR tasks as retired only after API verification and representativ
 workflow recovery. Record why each task is retired. Do not describe retired tasks as
 same-target recoveries.
 
-Unknown or malformed quota, missing reset time, and credential or configuration
-incidents need operator attention rather than automatic recovery.
+Unknown or malformed quota, missing incident reset time, and credential or
+configuration incidents need operator attention rather than automatic recovery.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
