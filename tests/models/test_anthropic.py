@@ -64,6 +64,8 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     ToolAvailabilityDeltaPart,
     ToolReturn,
     ToolSearchCallPart,
@@ -939,7 +941,11 @@ def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> 
 
 
 def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
-    """The legacy Bedrock InvokeModel API doesn't support `bm25`, so the default strategy is `regex` there."""
+    """An unset strategy resolves to `regex` on the legacy Bedrock InvokeModel API.
+
+    Pins the outgoing tool parameter directly, which a cassette's default matchers wouldn't catch. An explicit
+    `bm25` is covered by `test_anthropic_tool_search_bm25_on_legacy_bedrock`.
+    """
     base_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
     param = _tool_search_param(AsyncAnthropicBedrock, base_url, ToolSearchTool())
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
@@ -948,26 +954,159 @@ def test_anthropic_tool_search_defaults_to_regex_on_legacy_bedrock():
     assert param == {'type': 'tool_search_tool_regex_20251119', 'name': 'tool_search_tool_regex'}
 
 
-def test_anthropic_tool_search_bm25_rejected_on_legacy_bedrock():
-    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API is a `UserError`, not an opaque 400."""
-    m = AnthropicModel(
-        'claude-haiku-4-5',
-        provider=AnthropicProvider(
-            anthropic_client=mock_anthropic_client(
-                AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'
-            )
-        ),
+@pytest.mark.vcr()
+async def test_anthropic_tool_search_bm25_on_legacy_bedrock(
+    allow_model_requests: None, request_capture: RequestCapture
+):
+    """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API sends the `bm25` variant and replays it as recorded.
+
+    InvokeModel accepts `tool_search_tool_bm25_20251119` without a beta header:
+    https://github.com/pydantic/pydantic-ai/issues/9911. The second run replays the first run's search.
+    """
+    # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore`, which only ships under the `bedrock` extra.
+    pytest.importorskip('botocore')
+
+    from anthropic import AsyncAnthropicBedrock
+
+    client = AsyncAnthropicBedrock(
+        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
+        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
+        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        aws_region='us-east-1',
+        http_client=request_capture.client,
     )
-    with pytest.raises(
-        UserError, match="ToolSearch\\(strategy='bm25'\\) is not supported by the `AsyncAnthropicBedrock` client"
-    ):
-        m._add_native_tools(  # pyright: ignore[reportPrivateUsage]
-            [], ModelRequestParameters(native_tools=[ToolSearchTool(strategy='bm25')]), AnthropicModelSettings()
+    agent = Agent(
+        AnthropicModel('us.anthropic.claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)),
+        capabilities=[ToolSearch(strategy='bm25')],
+    )
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f'Sunny, 21C in {city}'
+
+    @agent.tool_plain(defer_loading=True)
+    def search_files(query: str) -> str:
+        """Search through files in the workspace."""
+        return 'No files found.'
+
+    result = await agent.run('What is the weather in Paris?')
+    await agent.run('Now search my files for the quarterly report.', message_history=result.all_messages())
+
+    bodies = request_capture.bodies()
+    assert [body.get('anthropic_beta') for body in bodies] == [None, None, None, None]
+    assert [
+        [tool for tool in json_objects(body['tools']) if str(tool['name']).startswith('tool_search_tool_')]
+        for body in bodies
+    ] == snapshot(
+        [
+            [{'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}],
+            [{'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}],
+            [{'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}],
+            [{'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}],
+        ]
+    )
+    assert content_blocks(bodies[-1], 'server_tool_use') == snapshot(
+        [
+            {
+                'id': 'srvtoolu_bdrk_01Tg8SnCY2u9tPguiJz7RsNS',
+                'type': 'server_tool_use',
+                'name': 'tool_search_tool_bm25',
+                'input': {'query': 'weather'},
+            },
+            {
+                'id': 'srvtoolu_bdrk_01Cb5xF4nXEPyjntbiTBBNed',
+                'type': 'server_tool_use',
+                'name': 'tool_search_tool_bm25',
+                'input': {'query': 'search files'},
+            },
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'strategy,expected',
+    [
+        pytest.param(
+            None,
+            {'name': 'tool_search_tool_regex', 'input': {'pattern': 'weather forecast'}},
+            id='unset',
+        ),
+        pytest.param(
+            'regex',
+            {'name': 'tool_search_tool_regex', 'input': {'pattern': 'weather forecast'}},
+            id='regex',
+        ),
+        pytest.param(
+            'bm25',
+            {'name': 'tool_search_tool_bm25', 'input': {'query': 'weather forecast'}},
+            id='bm25',
+        ),
+    ],
+)
+async def test_anthropic_legacy_bedrock_bm25_history_replay(
+    allow_model_requests: None, strategy: Literal['bm25', 'regex'] | None, expected: dict[str, JsonValue]
+):
+    """On `AsyncAnthropicBedrock`, a recorded `bm25` search replays as `regex` unless the request sends `bm25` explicitly.
+
+    The history stands in for one recorded on another Anthropic transport. A mock transport stands in for a
+    cassette because the claim is the replayed request, not the response.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(
+            AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client)),
+            capabilities=[ToolSearch(strategy=strategy)],
         )
+
+        @agent.tool_plain(defer_loading=True)
+        def get_weather(city: str) -> str:
+            raise NotImplementedError
+
+        history: list[ModelMessage] = [
+            ModelRequest.user_text_prompt('What is the weather in Paris?'),
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather forecast']},
+                        tool_call_id='srvtoolu_1',
+                        provider_name='anthropic',
+                        provider_details={'strategy': 'bm25'},
+                    ),
+                    NativeToolSearchReturnPart(
+                        tool_call_id='srvtoolu_1',
+                        provider_name='anthropic',
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                    ),
+                ],
+                provider_name='anthropic',
+            ),
+        ]
+        with pytest.raises(ModelHTTPError):
+            await agent.run('And in Rome?', message_history=history)
+
+    [body] = bodies
+    assert [{key: block[key] for key in ('name', 'input')} for block in content_blocks(body, 'server_tool_use')] == [
+        expected
+    ]
 
 
 def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
-    """`bm25` stays the default on clients not in `_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS` —
+    """`bm25` stays the default on clients not in `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS` —
     e.g. the (Messages-API-based) Bedrock Mantle client, like the direct Anthropic API."""
     param = _tool_search_param(
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
