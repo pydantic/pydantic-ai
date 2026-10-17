@@ -9,11 +9,13 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, SupportsIndex, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
+from ._utils import fill_run_metadata
 from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
+    EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -28,7 +30,9 @@ from .messages import (
 )
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .messages import UserContent
+    from .models import ModelRequestContext
 
 
 PendingMessagePriority: TypeAlias = Literal['asap', 'when_idle']
@@ -205,3 +209,52 @@ class PendingMessageQueue(list[PendingMessage]):
         selected = [pending for pending in self if pending.priority == priority]
         self[:] = [pending for pending in self if pending.priority != priority]
         return selected
+
+
+def stamped_messages(
+    pending: PendingMessage,
+    *,
+    fallback_run_id: str | None,
+    fallback_conversation_id: str | None,
+) -> list[ModelMessage]:
+    """Stamp a pending message's messages' `timestamp` / `run_id` / `conversation_id` where unset.
+
+    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
+    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
+    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
+    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
+    are preserved.
+    """
+    messages: list[ModelMessage] = []
+    for message in pending.messages:
+        fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
+        messages.append(message)
+    return messages
+
+
+def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
+    """The run's pending-message queue.
+
+    Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec guards,
+    synthetic contexts) never reach the code that drains it.
+    """
+    queue = ctx.pending_messages
+    assert isinstance(queue, PendingMessageQueue)
+    return queue
+
+
+def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+    """Deliver the queued `'asap'` messages into the request being prepared.
+
+    Each drained request is appended to both `request_context.messages` (so the model sees it this
+    step) and `ctx.messages` (so it persists in the agent's message history), and one
+    [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
+    [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the messages
+    exactly as delivered.
+    """
+    for pending in run_queue(ctx).pop_priority('asap'):
+        messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
+        request_context.messages = [*request_context.messages, *messages]
+        ctx.messages.extend(messages)
+        ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
+    return request_context
