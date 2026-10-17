@@ -1127,6 +1127,18 @@ async def test_a_process_plugin_is_built_once_and_hears_every_session(tmp_path: 
     assert a.text.count('shared stopped') == 1 and a.text.endswith('shared stopped eof\n')
 
 
+async def test_live_sessions_tell_listeners_when_one_joins_or_leaves(tmp_path: Path) -> None:
+    a, b = two_sessions(tmp_path)
+    live = a.loader.process.live
+    heard: list[list[str]] = []
+    live.subscribe(lambda: heard.append([session.id for session in live.listing()]))
+    await a.loader.load_all()
+    await b.loader.load_all()
+    await a.loader.close('exit')
+    await a.loader.close('exit')
+    assert heard == [['a'], ['a', 'b'], ['b']]
+
+
 async def test_a_process_plugin_ends_once_every_running_turn_is_over(tmp_path: Path) -> None:
     a, b = two_sessions(tmp_path)
     (a.store.plugins_dir / 'shared.py').write_text(SHARED)

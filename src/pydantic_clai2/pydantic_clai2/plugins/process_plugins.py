@@ -376,10 +376,13 @@ class ProcessPlugins(Generic[DepsT]):
         """Count `session` among the live ones, so it follows changes and gets process-scoped plugins."""
         if session not in self._sessions:
             self._sessions.append(session)
+            self.live.changed(session.live_session)
 
     def leave(self, session: 'SessionPlugins[DepsT]') -> None:
         """Stop counting `session` among the live ones."""
-        self._sessions = [joined for joined in self._sessions if joined is not session]
+        if session in self._sessions:
+            self._sessions = [joined for joined in self._sessions if joined is not session]
+            self.live.changed(session.live_session)
 
     def loading(self, name: str) -> Lock:
         """Held while a session loads `name`, so sessions load it one at a time and build a process plugin once."""
