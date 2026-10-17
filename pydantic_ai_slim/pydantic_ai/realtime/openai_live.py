@@ -61,6 +61,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ModelResponsePart,
     MultiModalContent,
     PartEndEvent,
@@ -79,6 +80,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
+from ..models._speech import assistant_speech_text
 from ..models.openai import (
     OpenAIResponsesModel,
     _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
@@ -470,15 +472,17 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     return None
 
 
-def _seed_response_part(part: ModelResponsePart) -> tuple[_SeedRole, str] | None:
-    """The role and text a response part seeds as, or `None` when it carries nothing replayable.
+def _seed_response_part(message: ModelResponse, index: int) -> tuple[_SeedRole, str] | None:
+    """The role and text the part at `index` of `message` seeds as, or `None` when it carries nothing replayable.
 
-    Thinking is bound to the session that produced it: its text is replayable, its signature is not.
+    Thinking is bound to the session that produced it: its text is replayable, its signature is not. Speech is
+    its transcript, marked where a barge-in cut it off.
     """
+    part = message.parts[index]
     if isinstance(part, TextPart):
         return 'assistant', part.content
     if isinstance(part, SpeechPart):
-        return 'assistant', part.transcript or ''
+        return 'assistant', assistant_speech_text(message, index) if part.transcript else ''
     if isinstance(part, ThinkingPart):
         return 'assistant', part.content
     if isinstance(part, ToolCallPart):
@@ -500,7 +504,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:
-            seeded_parts = [_seed_response_part(part) for part in message.parts]
+            seeded_parts = [_seed_response_part(message, index) for index in range(len(message.parts))]
         for seeded in seeded_parts:
             if seeded is not None and (item := _seed_item(*seeded)) is not None:
                 items.append(item)
@@ -534,6 +538,9 @@ async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name:
     """
     replayable = [replayable for message in messages if (replayable := without_media(message)) is not None]
     items = seed_input_items(replayable, provider_name=provider_name)
+    if not items:
+        # Nothing to cut to the caps: the redial needn't wait for the tokenizer to load (seconds, on first use).
+        return []
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     kept: list[dict[str, Any]] = []
     tokens = 0
@@ -1840,6 +1847,11 @@ class OpenAILiveModel(RealtimeModel):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Web search, which the delegated backend runs: the only native tool Live lets it have."""
         return frozenset({WebSearchTool})
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        # `WebSearchTool` is the only native tool Live supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
 
     @property
     def client(self) -> AsyncOpenAI:
