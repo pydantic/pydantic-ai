@@ -46,6 +46,31 @@ def _is_valid_xml_name(name: str) -> bool:
     return _XML_NAME_RE.fullmatch(name) is not None
 
 
+def _value_type(value: Any) -> str:
+    """JSON-style type name for `value`, used by `include_type_info` to make the output lossless."""
+    if value is None:
+        return 'null'
+    if isinstance(value, bool):
+        return 'boolean'
+    if isinstance(value, Enum):
+        return 'string'
+    if isinstance(value, int):
+        return 'integer'
+    if isinstance(value, float):
+        return 'number'
+    if isinstance(value, (str, bytes, bytearray, date, time, timedelta, Decimal, UUID)):
+        return 'string'
+    if isinstance(value, Mapping):
+        return 'object'
+    if is_dataclass(value) and not isinstance(value, type):
+        return 'object'
+    if isinstance(value, BaseModel):
+        return 'object'
+    if isinstance(value, Iterable):
+        return 'array'
+    return 'string'
+
+
 def format_as_xml(
     obj: Any,
     root_tag: str | None = None,
@@ -53,6 +78,7 @@ def format_as_xml(
     none_str: str = 'null',
     indent: str | None = '  ',
     include_field_info: Literal['once'] | bool = False,
+    include_type_info: bool = False,
 ) -> str:
     """Format a Python object as XML.
 
@@ -73,6 +99,10 @@ def format_as_xml(
             `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are
             `title` and `description`. If a field is repeated in the data (e.g. in a list) by setting `once`
             the attributes are included only in the first occurrence of an XML element relative to the same field.
+        include_type_info: Whether to add a `type` attribute to every element describing the value's type
+            (`null`, `boolean`, `integer`, `number`, `string`, `object` or `array`). Without it the XML is lossy:
+            `None` and the string `'null'`, `3` and `'3'`, and `{}` and `[]` all render the same. Defaults to
+            `False` so existing output is unchanged.
 
     Returns:
         XML representation of the object.
@@ -96,10 +126,16 @@ def format_as_xml(
         item_tag=item_tag,
         none_str=none_str,
         include_field_info=include_field_info,
+        include_type_info=include_type_info,
     ).to_xml(root_tag)
     if root_tag is None and el.text is None:
+        elements = list(_rootless_xml_elements(el, indent))
+        if not elements and include_type_info:
+            # An empty mapping or iterable has no children, so keep the (self-closing) element
+            # itself; otherwise `{}` and `[]` would both serialize to an empty string.
+            return ElementTree.tostring(el, encoding='unicode')
         join = '' if indent is None else '\n'
-        return join.join(_rootless_xml_elements(el, indent))
+        return join.join(elements)
     else:
         if indent is not None:
             ElementTree.indent(el, space=indent)
@@ -112,6 +148,7 @@ class _ToXml:
     item_tag: str
     none_str: str
     include_field_info: Literal['once'] | bool
+    include_type_info: bool = False
     # a map of Pydantic and dataclasses Field paths to their metadata:
     # a field unique string representation and its class
     _fields_info: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] = field(
@@ -130,6 +167,8 @@ class _ToXml:
 
     def _to_xml(self, value: Any, path: str, tag: str | None = None) -> ElementTree.Element:
         element = self._create_element(self.item_tag if tag is None else tag, path)
+        if self.include_type_info:
+            element.set('type', _value_type(value))
         if self._set_scalar_text(element, value):
             return element
         if isinstance(value, Mapping):

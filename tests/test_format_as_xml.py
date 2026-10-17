@@ -657,6 +657,42 @@ def test_valid_key_name_still_becomes_tag(key: str):
     assert root[0].text == '1'
 
 
+def test_include_type_info_makes_output_lossless():
+    # `None`/`'null'`, `3`/`'3'` and `{}`/`[]` are indistinguishable without type info.
+    xml = format_as_xml(
+        {'a': None, 'b': 'null', 'c': 3, 'd': '3', 'e': {}, 'f': []},
+        root_tag='r',
+        include_type_info=True,
+    )
+    assert xml == snapshot("""\
+<r type="object">
+  <a type="null">null</a>
+  <b type="string">null</b>
+  <c type="integer">3</c>
+  <d type="string">3</d>
+  <e type="object" />
+  <f type="array" />
+</r>\
+""")
+
+
+def test_include_type_info_empty_containers_without_root():
+    # Without a root tag an empty container has no children, so its element must be kept.
+    assert format_as_xml({}, include_type_info=True) == snapshot('<item type="object" />')
+    assert format_as_xml([], include_type_info=True) == snapshot('<item type="array" />')
+
+
+def test_include_type_info_off_by_default():
+    xml = format_as_xml({'a': None, 'b': 3, 'c': []}, root_tag='r')
+    assert xml == snapshot("""\
+<r>
+  <a>null</a>
+  <b>3</b>
+  <c />
+</r>\
+""")
+
+
 def test_parse_invalid_value():
     class Invalid(BaseModel):
         name: str = Field(default='Alice', title='Name')
