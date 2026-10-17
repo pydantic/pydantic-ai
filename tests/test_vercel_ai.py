@@ -17,7 +17,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
@@ -4543,6 +4543,16 @@ async def _stream_then_block(_messages: list[ModelMessage], _info: AgentInfo) ->
     raise AssertionError('unreachable')  # pragma: no cover
 
 
+async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+    yield 'partial'
+    ctx = get_current_run_context()
+    assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+    ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+    await asyncio.Event().wait()
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
 async def test_run_stream_native_timeout():
     adapter = VercelAIAdapter(
         Agent(model=FunctionModel(stream_function=_stream_then_block)),
@@ -4579,8 +4589,8 @@ async def test_adapter_dispatch_request_timeout():
 
     response = await VercelAIAdapter.dispatch_request(
         request,
-        agent=Agent(model=FunctionModel(stream_function=_stream_then_block)),
-        timeout=0.05,
+        agent=Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        timeout=60,
         on_cancel=cancelled.append,
     )
     assert isinstance(response, StreamingResponse)
@@ -4620,7 +4630,7 @@ async def test_adapter_dispatch_request_timeout():
             ModelResponse(
                 parts=[TextPart(content='partial')],
                 usage=RequestUsage(output_tokens=1, input_tokens=50),
-                model_name='function::_stream_then_block',
+                model_name='function::_stream_then_time_out',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id='foo',
