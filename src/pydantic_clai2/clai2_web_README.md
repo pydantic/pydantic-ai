@@ -12,14 +12,16 @@ show it. The page follows `/theme`, and the sidebar's footer picks a theme too. 
 ends the web UI; `/web status` shows its address.
 
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
-the address, opens it, and logs the conversation to the terminal until Ctrl-C. There, each
-session runs in its own directory. Opening a session saved elsewhere moves CLAI there before its
-next turn, with that directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if
-CLAI had started there. **New session** asks where the session runs: a project or worktree from
-the sidebar, by default the current one, or any directory by its absolute path
-(`/workspace DIRECTORY` in the composer does the same). The header shows where the session works.
-`clai2 --web --resume ID` starts in that session's directory. Nothing moves while a turn, a
-background `/fork`, or a delegated task runs. The launch directory's `.env` stays loaded.
+the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
+ends every session. There, each session you open is live in its own directory, with that
+directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
+there; CLAI's own working directory never changes. **New session** asks where the session runs: a
+project or worktree from the sidebar, by default the current one, or any directory by its absolute
+path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
+session moves that session instead, never while a turn, a background `/fork`, or a delegated task
+runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
+an hour, with nothing running or queued and no browser showing it, closes, except the one CLAI
+started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
@@ -276,13 +278,15 @@ answers its questions, and reports back. It destroys a workspace only after you 
 ID** when it asked, in its chat. It also finds the saved sessions of every project and cleans them
 up by archiving them ("archive every session older than 3 days"), which you can undo. No tool
 deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which
-the chat offers to do in one click, and uses the session's model. Its conversation is kept across
+the chat offers to do in one click, and uses the saved default model, the one a new session starts
+with (`/set model NAME` changes it). Its conversation is kept across
 reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
 
 ## Several live sessions
 
-`clai2 --web` keeps every session you open live in the one CLAI process: each runs its own turns in
+The web UI (`clai2 --web`, or `/web` from a terminal) keeps every session you open live in the one
+CLAI process: each runs its own turns in
 its own folder, with its own plugins and input queue, while the others run theirs. The page watches
 the sessions it shows over its one WebSocket.
 
@@ -329,8 +333,8 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
 the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
-opens no other sessions (`/web` from a terminal), both switch the one session instead, with `/resume`
-or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
+with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged.
 
 A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:

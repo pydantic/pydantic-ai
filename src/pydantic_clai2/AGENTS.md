@@ -130,8 +130,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   commands, and runs set it); its other attributes are the loading session's.
   `restart` keeps it. A process plugin that includes a session plugin (`web` and
   `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
-  `LiveSessions` protocols are exported for third-party plugins; their `PLUGINS.md`
-  contract lands with the multi-session docs, so keep them stable meanwhile.
+  `LiveSession`/`LiveSessions` protocols are public: `PLUGINS.md`'s "Several live
+  sessions" is their contract, with the six rules every plugin follows. Change them
+  as public API, and update that section in the same PR.
 - **A process holds many live sessions; a conversation is live in one.**
   `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
   adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
@@ -146,6 +147,19 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
   every live session (`CommandContext.adopt`) unless its project file sets it.
   There is no turn cap.
+- **Per session on `SessionRuntime`, per process on `ClaiProcess`; never the other
+  way.** `ClaiProcess` (`runtime/process.py`) holds what exists once: the stores,
+  `ProcessPlugins`, the task owner and router, the namer, the Codex providers, and
+  `live`. `SessionRuntime` (`runtime/session_runtime.py`) holds what each live session
+  has: its `Session`, commands, `SessionPlugins`, status, interrupts, input queue,
+  forks, and folder (`Session.workspace`, which plugins read as `host.workspace`).
+  `Terminal` holds what only the terminal has, whichever session it shows.
+  A per-session value on `ClaiProcess` leaks between sessions; a process value on a
+  runtime is built twice or closes with one session. Module-level mutable state is
+  process state too, so keep it off modules. Never call `os.chdir` or read
+  `Path.cwd()` for a session's folder after startup: pass `Session.workspace` (or
+  `host.workspace`). `Path.cwd` stays only as the default of hosts built outside the
+  shell, and for `--worktree` setup and cleanup around the session.
 - **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
   owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
   history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
