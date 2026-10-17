@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1166,10 +1165,10 @@ class TestReminder:
         'tool_result',
         [
             ToolReturnPart('lookup', 'result', tool_call_id='c1'),
-            RetryPromptPart('try again', tool_name='lookup', tool_call_id='c1'),
+            ToolReturnPart('lookup', 'try again', tool_call_id='c1', outcome='retried'),
         ],
     )
-    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart | RetryPromptPart) -> None:
+    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart) -> None:
         """In a tool loop the breakpoint marks the tool results, the last content the next request keeps."""
         store = InMemoryPlanStore()
         await store.add_item(PlanItem(content='Do X'))

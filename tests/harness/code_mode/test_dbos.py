@@ -34,7 +34,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
@@ -132,7 +132,7 @@ def _gather_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo)
     last = messages[-1]
     assert isinstance(last, ModelRequest)
     for part in last.parts:
-        if isinstance(part, ToolReturnPart | RetryPromptPart):
+        if isinstance(part, ToolReturnPart):
             return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
     code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
     return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='gather')])

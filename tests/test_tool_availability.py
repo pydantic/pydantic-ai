@@ -9,6 +9,7 @@ its own module rather than an arbitrary slice.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -33,7 +34,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -66,6 +66,15 @@ _INVALID_WIRE_BOUNDARIES = [
 def _provider_response(parts: list[Any], provider_name: str | None) -> ModelResponse:
     """Build a response whose explicit provenance drives the retrospective evidence window."""
     return ModelResponse(parts=parts, provider_name=provider_name)
+
+
+def _iter_refusals(messages: Sequence[ModelMessage]) -> Iterator[ToolReturnPart]:
+    """The availability refusals in `messages`.
+
+    A refusal answers the call it refuses, so it arrives as that call's own result carrying
+    `outcome='retried'` rather than as a prompt of its own.
+    """
+    return (part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried')
 
 
 @pytest.mark.parametrize(('boundary', 'provider_name'), _INVALID_WIRE_BOUNDARIES)
@@ -186,7 +195,7 @@ async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
         return 'ran'
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(True for _ in iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+        if any(True for _ in _iter_refusals(messages)):
             return _provider_response([make_text_response('done').parts[0]], provider_name)
         return _provider_response([ToolCallPart(tool_name='guarded_tool', args={}, tool_call_id='g1')], provider_name)
 
@@ -212,7 +221,7 @@ async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
     executed = [
         part
         for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
-        if part.tool_name == 'guarded_tool'
+        if part.tool_name == 'guarded_tool' and part.outcome != 'retried'
     ]
     assert executed == []
     # The filter ran with the capability treated as active, and it removed the tool.
@@ -221,9 +230,9 @@ async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
     # dropped the load, so the prospective set does not name the capability. That gap is the whole
     # point — the filter has to follow whatever the gate authorizes from, not the narrower set.
     assert loaded_ids_seen[0] == snapshot([])
-    assert [
-        str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-    ] == snapshot(["Unknown tool name: 'guarded_tool'. Available tools: 'load_capability'"])
+    assert [str(part.content) for part in _iter_refusals(result.all_messages())] == snapshot(
+        ["Unknown tool name: 'guarded_tool'. Available tools: 'load_capability'"]
+    )
 
 
 async def test_compaction_inside_serving_response_does_not_reset_tool_evidence():
@@ -261,7 +270,7 @@ async def test_missing_provider_name_uses_agnostic_window():
     ]
 
     def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+        for part in _iter_refusals(messages):
             return make_text_response(str(part.content))
         return ModelResponse(parts=[ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')])
 
@@ -285,7 +294,7 @@ async def test_boundary_the_serving_provider_honored_still_hides_evidence():
     ]
 
     def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+        for part in _iter_refusals(messages):
             return _provider_response([make_text_response(str(part.content)).parts[0]], 'anthropic')
         return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], 'anthropic')
 
@@ -308,7 +317,7 @@ def _report_secret_op_outcome(messages: list[ModelMessage]) -> ModelResponse | N
     purpose, since proving the tool is callable again is the whole assertion. These tests catch an
     unwanted execution by asserting on the refusal instead.
     """
-    for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+    for part in _iter_refusals(messages):
         return make_text_response(f'BLOCKED: {part.content}')
     return None
 
@@ -322,7 +331,7 @@ def _call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelRespo
 
 def _call_bogus_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Call a tool that does not exist, then echo the retry that refuses it."""
-    for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+    for part in _iter_refusals(messages):
         return make_text_response(str(part.content))
     return ModelResponse(parts=[ToolCallPart(tool_name='bogus_op', args={}, tool_call_id='b1')])
 
@@ -416,7 +425,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         """
 
         def call_twice_then_report(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            refusals = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+            refusals = list(_iter_refusals(messages))
             if len(refusals) >= 2:
                 return make_text_response(f'refused {len(refusals)}x, still running')
             return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{len(refusals)}')])
@@ -425,7 +434,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         assert (await agent.run('hello')).output == snapshot('refused 2x, still running')
 
         def keep_calling(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            refusals = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+            refusals = list(_iter_refusals(messages))
             return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{len(refusals)}')])
 
         stubborn = Agent(FunctionModel(keep_calling), capabilities=[self._guarded_capability()])
@@ -449,7 +458,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
             )
             kinds[:] = [
                 'availability' if 'is not available yet' in str(part.content) else 'real'
-                for part in iter_message_parts(messages, ModelRequest, RetryPromptPart)
+                for part in _iter_refusals(messages)
             ]
             if not loaded and not kinds:
                 # Call before loading: refused for availability.
@@ -486,7 +495,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
 
         def keep_calling(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal refusals
-            refusals = len(list(iter_message_parts(messages, ModelRequest, RetryPromptPart)))
+            refusals = len(list(_iter_refusals(messages)))
             return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{refusals}')])
 
         toolset = FunctionToolset[Any]()
@@ -636,7 +645,7 @@ async def test_loaded_capability_tool_survives_a_stripped_reveal_marker() -> Non
     )
 
     assert result.output == 'EXECUTED'
-    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    refusals = [str(part.content) for part in _iter_refusals(result.all_messages())]
     assert refusals == []
 
 
@@ -686,7 +695,7 @@ async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> 
     )
 
     assert result.output == 'EXECUTED'
-    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    refusals = [str(part.content) for part in _iter_refusals(result.all_messages())]
     assert refusals == []
 
 

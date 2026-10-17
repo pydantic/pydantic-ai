@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -63,9 +63,10 @@ def invalid_then_valid_typed_argument_model(
 ) -> ModelResponse:
     del info
     parts = [part for message in messages for part in message.parts]
-    if any(isinstance(part, ToolReturnPart) for part in parts):
+    returns = [part for part in parts if isinstance(part, ToolReturnPart)]
+    if any(part.outcome != 'retried' for part in returns):
         return ModelResponse(parts=[TextPart('typed arguments recovered')])
-    due = '2026-09-15' if any(isinstance(part, RetryPromptPart) for part in parts) else 'not-a-date'
+    due = '2026-09-15' if returns else 'not-a-date'
     return ModelResponse(
         parts=[
             ToolCallPart(

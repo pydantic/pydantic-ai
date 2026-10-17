@@ -14,12 +14,13 @@ tool calls are covered in [Capabilities and hooks](capabilities.md).
 When a model calls a tool, the session emits
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool, returns the
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
-failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
-[`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions are raised from `async for` while the event stream is being iterated. Otherwise they end
-the audio and transcript views and are raised when the session closes. If the receive side has
-already ended, an outbound session method raises the failure instead; it is delivered only once.
-The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
+failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call with a
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
+standard agent run. Other tool exceptions are raised from `async for` while the event stream is
+being iterated. Otherwise they end the audio and transcript views and are raised when the session
+closes. If the receive side has already ended, an outbound session method raises the failure
+instead; it is delivered only once. The failed call is recorded with `outcome='failed'`, so the
+settled history can be passed to
 [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general
 [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error]

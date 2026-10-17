@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -54,6 +54,7 @@ from pydantic_ai_harness.step_persistence import (
 )
 from pydantic_ai_harness.step_persistence._context import current_run_id
 from pydantic_ai_harness.step_persistence._store import _validate_id  # pyright: ignore[reportPrivateUsage]
+from tests.conftest import legacy_retry_prompt_part
 
 
 def build_run_context(
@@ -135,10 +136,13 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_retry_prompt_resolves_a_tool_call(self) -> None:
+    def test_retried_tool_return_resolves_a_tool_call(self) -> None:
+        """A retry that answers a call travels as that call's return, so it settles the pairing."""
         messages: list[ModelMessage] = [
             ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name='add', tool_call_id='c1')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='try again', tool_call_id='c1', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is True
 
@@ -174,12 +178,29 @@ class TestIsProviderValid:
         ]
         assert is_provider_valid(messages) is False
 
-    def test_orphan_retry_prompt_is_invalid(self) -> None:
-        """`RetryPromptPart` with no matching open call is also rejected."""
+    def test_orphan_retried_tool_return_is_invalid(self) -> None:
+        """A retried return with no matching open call is rejected like any other orphan."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
+
+    @pytest.mark.parametrize(
+        ('call_id', 'tool_name', 'expected'),
+        [('c1', 'add', True), ('ghost', 'add', False), ('c1', None, False)],
+    )
+    def test_legacy_retry_prompt_part_pairs_like_a_retried_return(
+        self, call_id: str, tool_name: str | None, expected: bool
+    ) -> None:
+        """A caller-passed history can still hold the deprecated part: a tool-bound one settles its
+        call, and a tool-less one answers no call."""
+        messages: list[ModelMessage] = [
+            ModelResponse(parts=[ToolCallPart(tool_name='add', args={}, tool_call_id='c1')]),
+            ModelRequest(parts=[legacy_retry_prompt_part('try again', tool_name=tool_name, tool_call_id=call_id)]),
+        ]
+        assert is_provider_valid(messages) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -1536,25 +1557,27 @@ class TestCapabilityHookBranches:
 
 
 # ---------------------------------------------------------------------------
-# Round-2 review fixes (RetryPromptPart, list_runs ordering, effect metadata,
+# Round-2 review fixes (retry parts, list_runs ordering, effect metadata,
 # from_spec validation, annotate_tool_effect)
 # ---------------------------------------------------------------------------
 
 
-class TestNonToolRetryPrompt:
-    def test_non_tool_retry_prompt_is_valid(self) -> None:
-        """`RetryPromptPart(tool_name=None)` is an output-validation retry, not a tool result."""
+class TestRetryFeedback:
+    def test_retry_feedback_is_valid(self) -> None:
+        """`RetryFeedbackPart` answers no call, so it settles nothing and needs nothing open."""
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='hi')]),
             ModelResponse(parts=[TextPart(content='wrong shape')]),
-            ModelRequest(parts=[RetryPromptPart(content='try again', tool_name=None)]),
+            ModelRequest(parts=[RetryFeedbackPart(content='try again', cause='validation_error')]),
         ]
         assert is_provider_valid(messages) is True
 
-    def test_tool_retry_prompt_still_needs_open_call(self) -> None:
-        """`RetryPromptPart(tool_name=...)` still requires a matching open `ToolCallPart`."""
+    def test_a_retried_return_still_needs_an_open_call(self) -> None:
+        """The tool-bound half is a `ToolReturnPart`, which still requires a matching call."""
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='retry', tool_name='add', tool_call_id='ghost')]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='add', content='retry', tool_call_id='ghost', outcome='retried')]
+            ),
         ]
         assert is_provider_valid(messages) is False
 

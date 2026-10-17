@@ -14,6 +14,8 @@ from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
+    build_retried_tool_return,
+    retried_return_from_legacy,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -30,7 +32,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import ToolCallPart, ToolReturn
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -98,11 +100,20 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+class _UnknownTool(ModelRetry):
+    """A `ModelRetry` refusing a call to a tool name that doesn't exist.
+
+    A distinct type only so the retried result can record `cause='unknown_tool'`; it reaches the
+    model as an ordinary retry, exactly like the `ModelRetry` it replaced.
+    """
+
+
 class _ToolUnavailable(ModelRetry):
     """A `ModelRetry` refusing a call because the tool is not available yet.
 
-    A distinct type only so `_make_validation_failure` can recognise it. It
-    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+    A distinct type only so `_make_validation_failure` can recognise it and the retried result can
+    record `cause='unavailable_tool'`. It reaches the model as an ordinary retry, exactly like the
+    `ModelRetry` it replaced.
 
     Carries the tool it refused: the refusal is raised while resolving, before the caller has
     bound the resolved tool, and the budget this failure is charged against is the tool's own
@@ -312,9 +323,17 @@ class ToolManager(Generic[AgentDepsT]):
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
-        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
-        m = RetryPromptPart.from_error(error, tool_name=name, tool_call_id=call.tool_call_id)
-        return ToolRetryError(m)
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
+        cause = (
+            'unknown_tool'
+            if isinstance(error, _UnknownTool)
+            else 'unavailable_tool'
+            if isinstance(error, _ToolUnavailable)
+            else None
+        )
+        return ToolRetryError(
+            build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id, cause=cause)
+        )
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
@@ -560,7 +579,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
-            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            raise _UnknownTool(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)
         return name, tool
@@ -1290,16 +1309,13 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.RetryPromptPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
-                )
+                build_retried_tool_return(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
             )
-        if isinstance(tool_call_result, _messages.RetryPromptPart):
-            tool_call_result.tool_name = call.tool_name
-            tool_call_result.tool_call_id = call.tool_call_id
-            raise ToolRetryError(tool_call_result)
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            raise ToolRetryError(
+                retried_return_from_legacy(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+            )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the
         # tool would have returned" — is preserved for plain-vs-wrapped inputs.

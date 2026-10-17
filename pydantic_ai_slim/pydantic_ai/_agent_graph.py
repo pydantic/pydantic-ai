@@ -78,6 +78,7 @@ from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -813,7 +814,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         if last_model_request:
             for part in last_model_request.parts:
-                if isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart):
+                if _is_tool_result_part(part):
                     if part.tool_call_id in tool_call_results:
                         raise exceptions.UserError(
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
@@ -2311,13 +2312,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
-        Increments the retry counter and creates a new request with a RetryPromptPart.
+        Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
         _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
-        m = _messages.RetryPromptPart(content=error.message)
+        m = _messages.RetryFeedbackPart(content=error.message, cause='model_retry')
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2581,8 +2582,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
-                m = _messages.RetryPromptPart(
+                m = _messages.RetryFeedbackPart(
                     content=f'Please {" or ".join(alternatives)}.',
+                    cause='no_output',
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:

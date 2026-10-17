@@ -22,7 +22,7 @@ Before editing, identify which contracts can change:
 
 - Public API: constructor kwargs, decorators, settings, output types, tool/toolset APIs, imports, and documented names.
 - Provider API compatibility: request parameters, response parts, streaming chunks, native tools, structured output, thinking/reasoning, prompt caching, token counting, usage, and provider metadata.
-- Message/event protocol: persisted message history, partial responses, tool-call parts, output events, native tool parts, retry prompts, and UI event streams.
+- Message/event protocol: persisted message history, partial responses, tool-call parts, output events, native tool parts, retries, and UI event streams.
 - Durable execution: context propagation, dependency serialization, tool ordering, retries, message replay, toolset lifecycle, activity/task boundaries, and deterministic behavior.
 - Agent specs/config: whether new state is serializable, safe to load, and representable without runtime-only closures.
 

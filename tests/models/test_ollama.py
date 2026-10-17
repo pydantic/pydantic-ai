@@ -10,7 +10,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -280,7 +280,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -289,7 +289,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
