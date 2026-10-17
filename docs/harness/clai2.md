@@ -16,6 +16,34 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+## Undo and redo
+
+Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
+brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
+or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
+time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
+Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
+the next draft with none.
+
+The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
+it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
+Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
+as Ctrl+Z, so use Ctrl+Y to redo there.
+
+Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
+asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
+terminals keep Cmd shortcuts for their own menus:
+
+- kitty passes Cmd+Z on with no setup.
+- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
+  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
+- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
+  `wezterm.action.SendString '\x1a'`.
+- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
+  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
+- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
+  outer terminal as above.
+
 ## Interrupting a turn
 
 Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup
@@ -263,7 +291,7 @@ start, a built-in editor opens instead. Changes apply from your next prompt.
 to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
 not yet in your list is added and selected; CLAI does not check that it exists, so a
 mistyped name fails on the next prompt with the provider's error. Model names normally
-start with a provider (`openai:gpt-5`), so no real model is called `add` or `settings`.
+start with a provider (`{{ openai:medium }}`), so no real model is called `add` or `settings`.
 
 | Command | What it does |
 | --- | --- |
@@ -370,7 +398,7 @@ from pydantic_clai2 import open_stock_agent
 
 
 async def main() -> None:
-    async with open_stock_agent(workspace=Path.cwd(), model='anthropic:claude-opus-5-5') as agent:
+    async with open_stock_agent(workspace=Path.cwd(), model='{{ anthropic:large }}') as agent:
         result = await agent.run('Summarize this repository in one paragraph.')
         print(result.output)
 
@@ -602,7 +630,16 @@ any dependencies in CLAI's Python environment first. See
 [where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
 for supported URLs and checkout management.
 The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove. Plugins are trusted code running as you.
+reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`, and `d`
+configure, reload, and remove it. Plugins are trusted code running as you.
+
+Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observability`
+sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command
+`/logfire`) lets the agent query your data through Logfire's MCP server. Both ask
+which Logfire with the same picker: Logfire US, Logfire EU, or another typed as a
+host, the URL you open it at, or its MCP URL. The one you last picked in either is
+remembered, and the other plugin's picker starts there until it has a Logfire of
+its own.
 
 [PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
 

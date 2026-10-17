@@ -6,9 +6,10 @@ Split out of `test_capabilities.py`, which had grown past the repository's file-
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings as _ModelSettings
@@ -41,6 +43,7 @@ from .capability_models import (
 )
 
 pytestmark = []
+READINESS_WAIT_TIMEOUT = 10
 
 
 class _RequestOnlyModel(Model):
@@ -1004,3 +1007,344 @@ class TestProcessEventStream:
                 node = await agent_run.next(node)
 
         assert agent_run.result is not None
+
+    @pytest.mark.parametrize('exit_mode', ['break', 'error', 'complete'])
+    async def test_processor_cleanup(self, exit_mode: Literal['break', 'error', 'complete']):
+        cleanup_complete = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_permitted.set()
+        processors: list[AsyncGenerator[AgentStreamEvent, None]] = []
+
+        async def tokens(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'first'
+            yield 'second'
+
+        async def process(stream: AsyncIterable[AgentStreamEvent]) -> AsyncGenerator[AgentStreamEvent, None]:
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                await cleanup_permitted.wait()
+                cleanup_complete.set()
+
+        def processor(
+            ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            iterator = process(stream)
+            # Retain the user-owned iterator so GC cannot hide a missing close at run exit.
+            processors.append(iterator)
+            return iterator
+
+        agent = Agent(
+            FunctionModel(stream_function=tokens), deps_type=type(None), capabilities=[ProcessEventStream(processor)]
+        )
+        try:
+            with pytest.raises(ValueError, match='consumer failed') if exit_mode == 'error' else nullcontext():
+                async with agent.run_stream('hello') as result:
+                    async for _ in result.stream_text(debounce_by=None):
+                        if exit_mode == 'break':
+                            break
+                        if exit_mode == 'error':
+                            raise ValueError('consumer failed')
+
+            assert cleanup_complete.is_set(), 'Processor resource is still open after the run context exited'
+        finally:
+            for iterator in processors:
+                await iterator.aclose()
+
+    async def test_observer_async_cleanup_after_consumer_error(self):
+        cleanup_complete = anyio.Event()
+        cleanup_checkpoint = anyio.Event()
+        cleanup_checkpoint.set()
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _ in stream:
+                    pass
+            finally:
+                await cleanup_checkpoint.wait()
+                cleanup_complete.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        consumer_error = ValueError('consumer failed')
+        with pytest.raises(ValueError, match='consumer failed') as exc_info:
+            async with agent.run_stream('hello') as result:
+                async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
+                    raise consumer_error
+
+        assert exc_info.value is consumer_error
+        assert cleanup_complete.is_set(), 'Observer resource cleanup was interrupted during teardown'
+
+    async def test_observer_cleanup_finishes_when_cancelled_after_eof(self):
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_complete = anyio.Event()
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _ in stream:
+                    pass
+            finally:
+                with anyio.CancelScope(shield=True):
+                    cleanup_started.set()
+                    await cleanup_permitted.wait()
+                    cleanup_complete.set()
+
+        scope = anyio.CancelScope()
+
+        async def cancel_during_cleanup() -> None:
+            await cleanup_started.wait()
+            scope.cancel()
+            await anyio.lowlevel.checkpoint()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(cancel_during_cleanup)
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        async for _ in result.stream_text(debounce_by=None):
+                            pass
+                assert cleanup_complete.is_set(), 'Observer finalizer was interrupted after receiving EOF'
+
+        assert scope.cancelled_caught
+
+    async def test_processor_cleanup_on_cancellation(self):
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_complete = anyio.Event()
+        processors: list[AsyncGenerator[AgentStreamEvent, None]] = []
+
+        async def process(stream: AsyncIterable[AgentStreamEvent]) -> AsyncGenerator[AgentStreamEvent, None]:
+            try:
+                async for event in stream:  # pragma: no branch
+                    yield event
+            finally:
+                cleanup_started.set()
+                await cleanup_permitted.wait()
+                cleanup_complete.set()
+
+        def processor(
+            ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterator[AgentStreamEvent]:
+            iterator = process(stream)
+            processors.append(iterator)
+            return iterator
+
+        async def permit_cleanup() -> None:
+            await cleanup_started.wait()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=simple_stream_function),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(processor)],
+        )
+        scope = anyio.CancelScope()
+        complete_at_run_exit = False
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(permit_cleanup)
+                    with scope:
+                        async with agent.run_stream('hello') as result:
+                            async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
+                                scope.cancel()
+                                await anyio.lowlevel.checkpoint()
+                    complete_at_run_exit = cleanup_complete.is_set()
+                    tg.cancel_scope.cancel()
+
+            assert scope.cancelled_caught
+            assert complete_at_run_exit, 'Processor resource is still open after the cancelled run context exited'
+        finally:
+            cleanup_permitted.set()
+            for iterator in processors:
+                await iterator.aclose()
+
+    @pytest.mark.parametrize('wait_for_source', [False, True])
+    async def test_observer_cleanup_on_cancellation(self, wait_for_source: bool):
+        observer_cleanup_complete = anyio.Event()
+        source_cleanup_complete = anyio.Event()
+        source_waiting = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        cleanup_permitted.set()
+        sources: list[AsyncGenerator[str, None]] = []
+
+        async def tokens(messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+            try:
+                yield 'first'
+                source_waiting.set()
+                await anyio.Event().wait()
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await cleanup_permitted.wait()
+                    source_cleanup_complete.set()
+
+        def source(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            iterator = tokens(messages, info)
+            sources.append(iterator)
+            return iterator
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            try:
+                async for _ in stream:
+                    pass
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await cleanup_permitted.wait()
+                    observer_cleanup_complete.set()
+
+        agent = Agent(
+            ConcurrencyLimitedModel(FunctionModel(stream_function=source), limiter=1),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        scope = anyio.CancelScope()
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                with scope:
+                    async with agent.run_stream('hello') as result:
+                        async for _ in result.stream_text(debounce_by=0):  # pragma: no branch
+                            if wait_for_source:
+                                await source_waiting.wait()
+                            scope.cancel()
+                            await anyio.lowlevel.checkpoint()
+
+                assert scope.cancelled_caught
+                assert observer_cleanup_complete.is_set(), 'Observer resource cleanup was interrupted during teardown'
+                assert source_cleanup_complete.is_set(), 'Model source resource remains open after run context exit'
+        finally:
+            cleanup_permitted.set()
+            for iterator in sources:
+                await iterator.aclose()
+
+    async def test_source_cleanup_finishes_when_cancelled_after_observer_returns(self):
+        """A cancel landing on a pull parked in the source, after the observer returned, lets the source's cleanup finish.
+
+        Once the observer has returned, each pull is awaited directly rather than raced against the handler. The outer
+        scope keeps re-cancelling the consumer while the source's shielded `finally` waits, so a pull awaited with a
+        plain `await` would forward each of those cancels into the source natively and interrupt that cleanup.
+        """
+        source_waiting = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        source_cleanup_complete = anyio.Event()
+        sources: list[AsyncGenerator[str, None]] = []
+
+        async def tokens(messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+            try:
+                yield 'first'
+                source_waiting.set()
+                await anyio.Event().wait()
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await cleanup_permitted.wait()
+                    source_cleanup_complete.set()
+
+        def source(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            iterator = tokens(messages, info)
+            sources.append(iterator)
+            return iterator
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            return
+
+        scope = anyio.CancelScope()
+
+        async def cancel_during_pull() -> None:
+            await source_waiting.wait()
+            scope.cancel()
+            await anyio.lowlevel.checkpoint()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=source),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(cancel_during_pull)
+                    with scope:
+                        async with agent.run_stream('hello') as result:
+                            async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
+                                pass
+                    assert source_cleanup_complete.is_set(), 'Model source cleanup was interrupted during teardown'
+
+            assert scope.cancelled_caught
+        finally:
+            cleanup_permitted.set()
+            for iterator in sources:
+                await iterator.aclose()
+
+    async def test_source_cleanup_finishes_when_cancelled_during_debounced_pull(self):
+        """A cancel landing on a debounced pull, while the observer is still reading, lets the source's cleanup finish.
+
+        The debouncer runs the wrapped stream in its own pull task. The outer scope keeps re-cancelling the consumer
+        while the debouncer's teardown waits for that pull, so a plain `await` on it would forward each of those
+        cancels natively into the observer teardown's drain, and from there into the source.
+        """
+        source_waiting = anyio.Event()
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        source_cleanup_complete = anyio.Event()
+        sources: list[AsyncGenerator[str, None]] = []
+
+        async def tokens(messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+            try:
+                yield 'first'
+                source_waiting.set()
+                await anyio.Event().wait()
+            finally:
+                cleanup_started.set()
+                with anyio.CancelScope(shield=True):
+                    await cleanup_permitted.wait()
+                    source_cleanup_complete.set()
+
+        def source(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            iterator = tokens(messages, info)
+            sources.append(iterator)
+            return iterator
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+
+        scope = anyio.CancelScope()
+
+        async def cancel_during_pull() -> None:
+            await source_waiting.wait()
+            scope.cancel()
+            await cleanup_started.wait()
+            await anyio.lowlevel.checkpoint()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=source),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(cancel_during_pull)
+                    with scope:
+                        async with agent.run_stream('hello') as result:
+                            async for _ in result.stream_text():  # pragma: no branch
+                                pass
+                    assert source_cleanup_complete.is_set(), 'Model source cleanup was interrupted during teardown'
+
+            assert scope.cancelled_caught
+        finally:
+            cleanup_permitted.set()
+            for iterator in sources:
+                await iterator.aclose()

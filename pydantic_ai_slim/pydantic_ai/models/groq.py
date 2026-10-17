@@ -62,8 +62,10 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
+from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._sdk_retries import with_max_retries
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from groq import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, AsyncGroq, AsyncStream, NotGiven
@@ -78,6 +80,10 @@ except ImportError as _import_error:
         'Please install `groq` to use the Groq model, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+# Below the guard on purpose: `groq` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -105,6 +111,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received, so there is no status code to report.
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx.TransportError as e:
+        # `groq` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
+        # off a stream mid-way surfaces as the raw `httpx` error.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 ProductionGroqModelNames = Literal[
@@ -226,6 +236,11 @@ class GroqModel(Model[AsyncGroq]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters `search_settings` applies."""
+        # `WebSearchTool` is the only native tool Groq supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -263,7 +278,7 @@ class GroqModel(Model[AsyncGroq]):
                     finish_reason='error',
                 )
             raise
-        model_response = self._process_response(response)
+        model_response = self._process_response(check_json_response(self.model_name, response))
         return model_response
 
     @asynccontextmanager
@@ -392,7 +407,7 @@ class GroqModel(Model[AsyncGroq]):
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            return await self.client.chat.completions.create(
+            return await with_max_retries(self.client, model_settings).chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,

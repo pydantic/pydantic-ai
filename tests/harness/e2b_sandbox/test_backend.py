@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -1019,19 +1019,12 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
 
 
-def test_missing_e2b_extra_has_an_install_hint() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            '-c',
-            "import sys; sys.modules['e2b'] = None; import pydantic_ai_harness.e2b_sandbox",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0
-    assert 'Install `pydantic-ai-harness[e2b]`' in result.stderr
+def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'e2b', None)
+    for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.e2b_sandbox')]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[e2b\]` to use E2BSandbox\.$'):
+        importlib.import_module('pydantic_ai_harness.e2b_sandbox')
 
 
 async def test_command_timeout_starts_once_the_sandbox_is_acquired(fake_e2b: FakeE2B) -> None:

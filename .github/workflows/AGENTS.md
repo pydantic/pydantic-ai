@@ -9,8 +9,15 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+| `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
 `douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+
+The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present immediately before Claude starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
+
+Removing the approval label cancels in-flight work on a best-effort basis; cancellation may not stop a reviewer that has already started. Both review labels share the per-PR concurrency group, so removing the approval label can also cancel an ordinary review, and reapplying it starts another workflow run that uses that shared slot.
+
+Other label removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -27,6 +34,17 @@ that needs to know which PR this is must read them from `needs.eligibility.outpu
 never from `github.event`. For the safe outputs specifically that means frontmatter
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
+
+The `CI Review` agent job queues in gh-aw's per-workflow engine concurrency group
+(`queue: max`), so one review runs at a time across all PRs. `eligibility` can
+therefore decide hours before the model starts. The pre-agent step `Skip a PR that
+closed or moved on while queued` writes a `noop` to safe outputs when the PR has
+closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
+`noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
+(`hasNoopInSafeOutputs`). Any other engine harness, including
+`src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
+spends a full review. The `noop` does not skip the `detection` job, which still runs
+one threat-detection pass outside the agent slot.
 
 ## What confines `CI Review` to same-repo PRs
 
@@ -216,6 +234,17 @@ window, and unit `6` / number `1` is the weekly window. `percentage` is the
 percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
 epoch milliseconds. A missing or malformed required window makes health unknown
 and keeps agent workflows gated. No quota-resource repository variable is needed.
+
+Unknown quota results may include one of these fixed diagnostic categories:
+`missing_api_key`, `invalid_request`, `http_error`, `timeout`, `tls_error`, `network_error`,
+`invalid_encoding`, `invalid_json`, `invalid_response`, `invalid_response_code`,
+`unsuccessful_response`, `invalid_limits`, `invalid_limit_row`,
+`invalid_window_unit`, `invalid_window_number`, `duplicate_window`,
+`invalid_percentage`, `invalid_reset_time`, or `missing_windows`. The artifact may
+also include a numeric HTTP status. These values contain no provider response text,
+request headers, URL, credential, or exception message. Version 1 artifacts without
+diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
+change gate or recovery policy.
 
 To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one

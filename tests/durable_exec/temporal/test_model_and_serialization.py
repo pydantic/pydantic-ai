@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -22,6 +23,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     FilePart,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -40,6 +42,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Instrumentation,
@@ -69,6 +72,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -886,7 +890,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134191)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134214)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1071,6 +1075,9 @@ def test_temporal_run_context_serialization_is_exhaustive():
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
     }
+    carried_only_when_set = {
+        '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
+    }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
     all_fields = set(RunContext.__dataclass_fields__)
@@ -1078,11 +1085,50 @@ def test_temporal_run_context_serialization_is_exhaustive():
     overlap = serialized & intentionally_unserialized
     assert not overlap, f'Fields both serialized and excluded: {overlap}'
 
-    uncategorized = all_fields - (serialized | intentionally_unserialized)
+    uncategorized = all_fields - (serialized | intentionally_unserialized | carried_only_when_set)
     assert not uncategorized, (
         f'Uncategorized `RunContext` fields: {uncategorized}. Add each to '
         '`TemporalRunContext.serialize_run_context` or to `intentionally_unserialized` (with a reason).'
     )
+
+
+async def test_temporal_run_context_carries_tool_name_path():
+    """A toolset listed in an activity under a wrapper reads its tool's count by the wrapper's names.
+
+    The path crosses as JSON and comes back in the shape the toolsets read. A payload without it, from a worker that
+    predates it or a custom `serialize_run_context` that omits it, still loads and lists the tool by the name its
+    toolset holds it under, as before the path existed.
+
+    A unit test, not a workflow or recorded test: a workflow run shows only the count the toolset reads, not the
+    payload that crossed the activity boundary or whether an older payload still loads.
+
+    See https://github.com/pydantic/pydantic-ai/issues/9741.
+    """
+    seen: list[int] = []
+    toolset = FunctionToolset[None]()
+
+    async def record(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+        seen.append(ctx.retry)
+        return tool_def
+
+    @toolset.tool(prepare=record)
+    async def fail(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), retries={'outer_x': 1})
+    wire = to_jsonable_python(
+        TemporalRunContext.serialize_run_context(
+            with_tool_name_layer(with_tool_name_layer(ctx, 'outer'), {'fail': 'x'})
+        )
+    )
+    assert wire['_tool_name_path'] == ['outer', {'fail': 'x'}]
+    older_wire: dict[str, object] = {key: value for key, value in wire.items() if key != '_tool_name_path'}
+
+    for payload in (wire, older_wire):
+        await toolset.get_tools(TemporalRunContext.deserialize_run_context(payload, deps=None))
+
+    assert seen == [1, 0]
+    assert '_tool_name_path' not in TemporalRunContext.serialize_run_context(ctx)
 
 
 @dataclass
@@ -1592,6 +1638,34 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.model_name == 'alt-model'
         assert temporal_model_with_registry.system == alt_model.system
         assert temporal_model_with_registry.profile == alt_model.profile
+
+
+class _NoRestrictionsTestModel(TestModel):
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+def test_temporal_model_unsupported_native_tool_settings_follow_active_model():
+    """The native tool settings check asks the active model, so a swapped-in model's limits are the ones applied.
+
+    A raw model string has no model class to ask, so it reports none; the activity's concrete model decides.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__unsupported_native_tool_settings',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': _NoRestrictionsTestModel(model_name='alt-model')},
+    )
+    web_search = WebSearchTool(allowed_domains=['pydantic.dev'])
+
+    assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset({'allowed_domains'})
+
+    with temporal_model.using_model('google-gla:gemini-2.5-flash'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
 
 
 class DefaultHostModel(TestModel):

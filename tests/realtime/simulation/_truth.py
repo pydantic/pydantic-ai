@@ -74,6 +74,8 @@ class TruthResponse:
     words: list[str] = field(default_factory=list[str])
     audio_bytes: int = 0
     tool_calls: list[str] = field(default_factory=list[str])
+    items: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """The words of each assistant message item it spoke, by item id."""
     input_tokens: int = 0
     output_tokens: int = 0
     started_read: int | None = None
@@ -134,6 +136,8 @@ class GroundTruth:
     next_user_number: int = 1
     truncations: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     """`(item id, audio_end_ms)` for every truncation the server applied."""
+    item_responses: dict[str, TruthResponse] = field(default_factory=dict[str, TruthResponse])
+    """The response that spoke each assistant message item."""
     refused_truncations: list[str] = field(default_factory=list[str])
     """Why the server refused each truncation it was asked for."""
     connection_losses: list[int] = field(default_factory=list[int])
@@ -150,6 +154,16 @@ class GroundTruth:
     """When server VAD heard each spoken user turn start, on the shared clock."""
     speech_committed: set[str] = field(default_factory=set[str])
     """The spoken user turns whose audio was committed (xAI adds a turn's item before it commits it)."""
+    speech_cleared: set[str] = field(default_factory=set[str])
+    """Spoken user turns whose buffered audio was cleared while the user was still saying them."""
+    speech_cleared_read: set[str] = field(default_factory=set[str])
+    """Those whose `input_audio_buffer.cleared` the client read."""
+    speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
+    """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
+    """When the client read each spoken user turn's completed transcript."""
+    models_every_spoken_turn: bool = False
+    """Whether every spoken user turn the provider has is an input here, so history can have no other."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
     """When the server generated each word a response said, on the shared clock."""
     word_read: dict[str, int] = field(default_factory=dict[str, int])

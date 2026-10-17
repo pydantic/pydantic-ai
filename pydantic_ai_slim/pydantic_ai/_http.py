@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
-# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop.
-import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
+
+# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
+# I/O if that happens inside the event loop. Since 2.10, httpx2 does not install httpcore2 on
+# Emscripten (Pyodide), where it sends requests through the browser's `fetch` instead, so the
+# preload is skipped there. The check is on the platform rather than on `ImportError` so that a
+# broken install elsewhere still fails loudly here.
+if sys.platform != 'emscripten':
+    import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 from ._warnings import PydanticAIDeprecationWarning
 
@@ -76,9 +82,10 @@ def create_async_httpx2_client(
 ) -> httpx2.AsyncClient:
     """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
 
-    This is the client a provider creates when you don't pass your own `http_client`. Call it yourself
-    to adjust the timeouts or connection pool limits, and pass the result to the provider as
-    `http_client`. A client you create this way is yours to close.
+    This is the client a provider creates when you don't pass your own `http_client`; the Google
+    providers create it with a 20-minute timeout instead. Call it yourself to adjust the timeouts or
+    connection pool limits, and pass the result to the provider as `http_client`. A client you create
+    this way is yours to close.
 
     Args:
         timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase

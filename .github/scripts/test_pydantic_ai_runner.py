@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -55,6 +56,7 @@ from pydantic_ai_gh_aw_shim import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
+    BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -545,6 +547,16 @@ def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatc
     assert 'L3' in nxt and 'L2' not in nxt
 
 
+def test_read_file_returns_an_image_as_the_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # An image comes back as the harness returns it, header plus the file, not as text.
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+    (tmp_path / 'chart.png').write_bytes(png)
+    out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'chart.png')))
+    assert isinstance(out, list)
+    assert out[1] == BinaryContent(data=png, media_type='image/png')
+
+
 def test_read_limit_zero_behaves_like_omitted_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Passed straight to the harness, `limit=0` reads zero lines and emits a
     # same-offset hint that loops. The adapter normalizes `limit<=0` to an omitted
@@ -564,7 +576,8 @@ def test_harness_backed_tools_surface_oserror_as_error(tmp_path: Path, monkeypat
     # of letting it escape and abort the whole agent run.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     long_path = 'a' * 10_000
-    assert asyncio.run(pkg.read_file(_ctx(), long_path)).startswith('error:')
+    read = asyncio.run(pkg.read_file(_ctx(), long_path))
+    assert isinstance(read, str) and read.startswith('error:')
     assert asyncio.run(pkg.edit_file(_ctx(), long_path, 'x', 'y')).startswith('error:')
     assert asyncio.run(pkg.list_dir(_ctx(), long_path)).startswith('error:')
     assert asyncio.run(pkg.glob_search(_ctx(), '*.py', long_path)).startswith('error:')
@@ -582,6 +595,7 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # plus long padding so the chunk blows well past the char cap.
     f.write_text('\n'.join(f'{i:06d}' + 'x' * 200 for i in range(1, 2001)) + '\n', encoding='utf-8')
     out = asyncio.run(pkg.read_file(_ctx(), str(f)))
+    assert isinstance(out, str)
     assert len(out) <= shared.MAX_TOOL_OUTPUT + 256  # bounded by the output cap
     m = re.search(r'Use offset=(\d+) to continue reading', out)
     assert m, 'continuation hint must survive char-budget truncation'
@@ -1100,6 +1114,27 @@ def test_run_warns_the_model_when_the_request_budget_is_nearly_spent(monkeypatch
     assert warned == [False] * 18 + [True, True]
 
 
+@pytest.mark.parametrize('inside_reserve', [False, True])
+def test_run_warns_the_model_when_the_time_budget_is_nearly_spent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, inside_reserve: bool
+):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if inside_reserve else 60)
+    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + seconds_left)
+    warned: list[bool] = []
+
+    def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        warned.append(shim.TIME_BUDGET_NOTICE in (info.instructions or ''))
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('noop', {'message': 'posted'})])
+
+    assert _run_shim(_respond, sink) == 0
+    assert warned == [inside_reserve, inside_reserve]
+
+
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
 def test_run_caps_subagents_so_the_budget_notice_still_fires(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parallel_tasks: int
@@ -1148,6 +1183,37 @@ def test_task_refuses_to_spawn_inside_the_final_tenth():
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: the request budget is nearly spent; finish the task from what you already have'
+
+
+def test_task_refuses_to_spawn_inside_the_run_time_reserve(monkeypatch: pytest.MonkeyPatch):
+    class _Ctx:
+        model = None
+        usage = RunUsage()
+        usage_limits = None
+
+    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
+    assert out == 'error: the time budget is nearly spent; finish the task from what you already have'
+
+
+def test_task_cuts_off_a_subagent_before_the_run_time_reserve(monkeypatch: pytest.MonkeyPatch):
+    class _HangingAgent:
+        def __init__(self, *a: object, **k: object) -> None:
+            pass
+
+        async def run(self, *a: object, **k: object) -> None:
+            await asyncio.Event().wait()
+
+    class _Ctx:
+        model = TestModel()
+        usage = RunUsage()
+        usage_limits = None
+
+    monkeypatch.setattr(shim, 'Agent', _HangingAgent)
+    # The sub-agent gets the 0.01s before the reserve starts, not `SUBAGENT_TIMEOUT_SECS`.
+    monkeypatch.setattr(shim, '_run_seconds_left', lambda: shim.RUN_TIME_RESERVE_SECS + 0.01)
+    out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
+    assert out == 'error: sub-agent timed out after 1min'
 
 
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
@@ -1798,7 +1864,7 @@ def test_stream_events_tags_retry_prompt_as_error():
 def test_read_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     out = asyncio.run(pkg.read_file(_ctx(), str(tmp_path / 'nope.txt')))
-    assert out.startswith('error:')
+    assert isinstance(out, str) and out.startswith('error:')
 
 
 def test_edit_missing_file_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2053,10 +2119,13 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
+    seconds_left: list[float | None] = []
+
     async def _hang(*_a: object, **kw: object) -> int:
         usage = kw['usage']
         assert isinstance(usage, RunUsage)
         usage.incr(RunUsage(requests=2, input_tokens=11, output_tokens=4, cache_read_tokens=3))
+        seconds_left.append(shim._run_seconds_left())  # pyright: ignore[reportPrivateUsage]
         await asyncio.sleep(9999)
         return 0
 
@@ -2078,8 +2147,11 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert obj['usage']['output_tokens'] == 4
     assert obj['usage']['cache_read_input_tokens'] == 3
     assert obj['num_turns'] == 2
-    assert obj['provider_health']['failure']['kind'] == 'timeout'
+    assert obj['provider_health']['failure']['kind'] == 'time_limit'
     assert obj['provider_health']['run_attempt'] is None
+    [left] = seconds_left
+    assert left is not None and left <= 0.01
+    assert shim._run_seconds_left() is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
@@ -2344,6 +2416,8 @@ def test_emit_result_error_subtype():
         (ModelHTTPError(429, 'test-model', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
         (ModelHTTPError(402, 'test-model', {'error': {'type': 'payment_required_error'}}), 'other', 402),
         (UsageLimitExceeded('request limit'), 'request_limit', None),
+        (shim.RunTimeLimitExceeded(), 'time_limit', None),
+        (TimeoutError(), 'timeout', None),
         (RuntimeError('provider returned a 402'), 'other', None),
     ],
 )

@@ -31,7 +31,7 @@ with try_import() as anthropic_available:
         AnthropicModelSettings,
         _support_tool_forcing as anthropic_support_tool_forcing,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+    from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
@@ -124,6 +124,16 @@ SIMPLE_CASES = [
         expected='required',
     ),
     dict(
+        id='list_exact_match_function_and_output_tools',
+        tool_choice=['a', 'b', 'final_result'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('final_result')],
+            'allow_text_output': True,
+        },
+        expected='required',
+    ),
+    dict(
         id='tool_or_output_empty_no_output_tools',
         tool_choice=ToolOrOutput(function_tools=[]),
         params_kwargs={'allow_text_output': True},
@@ -193,6 +203,27 @@ TUPLE_CASES = [
         params_kwargs={'function_tools': [make_tool('a'), make_tool('b'), make_tool('c')], 'allow_text_output': True},
         expected_mode='required',
         expected_tools={'a', 'c'},
+    ),
+    dict(
+        id='list_one_of_multiple_output_tools',
+        tool_choice=['result_a'],
+        params_kwargs={
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'result_a'},
+    ),
+    dict(
+        id='list_mixed_function_and_output_subset',
+        tool_choice=['a', 'result_a'],
+        params_kwargs={
+            'function_tools': [make_tool('a'), make_tool('b')],
+            'output_tools': [make_tool('result_a'), make_tool('result_b')],
+            'allow_text_output': True,
+        },
+        expected_mode='required',
+        expected_tools={'a', 'result_a'},
     ),
     dict(
         id='tool_or_output_empty_with_output_tools_direct_output',
@@ -663,6 +694,27 @@ def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking()
         )
 
 
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param({'anthropic_thinking': {'type': 'adaptive'}, 'tool_choice': 'required'}, id='adaptive'),
+        pytest.param({'anthropic_thinking': {'type': 'disabled'}, 'tool_choice': 'required'}, id='disabled'),
+    ],
+)
+def test_haiku_5_5_supports_forced_tool_choice_with_adaptive_or_disabled_thinking(settings: AnthropicModelSettings):
+    """Haiku 5.5 accepts forced tool choice with either adaptive or disabled thinking."""
+    model_profile = anthropic_model_profile('claude-haiku-5-5')
+    assert model_profile is not None
+    profile = AnthropicModelProfile(**model_profile)
+    assert (
+        anthropic_support_tool_forcing(
+            'claude-haiku-5-5', profile, settings, ModelRequestParameters(function_tools=[make_tool('my_tool')])
+        )
+        is True
+    )
+
+
 @pytest.mark.parametrize(
     'provider_name',
     [
@@ -706,7 +758,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
         thinking=True,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'auto': {}}
@@ -758,7 +810,7 @@ def test_bedrock_tool_or_output_single_resolved_preserves_cache(
         allow_text_output=False,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'tool': {'name': expected_forced_name}}
@@ -833,6 +885,40 @@ def test_google_allowed_function_names_ignore_unavailable_tools():
     config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
     assert config is not None
     assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
+@skip_if_no_openai
+@pytest.mark.parametrize(
+    'tool_choice,expected_names',
+    [
+        pytest.param(['tool_b', 'typo', 'tool_c'], ['tool_c', 'tool_b'], id='list'),
+        pytest.param(ToolOrOutput(function_tools=['tool_b', 'typo']), ['tool_b', 'final_result'], id='tool_or_output'),
+    ],
+)
+def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: ToolChoice, expected_names: list[str]):
+    """`allowed_tools` drops the names `resolve_tool_choice` warns it will ignore, and keeps declaration order.
+
+    A unit test rather than VCR: cassette replay doesn't match on the request body, so only the built payload shows
+    an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
+    define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs` but stays forceable.
+    """
+    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'tool_b': 'via_history'},
+        allow_text_output=False,
+    )
+    settings: OpenAIResponsesModelSettings = {'tool_choice': tool_choice}
+
+    with pytest.warns(UserWarning, match=re.escape("will be ignored: ['typo']")):
+        _, responses_tool_choice = m._get_responses_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+
+    assert responses_tool_choice == {
+        'type': 'allowed_tools',
+        'mode': 'required',
+        'tools': [{'type': 'function', 'name': name} for name in expected_names],
+    }
 
 
 NATIVE_TOOL_CONFIG_CASES = [

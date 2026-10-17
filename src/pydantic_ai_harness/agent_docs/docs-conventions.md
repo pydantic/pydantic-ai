@@ -60,9 +60,10 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
-  text; models are the current generation (verify against core's `_known_model_names.py` — as of
-  2026-08 that means `claude-fable-5` / `gpt-5.6-sol`, not older defaults) unless a page
-  intentionally pins an older one.
+  text. On `docs/harness/` pages, name models with the aliases from
+  `docs/model_aliases/aliases.json` (`{{ anthropic:large }}`), never model IDs; see the "Model names"
+  section of `docs/AGENTS.md`.
+  READMEs, which GitHub renders without resolving aliases, keep concrete model IDs.
 
 ## The Capability Index Spans Core And Harness
 
@@ -81,7 +82,9 @@ reminder lives here: a rename PR is not done until both indexes agree.
 
 Capabilities are grouped by what they give the agent, not by implementation detail:
 **Harnesses** (complete combined capabilities like `Coder`) · **Execution environments** (the
-workspace the agent acts in) · **Tools & native abilities** · **Web & research** ·
+workspace the agent acts in) · **Tools & native abilities** · **Integrations** (one third-party
+service each, like `GitHub` or `Slack`; also list a new one on `docs/harness/integrations.md`) ·
+**Web & research** ·
 **Reasoning, planning & delegation** · **Context management** (how the agent spends the context
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·

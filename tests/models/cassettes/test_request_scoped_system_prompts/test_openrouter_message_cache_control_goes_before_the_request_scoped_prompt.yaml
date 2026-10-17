@@ -1,0 +1,240 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "919"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-4.5
+        stream: false
+        messages:
+        - role: user
+          content: Weather in Paris and Oslo?
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: call_1
+          content: "Paris: 18C"
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_2
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Oslo\"}"
+        - role: tool
+          tool_call_id: call_2
+          content:
+          - type: text
+            text: "Oslo: 18C"
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content: <system>Reminder 2.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792166358-CFvnZ0ccgT53nHbJmvPB
+        object: chat.completion
+        created: 1792166358
+        model: anthropic/claude-haiku-4.5
+        provider: Amazon Bedrock
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: |-
+              Here's the weather information you requested:
+
+              - **Paris**: 18°C
+              - **Oslo**: 18°C
+
+              Both cities are currently at the same temperature of 18°C. Is there anything else you'd like to know about the weather in these cities?
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 715
+          completion_tokens: 60
+          total_tokens: 775
+          cost: 0.001015
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.001015
+            upstream_inference_prompt_cost: 0.000715
+            upstream_inference_completions_cost: 0.0003
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-16T15:59:22.084894+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "357"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-4.5
+        stream: false
+        messages:
+        - role: user
+          content: <system>Reminder.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792166362-9OI8Jzjt6Jnol0CSDVoq
+        object: chat.completion
+        created: 1792166362
+        model: anthropic/claude-haiku-4.5
+        provider: Amazon Bedrock
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: |-
+              Hello! I'm here to help you. I have access to a weather tool that can provide current weather information for any city you'd like to know about.
+
+              How can I assist you today? Feel free to ask me about:
+              - Weather conditions in a specific city
+              - Or anything else I can help with!
+
+              What would you like to know?
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 561
+          completion_tokens: 76
+          total_tokens: 637
+          cost: 0.000941
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000941
+            upstream_inference_prompt_cost: 0.000561
+            upstream_inference_completions_cost: 0.00038
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-16T15:59:23.930867+00:00

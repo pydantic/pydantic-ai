@@ -464,7 +464,6 @@ def sessions_service(tmp_path: Path) -> tuple[Sessions[None, str], SqliteConvers
     context = CommandContext(
         settings=Settings(model=None, session_namer=False),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=session.clear,
         apply_setting=lambda key, settings: None,
     )
     return Sessions(session=session, store=store, context=context), store
@@ -495,7 +494,7 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     service, store = sessions_service(tmp_path)
     await service.session.prompt('A CLAI session')
     native_id = service.session.summary.id
-    service.session.clear()
+    await service.session.clear()
     # Older than the CLAI session, so the browser lists it first.
     os.utime(claude_session(tmp_path), (2_000, 2_000))
     os.utime(codex_session(tmp_path / 'other'), (1_000, 1_000))
@@ -537,6 +536,35 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     assert (await service.command([])).startswith('Resumed Fix the parser')
 
 
+async def test_an_archived_copy_keeps_its_original_out_of_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _ = sessions_service(tmp_path)
+    claude_session(tmp_path)
+
+    def pick(browser: SessionBrowser) -> str:
+        return next(entry.id for entry in browser.entries if entry.tags == ('claude',))
+
+    monkeypatch.setattr(SessionBrowser, 'run', pick)
+    await service.command([])
+    copy = service.session.conversation_id
+    await service.session.clear()
+    await service.archive(copy)
+
+    def hidden(browser: SessionBrowser) -> str:
+        assert copy not in [entry.id for entry in browser.entries]
+        browser.reload()
+        assert copy not in [entry.id for entry in browser.entries]
+        browser.archived = True
+        browser.reload()
+        [listed] = [entry for entry in browser.entries if entry.id == copy]
+        assert listed.archived_at is not None and not browser.importing(listed)
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', hidden)
+    assert await service.command([]) == ''
+
+
 def test_browser_marks_sessions_to_import() -> None:
     entries = [ConversationSummary(id='claude', workspace='/w', title='From Claude Code', tags=('claude',))]
     keys = iter(['d', 'r', 'ctrl-c'])
@@ -544,10 +572,11 @@ def test_browser_marks_sessions_to_import() -> None:
         entries=entries,
         workspace='/w',
         active_id='',
-        refresh=lambda query, limit: entries,
+        refresh=lambda query, limit, archived: entries,
         preview=lambda session_id: '',
         delete=lambda entry: pytest.fail('not imported'),
         rename=lambda entry, title: pytest.fail('not imported'),
+        archive=lambda entry, archived: pytest.fail('not imported'),
         importing=lambda entry: True,
         output=StringIO(),
         key_source=lambda: next(keys),
@@ -560,6 +589,9 @@ def test_browser_marks_sessions_to_import() -> None:
     browser.notice = ''
     assert browser.handle_key('r') is None
     assert browser.mode == 'sessions' and browser.notice.startswith('Not imported yet.')
+    browser.notice = ''
+    assert browser.handle_key('a') is None
+    assert browser.notice.startswith('Not imported yet.')
     assert browser.handle_key(Key.ENTER) == 'claude'
 
 

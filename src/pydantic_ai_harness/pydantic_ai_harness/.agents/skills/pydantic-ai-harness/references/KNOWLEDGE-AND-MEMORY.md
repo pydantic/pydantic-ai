@@ -18,7 +18,8 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part.
+of other files is injected into each request as a delimited user-role part, attached to the request
+that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
 ```python
 from pydantic_ai import Agent
@@ -224,22 +225,47 @@ agent = Agent(
 )
 ```
 
-Signature: `Skills(directories, *, include=None, exclude=None, workspace=None)`. `directories` is
-one path or a sequence of library directories (not individual skill folders).
+Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='error',
+duplicate_names='error', unknown_names='error', workspace=None)`. `directories` is one path or a sequence of library
+directories (not individual skill folders), in precedence order.
+
+To layer project and personal libraries as coding agents do, pass
+`missing_directories='skip'` (absent folders are left out quietly; a file, or a skill package, in
+their place is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
+a `UserWarning`).
+
+A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
+with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
+`skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
+`ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
+`catalog.skipped` lists the `SKILL.md` files and library paths left out as `SkippedSkill(path,
+reason, message)`, `reason` one of `'invalid'`, `'duplicate_name'`, `'not_a_directory'`,
+`'skill_package'`, for the host to show; `load` emits no warnings itself.
+
+Frontmatter `disable-model-invocation: true` keeps a skill out of the model's catalog
+(`SkillDefinition.model_invocable` is `False`) but `load` still returns it, for a host command.
+`user-invocable: false` sets `SkillDefinition.user_invocable` to `False`, for a host to offer no
+command; the model still sees it. Either field with a value other than `true` or `false` skips the skill.
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
 - Reads from the run's workspace; no workspace fails the run at start. Use
   `workspace=LocalWorkspaceBackend('/app')` to read skills shipped with the app while the agent
   works in a sandbox.
-- No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly. Only immediate
-  child directories with a `SKILL.md` count.
-- `include` and `exclude` are mutually exclusive; unknown names, duplicate selected names across
-  libraries, and missing library paths fail at run start. Malformed frontmatter or a name not
-  matching its directory warns and skips that skill.
-- `description` is required. Bundled `references/`, `scripts/`, `assets/` are never read or run,
-  and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`, `hooks`
-  are accepted but not implemented (one aggregated `UserWarning`).
+- No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
+  a home path (workspace paths never expand `~`). Only immediate child directories with a
+  `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
+  not compared) counts once.
+- `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
+  duplicate selected names and missing library paths with the default `'error'` options.
+  `unknown_names='skip'` ignores names no library has, for a selection shared across projects.
+  Malformed frontmatter or a name not matching its directory warns and skips that skill.
+- With no skills found, `Skills` adds no instructions and no `load_capability` tool.
+- `description` is required. The loaded instructions name the skill's directory in the run's
+  workspace (not for a `workspace=` library), so a model with file or shell tools can follow
+  `references/` or run `scripts/`; `Skills` itself never reads or
+  runs them, and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`,
+  `hooks` are accepted but not implemented (one aggregated `UserWarning`).
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
   catalog selection, not access control.
 - For instructions defined in Python, use core
@@ -249,12 +275,11 @@ Gotchas:
 
 ## PydanticAIDocs
 
-Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page verbatim, plus a short
-cache-stable instruction to read docs before writing capabilities, hooks, tools, or toolsets. It
-serves only these six Pydantic AI pages (`PydanticAIDocsTopic`), not your own docs: `capabilities`,
-`hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`. The `capabilities` topic maps to
-`docs/capabilities.md`, which the docs no longer have (the page is now `docs/capabilities/overview.md`),
-so that topic only works from a local path that provides the file.
+Adds one tool, `read_pyai_docs(topic)`, returning a Pydantic AI docs page with its model aliases
+replaced by the models they name, plus a short cache-stable instruction to read docs before writing
+capabilities, hooks, tools, or toolsets. It serves only these six Pydantic AI pages
+(`PydanticAIDocsTopic`), not your own docs: `capabilities`, `hooks`, `tools`, `tools-advanced`,
+`toolsets`, `agent`.
 
 ```python
 from pydantic_ai import Agent
