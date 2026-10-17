@@ -106,6 +106,6 @@ async def run_headless(
                     return 1
                 finally:
                     with CancelScope(shield=True):  # pragma: no branch -- this scope is never cancelled.
-                        await shell.loader.close(reason)
+                        await shell.close(reason)
     print(answer)
     return 0

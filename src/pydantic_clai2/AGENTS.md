@@ -132,6 +132,18 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
   `LiveSessions` protocols are exported for third-party plugins; their `PLUGINS.md`
   contract lands with the multi-session docs, so keep them stable meanwhile.
+- **A process holds many live sessions; a conversation is live in one.**
+  `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
+  adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
+  runtime with `close`, never with `loader.close` alone. `open` returns the session
+  already holding a conversation, and `Session.resume` refuses one another session
+  holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
+  `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
+  `/reload` and `/update` (only the session CLAI started with restarts it), and close
+  after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
+  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  every live session (`CommandContext.adopt`) unless its project file sets it.
+  There is no turn cap.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
