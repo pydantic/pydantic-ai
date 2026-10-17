@@ -21,7 +21,9 @@ scripted provider responses. `ConversationResult` then answers three questions:
 
 from __future__ import annotations
 
+import ast
 import importlib
+import importlib.util
 import inspect
 import json
 import pkgutil
@@ -565,16 +567,26 @@ def _shorten(text: str, limit: int) -> str:
 # --- Discovery and the expectation tables --------------------------------------------------------
 
 
-def discover_capabilities(packages: Sequence[str]) -> dict[str, type[AbstractCapability[Any]]]:
-    """Every public, concrete-or-abstract capability class defined in `packages`, by class name.
+@dataclass
+class Discovered:
+    capabilities: dict[str, type[AbstractCapability[Any]]]
+    """Every public capability class in the packages, by class name."""
+    not_installed: set[str]
+    """Names of the classes defined in modules that couldn't be imported here, read from their source."""
+
+
+def discover_capabilities(packages: Sequence[str]) -> Discovered:
+    """Every public capability class defined in `packages`, by class name.
 
     Walks the packages rather than reading an export list, so a new capability is a new case without
     anyone registering it. Public means importable under its name from the module path with the private
     (`_`-prefixed) segments dropped: `pydantic_ai.capabilities._tool_search.ToolSearch` is public because
     `pydantic_ai.capabilities.ToolSearch` is it. Modules whose optional dependency group isn't installed are
-    skipped: the capability could not be used either.
+    skipped, as the capability could not be used either, and the classes they define are listed as not
+    installed, so the expectation tables can keep entries for them.
     """
     found: dict[str, type[AbstractCapability[Any]]] = {}
+    not_installed: set[str] = set()
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         for package_name in packages:
@@ -588,6 +600,7 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, type[AbstractCap
                     module = importlib.import_module(module_name)
                 # An optional dependency group that isn't installed.
                 except ImportError:  # pragma: lax no cover
+                    not_installed |= _class_names(module_name)
                     continue
                 for obj in vars(module).values():
                     if (
@@ -597,7 +610,23 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, type[AbstractCap
                         and _is_public(obj)
                     ):
                         found[obj.__name__] = obj
-    return found
+    return Discovered(found, not_installed)
+
+
+def _class_names(module_name: str) -> set[str]:  # pragma: lax no cover
+    """The classes a module (or, for a package, any module in it) defines, read without importing it."""
+    spec = importlib.util.find_spec(module_name)
+    assert spec is not None and spec.origin is not None
+    locations = spec.submodule_search_locations
+    paths = (
+        [path for location in locations for path in Path(location).rglob('*.py')] if locations else [Path(spec.origin)]
+    )
+    return {
+        node.name
+        for path in paths
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
+        if isinstance(node, ast.ClassDef)
+    }
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:

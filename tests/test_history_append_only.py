@@ -181,12 +181,13 @@ AGENT_FEATURES: dict[str, Scenario] = {
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
-CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
+DISCOVERED = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
+CAPABILITIES = DISCOVERED.capabilities
 
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    stale = (FIXTURES.keys() | EXEMPT.keys()) - CAPABILITIES.keys()
+    stale = (FIXTURES.keys() | EXEMPT.keys()) - CAPABILITIES.keys() - DISCOVERED.not_installed
     assert not stale, f'`FIXTURES`/`EXEMPT` entries for capabilities that no longer exist: {sorted(stale)}'
 
 

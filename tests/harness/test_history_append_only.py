@@ -38,7 +38,6 @@ from pydantic_ai_harness import (
     InputGuardrail,
     Macroscope,
     ManagedPrompt,
-    ModalSandbox,
     Ordinal,
     OutputGuardrail,
     PostHog,
@@ -64,6 +63,11 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
+
+from ..conftest import try_import
+
+with try_import():
+    from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
 from ..append_only import (
     CLOCK,
@@ -294,13 +298,14 @@ ENV: dict[str, dict[str, str]] = {
 }
 """Credentials a capability checks when it's built; nothing is sent, as the scripted model never calls its tools."""
 
-CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
+DISCOVERED = discover_capabilities(('pydantic_ai_harness',))
+CAPABILITIES = DISCOVERED.capabilities
 
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
-    stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
+    stale = tables - CAPABILITIES.keys() - DISCOVERED.not_installed - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
