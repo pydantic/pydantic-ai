@@ -394,19 +394,30 @@ def _plugins(app: FastAPI, service: WebService) -> None:
 
 
 def _commands(app: FastAPI, service: WebService) -> None:
-    """Commands' own menus, such as `/set`'s, shown in the page instead of the terminal."""
+    """Commands' own menus, such as `/set`'s, shown in the page instead of the terminal.
 
-    @app.get('/api/commands/{name}/fields')
-    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
-        return await _wait(service.command_menu(name, path=path))
+    Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
+    holding conversation ID, whose commands build the menu, and unprefixed for the default session.
+    """
 
-    @app.post('/api/commands/{name}/fields/{key}')
-    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
-        return await _wait(service.edit_command_menu(name, key, body.value, path=path))
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
 
-    @app.post('/api/commands/{name}/fields/{key}/action')
-    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
-        return await _wait(service.run_command_menu_action(name, key, path=path))
+    async def fields(name: str, path: MenuPath = (), conversation_id: str | None = None) -> MenuInfo:
+        return await _wait(service.command_menu(session(conversation_id), name, path=path))
+
+    async def set_field(
+        name: str, key: str, body: FieldValue, path: MenuPath = (), conversation_id: str | None = None
+    ) -> MenuEdited:
+        return await _wait(service.edit_command_menu(session(conversation_id), name, key, body.value, path=path))
+
+    async def run_action(name: str, key: str, path: MenuPath = (), conversation_id: str | None = None) -> MenuEdited:
+        return await _wait(service.run_command_menu_action(session(conversation_id), name, key, path=path))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/commands/{{name}}/fields')(fields)
+        app.post(f'{prefix}/commands/{{name}}/fields/{{key}}')(set_field)
+        app.post(f'{prefix}/commands/{{name}}/fields/{{key}}/action')(run_action)
 
 
 def _tasks(app: FastAPI, service: WebService) -> None:
