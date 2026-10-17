@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "339"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: Answer from the UI state, in one short sentence.
+        - role: user
+          content:
+          - text: <ui_state>{"url":"/products/42","cart":{"items":2,"total":949.0}}</ui_state>
+            type: text
+          - text: How many items are in my cart?
+            type: text
+        model: openai/gpt-oss-20b
+        "n": 1
+        stream: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-d30a9c3b-51bc-41b1-a54a-0fd13c43e4e9
+        object: chat.completion
+        created: 1792189692
+        model: openai/gpt-oss-20b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: Your cart contains 2 items.
+            reasoning: "We need to respond with a short sentence, referencing the UI state. UI state: {\"url\":\"/products/42\",\"cart\":{\"items\":2,\"total\":949.0}}. Items 2. So answer: \"Your cart contains 2 items.\" Should be short sentence."
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.04865518
+          prompt_tokens: 119
+          prompt_time: 0.005769296
+          completion_tokens: 75
+          completion_time: 0.081196134
+          total_tokens: 194
+          total_time: 0.08696543
+          completion_tokens_details:
+            reasoning_tokens: 59
+        usage_breakdown: null
+        system_fingerprint: fp_3826805fb8
+        x_groq:
+          id: req_01m53d8yvxe6abahk19ys5qtw7
+          seed: 1020003559
+        service_tier: on_demand
+  recorded_at: 2026-10-16T22:28:12.977752+00:00

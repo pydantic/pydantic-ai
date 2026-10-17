@@ -32,6 +32,7 @@ from ...messages import (
     NativeToolReturnPart,
     RetryPromptPart,
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -56,6 +57,8 @@ from .._adapter import (
     compaction_part_from_payload,
     compaction_payload,
     resolve_allow_uploaded_files,
+    structured_content_from_payload,
+    structured_content_payload,
     tool_availability_delta_from_payload,
 )
 from .._utils import get_ui_message_id, set_ui_message_id
@@ -343,7 +346,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 user_prompt_content: str | list[UserContent] = []
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        user_prompt_content.append(part.text)
+                        structured = load_provider_metadata(part.provider_metadata).get('structured_content')
+                        user_prompt_content.append(
+                            part.text if structured is None else structured_content_from_payload(structured, part.text)
+                        )
                     elif isinstance(part, FileUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
                         # Restoring client-supplied `vendor_metadata` is intentional (as the `UploadedFile` branch
@@ -1147,6 +1153,15 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
         for item in part.content:
             if isinstance(item, str):
                 ui_parts.append(TextUIPart(text=item, state='done'))
+            elif isinstance(item, StructuredContent):
+                # A text part the frontend shows like any user text, with the value in its metadata.
+                ui_parts.append(
+                    TextUIPart(
+                        text=item.content,
+                        state='done',
+                        provider_metadata=dump_provider_metadata(structured_content=structured_content_payload(item)),
+                    )
+                )
             elif isinstance(item, TextContent):
                 ui_parts.append(TextUIPart(text=item.content, state='done'))
             elif isinstance(item, BinaryContent):

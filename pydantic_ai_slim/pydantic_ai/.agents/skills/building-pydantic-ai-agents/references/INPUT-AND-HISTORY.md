@@ -1,6 +1,6 @@
 # Input and History
 
-Read this file when the user wants multimodal input, message history, `run_id` / `conversation_id` correlation, or context trimming.
+Read this file when the user wants multimodal or structured input, message history, `run_id` / `conversation_id` correlation, or context trimming.
 
 ## Send Images, Audio, Video, or Documents to the Model
 
@@ -26,6 +26,24 @@ Not every model supports every input type. Keep provider expectations in mind wh
 For Gemini models that support agentic video processing, set `vendor_metadata={'media_processing': 'AGENTIC'}` on a `VideoUrl`, video `BinaryContent`, or video `UploadedFile`. See Google's [agentic video understanding guide](https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding).
 
 On follow-up requests, Pydantic AI omits Gemini media-processing response parts while keeping the ordinary final response and thought signature. When follow-up history still includes the original video, it is sent and processed again, which can incur additional video-processing tokens.
+
+## Send Structured Data in the Prompt
+
+Wrap a structured value (UI state, a record to judge) in `StructuredContent` instead of serializing it yourself. It stays structured in message history, and the model is sent text rendered once when the item is created: compact JSON by default, wrapped in `tag` when given, with `<`, `>` and `&` escaped.
+
+```python
+from pydantic_ai import Agent, StructuredContent
+
+agent = Agent(model='openai:gpt-5.2')
+result = agent.run_sync(
+    [StructuredContent({'url': '/products/42', 'cart_total': 949.0}, tag='ui_state'), 'Why did the total jump?']
+)
+```
+
+- `format='xml'` renders with `format_as_xml`; a function `value -> str` renders custom text; or subclass `StructuredContent` and override `render()`.
+- The rendered text is stored in `content`, so a reloaded history is sent byte-for-byte as before. It is not re-rendered when `value` changes: build a new item, or `dataclasses.replace(item, value=..., content='')` (pass `format=` again if it was created with one). After loading from JSON, `value` is JSON-compatible data (a dict, not the original Pydantic model), and a subclass comes back as `StructuredContent`.
+- It is a `TextContent` subclass, so text readers handle it unchanged. Decision models (`DecisionModel`, e.g. TypeSafe) are sent `value` natively when the prompt is a single `StructuredContent`. When rewriting a prompt's text (redaction, truncation), replace the item with a plain `TextContent`.
+- It works in `ctx.enqueue(...)` like any user content. The Vercel AI and AG-UI adapters dump it as visible user text, with the value in the text part's `providerMetadata.pydantic_ai` (Vercel) or the `UserMessage.encrypted_value` (AG-UI, from ag-ui-protocol 0.1.11; plain text before that), and load it back whole.
 
 ## Work with Message History
 
