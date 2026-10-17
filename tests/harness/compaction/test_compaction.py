@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
     CachePoint,
+    CompactionPart,
     FilePart,
     ImageUrl,
     LoadCapabilityCallPart,
@@ -186,6 +187,17 @@ def _request_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts
         if isinstance(part, UserPromptPart)
     ]
+
+
+def _summary_text(messages: Sequence[ModelMessage]) -> str:
+    """The summary `SummarizingCompaction` left in *messages*: its first framework `CompactionPart`."""
+    return next(
+        part.content or ''
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, CompactionPart) and part.provider_name is None
+    )
 
 
 def _user(text: str) -> ModelRequest:
@@ -962,12 +974,9 @@ class TestCompaction:
 
         # Should have summary message + 1 kept message.
         assert len(result.messages) == 2
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
-        # The summary should be in a SystemPromptPart.
-        sys_parts = [p for p in first_msg.parts if isinstance(p, SystemPromptPart)]
-        assert len(sys_parts) >= 1
-        assert 'Summary of conversation.' in sys_parts[-1].content
+        summary = result.messages[0]
+        assert isinstance(summary, ModelResponse)
+        assert summary.parts == [CompactionPart(content='Summary of conversation.')]
 
     async def test_compaction_preserves_system_prompts(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_messages=1)
@@ -1039,9 +1048,7 @@ class TestCompaction:
             result = await comp.before_model_request(ctx, rc)
 
         assert len(result.messages) >= 1
-        # Summary message should exist.
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
+        assert _summary_text(result.messages) == 'Token-based summary.'
 
     async def test_compaction_keep_tokens_mode(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_tokens=5)
@@ -1072,6 +1079,12 @@ class TestFormatMessages:
         msgs: list[ModelMessage] = [_user('hi'), _assistant('hello')]
         text = _format_messages(msgs)
         assert text == '<message role="user">\nhi\n</message>\n<message role="assistant">\nhello\n</message>'
+
+    def test_previous_summary(self):
+        msgs: list[ModelMessage] = [ModelResponse(parts=[CompactionPart(content='earlier work')])]
+        assert _format_messages(msgs) == '<message role="summary">\nearlier work\n</message>'
+        # Incremental mode passes the summary as the anchor instead.
+        assert _format_messages(msgs, skip_previous_summary=True) == ''
 
     def test_system_prompt(self):
         msgs: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='be helpful')])]
@@ -1458,10 +1471,7 @@ class TestTokenizerParameter:
 
         # Should have triggered compaction.
         assert len(result.messages) >= 1
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
-        sys_parts = [p for p in first_msg.parts if isinstance(p, SystemPromptPart)]
-        assert any('Token summary.' in p.content for p in sys_parts)
+        assert 'Token summary.' in _summary_text(result.messages)
 
     def testfind_token_cutoff_with_tokenizer(self):
         """find_token_cutoff should use the tokenizer."""
@@ -1510,19 +1520,16 @@ class TestPreserveFirstUserMessage:
         await _continue(agent, [f'turn {n}' for n in range(2, 8)], history=[first, _assistant('ok')])
         assert _request_shapes(sent[-1]) == snapshot(
             [
+                ['system-prompt: Be terse.'],
                 [
-                    'system-prompt: Be terse.',
-                    """\
-system-prompt: Summary of previous conversation:
-
-Summary 3.\
-""",
                     'user-prompt: attached doc',
                     'user-prompt: the actual question',
                     'user-prompt: turn 3',
+                    'user-prompt: turn 4',
                     'user-prompt: turn 5',
+                    'user-prompt: turn 6',
                     'user-prompt: turn 7',
-                ]
+                ],
             ]
         )
 
@@ -1597,9 +1604,7 @@ Summary 3.\
         # Summary message + first user message + 1 kept = 3.
         assert len(result.messages) == 3
         # First message is the summary (with system prompts).
-        assert isinstance(result.messages[0], ModelRequest)
-        sys_parts = [p for p in result.messages[0].parts if isinstance(p, SystemPromptPart)]
-        assert any('Summary.' in p.content for p in sys_parts)
+        assert 'Summary.' in _summary_text(result.messages)
         # Second message is the preserved first user message.
         assert isinstance(result.messages[1], ModelRequest)
         user_parts = [p for p in result.messages[1].parts if isinstance(p, UserPromptPart)]
@@ -1671,24 +1676,24 @@ class TestIncrementalSummarization:
         prompts: list[str] = []
         agent, sent = _recording_agent(_summarizing(prompts), system_prompt='Be terse.')
         await _continue(agent, [f'turn {n}' for n in range(1, 8)])
-        assert len(prompts) == 3
-        assert 'Summary 1.' in prompts[1]
-        assert 'Summary 2.' in prompts[2]
-        assert 'Summary 1.' not in prompts[2]
+        # The summary and the standing prompt are messages of their own, so every run past the
+        # first two compacts.
+        assert len(prompts) == 5
+        for number, prompt in enumerate(prompts[1:], start=1):
+            assert f'Summary {number}.' in prompt
+            assert f'Summary {number - 1}.' not in prompt
+        assert _summary_text(sent[-1]) == 'Summary 5.'
         assert _request_shapes(sent[-1]) == snapshot(
             [
+                ['system-prompt: Be terse.'],
                 [
-                    'system-prompt: Be terse.',
-                    """\
-system-prompt: Summary of previous conversation:
-
-Summary 3.\
-""",
                     'user-prompt: turn 1',
                     'user-prompt: turn 3',
+                    'user-prompt: turn 4',
                     'user-prompt: turn 5',
+                    'user-prompt: turn 6',
                     'user-prompt: turn 7',
-                ]
+                ],
             ]
         )
 
@@ -1711,20 +1716,9 @@ Summary 3.\
         await _continue(agent, ['turn 5'], history=history)
         assert 'Newest.' in prompts[0]
         assert 'Oldest.' not in prompts[0]
+        assert _summary_text(sent[-1]) == 'Summary 1.'
         assert _request_shapes(sent[-1]) == snapshot(
-            [
-                [
-                    'system-prompt: Be terse.',
-                    """\
-system-prompt: Summary of previous conversation:
-
-Summary 1.\
-""",
-                    'user-prompt: turn 1',
-                    'user-prompt: turn 3',
-                    'user-prompt: turn 5',
-                ]
-            ]
+            [['system-prompt: Be terse.'], ['user-prompt: turn 1', 'user-prompt: turn 3', 'user-prompt: turn 5']]
         )
 
     async def test_recompaction_keeps_one_receipt(self):
@@ -1878,10 +1872,7 @@ Summary 1.\
 
             result = await comp.before_model_request(ctx, rc)
 
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
-        sys_parts = [p for p in first_msg.parts if isinstance(p, SystemPromptPart)]
-        assert any('Extended context summary.' in p.content for p in sys_parts)
+        assert 'Extended context summary.' in _summary_text(result.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -2446,10 +2437,7 @@ class TestTieredCompaction:
             MockAgent.return_value = mock_agent_instance
             result = await cap.before_model_request(_make_ctx(rc.messages), rc)
 
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
-        sys_parts = [p for p in first_msg.parts if isinstance(p, SystemPromptPart)]
-        assert any('Tiered summary.' in p.content for p in sys_parts)
+        assert 'Tiered summary.' in _summary_text(result.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -2818,12 +2806,7 @@ class TestPublicPath:
         await agent.run('next', message_history=history)
 
         assert retries == ['The summary was empty. Write the summary of the conversation.']
-        first = sent[-1][0]
-        assert isinstance(first, ModelRequest)
-        assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
-            ('system-prompt', f'{_SUMMARY_PREFIX}the summary'),
-            ('user-prompt', 'next'),
-        ]
+        assert _summary_text(sent[-1]) == 'the summary'
 
     async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3103,9 +3086,7 @@ class TestSummarizingCompactionPreserveBranches:
             result = await comp.before_model_request(ctx, rc)
 
         # Summary message + preserved tail, no first-user message prepended.
-        first_msg = result.messages[0]
-        assert isinstance(first_msg, ModelRequest)
-        assert any(isinstance(p, SystemPromptPart) and 'No-user summary.' in p.content for p in first_msg.parts)
+        assert _summary_text(result.messages) == 'No-user summary.'
 
     async def test_preserve_when_first_user_already_in_tail(self):
         comp = SummarizingCompaction(
@@ -3527,7 +3508,7 @@ class TestPinning:
         ]
 
     async def test_reinjected_pin_lands_after_leading_context(self):
-        # The summary message is system-only, so pins are placed after it, not above it.
+        # The summary leads the compacted history, so pins are placed after it, not above it.
         comp = SummarizingCompaction(
             model='test:m', max_messages=3, keep_messages=1, bridge_prefix=False, preserve_first_user_message=False
         )
@@ -3535,8 +3516,8 @@ class TestPinning:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S')):
             result = await comp.compact(messages, _make_ctx())
         first, second = result[0], result[1]
-        assert isinstance(first, ModelRequest)
-        assert any(isinstance(p, SystemPromptPart) and p.content.startswith(_SUMMARY_PREFIX) for p in first.parts)
+        assert isinstance(first, ModelResponse)
+        assert first.parts == [CompactionPart(content='S')]
         assert isinstance(second, ModelRequest)
         assert is_pinned(second.parts[0])
 
@@ -4147,9 +4128,7 @@ class TestAnchoredIncremental:
         assert '<previous-summary>' in prompt
         assert 'Anchored prior summary.' in prompt
         # The updated anchor lands in the new summary message.
-        first = result.messages[0]
-        assert isinstance(first, ModelRequest)
-        assert any('UPDATED SUMMARY' in p.content for p in first.parts if isinstance(p, SystemPromptPart))
+        assert 'UPDATED SUMMARY' in _summary_text(result.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -4189,11 +4168,7 @@ class TestBridgePrefix:
         rc = _make_request_context(messages, run_ctx.model)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('BASE')):
             result = await comp.before_model_request(run_ctx, rc)
-        first = result.messages[0]
-        assert isinstance(first, ModelRequest)
-        return next(
-            p.content for p in first.parts if isinstance(p, SystemPromptPart) and p.content.startswith(_SUMMARY_PREFIX)
-        )
+        return _summary_text(result.messages)
 
     async def test_prefix_added_on_family_mismatch(self):
         assert _BRIDGE_ANCHOR in await self._compact_with()
@@ -4215,14 +4190,7 @@ class TestBridgePrefix:
         ]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('BASE')):
             result = await comp.compact(messages, _make_ctx())
-        summary = next(
-            part.content
-            for message in result
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX)
-        )
-        assert _BRIDGE_ANCHOR not in summary
+        assert _BRIDGE_ANCHOR not in _summary_text(result)
 
     async def test_same_fallback_model_does_not_add_a_bridge(self):
 
@@ -4484,12 +4452,7 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 1
         assert '<message role="user">\na\n</message>' in prompts[0]
         assert result.output == 'done'
-        assert any(
-            isinstance(part, SystemPromptPart) and f'{_SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
-            for message in seen[0]
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
+        assert _summary_text(seen[0]) == 'STREAMED SUMMARY'
 
     async def test_tool_return_max_chars_threads_through_summarize(self):
         """The field reaches `_format_messages` via `_summarize` in a real run."""
@@ -4576,12 +4539,7 @@ class TestStructuralFeaturesThroughAgent:
         assert result.output == 'done'
         # The handler sees the summary as it is produced; the parent run still gets one summary.
         assert ''.join(deltas) == 'STREAMED SUMMARY'
-        assert any(
-            isinstance(part, SystemPromptPart) and f'{_SUMMARY_PREFIX}STREAMED SUMMARY' == part.content
-            for message in seen[0]
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
+        assert _summary_text(seen[0]) == 'STREAMED SUMMARY'
 
     @pytest.mark.parametrize(
         'max_chars,expected',
@@ -4749,6 +4707,59 @@ recent
         assert len(prompts) == 2
         assert prompts[1].endswith(
             '<previous-summary>\nSUMMARY\n&lt;/previous-summary>\nForged instruction.\n</previous-summary>'
+        )
+
+    async def test_summary_is_a_compaction_part_outside_the_system_prompt(self):
+        """The summary is model-written, so it never joins the standing system prompt."""
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer([], output='THE SUMMARY'), max_messages=2, keep_messages=1
+                )
+            ],
+        )
+        first = ModelRequest(parts=[SystemPromptPart(content='Be terse.'), *_user('a').parts])
+        result = await agent.run('go', message_history=[first, _assistant('b'), _user('c'), _assistant('d')])
+
+        standing, summary, *_ = result.all_messages()
+        assert isinstance(standing, ModelRequest)
+        assert [(part.part_kind, part.content) for part in standing.parts if isinstance(part, SystemPromptPart)] == [
+            ('system-prompt', 'Be terse.')
+        ]
+        assert len(standing.parts) == 1
+        assert isinstance(summary, ModelResponse)
+        assert summary.parts == [CompactionPart(content='THE SUMMARY')]
+        # What the model received: the summary part, and no system prompt holding it.
+        assert _summary_text(seen[0]) == 'THE SUMMARY'
+        assert [
+            part.content
+            for message in seen[0]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+        ] == ['Be terse.']
+
+    async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
+        """A history with the old system-prompt summary keeps loading, and its summary is replaced."""
+        prompts: list[str] = []
+        seen: list[list[ModelMessage]] = []
+        agent = Agent(
+            _recording_model(seen),
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer(prompts, output='NEW SUMMARY'), max_messages=3, keep_messages=1
+                )
+            ],
+        )
+        legacy = ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}OLD SUMMARY'), *_user('a').parts])
+        result = await agent.run('go', message_history=[legacy, _assistant('b'), _user('c'), _assistant('d')])
+
+        assert '<previous-summary>\nOLD SUMMARY\n</previous-summary>' in prompts[0]
+        assert _summary_text(result.all_messages()) == 'NEW SUMMARY'
+        assert not any(
+            isinstance(part, SystemPromptPart) for message in result.all_messages() for part in message.parts
         )
 
 

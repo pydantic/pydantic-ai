@@ -56,6 +56,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -562,6 +563,7 @@ class GroqModel(Model[AsyncGroq]):
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
+        messages = _render_unattributed_compaction_parts(messages)
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):

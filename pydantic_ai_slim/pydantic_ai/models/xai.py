@@ -48,6 +48,7 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -363,6 +364,7 @@ class XaiModel(Model[AsyncClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
+        messages = _render_unattributed_compaction_parts(messages)
         xai_messages: list[chat_types.chat_pb2.Message] = []
         # xAI expects tool results in the same order as tool calls.
         #

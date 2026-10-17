@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -22,7 +23,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
-from typing_extensions import TypeAliasType, TypedDict, deprecated
+from typing_extensions import TypeAliasType, TypedDict, TypeIs, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
@@ -2506,6 +2507,59 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if response_parts:
                 new_messages.append(replace(message, parts=response_parts))
     return new_messages
+
+
+_CONVERSATION_SUMMARY_CLOSING_TAG = re.compile(r'</(conversation_summary)\s*>', re.IGNORECASE)
+
+
+def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFunction]
+    messages: Sequence[ModelMessage],
+) -> list[ModelMessage]:
+    """Send each `CompactionPart` that no provider produced as assistant text framed as a summary.
+
+    A part without `provider_name` was written by the application or a framework capability (such as
+    Pydantic AI Harness's `SummarizingCompaction`), not by a provider's compaction API, so no provider
+    has a native block for it and every adapter would otherwise leave it out. It is model-written
+    text standing in for earlier turns, so it goes out in the assistant turn that holds it, never in
+    system voice. Its own closing tag is neutralized, so the summary can't end its frame early.
+    Parts without content have nothing to send and are left for the adapter to omit.
+
+    Adapters call this as the first step of their own message mapping, not from `prepare_messages`:
+    the request context, hooks and cache-health accounting keep seeing the typed part.
+    """
+    if not any(
+        _is_unattributed_summary(part)
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    ):
+        return list(messages)
+    new_messages: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            message = replace(
+                message,
+                parts=[
+                    TextPart(content=_conversation_summary_text(part.content or ''))
+                    if _is_unattributed_summary(part)
+                    else part
+                    for part in message.parts
+                ],
+            )
+        new_messages.append(message)
+    return new_messages
+
+
+def _is_unattributed_summary(part: ModelResponsePart) -> TypeIs[CompactionPart]:
+    """Whether *part* is a compaction summary no provider produced, which every adapter renders as text."""
+    return isinstance(part, CompactionPart) and part.provider_name is None and bool(part.content)
+
+
+def _conversation_summary_text(content: str) -> str:
+    """*content* framed as a summary of the conversation it replaced."""
+    # TODO(#10547): switch to `_framing.wrap()` once it lands.
+    body = _CONVERSATION_SUMMARY_CLOSING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+    return f'<conversation_summary>\n{body}\n</conversation_summary>'
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:

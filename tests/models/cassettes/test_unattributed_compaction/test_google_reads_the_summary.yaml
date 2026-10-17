@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "489"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: ""
+          role: user
+        - parts:
+          - text: |-
+              <conversation_summary>
+              ## Intent
+              The user is naming their new project. They settled on the codename 'Bluefin'.
+              </conversation_summary>
+          role: model
+        - parts:
+          - text: What codename did we settle on? Answer with the codename only.
+          role: user
+        systemInstruction:
+          parts:
+          - text: You are a concise assistant.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1208
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: Bluefin
+              thoughtSignature: >-
+                Ev4CCvsCAWkUfRMqN7/udW1IyfSWa1C4sTLgTQ0kIdCDJoydp1uyP1Bg5Zum2rtgH9y9D3UPGLXxKTVlCCo7Du+wv3FHPJx2dEIsQX0vxzk2IbqzgiaihnsZ7tFKI3kuwPN/tfaGQaDRS/o0nLW7U0ekbgq/c1qRQIR/LkvZWpDXLbpjNtJNzKMqWR61Debd25ZuZmm+y4MfbUr3kC1Fiv4tsnXBtdUqyyjkKXkkNAd7fyYdt2oHzQ96B9alfsl77+mOPr6ZbDLd7xjrEb8++WUom9P6qmMq8ALtFFA2l40E3PmWg4JTheBIWUBGpd8FGGXkVgGzmyMxKxjs5Lzh6ESai4pPAZKJ21faWqE+VKcH/2hViNrruFgF1Q90l0Tsa/WilGmaSY5gJfE255xS8zJxAAkfPxq7b0ZOT5GhY/aUP38YOPk5d0T/H73jofR4XXI9//sZqY0LHxCjnsOv2NOqYdtefWkgb1TEV8yl65sxvHrh+YMgUCbzyoVLA1idZg==
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 58
+          candidatesTokenCount: 2
+          totalTokenCount: 128
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 58
+          thoughtsTokenCount: 68
+          serviceTier: standard
+        modelVersion: gemini-3-flash-preview
+        responseId: nQrTarKIMbDtz7IPxsGFsQ8
+  recorded_at: 2026-10-17T05:41:50.934097+00:00

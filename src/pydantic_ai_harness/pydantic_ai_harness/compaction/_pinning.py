@@ -16,10 +16,12 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     SystemPromptPart,
     TextContent,
     UserPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import is_summary_part
 
 _PIN_METADATA = 'pydantic-ai-harness.compaction.pin.v1'
 """Model-invisible metadata identifying a pinned user-content item."""
@@ -53,10 +55,12 @@ def collect_pinned(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
 
 
 def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
-    """Count the leading run of system-only requests (system prompts + a summary message)."""
+    """Count the leading run of system-only requests and summary-only responses."""
     count = 0
     for msg in messages:
         if isinstance(msg, ModelRequest) and msg.parts and all(isinstance(p, SystemPromptPart) for p in msg.parts):
+            count += 1
+        elif isinstance(msg, ModelResponse) and msg.parts and all(is_summary_part(p) for p in msg.parts):
             count += 1
         else:
             break

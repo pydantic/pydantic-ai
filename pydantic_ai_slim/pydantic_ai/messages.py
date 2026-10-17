@@ -2308,6 +2308,10 @@ class CompactionPart:
 
     For Anthropic, `content` contains a readable text summary.
     For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
+
+    A part without `provider_name` holds a summary written by the application or a capability, such
+    as Pydantic AI Harness's `SummarizingCompaction`. No provider has a native block for it, so every
+    request-response model receives its `content` as assistant text inside `<conversation_summary>`.
     """
 
     content: str | None = None

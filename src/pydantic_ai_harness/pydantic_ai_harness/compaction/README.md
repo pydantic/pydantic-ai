@@ -475,6 +475,15 @@ releases; set `incremental=False` to retain the prior regeneration behavior. `pr
 when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
 instead of using `keep_messages`.
 
+The summary is a `CompactionPart` in a `ModelResponse` of its own, right after the original system
+prompts, which stay exactly as they were. Every request-response model receives it as assistant text
+inside `<conversation_summary>`, never as part of the system prompt: a model wrote it, from a history
+that can include tool output. Because it is a compaction part, Pydantic AI also treats it as a
+compaction boundary, so tool discoveries and on-demand capability loads from before it are announced
+again, and `WarnOnCacheBusts` reports the cache drop it causes as `compacted`. A history saved before
+this, with the summary in a system prompt opening with `Summary of previous conversation:`, keeps
+working: that summary anchors the next one and is replaced by it.
+
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
@@ -651,8 +660,8 @@ supersedes `preserve_first_user_message` (which keeps only the first).
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
 ```
 
-Retaining user turns leaves the summary, any receipt, and the retained turns as adjacent
-`ModelRequest`s. Providers that require one request per turn -- Bedrock Converse and Gemini among
+Retaining user turns leaves any receipt and the retained turns as adjacent `ModelRequest`s after the
+summary. Providers that require one request per turn -- Bedrock Converse and Gemini among
 them -- never see that shape: Pydantic AI normalizes the history with `_merge_consecutive_messages`
 after the `before_model_request` hooks run, combining adjacent requests into a single turn before
 dispatch. `keep_user_messages` therefore needs no provider-specific handling.

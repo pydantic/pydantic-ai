@@ -118,6 +118,7 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -1983,6 +1984,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = _render_unattributed_compaction_parts(messages)
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
@@ -3847,6 +3849,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
+        messages = _render_unattributed_compaction_parts(messages)
         profile = self.profile
         response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
         response_id = previous_response_id if response_scoped_tool_call_ids else None

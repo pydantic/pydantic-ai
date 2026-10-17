@@ -28,12 +28,16 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelResponse,
     SystemPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import is_summary_part
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
 SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
-"""The exact prefix a `SummarizingCompaction` writes into the summary artifact it inserts.
+"""The exact prefix an earlier `SummarizingCompaction` wrote into the summary system prompt it inserted.
+
+Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
 
 Byte-for-byte mirror of `pydantic_ai_harness.compaction._summarizing_compaction._SUMMARY_PREFIX`,
 including the blank line: that is the marker compaction itself matches on to recognize its own
@@ -133,9 +137,13 @@ def _overlap_length(history: list[str], snapshot: list[str]) -> int:
 
 
 def is_summary_artifact(message: ModelMessage) -> bool:
-    """Return whether a message is a compaction summary artifact (never indexed)."""
-    if not isinstance(message, ModelRequest):
-        return False
+    """Return whether a message is a compaction summary artifact (never indexed).
+
+    That is a response holding a `CompactionPart` no provider produced, or, in a history saved before
+    `SummarizingCompaction` wrote one, a request carrying its prefixed summary system prompt.
+    """
+    if isinstance(message, ModelResponse):
+        return any(is_summary_part(part) for part in message.parts)
     return any(isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts)
 
 

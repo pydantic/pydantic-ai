@@ -42,6 +42,7 @@ from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -305,6 +306,7 @@ class CohereModel(Model[AsyncClientV2]):
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
+        messages = _render_unattributed_compaction_parts(messages)
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:
             if isinstance(message, ModelRequest):

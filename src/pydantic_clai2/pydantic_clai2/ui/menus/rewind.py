@@ -8,8 +8,10 @@ from termflow.tui.menu import Menu
 
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
     ToolReturnPart,
@@ -40,11 +42,20 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
     # Harness pins this shape in `tests/harness/compaction/test_summary_provenance.py`.
     context_time = max(
         (
-            part.timestamp
-            for message in messages
-            if isinstance(message, ModelRequest) and message.run_id is None
-            for part in message.parts
-            if isinstance(part, SystemPromptPart)
+            *(
+                part.timestamp
+                for message in messages
+                if isinstance(message, ModelRequest) and message.run_id is None
+                for part in message.parts
+                if isinstance(part, SystemPromptPart)
+            ),
+            *(
+                message.timestamp
+                for message in messages
+                if isinstance(message, ModelResponse)
+                and message.run_id is None
+                and any(isinstance(part, CompactionPart) for part in message.parts)
+            ),
         ),
         default=None,
     )

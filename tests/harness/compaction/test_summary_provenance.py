@@ -1,6 +1,6 @@
 """Pin the summary provenance used by CLAI2's conservative rewind boundary check."""
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 
@@ -22,9 +22,7 @@ class TestSummarizingCompaction:
         )
 
         summary, preserved_prompt, last_response = result
-        assert isinstance(summary, ModelRequest) and summary.run_id is None
-        [part] = summary.parts
-        assert isinstance(part, SystemPromptPart)
-        assert part.content == 'Summary of previous conversation:\n\nsummary of both prompts'
-        assert part.timestamp > max(first_prompt.timestamp, later_prompt.timestamp)
+        assert isinstance(summary, ModelResponse) and summary.run_id is None
+        assert summary.parts == [CompactionPart(content='summary of both prompts')]
+        assert summary.timestamp > max(first_prompt.timestamp, later_prompt.timestamp)
         assert preserved_prompt == messages[0] and last_response == messages[-1]
