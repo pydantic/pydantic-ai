@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** An answer or thinking block the model is still writing; live runs only. */
+  streaming: boolean
 }
 
 export interface Option {
@@ -185,6 +187,7 @@ export interface TaskTranscript {
 export type ItemMessage =
   | { type: 'item'; item: Item }
   | { type: 'delta'; id: string; text: string }
+  | { type: 'text_done'; id: string }
   | { type: 'tool_output'; id: string; text: string }
   | { type: 'args_delta'; id: string; text: string }
   | { type: 'tool_args'; id: string; args: string }

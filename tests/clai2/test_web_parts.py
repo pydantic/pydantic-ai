@@ -20,6 +20,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RunContext,
 )
@@ -66,6 +67,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     SubCallDone,
     SubCallOutput,
     TextDelta,
+    TextDone,
     ToolArgs,
     ToolDone,
     ToolOutput,
@@ -101,18 +103,18 @@ BLUE = AskUserResponse(answers=(AskUserAnswer(header='Colour', selected=('Blue',
 def test_streamed_parts_become_items() -> None:
     translate = EventTranslator().translate
     assert translate(PartStartEvent(index=0, part=TextPart('Hel'))) == [
-        ItemAdded(item=Item(id='live1', kind='assistant', text='Hel'))
+        ItemAdded(item=Item(id='live1', kind='assistant', text='Hel', streaming=True))
     ]
     assert translate(PartDeltaEvent(index=0, delta=TextPartDelta('lo'))) == [TextDelta(id='live1', text='lo')]
     assert translate(PartStartEvent(index=1, part=ThinkingPart('Hmm'))) == [
-        ItemAdded(item=Item(id='live2', kind='thinking', text='Hmm'))
+        ItemAdded(item=Item(id='live2', kind='thinking', text='Hmm', streaming=True))
     ]
     assert translate(PartDeltaEvent(index=1, delta=ThinkingPartDelta(content_delta='.'))) == [
         TextDelta(id='live2', text='.')
     ]
     # The next response restarts its indexes; its part is a new item.
     assert translate(PartStartEvent(index=0, part=TextPart(''))) == [
-        ItemAdded(item=Item(id='live3', kind='assistant', text=''))
+        ItemAdded(item=Item(id='live3', kind='assistant', text='', streaming=True))
     ]
     assert translate(PartDeltaEvent(index=0, delta=TextPartDelta('x'))) == [TextDelta(id='live3', text='x')]
     assert translate(PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta='sig'))) == []
@@ -120,6 +122,10 @@ def test_streamed_parts_become_items() -> None:
     assert translate(PartStartEvent(index=2, part=ToolCallPart('shell', '{}'))) == []
     assert translate(PartStartEvent(index=3, part=NativeToolCallPart('web_search', {}))) == []
     assert translate(PartDeltaEvent(index=2, delta=ToolCallPartDelta(args_delta='{'))) == []
+    # A finished part says so: the model may go on to write a tool call's arguments, which no item shows yet.
+    assert translate(PartEndEvent(index=0, part=TextPart('x'))) == [TextDone(id='live3')]
+    assert translate(PartEndEvent(index=2, part=ToolCallPart('shell', '{}'))) == []
+    assert translate(PartEndEvent(index=5, part=TextPart('lost'))) == []
 
 
 def test_tool_calls_results_shell_output_and_diffs() -> None:
@@ -283,8 +289,9 @@ def test_item_log_follows_what_browsers_were_sent() -> None:
         TextDelta(id='missing', text='ignored'),
     ):
         log.apply(message)
-    log.apply(ItemAdded(item=Item(id='a', kind='assistant', text='Hi')))
+    log.apply(ItemAdded(item=Item(id='a', kind='assistant', text='Hi', streaming=True)))
     log.apply(TextDelta(id='a', text=' there'))
+    log.apply(TextDone(id='a'))
     assert list(log.items.values()) == [
         Item(
             id='t',
