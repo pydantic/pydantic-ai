@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
@@ -15,6 +16,34 @@ from pydantic_core import PydanticSerializationError
 __all__ = ('format_as_xml',)
 
 from pydantic.fields import ComputedFieldInfo, FieldInfo
+
+# The XML 1.0 `Name` production (https://www.w3.org/TR/xml/#NT-Name), used to decide whether a
+# mapping key can be emitted verbatim as an element name. Keys that don't match (spaces, `<`, `>`,
+# `/`, a leading digit, ...) would otherwise produce malformed XML, and a client-controlled key
+# could close the root tag and inject elements; those keys are preserved as an escaped attribute
+# on a generic element instead, so no information is lost.
+_XML_NAME_START_CHARS = (
+    ':A-Z_a-z'
+    '\u00c0-\u00d6'
+    '\u00d8-\u00f6'
+    '\u00f8-\u02ff'
+    '\u0370-\u037d'
+    '\u037f-\u1fff'
+    '\u200c-\u200d'
+    '\u2070-\u218f'
+    '\u2c00-\u2fef'
+    '\u3001-\ud7ff'
+    '\uf900-\ufdcf'
+    '\ufdf0-\ufffd'
+    '\U00010000-\U000effff'
+)
+_XML_NAME_CHARS = _XML_NAME_START_CHARS + '\u00b7\u0300-\u036f\u203f-\u2040' + r'\-.0-9'
+_XML_NAME_RE = re.compile(f'[{_XML_NAME_START_CHARS}][{_XML_NAME_CHARS}]*')
+
+
+def _is_valid_xml_name(name: str) -> bool:
+    """Whether `name` is a valid XML element name (XML 1.0 `Name` production)."""
+    return _XML_NAME_RE.fullmatch(name) is not None
 
 
 def format_as_xml(
@@ -182,7 +211,15 @@ class _ToXml:
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self._to_xml(value=value, path=f'{path}.{key}' if path else key, tag=key))
+            child_path = f'{path}.{key}' if path else key
+            if _is_valid_xml_name(key):
+                element.append(self._to_xml(value=value, path=child_path, tag=key))
+            else:
+                # The key can't be used as an element name without producing malformed or
+                # injectable XML, so keep it as an escaped attribute on a generic element.
+                child = self._to_xml(value=value, path=child_path, tag=self.item_tag)
+                child.set('key', key)
+                element.append(child)
 
     def _parse_data_structures(
         self,
