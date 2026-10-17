@@ -244,7 +244,7 @@ async def test_settings_and_question_override():
     }
 
 
-@pytest.mark.parametrize('body', [[], {'questions': 'invalid'}, {1: 'non-string key'}])
+@pytest.mark.parametrize('body', [[], {'questions': 'invalid'}, {'images': 'invalid'}, {1: 'non-string key'}])
 async def test_invalid_extra_body(body: object):
     captured = mock_model({})
     with pytest.raises(UserError, match=r'Cloudflare.*extra_body'):
@@ -337,6 +337,16 @@ async def test_image_url_is_downloaded_and_sent_inline():
     assert '<image 1>' in str(body['state'])
 
 
+async def test_extra_body_images_at_limit():
+    captured = mock_model(response_body({'q': {'type': 'noul', 'noul': 0.9}}))
+    images = ['data:image/png;base64,ZnJ1aXQ='] * 4
+    await captured.model.decide(
+        DecisionRequest(state='state', questions={'q': NoulQuestion(instructions='Is this fruit?')}),
+        {'extra_body': {'images': images}},
+    )
+    assert json.loads(captured.requests[0].content)['images'] == images
+
+
 @pytest.mark.parametrize('media_type', ['image/gif', 'audio/wav'])
 async def test_direct_unsupported_media(media_type: str):
     captured = mock_model({})
@@ -348,7 +358,7 @@ async def test_direct_unsupported_media(media_type: str):
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('kind', ['questions', 'images', 'overridden-questions'])
+@pytest.mark.parametrize('kind', ['questions', 'images', 'overridden-questions', 'overridden-images'])
 async def test_direct_transport_limits(kind: str):
     captured = mock_model({})
     questions: dict[str, DecisionQuestion] = {'q': NoulQuestion(instructions='Question?')}
@@ -358,10 +368,12 @@ async def test_direct_transport_limits(kind: str):
         questions = {str(i): NoulQuestion(instructions='Question?') for i in range(65)}
     elif kind == 'images':
         images = (BinaryContent(data=b'bytes', media_type='image/jpeg'),) * 5
-    else:
+    elif kind == 'overridden-questions':
         settings['extra_body'] = {
             'questions': {str(i): {'type': 'noul', 'instructions': 'Question?'} for i in range(65)}
         }
+    else:
+        settings['extra_body'] = {'images': ['data:image/png;base64,ZnJ1aXQ='] * 5}
     with pytest.raises(ModelAPIError, match='accepts at most'):
         await captured.model.decide(DecisionRequest(state='state', questions=questions, images=images), settings)
     assert captured.requests == []

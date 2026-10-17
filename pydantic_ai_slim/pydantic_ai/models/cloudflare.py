@@ -103,15 +103,18 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
             body['images'] = [image.data_uri for image in request.images]
 
         questions = request.questions
+        image_count = len(request.images)
         if (extra_body := model_settings.get('extra_body')) is not None:
             try:
                 overrides = _extra_body_adapter.validate_python(extra_body)
                 body.update(overrides)
                 if 'questions' in overrides:
                     questions = _system_one.questions_adapter.validate_python(body['questions'])
+                if 'images' in overrides:
+                    image_count = len(_images_adapter.validate_python(body['images']))
             except (ValidationError, TypeError) as e:
                 raise UserError(f'Cannot validate the Cloudflare `extra_body` override: {e}') from e
-        self._check_request_limits(question_count=len(questions))
+        self._check_request_limits(image_count=image_count, question_count=len(questions))
 
         timeout = model_settings.get('timeout')
         try:
@@ -158,3 +161,4 @@ class _CloudflareResponse:
 
 _response_adapter = TypeAdapter(_CloudflareResponse)
 _extra_body_adapter = TypeAdapter(dict[str, object])
+_images_adapter = TypeAdapter(list[str])
