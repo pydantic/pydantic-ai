@@ -15,8 +15,12 @@ import pytest
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -97,12 +101,36 @@ async def _map_groq(part: ModelRequestPart) -> Sequence[object]:
     )
 
 
+_MISTRAL_CALL_ID = 'RksXkbv4v'
+"""What Mistral's profile rewrites `call_1` to: its API only takes 9-character alphanumeric tool call IDs."""
+
+
 async def _map_mistral(part: ModelRequestPart) -> Sequence[object]:
+    """Map `part` behind the call it answers, and check the ID rewrite keeps the two paired.
+
+    The call is mapped too because Mistral rewrites any tool call ID that doesn't fit its format, and a
+    retried return has to come out under the same ID as its call. The call's own message is left out of
+    the returned wire so the cases compare only what `part` became.
+    """
     model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test-key'))
-    messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
+    # TODO(v3): remove `RetryPromptPart`
+    answers_a_call = isinstance(part, ToolReturnPart) or (
+        isinstance(part, RetryPromptPart) and part.tool_name is not None  # pyright: ignore[reportDeprecated]
     )
-    return [message.model_dump() for message in messages]
+    history: list[ModelMessage] = [ModelRequest(parts=[part])]
+    if answers_a_call:
+        assert isinstance(part, ToolReturnPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        history.insert(0, ModelResponse(parts=[ToolCallPart('tool', {}, tool_call_id=part.tool_call_id)]))
+    messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history, ModelRequestParameters()), ModelRequestParameters()
+    )
+    dumped = [message.model_dump() for message in messages]
+    if not answers_a_call:
+        return dumped
+    call_message, *rest = dumped
+    [called] = call_message['tool_calls']
+    assert [called['id']] == [message['tool_call_id'] for message in rest if message['role'] == 'tool']
+    return rest
 
 
 async def _map_xai(part: ModelRequestPart) -> Sequence[object]:
@@ -207,14 +235,14 @@ _CHANNEL_LESS_CASES = [
     ChannelLessCase(
         id='mistral',
         mapper=_map_mistral,
-        success_wire=_CHAT_SUCCESS_WIRE,
-        failed_wire=_CHAT_FAILED_WIRE,
+        success_wire=[{'role': 'tool', 'tool_call_id': _MISTRAL_CALL_ID, 'content': _TOOL_CONTENT}],
+        failed_wire=[{'role': 'tool', 'tool_call_id': _MISTRAL_CALL_ID, 'content': _FAILED_WIRE_CONTENT}],
         legacy_retry_wire=snapshot(
             [
                 {
                     'content': '{"error":"Disk full"}',
                     'role': 'tool',
-                    'tool_call_id': 'call_1',
+                    'tool_call_id': _MISTRAL_CALL_ID,
                 },
                 {
                     'content': '<system>Disk full</system>',
