@@ -1,0 +1,322 @@
+"""Every Harness capability keeps a conversation's requests append-only.
+
+See `tests/append_only.py` for the scenario and the three invariants it checks, and
+`tests/test_history_append_only.py` for the core capabilities. Every public capability class in
+`pydantic_ai_harness` runs, constructed with its defaults or with a fixture from `FIXTURES`, unless
+`EXEMPT` says why it can't run offline. Capabilities that keep state change it mid-conversation through
+`SCENARIOS`, and the clock moves an hour between requests.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+from mcp.server.fastmcp import FastMCP
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import (
+    Advisor,
+    ApprovalReviewer,
+    AskUser,
+    BubblewrapSandbox,
+    CapabilityCreation,
+    ClampOversizedMessages,
+    ClearToolResults,
+    CodeMode,
+    Coder,
+    DayAI,
+    DeduplicateFileReads,
+    FallbackCompaction,
+    FileSystem,
+    Grain,
+    InputGuardrail,
+    Macroscope,
+    ManagedPrompt,
+    ModalSandbox,
+    Ordinal,
+    OutputGuardrail,
+    PostHog,
+    Pylon,
+    RepoContext,
+    Researcher,
+    Shell,
+    Skills,
+    SlidingWindowCompaction,
+    StackOne,
+    SummarizingCompaction,
+    SystemReminders,
+    TieredCompaction,
+    ToolCallJudge,
+    ToolOutputLimits,
+    TrajectoryJudge,
+    WarnNearLimits,
+)
+from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.github import GitHub
+from pydantic_ai_harness.linear import Linear
+from pydantic_ai_harness.logfire_mcp import LogfireMCP
+from pydantic_ai_harness.notion import Notion
+from pydantic_ai_harness.slack import Slack
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
+
+from ..append_only import (
+    CLOCK,
+    PROVIDERS,
+    Allowed,
+    Exempt,
+    Fixture,
+    Known,
+    Provider,
+    Scenario,
+    build_capabilities,
+    check_conversation,
+    discover_capabilities,
+    inject_clock,
+    run_conversation,
+)
+
+# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
+)
+
+
+def _hosted_server() -> FastMCP:
+    """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
+    server = FastMCP('hosted', instructions='Hosted service instructions.')
+
+    @server.tool()
+    def search() -> str:
+        return 'found'  # pragma: no cover
+
+    return server
+
+
+_HOSTED_MCP: tuple[type[AbstractCapability[Any]], ...] = (
+    DayAI,
+    GitHub,
+    Grain,
+    Linear,
+    LogfireMCP,
+    Notion,
+    Ordinal,
+    PostHog,
+    Pylon,
+    Slack,
+)
+"""Hosted MCP integrations, run against an in-process server through their `client` field."""
+
+
+def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
+    return lambda _: cls(client=_hosted_server())
+
+
+def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
+    """The capability plus a local workspace in the test's directory, for capabilities that need one."""
+    return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
+
+
+def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
+    return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    skill = tmp_path / 'skills' / 'weather'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
+    return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
+
+
+def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
+    (tmp_path / 'notes.md').write_text('Sunny.\n')
+    return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _read_file_key(call: ToolCallPart) -> str | None:
+    args = call.args_as_dict()
+    return str(args['path']) if call.tool_name == 'read_file' else None
+
+
+def _time_reminder(ctx: RunContext[Any]) -> str:
+    return f'It is now {CLOCK.now:%H:%M} UTC.'
+
+
+FIXTURES: dict[str, Fixture] = {
+    **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
+    'Advisor': lambda _: Advisor(TestModel()),
+    'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
+    'AskUser': lambda _: AskUser(answerer=None),
+    'BubblewrapSandbox': lambda tmp_path: BubblewrapSandbox(LocalWorkspace(tmp_path)),
+    'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
+    'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
+    'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
+    'Coder': _workspace(Coder),
+    'ConversationSearch': lambda _: ConversationSearch(
+        SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
+    ),
+    'DeduplicateFileReads': _deduplicate_file_reads,
+    'FallbackCompaction': lambda _: FallbackCompaction(
+        fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
+    ),
+    'FileSystem': _workspace(FileSystem),
+    'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
+    'Macroscope': _workspace(Macroscope),
+    'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
+    'ModalSandbox': lambda _: ModalSandbox(warn_if_no_tools=False),
+    'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
+    'RepoContext': _repo_context,
+    'Researcher': _workspace(Researcher),
+    'Shell': _workspace(Shell),
+    'Skills': _skills,
+    'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
+    'StackOne': lambda _: StackOne('account', client=_hosted_server()),
+    'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
+    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
+    'TieredCompaction': lambda _: TieredCompaction(
+        tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10
+    ),
+    'ToolCallJudge': lambda _: ToolCallJudge(TestModel(), question='Is this call safe?'),
+    'ToolOutputLimits': _workspace(ToolOutputLimits),
+    'TrajectoryJudge': lambda _: TrajectoryJudge(model=TestModel()),
+    'WarnNearLimits': lambda _: WarnNearLimits(max_iterations=2),
+}
+"""Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
+
+VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
+    'CodeMode(dynamic_catalog=True)': (
+        lambda _: CodeMode(dynamic_catalog=True),
+        Scenario(look_up=lambda topic: ('run_code', {'code': f'await look_up(topic={topic!r})'})),
+    ),
+}
+"""Non-default configurations worth their own case, keyed by a case name."""
+
+SCENARIOS: dict[str, Scenario] = {
+    'CodeMode': Scenario(look_up=lambda topic: ('run_code', {'code': f'await look_up(topic={topic!r})'})),
+    'DeduplicateFileReads': Scenario(
+        state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
+    ),
+    'FileSystem': Scenario(
+        state_calls=(
+            ('write_file', {'path': 'notes.md', 'content': 'Sunny.\n'}),
+            ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+        )
+    ),
+    'Memory': Scenario(
+        state_calls=(
+            ('write_memory', {'content': 'The user follows the weather.'}),
+            ('write_memory', {'content': 'The user follows sports too.'}),
+        )
+    ),
+    'Planning': Scenario(
+        state_calls=(('add_task', {'content': 'Check the weather'}), ('add_task', {'content': 'Check the sports'}))
+    ),
+    'RepoContext': Scenario(
+        state_calls=(
+            ('edit_file', {'path': 'AGENTS.md', 'old_text': 'short', 'new_text': 'very short'}),
+            ('write_file', {'path': 'docs/AGENTS.md', 'content': 'Docs are in Markdown.\n'}),
+        )
+    ),
+}
+"""Conversations that change a capability's state, or call tools the way the capability exposes them."""
+
+EXEMPT: dict[str, Exempt] = {
+    'AbsurdDurability': Exempt('Durable engine: needs a Postgres-backed Absurd queue.'),
+    'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
+    'DelegationReports': Exempt('Built by `SubAgents` for each run, never by users; `SubAgents` is its case.'),
+    'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
+    'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
+    'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
+    'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
+    'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),
+}
+
+_ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
+_PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
+
+
+def _no_default_id(block: str) -> tuple[Known, ...]:
+    """A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
+    return (Known('ids', f'{_ISSUES}7237 (no default `id`)', match=block),)
+
+
+KNOWN: dict[str, tuple[Known, ...]] = {
+    'AskUser': _no_default_id('When the task is ambiguous'),
+    'CodeMode(dynamic_catalog=True)': (Known('ids', f'{_ISSUES}8965', match='The following functions are available'),),
+    'ConversationSearch': _no_default_id('A `search_conversation_history` tool'),
+    'LogfireMCP': (Known('prefix', f'{_PULLS}10543', match='current UTC time is within the hour'),),
+    'Macroscope': _no_default_id('You can run a local Macroscope code review'),
+    'ManagedPrompt': _no_default_id('You answer questions about the news.'),
+    'Memory': (Known('prefix', f'{_ISSUES}8996', match='<memory>'),),
+    'PlaywrightBrowser': _no_default_id('You have a real web browser powered by Playwright'),
+    'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
+    'RepoContext': (Known('prefix', f'{_PULLS}8188', match='<context-file path=\\"AGENTS.md\\">'),),
+    'Skills': (Known('ids', f'{_PULLS}8188', match='The following capabilities are deferred'),),
+    'WarnNearLimits': (Known('prefix', f'{_PULLS}9752 (closed; no open fix)', match='[WarnNearLimits]'),),
+}
+"""Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
+
+_COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'
+
+ALLOWED: dict[str, Allowed] = {
+    'ClearToolResults': Allowed(_COMPACTION),
+    'DeduplicateFileReads': Allowed(
+        'Clears superseded file reads in place, as documented, when the model reads a file again'
+    ),
+    'SlidingWindowCompaction': Allowed(_COMPACTION),
+    'SummarizingCompaction': Allowed(_COMPACTION),
+    # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
+    # `keep_pairs`: one on the third request and one on the fifth.
+    'TieredCompaction': Allowed(_COMPACTION, max_moves=2),
+    'Planning': Allowed(
+        f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
+        tail=True,
+    ),
+    'SystemReminders': Allowed(
+        f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
+        f'request-scoped system prompts in {_PULLS}9712',
+        tail=True,
+    ),
+}
+"""Documented prefix movers, checked exactly."""
+
+ENV: dict[str, dict[str, str]] = {
+    'ExaAgent': {'EXA_API_KEY': 'test-key'},
+    'ExaSearch': {'EXA_API_KEY': 'test-key'},
+    'YouResearch': {'YDC_API_KEY': 'test-key'},
+    'YouSearch': {'YDC_API_KEY': 'test-key'},
+}
+"""Credentials a capability checks when it's built; nothing is sent, as the scripted model never calls its tools."""
+
+CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
+
+
+def test_every_capability_has_a_case():
+    """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
+    tables = FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
+    stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
+    assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
+
+
+@pytest.mark.parametrize('provider', PROVIDERS)
+@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS))
+async def test_conversation_only_appends(
+    name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    for key, value in ENV.get(name, {}).items():
+        monkeypatch.setenv(key, value)
+    if name in VARIANTS:
+        fixture, scenario = VARIANTS[name]
+        capabilities = build_capabilities(name, AbstractCapability, fixture, tmp_path)
+    else:
+        capabilities = build_capabilities(name, CAPABILITIES[name], FIXTURES.get(name), tmp_path)
+        scenario = SCENARIOS.get(name, Scenario())
+    clock = inject_clock(monkeypatch)
+    result = await run_conversation(provider, capabilities, scenario, clock)
+    check_conversation(name, result, known=KNOWN.get(name, ()), allowed=ALLOWED.get(name))
