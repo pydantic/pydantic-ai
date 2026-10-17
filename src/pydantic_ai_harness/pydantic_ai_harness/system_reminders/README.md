@@ -77,6 +77,8 @@ SystemReminders(
 )
 ```
 
+Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and the text a dynamic callable returns are sent as written: return text you wrote yourself, and quote anything else (user input, tool output) as data. The built-in dynamic reminders do this. `GoalReanchor` sends a fixed sentence followed by the user's first request in a `<goal>` element, and `LLMReminder` sends a fixed sentence followed by the generated text in a `<reminder model="...">` element. A closing tag inside the quoted text is escaped (`&lt;/goal>`), so it can't end the element early. `LLMReminder` also quotes the transcript it sends the reminder model, in `<goal>` and `<message role="...">` elements.
+
 ### `GoalReanchor` -- zero-cost goal anchoring
 
 `GoalReanchor` re-states the run's first user request as the anchor and asks the model to check its next action advances it. No model call, no dependencies:

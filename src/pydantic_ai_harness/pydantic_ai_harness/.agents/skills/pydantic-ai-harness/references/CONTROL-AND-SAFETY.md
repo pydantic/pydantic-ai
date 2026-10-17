@@ -499,8 +499,11 @@ agent = Agent(
   default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
   system prompt; `tag='name'` wraps the text in `<name>`.
 - `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
-  request, injected raw (no tag).
-- `GoalReanchor()` restates the run's first user prompt; free.
+  request, injected raw (no tag). Reminders are system prompts, so return only text you wrote and
+  quote user input or tool output as data.
+- `GoalReanchor()` restates the run's first user prompt, quoted in a `<goal>` element; free.
+  `LLMReminder` quotes its generated text in `<reminder model="...">`. Forged closing tags are
+  escaped.
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
   `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
