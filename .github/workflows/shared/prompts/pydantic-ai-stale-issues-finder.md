@@ -50,7 +50,8 @@ issue, or if it looks only partially fixed, skip it.
    - `.github/.issue-context/issues/batches/batch-XXX/*.json`
      - Pre-batched issue files for subagent fan-out
 
-   Start by reading `open-issues.tsv` and `batch-manifest.tsv`.
+   Start by reading `.github/.issue-context/open-issues.tsv` and
+   `.github/.issue-context/issues/batch-manifest.tsv`.
 
 1. **Review all open issues every run**
 
@@ -218,7 +219,8 @@ the full corpus every run. If no candidates qualify this run, call
 - Use the native `Grep` and `Glob` tools for codebase search.
 - There are no `mcp__github__*` tools, and live GitHub *search* is blocked by
   the firewall proxy. Do first-pass triage entirely from the prefetched local
-  corpus (`.github/.issue-context/open-issues.tsv` and `issues/all/{number}.json`) —
+  corpus (`.github/.issue-context/open-issues.tsv` and
+  `.github/.issue-context/issues/all/{number}.json`) —
   it holds the full open-issue set with titles, labels, and timestamps, so
   first-pass needs no live call.
 - The corpus does NOT include comments. For the second-pass shortlist only,
