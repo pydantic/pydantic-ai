@@ -11,7 +11,7 @@ Loaded function tools are recorded in durable message history with `ToolAvailabi
 The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's history-item reveal mechanism determines its wire representation. Provider adapters project the recorded control state without changing history:
 
 - `tool_addition_mode='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
-- `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.
+- `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`, except that on models before GPT-5.6 a request whose `tool_choice` names the tool declares it in `tools` instead and misses the prompt cache, unless `openai_previous_response_id` or `openai_conversation_id` is set (that request keeps the tool in the `additional_tools` item alone and gets a 400).
 - `tool_addition_mode=None`: announce the change when the schema is visible, or synthesize a complete local `search_tools` exchange only when its result must reveal a schema that is still withheld.
 
 Do not copy tool definitions into `ToolAvailabilityDeltaPart`.
