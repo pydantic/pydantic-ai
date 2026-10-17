@@ -201,26 +201,27 @@ def test_openai_profile_adds_ignored_settings(profile_drops_it: bool):
 
 
 @pytest.mark.skipif(not mcp_available(), reason='mcp not installed')
-async def test_mcp_sampling_stays_silent_about_the_servers_stop_sequences():
+@pytest.mark.parametrize('server_sends_stop_sequences', [True, False])
+async def test_mcp_sampling_stays_silent_about_the_servers_stop_sequences(server_sends_stop_sequences: bool):
     """The server chose the `stop_sequences` of its sampling request, so only the user's own settings warn."""
 
     @dataclass(init=False)
     class StopIgnoringModel(FunctionModel):
         unsupported_settings = frozenset({'timeout', 'stop_sequences'})
 
-    handler = _build_sampling_handler(StopIgnoringModel(_reply, model_name='ignoring', settings={'timeout': 5}))
+    model = StopIgnoringModel(_reply, model_name='ignoring', settings={'timeout': 5, 'stop_sequences': ['END']})
+    handler = _build_sampling_handler(model)
     params = mcp_types.CreateMessageRequestParams(
         messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
         maxTokens=42,
-        stopSequences=['STOP'],
+        stopSequences=['STOP'] if server_sends_stop_sequences else None,
     )
 
     with pytest.warns(UnsupportedSettingWarning) as record:
         await handler([], params, None)  # type: ignore[arg-type, misc]
 
-    assert [str(w.message).split(' and ')[0] for w in record] == [
-        "The `timeout` setting is not supported by model 'function:ignoring'"
-    ]
+    warned = [str(w.message).split('`')[1] for w in record]
+    assert warned == (['timeout'] if server_sends_stop_sequences else ['timeout', 'stop_sequences'])
 
 
 def test_model_setting_name_lists_every_model_settings_field():
