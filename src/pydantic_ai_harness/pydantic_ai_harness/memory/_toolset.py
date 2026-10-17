@@ -388,6 +388,9 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         store, scope = self._resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'write', path, {'content': content, 'file': file, 'old_text': old_text})
+        metadata = capability.write_metadata(ctx) if callable(capability.write_metadata) else capability.write_metadata
+        # Passed only when set, so a custom store that predates `metadata` keeps working without it.
+        metadata_kwargs = {} if metadata is None else {'metadata': metadata}
         scope_hash = _scope_hash(scope)
         with ctx.tracer.start_as_current_span(
             'memory.write', record_exception=False, set_status_on_exception=False
@@ -424,6 +427,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                             updated,
                             expected_version=None if current is None else current.version,
                             operation=operation,
+                            **metadata_kwargs,
                         )
                     except MemoryConflictError:
                         if attempt + 1 == _MAX_CAS_ATTEMPTS:

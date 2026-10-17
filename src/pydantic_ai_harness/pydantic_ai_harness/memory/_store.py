@@ -30,11 +30,14 @@ from pydantic_ai_harness._workspace import secondary_workspace, supports_command
 
 _VALID_SEGMENT_RE = re.compile(r'[A-Za-z0-9_.-]{1,200}')
 _OPERATIONS_NAME = '.memory-operations.json'
+_METADATA_NAME = '.memory-metadata.json'
+"""Maps each path written with metadata to that metadata and the version it describes; hidden from listings."""
 _LEGACY_JOURNAL_NAME = '.memory-store.sqlite3'
 """The SQLite journal earlier `FileStore` releases kept beside the files; hidden from listings."""
 _TEMP_PREFIX = '.memory-tmp-'
 """Names the file a write is staged in before it replaces its target; hidden from listings."""
-_HIDDEN_PREFIXES = (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME, _TEMP_PREFIX)
+_RESERVED_NAMES = (_OPERATIONS_NAME, _METADATA_NAME, _LEGACY_JOURNAL_NAME)
+_HIDDEN_PREFIXES = (*_RESERVED_NAMES, _TEMP_PREFIX)
 _RENAME_TIMEOUT = 30.0
 """Deadline in seconds for the `mv` that replaces a file, and for removing a staged file after a failure."""
 _MAX_RECEIPTS = 1024
@@ -55,6 +58,8 @@ class MemoryFile:
     version: str
     operation_id: str | None
     truncated: bool
+    metadata: dict[str, str] | None = None
+    """Caller-supplied metadata from the write that produced this version, or `None` if it had none."""
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,18 @@ def validate_store_path(path: str) -> None:
 def validate_store_prefix(prefix: str) -> None:
     if prefix:
         validate_store_path(prefix.removesuffix('/'))
+
+
+def encode_metadata(metadata: Mapping[str, str] | None) -> str | None:
+    """Serialize write metadata to the JSON text the database stores keep."""
+    return None if metadata is None else json.dumps(dict(metadata), sort_keys=True)
+
+
+def decode_metadata(raw: object) -> dict[str, str] | None:
+    """Parse metadata stored as JSON text by `encode_metadata`."""
+    if raw is None:
+        return None
+    return {str(key): str(value) for key, value in json.loads(str(raw)).items()}
 
 
 def _enable_wal(connection: sqlite3.Connection) -> None:
@@ -217,8 +234,14 @@ class MemoryStore(Protocol):
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
-        """Create or replace `path` if its version equals `expected_version`."""
+        """Create or replace `path` if its version equals `expected_version`.
+
+        `metadata` describes this write, such as who made it, and replaces the file's previous
+        metadata together with the content: a write without it leaves the file with none. A
+        replayed `operation` returns its receipt without changing the file or its metadata.
+        """
         ...  # pragma: no cover
 
     async def delete(
@@ -261,6 +284,7 @@ class InMemoryStore:
     _files: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     _versions: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False)
     _operation_ids: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False, repr=False)
+    _metadata: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]], init=False, repr=False)
     _receipts: dict[str, tuple[str, MemoryMutation]] = field(
         default_factory=dict[str, tuple[str, MemoryMutation]], init=False, repr=False
     )
@@ -274,6 +298,7 @@ class InMemoryStore:
             validate_store_path(path)
         self._versions = {}
         self._operation_ids = {}
+        self._metadata = {}
         self._receipts = {}
         self._generation = 0
         self._paths = sorted(self._files)
@@ -297,11 +322,13 @@ class InMemoryStore:
             version = self._next_generation()
             self._versions[path] = version
         truncated = max_chars is not None and len(content) > max_chars
+        metadata = self._metadata.get(path)
         return MemoryFile(
             content=content[:max_chars] if max_chars is not None else content,
             version=str(version),
             operation_id=self._operation_ids.get(path),
             truncated=truncated,
+            metadata=None if metadata is None else dict(metadata),
         )
 
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
@@ -322,6 +349,7 @@ class InMemoryStore:
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
         async with self._lock:
@@ -330,6 +358,10 @@ class InMemoryStore:
             current = self._current(path)
             if (current.version if current else None) != expected_version:
                 raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
+            if metadata is None:
+                self._metadata.pop(path, None)
+            else:
+                self._metadata[path] = dict(metadata)
             version = self._next_generation()
             self._files[path] = content
             if current is None:
@@ -361,6 +393,7 @@ class InMemoryStore:
                 self._paths.remove(path)
             self._versions.pop(path, None)
             self._operation_ids.pop(path, None)
+            self._metadata.pop(path, None)
             self._next_generation()
             mutation = MemoryMutation(version=None, replayed=False, existed=existed)
             if operation is not None:
@@ -482,7 +515,10 @@ class FileStore:
     also open the files with its file tools. A file's version is the SHA-256 of its content, so an
     edit made outside the store is seen as a change. Receipts for the most recent idempotent
     mutations are kept beside the files in `.memory-operations.json`, so a replayed tool call is
-    not applied twice.
+    not applied twice. Write metadata is kept in `.memory-metadata.json` with the version it
+    describes, so a file changed outside the store reads back without metadata until it again
+    holds the content the metadata was written with. The model's file tools can edit that file
+    too when the store is in the run's workspace.
 
     One writer per directory: one `FileStore` serializes its own operations, but two stores, or
     two processes, writing the same directory can lose updates. Use `SqliteMemoryStore` or
@@ -543,7 +579,7 @@ class FileStore:
     @staticmethod
     def _target(root: str, path: str) -> str:
         validate_store_path(path)
-        if path.split('/', 1)[0] in (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME):
+        if path.split('/', 1)[0] in _RESERVED_NAMES:
             raise ValueError(f'{path!r} is reserved for FileStore bookkeeping')
         return posixpath.join(root, path)
 
@@ -582,6 +618,37 @@ class FileStore:
             # Invalid receipts cannot establish idempotency; start a fresh journal.
             logger.warning('Invalid FileStore operation receipts; starting with an empty journal')
             return []
+
+    async def _metadata_file(self, workspace: Workspace, root: str) -> str:
+        return await self._confine(workspace, root, posixpath.join(root, _METADATA_NAME), _METADATA_NAME)
+
+    @staticmethod
+    async def _metadata_entries(workspace: Workspace, target: str) -> dict[str, tuple[str, dict[str, str]]]:
+        """Each path's recorded metadata, keyed by path, with the version it was written for."""
+        raw = await FileStore._content(workspace, target)
+        if raw is None:
+            return {}
+        try:
+            return {
+                str(path): (str(entry['version']), {str(key): str(value) for key, value in entry['metadata'].items()})
+                for path, entry in json.loads(raw).items()
+            }
+        except (json.JSONDecodeError, TypeError, KeyError, AttributeError):
+            logger.warning('Invalid FileStore metadata; reading files without it')
+            return {}
+
+    async def _record_metadata(
+        self, workspace: Workspace, root: str, path: str, version: str | None, metadata: Mapping[str, str] | None
+    ) -> None:
+        target = await self._metadata_file(workspace, root)
+        entries = await self._metadata_entries(workspace, target)
+        if version is None or metadata is None:
+            if entries.pop(path, None) is None:
+                return
+        else:
+            entries[path] = (version, dict(metadata))
+        encoded = {key: {'version': value[0], 'metadata': value[1]} for key, value in entries.items()}
+        await _replace_text(workspace, target, json.dumps(encoded))
 
     @staticmethod
     async def _save(workspace: Workspace, operations: str, receipts: list[_Receipt]) -> None:
@@ -634,11 +701,13 @@ class FileStore:
             ),
             None,
         )
+        entry = (await self._metadata_entries(workspace, await self._metadata_file(workspace, root))).get(path)
         return MemoryFile(
             content=content[:max_chars],
             version=version,
             operation_id=operation_id,
             truncated=len(content) > max_chars,
+            metadata=entry[1] if entry is not None and entry[0] == version else None,
         )
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
@@ -661,6 +730,7 @@ class FileStore:
         content: str | None,
         expected_version: str | None,
         operation: MemoryOperation | None,
+        metadata: Mapping[str, str] | None,
     ) -> MemoryMutation:
         workspace = self._workspace()
         async with self._lock:
@@ -698,6 +768,10 @@ class FileStore:
                 await self._save(workspace, operations, receipts)
             elif settled:
                 await self._save(workspace, operations, receipts)
+            # Before the content, so a write whose content landed has its metadata too: a receipt
+            # settled from that content is never applied again. The entry names the new version,
+            # so if the content write then fails, the old content reads back without metadata.
+            await self._record_metadata(workspace, root, path, version, metadata)
             if content is not None:
                 # The real path: `mv` onto a symlink would replace the link rather than write through it.
                 await _replace_text(workspace, real_target, content)
@@ -715,9 +789,10 @@ class FileStore:
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
-        return await self._mutate('write', path, content, expected_version, operation)
+        return await self._mutate('write', path, content, expected_version, operation, metadata)
 
     async def delete(
         self,
@@ -727,7 +802,7 @@ class FileStore:
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
-        return await self._mutate('delete', path, None, expected_version, operation)
+        return await self._mutate('delete', path, None, expected_version, operation, None)
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
         validate_store_prefix(prefix)
@@ -801,7 +876,7 @@ class FileStore:
 
 _SQLITE_MEMORY_SCHEMA = (
     'CREATE TABLE IF NOT EXISTS memory_files ('
-    'path TEXT PRIMARY KEY, content TEXT NOT NULL, version INTEGER NOT NULL, last_operation_id TEXT)'
+    'path TEXT PRIMARY KEY, content TEXT NOT NULL, version INTEGER NOT NULL, last_operation_id TEXT, metadata TEXT)'
 )
 _SQLITE_OPERATIONS_SCHEMA = (
     'CREATE TABLE IF NOT EXISTS memory_operations ('
@@ -855,6 +930,8 @@ class SqliteMemoryStore:
                     connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
                 if 'last_operation_id' not in columns:
                     connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
+                if 'metadata' not in columns:
+                    connection.execute('ALTER TABLE memory_files ADD COLUMN metadata TEXT')
                 connection.execute(_SQLITE_OPERATIONS_SCHEMA)
                 connection.execute(_SQLITE_METADATA_SCHEMA)
                 connection.execute(
@@ -914,7 +991,7 @@ class SqliteMemoryStore:
 
         def op(connection: sqlite3.Connection) -> MemoryFile | None:
             row = connection.execute(
-                'SELECT substr(content, 1, ?), version, last_operation_id, length(content) '
+                'SELECT substr(content, 1, ?), version, last_operation_id, length(content), metadata '
                 'FROM memory_files WHERE path = ?',
                 (max_chars, path),
             ).fetchone()
@@ -925,6 +1002,7 @@ class SqliteMemoryStore:
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
                 truncated=int(row[3]) > max_chars,
+                metadata=decode_metadata(row[4]),
             )
 
         return await anyio.to_thread.run_sync(self._run, op)
@@ -945,6 +1023,7 @@ class SqliteMemoryStore:
         content: str,
         expected_version: str | None,
         operation: MemoryOperation | None,
+        metadata: Mapping[str, str] | None,
     ) -> MemoryMutation:
         if operation is not None and (receipt := self._get_operation(connection, operation)) is not None:
             return receipt
@@ -953,16 +1032,18 @@ class SqliteMemoryStore:
         if current != expected_version:
             raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
         version = str(self._next_generation(connection))
+        operation_id = operation.id if operation else None
+        encoded = encode_metadata(metadata)
         if current is None:
             connection.execute(
-                'INSERT INTO memory_files(path, content, version, last_operation_id) VALUES (?, ?, ?, ?)',
-                (path, content, int(version), operation.id if operation else None),
+                'INSERT INTO memory_files(path, content, version, last_operation_id, metadata) VALUES (?, ?, ?, ?, ?)',
+                (path, content, int(version), operation_id, encoded),
             )
         else:
             cursor = connection.execute(
-                'UPDATE memory_files SET content = ?, version = ?, last_operation_id = ? '
+                'UPDATE memory_files SET content = ?, version = ?, last_operation_id = ?, metadata = ? '
                 'WHERE path = ? AND version = ?',
-                (content, int(version), operation.id if operation else None, path, int(current)),
+                (content, int(version), operation_id, encoded, path, int(current)),
             )
             if cursor.rowcount != 1:  # pragma: no cover - BEGIN IMMEDIATE prevents an intervening writer
                 raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
@@ -981,11 +1062,12 @@ class SqliteMemoryStore:
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
         return await anyio.to_thread.run_sync(
             lambda: self._run(
-                lambda connection: self._write(connection, path, content, expected_version, operation),
+                lambda connection: self._write(connection, path, content, expected_version, operation, metadata),
                 immediate=True,
             )
         )
