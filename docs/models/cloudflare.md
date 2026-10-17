@@ -101,6 +101,9 @@ print(result.output)
 thresholds. `timeout`, `extra_headers`, and `extra_body` are forwarded to Workers AI. Generic sampling
 settings, including `temperature`, are ignored because Clef rejects them.
 
+Field aliases and route names are mapped to Cloudflare-compatible question IDs when needed; returned answers
+retain their original names.
+
 The [model profile](../api/profiles.md) sets these context windows:
 
 | Model ID | Context window |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
@@ -116,6 +117,13 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
                 raise UserError(f'Cannot validate the Cloudflare `extra_body` override: {e}') from e
         self._check_request_limits(image_count=image_count, question_count=len(questions))
 
+        question_names: dict[str, str] = {}
+        if any(re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', name) is None for name in questions):
+            # Field aliases and route labels can exceed Cloudflare's question ID restrictions.
+            question_names = {f'q{index}': name for index, name in enumerate(questions)}
+            questions = {wire_name: questions[name] for wire_name, name in question_names.items()}
+            body['questions'] = {name: _wire(question) for name, question in questions.items()}
+
         timeout = model_settings.get('timeout')
         try:
             headers = httpx2.Headers(model_settings.get('extra_headers') or {})
@@ -145,13 +153,16 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
             parsed = _response_adapter.validate_json(response.content)
         except ValidationError as e:
             raise UnexpectedModelBehavior(f'Invalid response from Cloudflare Workers AI: {e}', response.text) from e
-        return _system_one.validate_response(
+        result = _system_one.validate_response(
             parsed.result,
             questions,
             api_name='Cloudflare Workers AI',
             response_text=response.text,
             provider_response_id=response.headers.get('cf-ai-req-id'),
         )
+        if question_names:
+            result.answers = {question_names[name]: answer for name, answer in result.answers.items()}
+        return result
 
 
 @dataclass(kw_only=True)

@@ -214,8 +214,10 @@ def test_infer_model_rejects_wrong_provider():
         )
 
 
-async def test_settings_and_question_override():
-    captured = mock_model(response_body({'overridden': {'type': 'noul', 'noul': 0.8}}))
+@pytest.mark.parametrize('question_name', ['overridden', 'bad key'])
+async def test_settings_and_question_override(question_name: str):
+    wire_name = 'q0' if question_name == 'bad key' else question_name
+    captured = mock_model(response_body({wire_name: {'type': 'noul', 'noul': 0.8}}))
     settings: DecisionModelSettings = {
         'temperature': 0.2,
         'top_p': 0.5,
@@ -224,14 +226,14 @@ async def test_settings_and_question_override():
         'extra_body': MappingProxyType(
             {
                 'state': {'custom': 'state'},
-                'questions': {'overridden': {'type': 'noul', 'instructions': 'An override?'}},
+                'questions': {question_name: {'type': 'noul', 'instructions': 'An override?'}},
             }
         ),
     }
     result = await captured.model.decide(
         DecisionRequest(state='original', questions={'original': NoulQuestion(instructions='Original?')}), settings
     )
-    assert result.answers == {'overridden': NoulAnswer(noul=0.8)}
+    assert result.answers == {question_name: NoulAnswer(noul=0.8)}
     assert result.provider_response_id is None
     sent = captured.requests[0]
     assert sent.headers['authorization'] == 'Bearer override'
@@ -240,7 +242,7 @@ async def test_settings_and_question_override():
     assert json.loads(sent.content) == {
         'model': 'clef-flash',
         'state': {'custom': 'state'},
-        'questions': {'overridden': {'type': 'noul', 'instructions': 'An override?'}},
+        'questions': {wire_name: {'type': 'noul', 'instructions': 'An override?'}},
     }
 
 
@@ -274,10 +276,36 @@ async def test_invalid_envelope(body: object):
         await captured.model.decide(DecisionRequest(state='state', questions={'q': NoulQuestion()}), {})
 
 
-async def test_answer_names_must_match():
+@pytest.mark.parametrize('question_name', ['q', 'bad key'])
+async def test_answer_names_must_match(question_name: str):
     captured = mock_model(response_body({'other': {'type': 'noul', 'noul': 0.8}}))
     with pytest.raises(UnexpectedModelBehavior, match='answer names do not match'):
-        await captured.model.decide(DecisionRequest(state='state', questions={'q': NoulQuestion()}), {})
+        await captured.model.decide(DecisionRequest(state='state', questions={question_name: NoulQuestion()}), {})
+
+
+@pytest.mark.parametrize('alias', ['', 'bad key', 'évidence', 'q' * 101])
+async def test_field_aliases_are_mapped_to_safe_question_ids(alias: str):
+    class AliasedOutput(BaseModel):
+        original: bool = Field(alias='q0', description='Is the incident resolved?')
+        aliased: bool = Field(alias=alias, description='Is there a production incident?')
+
+    captured = mock_model(response_body({'q0': {'type': 'noul', 'noul': 0.1}, 'q1': {'type': 'noul', 'noul': 0.9}}))
+    output = (await Agent(captured.model, output_type=AliasedOutput).run('Production is down.')).output
+    assert output.model_dump(by_alias=True) == {'q0': False, alias: True}
+    assert json.loads(captured.requests[0].content)['questions'] == {
+        'q0': {'type': 'noul', 'instructions': {'field': 'q0', 'question': 'Is the incident resolved?'}},
+        'q1': {'type': 'noul', 'instructions': {'field': alias, 'question': 'Is there a production incident?'}},
+    }
+
+
+@pytest.mark.parametrize('question_name', ['valid.id_1-with-dashes', 'q' * 100])
+async def test_supported_question_ids_are_preserved(question_name: str):
+    captured = mock_model(response_body({question_name: {'type': 'noul', 'noul': 0.9}}))
+    result = await captured.model.decide(
+        DecisionRequest(state='state', questions={question_name: NoulQuestion(instructions='Is this urgent?')}), {}
+    )
+    assert result.answers == {question_name: NoulAnswer(noul=0.9)}
+    assert list(json.loads(captured.requests[0].content)['questions']) == [question_name]
 
 
 @pytest.mark.parametrize(
