@@ -246,7 +246,7 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). A part's `index` identifies it for the whole
 session: when text of an output item's transcript arrives after a later item started, the session streams that part
 again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange
-boundary, when generation and tool work are complete. This is not always the end of audible speech:
+boundary: it comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included). This is not always the end of audible speech:
 on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
