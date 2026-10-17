@@ -57,14 +57,16 @@ print(result.output)
 
 | Tool | Purpose |
 |---|---|
-| `write_plan(items)` | Create or replace the full plan (whole-list replacement). |
+| `write_plan(items)` | Create or replace the full plan and return every step's stable id (whole-list replacement). |
 | `read_plan()` | Read the current plan with step ids and a progress summary. |
 | `add_task(content, active_form)` | Append a single `pending` step. |
 | `update_task_status(task_id, status)` | Move one step between statuses by id. |
 | `update_task_statuses(updates)` | Apply several status changes in one call, validated all-or-nothing. |
 | `remove_task(task_id)` | Delete a step by id. |
 
-Each step is a `content` string, an optional present-continuous `active_form` label, and a `status` (`pending`, `in_progress`, `completed`, `cancelled`). The convention -- stated in the guidance and the tools' replies -- is to keep exactly one step `in_progress`.
+Each step is a `content` string, an optional present-continuous `active_form` label, and a `status` (`pending`, `in_progress`, `completed`, `cancelled`). Unknown fields in step and status-update objects are rejected instead of being ignored. The convention -- stated in the guidance and the tools' replies -- is to keep exactly one step `in_progress`.
+
+The immediate `write_plan` result includes the stable id of every step. Use those ids with `update_task_status`, `update_task_statuses`, and `remove_task`; the tail reminder keeps the compact ordinal-only format, so use `read_plan` to recover ids later.
 
 All six are registered by default. `tools=` narrows that to an allowlist, and the built-in guidance follows it:
 
@@ -164,7 +166,7 @@ and store `event_emitter` parameters remain supported but are deprecated.
 
 ## Why whole-plan replacement
 
-Addressing steps by mutable integer index (insert/remove/reorder) is error-prone for both the code and the model. `write_plan` restates the whole plan each call, so there are no indices to track. Granular edits (`add_task`, `update_task_status`, `remove_task`) instead reference the stable `id` shown by `read_plan`.
+Addressing steps by mutable integer index (insert/remove/reorder) is error-prone for both the code and the model. `write_plan` restates the whole plan each call, so there are no indices to track. Granular edits (`add_task`, `update_task_status`, `remove_task`) instead reference the stable `id` shown by `write_plan` and `read_plan` results.
 
 ## Caching guarantee
 
