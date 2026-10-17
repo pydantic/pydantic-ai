@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -10,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import SystemPromptPart, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
@@ -261,13 +262,18 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> str:
+    def _render_note(self, context_file: ContextFile) -> str | SystemPromptPart:
+        """The file's contents as repository data on the user channel, or a framework pointer to it.
+
+        The contents are the repository's, not the operator's or the framework's, so they stay out of system
+        voice. The pointer is the framework speaking; the path in it is the repository's, escaped.
+        """
         label = self._label(context_file.path)
         if self.nested_inject == 'contents':
             return render_context_file(context_file, label=label)
-        return (
-            f'<repo-context>This directory has {context_file.path.name} ({label}). '
-            f'Read it if relevant to your task.</repo-context>'
+        return SystemPromptPart(
+            f'This directory has {html.escape(context_file.path.name)} ({html.escape(label)}). '
+            'Read it if relevant to your task.'
         )
 
     def _label(self, path: Path) -> str:
