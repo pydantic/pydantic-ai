@@ -240,7 +240,7 @@ def _format_messages(
     return '\n'.join(elements)
 
 
-_TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return']
+_TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return', 'summary']
 """The `role` of a `<message>` element in the summarizer transcript."""
 
 _TRANSCRIPT_TAG = re.compile(r'<(/?)(messages?|previous-summary)\b', re.IGNORECASE)

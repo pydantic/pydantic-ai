@@ -48,6 +48,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -397,6 +398,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
+        messages = _render_unattributed_compaction_parts(messages)
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):

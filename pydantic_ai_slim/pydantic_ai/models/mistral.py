@@ -59,6 +59,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -660,6 +661,7 @@ class MistralModel(Model[Mistral]):
         self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
+        messages = _render_unattributed_compaction_parts(messages)
         mistral_messages: list[MistralMessages] = []
         for message in messages:
             if isinstance(message, ModelRequest):

@@ -92,6 +92,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
@@ -2273,6 +2274,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
+        messages = _render_unattributed_compaction_parts(messages)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via

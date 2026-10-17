@@ -78,6 +78,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
@@ -1336,6 +1337,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
+        messages = _render_unattributed_compaction_parts(messages)
         settings = model_settings or BedrockModelSettings()
         profile = self.profile
         system_prompt: list[SystemContentBlockTypeDef] = []

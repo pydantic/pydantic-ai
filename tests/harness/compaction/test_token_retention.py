@@ -80,10 +80,6 @@ class TestCompactionTokenRetention:
         retained_parts = [
             part for message in seen for part in message.parts if isinstance(part, (TextPart, UserPromptPart))
         ]
-        if isinstance(strategy, SummarizingCompaction):
-            # The summary leads the request, sent as framed assistant text.
-            summary, *retained_parts = retained_parts
-            assert summary == TextPart('<conversation_summary>\nsummary\n</conversation_summary>')
         assert retained_parts == [history[1].parts[0], history[2].parts[0]]
         assert all(message is not history[0] for message in seen)
 

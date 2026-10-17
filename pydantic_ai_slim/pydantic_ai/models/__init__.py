@@ -1018,9 +1018,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume, renders each
-        [`CompactionPart`][pydantic_ai.messages.CompactionPart] that no provider produced as a
-        `<conversation_summary>` assistant text, and puts the tool results in each request in the
+        `TextPart`s that any model can consume, and puts the tool results in each request in the
         order of the calls they answer, so the request bytes (and the provider's prompt cache)
         don't depend on the order a history happened to store them in.
 
@@ -1039,7 +1037,6 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
-        messages = _render_unattributed_compaction_parts(messages)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -2515,7 +2512,9 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
 _CONVERSATION_SUMMARY_CLOSING_TAG = re.compile(r'</(conversation_summary)\s*>', re.IGNORECASE)
 
 
-def _render_unattributed_compaction_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFunction]
+    messages: Sequence[ModelMessage],
+) -> list[ModelMessage]:
     """Send each `CompactionPart` that no provider produced as assistant text framed as a summary.
 
     A part without `provider_name` was written by the application or a framework capability (such as
@@ -2523,8 +2522,10 @@ def _render_unattributed_compaction_parts(messages: list[ModelMessage]) -> list[
     has a native block for it and every adapter would otherwise leave it out. It is model-written
     text standing in for earlier turns, so it goes out in the assistant turn that holds it, never in
     system voice. Its own closing tag is neutralized, so the summary can't end its frame early.
-    Parts without content have nothing to send and are left for the adapter to omit. Returns the
-    original list when nothing changed.
+    Parts without content have nothing to send and are left for the adapter to omit.
+
+    Adapters call this as the first step of their own message mapping, not from `prepare_messages`:
+    the request context, hooks and cache-health accounting keep seeing the typed part.
     """
     if not any(
         _is_unattributed_summary(part)
@@ -2532,7 +2533,7 @@ def _render_unattributed_compaction_parts(messages: list[ModelMessage]) -> list[
         if isinstance(message, ModelResponse)
         for part in message.parts
     ):
-        return messages
+        return list(messages)
     new_messages: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):

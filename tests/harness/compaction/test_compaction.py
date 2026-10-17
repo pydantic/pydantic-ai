@@ -200,17 +200,6 @@ def _summary_text(messages: Sequence[ModelMessage]) -> str:
     )
 
 
-def _sent_summary_text(messages: Sequence[ModelMessage]) -> str:
-    """The summary as a model received it: the framed assistant text core sends a framework `CompactionPart` as."""
-    return next(
-        part.content.removeprefix('<conversation_summary>\n').removesuffix('\n</conversation_summary>')
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, TextPart) and part.content.startswith('<conversation_summary>\n')
-    )
-
-
 def _user(text: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=text)])
 
@@ -1693,7 +1682,7 @@ class TestIncrementalSummarization:
         for number, prompt in enumerate(prompts[1:], start=1):
             assert f'Summary {number}.' in prompt
             assert f'Summary {number - 1}.' not in prompt
-        assert _sent_summary_text(sent[-1]) == 'Summary 5.'
+        assert _summary_text(sent[-1]) == 'Summary 5.'
         assert _request_shapes(sent[-1]) == snapshot(
             [
                 ['system-prompt: Be terse.'],
@@ -1727,7 +1716,7 @@ class TestIncrementalSummarization:
         await _continue(agent, ['turn 5'], history=history)
         assert 'Newest.' in prompts[0]
         assert 'Oldest.' not in prompts[0]
-        assert _sent_summary_text(sent[-1]) == 'Summary 1.'
+        assert _summary_text(sent[-1]) == 'Summary 1.'
         assert _request_shapes(sent[-1]) == snapshot(
             [['system-prompt: Be terse.'], ['user-prompt: turn 1', 'user-prompt: turn 3', 'user-prompt: turn 5']]
         )
@@ -2817,7 +2806,7 @@ class TestPublicPath:
         await agent.run('next', message_history=history)
 
         assert retries == ['The summary was empty. Write the summary of the conversation.']
-        assert _sent_summary_text(sent[-1]) == 'the summary'
+        assert _summary_text(sent[-1]) == 'the summary'
 
     async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4463,7 +4452,7 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 1
         assert '<message role="user">\na\n</message>' in prompts[0]
         assert result.output == 'done'
-        assert _sent_summary_text(seen[0]) == 'STREAMED SUMMARY'
+        assert _summary_text(seen[0]) == 'STREAMED SUMMARY'
 
     async def test_tool_return_max_chars_threads_through_summarize(self):
         """The field reaches `_format_messages` via `_summarize` in a real run."""
@@ -4550,7 +4539,7 @@ class TestStructuralFeaturesThroughAgent:
         assert result.output == 'done'
         # The handler sees the summary as it is produced; the parent run still gets one summary.
         assert ''.join(deltas) == 'STREAMED SUMMARY'
-        assert _sent_summary_text(seen[0]) == 'STREAMED SUMMARY'
+        assert _summary_text(seen[0]) == 'STREAMED SUMMARY'
 
     @pytest.mark.parametrize(
         'max_chars,expected',
@@ -4739,8 +4728,8 @@ recent
         assert standing.parts == [SystemPromptPart(content='Be terse.', timestamp=standing.parts[0].timestamp)]
         assert isinstance(summary, ModelResponse)
         assert summary.parts == [CompactionPart(content='THE SUMMARY')]
-        # What the model received: the summary as framed assistant text, and no system prompt holding it.
-        assert _sent_summary_text(seen[0]) == 'THE SUMMARY'
+        # What the model received: the summary part, and no system prompt holding it.
+        assert _summary_text(seen[0]) == 'THE SUMMARY'
         assert [
             part.content
             for message in seen[0]

@@ -2311,7 +2311,7 @@ class CompactionPart:
 
     A part without `provider_name` holds a summary written by the application or a capability, such
     as Pydantic AI Harness's `SummarizingCompaction`. No provider has a native block for it, so every
-    model receives its `content` as assistant text inside `<conversation_summary>`.
+    request-response model receives its `content` as assistant text inside `<conversation_summary>`.
     """
 
     content: str | None = None

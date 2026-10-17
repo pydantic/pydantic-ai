@@ -69,6 +69,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -1261,6 +1262,7 @@ class GoogleModel(Model[Client]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+        messages = _render_unattributed_compaction_parts(messages)
         # Google Cloud (Vertex) has no `tool_call`/`tool_response` parts (the SDK raises on them), so native tool
         # parts from Gemini API history are dropped there, like they are on models without tool combination.
         supports_tool_combination = self.profile.get('google_supports_tool_combination', False) and not (
