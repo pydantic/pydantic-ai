@@ -245,7 +245,7 @@ def _neutralize_transcript_tags(content: str) -> str:
 
     Content then can't open or close a message, the transcript, or the previous summary.
     """
-    # TODO: switch to the core `wrap()` framing helper once it lands.
+    # TODO(#10547): switch to `_framing.wrap()` once it lands.
     return _TRANSCRIPT_TAG.sub(lambda match: f'&lt;{match.group(1)}{match.group(2)}', content)
 
 
