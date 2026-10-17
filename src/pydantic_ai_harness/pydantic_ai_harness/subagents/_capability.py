@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 
+from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler
@@ -74,8 +75,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     Exposes a single `delegate_task(agent_name, task)` tool. Each delegation
     runs the chosen sub-agent in a fresh, isolated run (it never sees the parent
-    conversation), and the available sub-agents are listed in the system prompt
-    as a static, cache-stable instruction.
+    conversation), and the available sub-agents are listed in the system prompt,
+    stable within a run; a change between runs of a conversation is appended
+    rather than rewritten.
 
     Sub-agents are passed as a sequence of `SubAgent` entries, each pairing an
     agent with its per-delegate run controls (a `usage_limits` budget, a
@@ -518,6 +520,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self._per_run:
             return lambda _ctx: self._render_instructions()
         return self._render_instructions()
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The listing is read from the workspace each run, so a delegate added or removed between runs is
+        # appended as a change rather than rewriting the cached prompt.
+        return append_on_change_by_default(super()._collect_instructions(), key='sub_agents')
 
     def _render_instructions(self) -> str | None:
         if self._delegation_off or (not self._by_name and not self.include_self):

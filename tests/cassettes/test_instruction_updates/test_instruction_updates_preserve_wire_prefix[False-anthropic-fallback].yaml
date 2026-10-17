@@ -1,0 +1,681 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "606"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-df5b312a557b63bfa23acdb7298bdefe-7aaca8c91b8b0515-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgnzZHF7TA89i7vDkfd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}      }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-09-30T00:35:41.892318+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "912"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f7f0d67aaf8f12238828c5fe69dfa0a5-0c977169fd821519-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgo7NJLS3qSd2VZf7qT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}    }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-30T00:35:43.446135+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1083"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c889077fc239948ada38356f07d90730-cfe0eca69ccfbb5d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoDqERAsv3nhAAGrK9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}               }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-30T00:35:44.984023+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1365"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a3f86bd7b9ddfe78dc56aeb1ff6ef4fe-6fb938c409daf50e-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoLKAUTcewKy63czZ2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}    }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-30T00:35:46.090389+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1721"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-46e9ba27f4337be720af6c689faf8150-57e18585608f348f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoRBbzkvax8JLZVhq5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"UNASSIGNED"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":7}       }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-30T00:35:47.350151+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2042"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              I have a box of books from the library donation drive. Where should it be
+              routed?
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse B.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: This one is a bicycle frame, oversized. Where does it go?
+            type: text
+        - role: assistant
+          content:
+          - text: B
+            type: text
+        - role: user
+          content:
+          - text: An envelope with signed contracts. Routing?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse A.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: A
+            type: text
+        - role: user
+          content:
+          - text: A pallet of bottled water arrived at the dock. Where to?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+              </context></system>
+            type: text
+        - role: assistant
+          content:
+          - text: UNASSIGNED
+            type: text
+        - role: user
+          content:
+          - text: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+            type: text
+          - text: |-
+              <system><context id="capability:memory:state">
+              Send parcels to warehouse C.
+              </context></system>
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system:
+        - type: text
+          text: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - type: text
+          text: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-efa3f4a81458a137a043f7c4999c9cc1-090ae2ce26f8ce37-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoWbHv5ERQMQTZRG2C","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}  }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-09-30T00:35:48.694416+00:00

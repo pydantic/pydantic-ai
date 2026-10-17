@@ -9,6 +9,8 @@ graph RL
     ToolReturnPart(ToolReturnPart) --- ModelRequestPart
     RetryPromptPart(RetryPromptPart) --- ModelRequestPart
     ToolAvailabilityDeltaPart(ToolAvailabilityDeltaPart) --- ModelRequestPart
+    InstructionDeltaPart(InstructionDeltaPart) --- ModelRequestPart
+    InstructionBaselinePart(InstructionBaselinePart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart
     ThinkingPart(ThinkingPart) --- ModelResponsePart

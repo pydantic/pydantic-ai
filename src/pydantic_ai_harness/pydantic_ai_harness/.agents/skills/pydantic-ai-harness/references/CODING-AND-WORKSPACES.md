@@ -400,7 +400,8 @@ every activity reattaches to that environment.
 
 ## RepoContext
 
-Loads `CLAUDE.md`/`AGENTS.md` into static instructions at run start and exposes
+Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
+runs of a conversation is appended rather than rewritten) and exposes
 `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks).
 
 ```python

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, append_on_change_by_default
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._system_prompt import SystemPromptRunner
 from pydantic_ai.tools import AgentDepsT
@@ -15,6 +15,9 @@ from .abstract import (
     CapabilityOrdering,
 )
 from .instrumentation import Instrumentation
+
+DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
+"""The source key of the deferred capability catalog's instruction block."""
 
 DEFERRED_CAPABILITY_CATALOG_PREFIX = (
     'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
@@ -87,6 +90,12 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return _render_deferred_capability_catalog
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The catalog gets a key of its own, though this capability has no `id`, so a catalog that changes
+        # between runs (a skill added to the workspace) is appended as a change instead of rewriting the
+        # cached prompt.
+        return append_on_change_by_default(super()._collect_instructions(), key=DEFERRED_CAPABILITY_CATALOG_ID)
 
     def get_ordering(self) -> CapabilityOrdering | None:
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])

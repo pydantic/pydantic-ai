@@ -1,0 +1,227 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "627"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - role: system
+          content: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: Process the todo.
+        model: deepseek/deepseek-chat
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: finish_todo
+            description: Finish the pending todo.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727149-kS7gEIpykQmpFAeh5lpO
+        object: chat.completion
+        created: 1790727149
+        model: deepseek/deepseek-chat
+        provider: StreamLake
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: tool_calls
+          native_finish_reason: tool_calls
+          message:
+            role: assistant
+            content: null
+            refusal: null
+            reasoning: null
+            tool_calls:
+            - type: function
+              index: 0
+              id: call_5042fd863e08450495808f27
+              function:
+                name: finish_todo
+                arguments: "{}"
+        usage:
+          prompt_tokens: 210
+          completion_tokens: 17
+          total_tokens: 227
+          cost: 0.0000715419
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000715419
+            upstream_inference_prompt_cost: 0.000054054
+            upstream_inference_completions_cost: 0.0000174879
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:31.741114+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "985"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - role: system
+          content: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: Process the todo.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_5042fd863e08450495808f27
+            type: function
+            function:
+              name: finish_todo
+              arguments: "{}"
+        - role: tool
+          tool_call_id: call_5042fd863e08450495808f27
+          content: Saved.
+        - role: user
+          content: |-
+            <system><context id="capability:todos:state">
+            Todo status: done.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: finish_todo
+            description: Finish the pending todo.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727151-IkhcqbTLsI9MS1QPkZIP
+        object: chat.completion
+        created: 1790727151
+        model: deepseek/deepseek-chat
+        provider: StreamLake
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: DONE
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 275
+          completion_tokens: 3
+          total_tokens: 278
+          cost: 0.0000738711
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000738711
+            upstream_inference_prompt_cost: 0.000070785
+            upstream_inference_completions_cost: 3.0861e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:33.117005+00:00
