@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal
@@ -79,6 +79,13 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     namespace: str | Callable[[RunContext[AgentDepsT]], str] = ''
     """Static or per-run tenant namespace, never exposed as a tool argument."""
+
+    write_metadata: Mapping[str, str] | Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None] | None = field(
+        default=None, kw_only=True
+    )
+    """Metadata stored with each `write_memory` write, such as who made it, or a callable resolving it per write.
+
+    The application supplies it; it is never a tool argument. `None` stores the write without metadata."""
 
     inject_memory: bool = True
     """Inject stored memory when true; otherwise inject static tool guidance only."""

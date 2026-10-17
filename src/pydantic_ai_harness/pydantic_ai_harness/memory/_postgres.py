@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol, runtime_checkable
 
@@ -16,6 +16,8 @@ from pydantic_ai_harness.memory._store import (
     MemoryOperation,
     MemoryOperationConflictError,
     MemorySearchResult,
+    decode_metadata,
+    encode_metadata,
     lexical_search,
     validate_store_path,
     validate_store_prefix,
@@ -83,12 +85,13 @@ class PostgresMemoryStore:
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._table} ('
                     'path TEXT PRIMARY KEY, content TEXT NOT NULL, '
-                    'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT)'
+                    'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT, metadata JSONB)'
                 )
                 await connection.execute(
                     f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1'
                 )
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_operation_id TEXT')
+                await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS metadata JSONB')
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._operations_table} ('
                     'id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version TEXT, '
@@ -157,7 +160,8 @@ class PostgresMemoryStore:
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(
-                f'SELECT left(content, $2), version, last_operation_id, length(content) '
+                # As text, so the result does not depend on the driver's JSON codec.
+                f'SELECT left(content, $2), version, last_operation_id, length(content), metadata::TEXT '
                 f'FROM {self._table} WHERE path = $1',
                 path,
                 max_chars,
@@ -169,6 +173,7 @@ class PostgresMemoryStore:
             version=str(row[1]),
             operation_id=str(row[2]) if row[2] is not None else None,
             truncated=int(str(row[3])) > max_chars,
+            metadata=decode_metadata(row[4]),
         )
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
@@ -183,6 +188,7 @@ class PostgresMemoryStore:
         *,
         expected_version: str | None,
         operation: MemoryOperation | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
         await self._ensure_schema()
@@ -191,23 +197,25 @@ class PostgresMemoryStore:
                 return receipt
             if expected_version is None:
                 row = await connection.fetchrow(
-                    f'INSERT INTO {self._table} (path, content, version, last_operation_id) '
-                    f"VALUES ($1, $2, nextval('{self._version_sequence}'), $3) "
+                    f'INSERT INTO {self._table} (path, content, version, last_operation_id, metadata) '
+                    f"VALUES ($1, $2, nextval('{self._version_sequence}'), $3, $4::JSONB) "
                     'ON CONFLICT (path) DO NOTHING RETURNING version',
                     path,
                     content,
                     operation.id if operation else None,
+                    encode_metadata(metadata),
                 )
                 existed = False
             else:
                 row = await connection.fetchrow(
                     f"UPDATE {self._table} SET content = $2, version = nextval('{self._version_sequence}'), "
-                    'last_operation_id = $3 '
+                    'last_operation_id = $3, metadata = $5::JSONB '
                     'WHERE path = $1 AND version::TEXT = $4 RETURNING version',
                     path,
                     content,
                     operation.id if operation else None,
                     expected_version,
+                    encode_metadata(metadata),
                 )
                 existed = True
             if row is None:

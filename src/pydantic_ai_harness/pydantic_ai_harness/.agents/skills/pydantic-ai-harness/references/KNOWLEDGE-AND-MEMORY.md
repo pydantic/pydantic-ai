@@ -109,6 +109,18 @@ agent = Agent(
 Prefect both `store_resolver` and a callable `namespace` must be deterministic and do no backend
 I/O.
 
+### Write metadata
+
+Stores keep string-to-string metadata, such as who wrote a file, with each write:
+`store.write(path, content, expected_version=..., metadata={'updated_by': 'ui'})`, read back as
+`MemoryFile.metadata`. For the model's writes, pass `write_metadata=` (a mapping, or a
+`RunContext -> mapping` callable resolved per `write_memory` call; never a tool argument). It
+describes the write that produced the current version: a write without it leaves the file with
+none, a CAS conflict changes nothing, a replayed operation keeps the original write's metadata, and
+delete removes it. Postgres adds a `metadata JSONB` column, SQLite a `metadata TEXT` column, and
+`FileStore` keeps `.memory-metadata.json`. A custom store must accept `metadata` on `write` before
+`write_metadata` is set.
+
 ### Bounded injection and search
 
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
