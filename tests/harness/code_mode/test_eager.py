@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -13,7 +14,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -31,7 +32,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
@@ -270,6 +271,34 @@ class TestEagerCodeMode:
 
         assert result.output == 'done'
         assert calls == ['alpha']
+
+    async def test_tool_calls_limit_applies_to_streamed_fragments(self):
+        """A fragment's nested call that would exceed `tool_calls_limit` ends the run once `run_code` is dispatched."""
+        calls: list[str] = []
+
+        def search(query: str) -> str:
+            calls.append(query)
+            return query
+
+        code = (
+            'a = await search(query="alpha")\nb = await search(query="beta")\nc = await search(query="gamma")\n"unused"'
+        )
+
+        async def stream_code(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            yield {1: DeltaToolCall(name='run_code')}
+            for chunk in stream_json_args(code):
+                yield {1: DeltaToolCall(json_args=chunk)}
+                await asyncio.sleep(0)
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(stream_function=stream_code), deps_type=type(None), capabilities=[CodeMode(eager=True)]
+        )
+        agent.tool_plain(search)
+
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert calls == ['alpha', 'beta']
 
     async def test_monty_limits_apply_to_eager_fragments(self):
         capability = CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.3})
