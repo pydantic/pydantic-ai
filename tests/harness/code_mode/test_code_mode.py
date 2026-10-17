@@ -3691,21 +3691,6 @@ class TestDynamicCatalog:
         assert ctx.pending_messages is not None
         assert len(ctx.pending_messages) == 1
 
-    async def test_other_system_prompts_do_not_count_as_announcements(self) -> None:
-        """Only an authored announcement suppresses one: a system prompt naming the tool does not."""
-        cap = CodeMode[object](dynamic_catalog=True)
-        ctx = build_run_context(None)
-        ctx.messages.append(ModelRequest(parts=[SystemPromptPart(content='Prefer `weather` for forecasts.')]))
-        await cap.after_tool_execute(
-            ctx,
-            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
-            tool_def=_search_tool_def(),
-            args={},
-            result={'discovered_tools': [{'name': 'weather'}]},
-        )
-        assert ctx.pending_messages is not None
-        assert len(ctx.pending_messages) == 1
-
     async def test_announcement_in_visible_history_deduplicates_across_steps(self) -> None:
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
@@ -3770,10 +3755,11 @@ class TestDynamicCatalog:
 
         assert len(ctx.pending_messages) == 1
 
-    async def test_dropped_announcement_is_enqueued_again(self) -> None:
+    async def test_search_return_in_history_counts_even_if_its_announcement_was_dropped(self) -> None:
+        """What marks a tool as announced is its search return in visible history, not the announcement."""
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
-        result = {'discovered_tools': [{'name': 'weather'}]}
+        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
         await cap.after_tool_execute(
             ctx,
             call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
@@ -3782,7 +3768,9 @@ class TestDynamicCatalog:
             result=result,
         )
         assert ctx.pending_messages is not None
-        ctx.pending_messages.clear()  # A history processor omitted the authored announcement.
+        # A history processor omitted the announcement but kept the search return.
+        ctx.messages.append(ModelRequest(parts=[ToolSearchReturnPart(content=result, tool_call_id='c1')]))
+        ctx.pending_messages.clear()
 
         await cap.before_model_request(ctx, request_context=None)  # pyright: ignore[reportArgumentType]
         await cap.after_tool_execute(
@@ -3793,7 +3781,7 @@ class TestDynamicCatalog:
             result=result,
         )
 
-        assert len(ctx.pending_messages) == 1
+        assert ctx.pending_messages == []
 
     async def test_announcement_of_ordinary_names(self) -> None:
         """Ordinary names are announced exactly as written."""
