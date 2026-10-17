@@ -581,7 +581,9 @@ class OpenAIServer:
         session.conversation.discard(fingerprint)
         self.truth.pruned.append(fingerprint)
         kind, _, call_id = fingerprint.partition(':')
-        if kind in ('function_call', 'function_call_output') and call_id in session.unanswered_tool_outputs:
+        if (
+            kind in ('function_call', 'function_call_output') and call_id in session.unanswered_tool_outputs
+        ):  # pragma: lax no cover (only a premature deletion)
             # The model hadn't answered the result yet: it would answer without it.
             self.truth.pruned_unanswered.append(call_id)
         self._emit(session, {'type': 'conversation.item.deleted', 'item_id': item_id})

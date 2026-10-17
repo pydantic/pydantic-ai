@@ -12243,8 +12243,12 @@ class _PrunesToolItems(FakeRealtimeConnection):
 @pytest.mark.parametrize('link_drops', [False, True])
 async def test_tool_rounds_the_connection_prunes_leave_the_replay(link_drops: bool) -> None:
     """Once the answer completes, the connection is asked to prune the round: what it deleted, a replay leaves out."""
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
     conn = _PrunesToolItems(link_drops=link_drops)
-    session = RealtimeSession(conn)
+    session = RealtimeSession(conn, runner)
     async with session:
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             async for event in session:  # pragma: no branch
