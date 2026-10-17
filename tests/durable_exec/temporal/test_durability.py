@@ -34,6 +34,7 @@ from pydantic_ai import (
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PendingModelResponse,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -94,6 +95,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
+from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -110,12 +112,13 @@ from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, W
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
+from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
@@ -5012,6 +5015,170 @@ async def test_durability_continuation_usage_limit_checked_inside_activity(clien
     # The over-budget merge was still suspended, so the live job was cancelled before raising.
     assert len(_continuation_model.cancelled) == 1
     assert _continuation_model.cancelled[0].provider_response_id == 'cont2'
+
+
+# --- `BatchModel` rides the continuation loop: one activity per batch check, durable timers between ---
+
+_batch_wrapped_model = SlowBatchTestModel()
+_batch_model = BatchModel(_batch_wrapped_model, **FAST_BATCH_SETTINGS)
+
+_batch_agent = Agent(
+    _batch_model,
+    name='durability_batch_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityBatchWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _batch_agent.run(prompt)
+
+
+@workflow.defn
+class DurabilityBatchResumeWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> AgentRunResult[str]:
+        return await _batch_agent.run(message_history=messages)
+
+
+def _timer_count(history: WorkflowHistory) -> int:
+    return len([e for e in history.events if e.HasField('timer_started_event_attributes')])
+
+
+async def test_durability_batch_model_in_workflow(client: Client):
+    """`BatchModel` works under `TemporalDurability` through the continuation loop alone.
+
+    The submitting request and every later batch check each run in their own model-request
+    activity, and the poll delay `BatchModel.continuation_delay` asks for is a durable workflow
+    timer between them, so a run can wait out a batch across worker restarts. The suspended
+    response is replaced by each check and then by the decoded result, so the run ends with one
+    complete response counted as one request.
+    """
+    _batch_wrapped_model.reset(pending_checks=1)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchWorkflow.run,
+            args=['go'],
+            id='DurabilityBatchWorkflow_chain',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'success (no tool calls)'
+    assert [type(message).__name__ for message in result.all_messages()] == ['ModelRequest', 'ModelResponse']
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    assert result.usage.requests == 1
+    assert len(_batch_wrapped_model.created) == 1
+    # The first check finds the batch in progress, the second finds it ended.
+    assert _batch_wrapped_model.status_checks == 2
+    # One activity submits the request, then one per check, with a durable timer before each check.
+    assert _scheduled_activity_count(history) == 3
+    assert _timer_count(history) == 2
+
+
+async def test_durability_batch_model_resume_from_history(client: Client):
+    """A run resumed from history ending in a pending batch response waits for that same batch.
+
+    The pending response, created outside the workflow, crosses the activity boundary as the
+    last request message, so the activity checks the batch it records instead of submitting
+    the request again.
+    """
+    _batch_wrapped_model.reset(pending_checks=0)
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    pending = await _batch_model.request([request], None, ModelRequestParameters())
+    assert pending.state == 'suspended'
+    assert len(_batch_wrapped_model.created) == 1
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchResumeWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchResumeWorkflow.run,
+            args=[[request, pending]],
+            id='DurabilityBatchWorkflow_resume',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result.output == 'success (no tool calls)'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'complete'
+    # No second batch: the one activity checked the batch the history recorded.
+    assert len(_batch_wrapped_model.created) == 1
+    assert _batch_wrapped_model.status_checks == 1
+    assert _scheduled_activity_count(history) == 1
+    assert _timer_count(history) == 1
+
+
+@workflow.defn
+class DurabilityBatchPendingWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage] | None) -> AgentRunResult[str | PendingModelResponse]:
+        return await _batch_agent.run(
+            None if messages else 'go', message_history=messages, output_type=[str, PendingModelResponse]
+        )
+
+
+async def test_durability_batch_model_with_pending_output_ends_and_resumes(client: Client):
+    """With `PendingModelResponse` in the output type, each workflow run makes one batch call and ends.
+
+    The first run submits the request in one activity and returns the pending response without starting a timer.
+    The second run, resumed from that history in a new workflow, checks the batch once, again without a timer, and
+    finishes with the result.
+    """
+    _batch_wrapped_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchPendingWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        submit = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[None],
+            id='DurabilityBatchPendingWorkflow_submit',
+            task_queue=TASK_QUEUE,
+        )
+        submitted = await submit.result()
+        submit_history = await submit.fetch_history()
+
+        assert isinstance(submitted.output, PendingModelResponse)
+        assert submitted.output.response.state == 'suspended'
+        assert submitted.output.response == submitted.all_messages()[-1]
+        assert len(_batch_wrapped_model.created) == 1
+        assert _batch_wrapped_model.status_checks == 0
+        assert _scheduled_activity_count(submit_history) == 1
+        assert _timer_count(submit_history) == 0
+
+        collect = await client.start_workflow(
+            DurabilityBatchPendingWorkflow.run,
+            args=[submitted.all_messages()],
+            id='DurabilityBatchPendingWorkflow_collect',
+            task_queue=TASK_QUEUE,
+        )
+        collected = await collect.result()
+        collect_history = await collect.fetch_history()
+
+    assert collected.output == 'success (no tool calls)'
+    assert len(_batch_wrapped_model.created) == 1
+    assert _batch_wrapped_model.status_checks == 1
+    assert _scheduled_activity_count(collect_history) == 1
+    assert _timer_count(collect_history) == 0
 
 
 _continuation_ceiling_model = ScriptedContinuationModel()

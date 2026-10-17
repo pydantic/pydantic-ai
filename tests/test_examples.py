@@ -13,6 +13,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import timedelta
 from importlib.util import find_spec
 from inspect import FrameInfo
 from pathlib import Path
@@ -57,6 +58,7 @@ from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models.batch import BatchModel
 from pydantic_ai.models.decision import DecisionModel, UnfillableRoute, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -1960,6 +1962,15 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
+    elif isinstance(model, BatchModel):
+        # Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals.
+        return BatchModel(
+            mock_infer_model(model.wrapped),
+            max_requests=model.max_requests,
+            max_wait=timedelta(milliseconds=1),
+            poll_interval=timedelta(milliseconds=1),
+            max_poll_interval=timedelta(milliseconds=1),
+        )
     elif isinstance(model, DecisionModel):
         return FunctionModel(
             decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile

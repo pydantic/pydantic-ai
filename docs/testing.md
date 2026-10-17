@@ -268,6 +268,28 @@ async def test_forecast_future():
 
 If your replacement model needs to carry state between requests, `FunctionModel` also accepts a callable instance with an `async def __call__` in place of a function; see the [`FunctionModel` API docs](api/models/function.md) for an example.
 
+### Testing batch processing
+
+`TestModel` and `FunctionModel` implement the [batch API](batch.md) in memory: a batch's requests run as soon as it's created, and it ends straight away. To test code that uses [`BatchModel`][pydantic_ai.models.batch.BatchModel], wrap one of them in it, and set short intervals so the test doesn't wait:
+
+```python {title="test_batch_agent.py" call_name="test_batch_agent"}
+from datetime import timedelta
+
+from pydantic_ai import Agent
+from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models.test import TestModel
+
+
+async def test_batch_agent():
+    model = BatchModel(
+        TestModel(custom_output_text='Paris'),
+        max_wait=timedelta(milliseconds=1),
+        poll_interval=timedelta(milliseconds=1),
+    )
+    result = await Agent(model).run('What is the capital of France?')
+    assert result.output == 'Paris'
+```
+
 ### Overriding model via pytest fixtures
 
 If you're writing lots of tests that all require model to be overridden, you can use [pytest fixtures](https://docs.pytest.org/en/6.2.x/fixture.html) to override the model with [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in a reusable way.

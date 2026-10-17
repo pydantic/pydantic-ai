@@ -498,6 +498,17 @@ agent = Agent(GoogleModel('{{ google:medium.name }}'), model_settings=model_sett
 
     Caches have a minimum size (≈2048 tokens for Gemini 2.5 series models, ≈4096 for Gemini 3 series models) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
+## Batch API
+
+`GoogleModel` supports [batch processing](../batch.md) through the Gemini API's
+[Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api), which charges 50% of the standard price. A job
+targets one model, its requests are uploaded as a file of up to 2 GB, and it expires if it hasn't finished within
+48 hours.
+
+Batch Mode isn't available on Google Cloud (Vertex AI), which runs batch prediction jobs from Cloud Storage or
+BigQuery instead. Configure timeouts and custom headers on the client: per-request `timeout` and `extra_headers`
+are unsupported. Retrieve a job with the same API key that submitted it.
+
 ## Long decode
 
 `gemini-4-argon` caps the output of each request; Google's

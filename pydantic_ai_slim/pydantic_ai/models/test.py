@@ -37,7 +37,8 @@ from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import ModelRequestParameters, StreamedResponse
+from ._in_memory_batch import InMemoryBatchModel
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
 
@@ -59,7 +60,7 @@ class _WrappedToolOutput:
 
 
 @dataclass(init=False)
-class TestModel(Model):
+class TestModel(InMemoryBatchModel):
     """A model specifically for testing purposes.
 
     This will (by default) call all tools in the agent, then return a tool response if possible,
