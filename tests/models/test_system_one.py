@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, BinaryContent, ModelHTTPError, ToolCallPart
 from pydantic_ai.exceptions import (
-    ModelAPIError,
     ModelConnectionError,
     ModelOverloadedError,
     ModelRateLimitError,
     ModelServerError,
     ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -544,17 +544,23 @@ async def test_timeout_error(allow_model_requests: None):
     [
         (httpx2.Response(429, json={'detail': 'slow down'}), ModelRateLimitError),
         (httpx2.Response(503, text='overloaded, try again'), ModelOverloadedError),
+        (httpx2.Response(503, text='warming up'), ModelUnavailableError),
         (httpx2.Response(502, text='embedder unreachable'), ModelServerError),
     ],
 )
 async def test_http_error_category(
-    allow_model_requests: None, response: httpx2.Response, category: type[ModelAPIError]
+    allow_model_requests: None,
+    response: httpx2.Response,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
 ):
     """A rate limit or outage is raised in its error category, as for any other provider."""
     agent = Agent(mock_model(lambda _: response), output_type=Ticket)
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Charged twice.')
-    assert isinstance(exc_info.value, category)
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    expected = ModelHTTPError.for_category(category, status_code=response.status_code, model_name='clm-latest')
+    assert type(exc_info.value) is type(expected)
+    assert exc_info.value.status_code == response.status_code
 
 
 async def test_server_error_falls_back(allow_model_requests: None):

@@ -20,7 +20,6 @@ from pydantic_ai import (
     Choices,
     CompactionPart,
     FilePart,
-    ModelAPIError,
     ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
@@ -2732,12 +2731,19 @@ async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, t
     ('status', 'category'),
     [(429, ModelRateLimitError), (503, ModelUnavailableError), (500, ModelServerError)],
 )
-async def test_http_error_category(allow_model_requests: None, status: int, category: type[ModelAPIError]):
+async def test_http_error_category(
+    allow_model_requests: None,
+    status: int,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
+):
     """A rate limit or outage is raised in its error category, as for any other provider."""
     model = mock_model(lambda _: httpx2.Response(status, json={'error': 'not now'}))
     with pytest.raises(ModelHTTPError) as exc_info:
         await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
-    assert isinstance(exc_info.value, category)
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(category, status_code=status, model_name='jev-latest')
+    )
     assert exc_info.value.status_code == status
 
 
