@@ -15,8 +15,8 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    BaseToolReturnPart,
     ModelMessage,
-    ModelRequest,
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
@@ -49,14 +49,6 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'New functions are now available inside `run_code`. Their signatures have been '
     'added to the available-functions catalog in the system prompt'
 )
-_DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery-announcement.v1'
-"""The `origin` in the `metadata` of the `ModelRequest` that delivers a discovery announcement.
-
-The same metadata lists the announced names under `'tools'`, exactly as discovered. History is read
-back through this record, never through the announcement's text, which carries tool names a remote
-server chose.
-"""
-
 # TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
 # (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
 _CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
@@ -381,12 +373,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
-        ctx.enqueue(
-            ModelRequest(
-                parts=[SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.')],
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': fresh},
-            )
-        )
+        ctx.enqueue(SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'))
 
 
 def _neutralize_closing_system_tag(text: str) -> str:
@@ -395,28 +382,20 @@ def _neutralize_closing_system_tag(text: str) -> str:
 
 
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
-    """Read the names in discovery announcements after the latest compaction boundary.
+    """Read the names discovered by tool searches after the latest compaction boundary.
 
-    An announcement is recognized by its request's metadata, so a system prompt that merely reads like
-    one, or a tool name shaped like a list of names, can't mark another tool as announced.
+    Each search return is announced as soon as it arrives, so the names it discovered are the ones the
+    model has been told about. The search returns are read rather than the announcements: an
+    announcement's text carries names a remote server chose, so a system prompt that merely reads like
+    one, or a name shaped like a list of names, must not count. A search return is identified by its
+    `tool_kind`, which also survives serialization and the merging of adjacent requests.
     """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
-        metadata = message.metadata if isinstance(message, ModelRequest) else None
-        if metadata is not None and metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN:
-            announced.update(_announced_names(metadata.get('tools')))
+        for part in message.parts:
+            if isinstance(part, BaseToolReturnPart) and part.tool_kind == 'tool-search':
+                announced.update(_extract_discovered_names(part.content))
     return announced
-
-
-_ANNOUNCED_NAMES_ADAPTER = TypeAdapter(list[str])
-
-
-def _announced_names(value: object) -> list[str]:
-    """Read the announced names from an announcement's metadata, or `[]` if a stored history mangled them."""
-    try:
-        return _ANNOUNCED_NAMES_ADAPTER.validate_python(value, strict=True)
-    except ValidationError:
-        return []
 
 
 class _DiscoveredCatalog(TypedDict):
