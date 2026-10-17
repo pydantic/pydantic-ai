@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
     from .render import RenderWorkflows
+    from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
@@ -128,6 +129,8 @@ __all__ = [
     'READ_ONLY_TOOL_NAMES',
     'RenderWorkflows',
     'ReportContextUsage',
+    'RenderSandbox',
+    'RenderSandboxBackend',
     'RepoContext',
     'Researcher',
     'SSHWorkspace',
@@ -194,6 +197,7 @@ _CAPABILITY_EXPORTS = {
     'Pylon': 'pylon',
     'RenderWorkflows': 'render',
     'ReportContextUsage': 'compaction',
+    'RenderSandbox': 'render_sandbox',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',
     'Shell': 'shell',
@@ -226,6 +230,7 @@ _CONSTANT_EXPORTS = {
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'RenderSandboxBackend': 'render_sandbox',
     'SmolSandboxBackend': 'smol_sandbox',
     'SpritesSandboxBackend': 'sprites_sandbox',
     'SSHWorkspaceBackend': 'ssh_workspace',

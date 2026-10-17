@@ -288,6 +288,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'RenderSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
