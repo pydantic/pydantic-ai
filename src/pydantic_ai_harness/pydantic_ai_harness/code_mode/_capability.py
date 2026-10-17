@@ -15,11 +15,11 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Too
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    BaseToolReturnPart,
     ModelMessage,
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
+    ToolSearchReturnPart,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
@@ -387,13 +387,14 @@ def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Each search return is announced as soon as it arrives, so the names it discovered are the ones the
     model has been told about. The search returns are read rather than the announcements: an
     announcement's text carries names a remote server chose, so a system prompt that merely reads like
-    one, or a name shaped like a list of names, must not count. A search return is identified by its
-    `tool_kind`, which also survives serialization and the merging of adjacent requests.
+    one, or a name shaped like a list of names, must not count. A search return is identified by its type,
+    `ToolSearchReturnPart` or `NativeToolSearchReturnPart`, which survives serialization and the merging
+    of adjacent requests.
     """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
         for part in message.parts:
-            if isinstance(part, BaseToolReturnPart) and part.tool_kind == 'tool-search':
+            if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
                 announced.update(_extract_discovered_names(part.content))
     return announced
 
