@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored, warn_default_changed
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 
 if TYPE_CHECKING:
@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 _WARNED_RUNS_KEPT = 256
 """How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
+
+
+_TAG_UNSET: Any = object()
+"""`Reminder.tag` left unset: sends the raw content and warns that the default changed."""
 
 
 @dataclass
@@ -56,11 +60,12 @@ class Reminder(Generic[AgentDepsT]):
     max_fires: int | None = None
     """Maximum number of times this reminder may fire within a run. `None` means no limit."""
 
-    tag: str | None = None
+    tag: str | None = cast('str | None', _TAG_UNSET)
     r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
 
-    `None` (the default) sends the raw content. The reminder is already a system prompt, which the model
-    is shown as one: natively where the model supports it, and in a `<system>` tag otherwise.
+    `None` sends the raw content, which is what a reminder needs: it's already a system prompt, which
+    the model is shown as one, natively where the model supports it and in a `<system>` tag otherwise.
+    Left unset, it's `None` and warns that the default used to be `'system-reminder'`.
     """
 
     def __post_init__(self) -> None:
@@ -70,6 +75,18 @@ class Reminder(Generic[AgentDepsT]):
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
             raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
+        if self.tag is _TAG_UNSET:
+            warn_default_changed(
+                owner='Reminder',
+                option='tag',
+                old='system-reminder',
+                new=None,
+                impact=(
+                    'The reminder is sent as a request-scoped system prompt, so the model already sees it as '
+                    'one, and its content is no longer wrapped in `<system-reminder>`.'
+                ),
+            )
+            self.tag = None
 
 
 DynamicReminder = Callable[[RunContext[AgentDepsT]], 'str | None']
@@ -107,7 +124,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         'anthropic:claude-sonnet-4-6',
         capabilities=[
             SystemReminders(
-                reminders=[Reminder('Stay focused on the original request.', interval=5)],
+                reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
             )
         ],
     )

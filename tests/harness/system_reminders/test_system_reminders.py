@@ -145,10 +145,23 @@ def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
 
 class TestReminderValidation:
     def test_defaults(self) -> None:
-        r = Reminder('text')
+        r = Reminder('text', tag=None)
         assert r.interval == 1
         assert r.first_after is None
         assert r.tag is None
+
+    def test_unset_tag_warns_that_the_default_changed(self) -> None:
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r"`Reminder` now defaults to `tag=None`; it previously defaulted to `tag='system-reminder'`",
+        ):
+            r = Reminder('text')
+        assert r.tag is None
+
+    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
+    @pytest.mark.parametrize('tag', [None, 'system-reminder'])
+    def test_explicit_tag_does_not_warn(self, tag: str | None) -> None:
+        assert Reminder('text', tag=tag).tag == tag
 
     def test_zero_interval_raises(self) -> None:
         with pytest.raises(ValueError, match='interval must be >= 1'):

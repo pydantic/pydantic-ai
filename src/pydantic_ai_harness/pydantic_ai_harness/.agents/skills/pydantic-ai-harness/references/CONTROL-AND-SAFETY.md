@@ -480,8 +480,8 @@ agent = Agent(
     capabilities=[
         SystemReminders(
             reminders=[
-                Reminder('Stay focused on the original request.', interval=5),
-                Reminder('Run the tests before finishing.', interval=10, max_fires=2),
+                Reminder('Stay focused on the original request.', interval=5, tag=None),
+                Reminder('Run the tests before finishing.', interval=10, max_fires=2, tag=None),
             ],
             dynamic_reminders=[
                 GoalReanchor(),
@@ -495,8 +495,9 @@ agent = Agent(
 - `Reminder(content, interval=1, first_after=None, trigger=None, max_fires=None, tag=None)`:
   requests are counted from 1 per run, so `interval=4` fires on requests 4, 8, 12; `first_after=N`
   moves the first fire to request N, then every `interval` after (`first_after=1, interval=4` fires
-  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition; `tag='name'` also wraps the text in
-  `<name>`, which a reminder doesn't need: it's already sent as a system prompt.
+  on 1, 5, 9). `trigger(ctx) -> bool` adds a condition. Pass `tag=None`: left unset it warns that the
+  default used to be `'system-reminder'`. A reminder needs no tag, since it's already sent as a
+  system prompt; `tag='name'` wraps the text in `<name>`.
 - `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
   request, injected raw (no tag).
 - `GoalReanchor()` restates the run's first user prompt; free.

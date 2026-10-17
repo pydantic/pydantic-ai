@@ -38,7 +38,7 @@ agent = Agent(
     '{{ anthropic:medium }}',
     capabilities=[
         SystemReminders(
-            reminders=[Reminder('Stay focused on the original request.', interval=5)],
+            reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
         )
     ],
 )
@@ -58,9 +58,9 @@ A `Reminder` fires on a cadence within a run:
 | `first_after` | Request number of the first fire, then every `interval` after. `None` = first multiple of `interval` (plain modulo). |
 | `trigger` | Predicate over `RunContext`. When set, fires only when it returns `True` *and* the cadence matches. |
 | `max_fires` | Cap the number of fires per run. `None` = no limit. |
-| `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` (the default) sends the raw content. |
+| `tag` | Also wrap the content in `<tag>\ncontent\n</tag>`. `None` sends the raw content. Left unset, it's `None` and warns that the default changed. |
 
-A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own; set `tag` only if your prompts refer to one.
+A reminder is a system prompt, so the model is already shown it as one: as a native system message where the model supports it, and in a `<system>` tag otherwise. It needs no tag of its own, so pass `tag=None`. The default used to be `'system-reminder'`: a `Reminder` that leaves `tag` unset sends the raw content and warns, and `tag='system-reminder'` restores the old wrapping.
 
 The `tag` wrapping applies only to static `Reminder` content. Dynamic callables (including `GoalReanchor` and `LLMReminder`) inject their returned text raw and own their own formatting.
 
@@ -138,7 +138,7 @@ from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent
 
 agent = Agent(
     '{{ anthropic:medium }}',
-    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5)])],
+    capabilities=[SystemReminders(reminders=[Reminder('...', interval=5, tag=None)])],
 )
 
 @agent.on_event(ReminderFiredEvent)
@@ -154,7 +154,7 @@ from pydantic_ai_harness import SystemReminders
 from pydantic_ai_harness.system_reminders import Reminder
 
 SystemReminders(
-    reminders=[Reminder('...', interval=5)],
+    reminders=[Reminder('...', interval=5, tag=None)],
     dynamic_reminders=[],       # callables evaluated every request
 )
 ```
