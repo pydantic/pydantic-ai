@@ -6096,3 +6096,36 @@ async def test_evicted_output_audio_is_released() -> None:
         assert [audio is not None for audio in retained()] == [False, True]
         gc.collect()
         assert evicted is not None and evicted() is None
+
+
+@pytest.mark.anyio
+async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
+    """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
+
+    def added(item_type: str, call_id: str, item_id: str) -> str:
+        return json.dumps(
+            {'type': 'conversation.item.added', 'item': {'id': item_id, 'type': item_type, 'call_id': call_id}}
+        )
+
+    frames = [
+        added('function_call', 'c1', 'item_c1'),
+        added('function_call_output', 'c1', 'item_o1'),
+        added('function_call', 'c2', 'item_c2'),
+        added('function_call_output', 'c2', 'item_o2'),
+        added('function_call', 'c3', 'item_c3'),
+    ]
+    ws = FakeWebSocket(frames)
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(conn)
+    calls = [
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
+        ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+    ]
+    assert await conn._prune_tool_calls(calls) == ['c1']  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
+        {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
+    ]
+    off = OpenAIRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
+    assert await off._prune_tool_calls(calls) == ()  # pyright: ignore[reportPrivateUsage]

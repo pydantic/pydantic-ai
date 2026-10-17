@@ -55,6 +55,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -216,6 +217,16 @@ class ReceiveEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallsPruned:
+    """The connection deleted these tool calls, and their results, from the provider's conversation.
+
+    History keeps them; a reconnect's replay leaves them out (see `replayable_messages`).
+    """
+
+    tool_call_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
 class Closed:
     """The session is closing: everything still open is settled into history, and nothing is owed any more."""
 
@@ -233,6 +244,7 @@ Command: TypeAlias = (
     | ResponseOverdue
     | ResponseRefused
     | ReceiveEnded
+    | ToolCallsPruned
     | Closed
 )
 CoreInput: TypeAlias = RealtimeCodecEvent | LifecycleEvent | Command
@@ -272,6 +284,17 @@ class UsageCounted:
 
 
 @dataclass(frozen=True)
+class ToolRoundsOver:
+    """A response completed without calling a tool: the tool rounds before it are over.
+
+    `calls` are their calls whose results went out, which the provider answered: what the provider still holds of
+    them in its conversation only costs input tokens from here on.
+    """
+
+    calls: tuple[ToolCallPart, ...]
+
+
+@dataclass(frozen=True)
 class ExchangeOver:
     """A response ended, and with it everything the model owed: what `wait_for_reply()` waits for is over."""
 
@@ -280,7 +303,14 @@ class ExchangeOver:
 
 
 Effect: TypeAlias = (
-    PartStartEvent | PartDeltaEvent | PartEndEvent | ResponseOpened | ResponseClosed | UsageCounted | ExchangeOver
+    PartStartEvent
+    | PartDeltaEvent
+    | PartEndEvent
+    | ResponseOpened
+    | ResponseClosed
+    | UsageCounted
+    | ToolRoundsOver
+    | ExchangeOver
 )
 """What an `apply()` did that the session acts on, in order (see `SessionCore.take_effects`)."""
 
@@ -480,6 +510,10 @@ class SessionCore:
         """What was owed when an exchange was abandoned: no waiter waits for it again."""
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
+        self._rounds_over: set[str] = set()
+        """Calls a `ToolRoundsOver` named already."""
+        self._pruned_calls: set[str] = set()
+        """Calls the connection deleted from the provider's conversation (see `ToolCallsPruned`)."""
         """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
         self._next_index = 0
         """The stream index of the next part to start: one counter for the session, as both speakers' parts stream at
@@ -578,10 +612,8 @@ class SessionCore:
             self._withdraw(command.input_ids)
         elif isinstance(command, (AudioSent, AudioCleared)):
             self._input_audio_command(command)
-        elif isinstance(command, ToolReturned):
-            self._tool_returned(command)
-        elif isinstance(command, ToolCallRefused):
-            self._refuse_call(command.tool_call_id)
+        elif isinstance(command, (ToolReturned, ToolCallRefused, ToolCallsPruned)):
+            self._tool_command(command)
         elif isinstance(command, Interrupted):
             if (response := self._speaking_response()) is not None:
                 response.interrupted_at_ms = command.played_ms
@@ -605,6 +637,14 @@ class SessionCore:
             self._close()
         else:
             assert_never(command)
+
+    def _tool_command(self, command: ToolReturned | ToolCallRefused | ToolCallsPruned) -> None:
+        if isinstance(command, ToolReturned):
+            self._tool_returned(command)
+        elif isinstance(command, ToolCallRefused):
+            self._refuse_call(command.tool_call_id)
+        else:
+            self._pruned_calls.update(command.tool_call_ids)
 
     def _input_audio_command(self, command: AudioSent | AudioCleared) -> None:
         if isinstance(command, AudioSent):
@@ -927,6 +967,26 @@ class SessionCore:
         self._effects.append(ResponseClosed(response.id, event.status, message, self._history_before(response)))
         if event.status != 'lost' and not response.refused:
             self._exchange_ending = event.status == 'cancelled'
+        if event.status == 'completed' and message is not None and not response.tool_calls:
+            self._tool_rounds_over()
+
+    def _tool_rounds_over(self) -> None:
+        """The tool rounds before a response that called no tool are over: name their answered calls once."""
+        calls: list[ToolCallPart] = []
+        for response in self._responses.values():
+            if response.message is None:
+                continue
+            for part in response.message.parts:
+                if (
+                    isinstance(part, ToolCallPart)
+                    and part.tool_call_id not in self._rounds_over
+                    and (result := self._result_input.get(part.tool_call_id)) is not None
+                    and self._obligations.get(result) == 'answered'
+                ):
+                    self._rounds_over.add(part.tool_call_id)
+                    calls.append(part)
+        if calls:
+            self._effects.append(ToolRoundsOver(tuple(calls)))
 
     def end_frame(self) -> None:
         """The frame applied is over: an exchange a response ended in it, with nothing more owed, is over.
@@ -1354,7 +1414,25 @@ class SessionCore:
         for entry in self._placed:
             messages.extend(self._entry_messages(entry))
         messages.extend(input_.request for input_ in self._unplaced.values())
-        return messages
+        if not self._pruned_calls:
+            return messages
+        # Tool calls the connection deleted from the provider's conversation stay deleted on the new one.
+        return [kept for message in messages if (kept := self._without_pruned_calls(message)) is not None]
+
+    def _without_pruned_calls(self, message: ModelMessage) -> ModelMessage | None:
+        """`message` without the pruned tool calls, or their results, it holds: `None` if that leaves nothing."""
+        pruned = self._pruned_calls
+
+        def is_pruned(part: Any) -> bool:
+            return isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) and part.tool_call_id in pruned
+
+        if not any(is_pruned(part) for part in message.parts):
+            return message
+        if isinstance(message, ModelResponse):
+            parts = [part for part in message.parts if not is_pruned(part)]
+            return replace(message, parts=parts) if parts else None
+        request_parts = [part for part in message.parts if not is_pruned(part)]
+        return replace(message, parts=request_parts) if request_parts else None
 
     def _held_from(self) -> int:
         """Where history is held back: the first entity not final yet (a response under way, a turn untranscribed)."""

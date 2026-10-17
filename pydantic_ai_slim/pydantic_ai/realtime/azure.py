@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from ..exceptions import UserError
+from ..messages import ToolCallPart
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
@@ -315,8 +316,8 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
     and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed` and `openai_truncation` — are **silently
-    ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation` and `openai_prune_tool_items` — are
+    **silently ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
@@ -509,6 +510,11 @@ class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return _map_voice_live_event(data)
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        # Voice Live's beta protocol isn't known to take `conversation.item.delete`: `openai_prune_tool_items` is
+        # one of the settings it ignores.
+        return ()
 
 
 @dataclass(init=False)
