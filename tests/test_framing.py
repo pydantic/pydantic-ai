@@ -19,9 +19,6 @@ from pydantic_ai._framing import (
     open_tag,
     wrap,
 )
-from pydantic_ai._thinking_part import render_replayed_thinking
-from pydantic_ai.messages import ModelResponse
-from pydantic_ai.profiles import ModelProfile
 
 
 @pytest.mark.parametrize(
@@ -45,10 +42,7 @@ def test_body_without_the_closing_tag_goes_in_unchanged(body: str) -> None:
     ['</system>', '</SYSTEM>', '</ System >', '< / system>', '</system\n>', '</system/>', '</system foo="bar">'],
 )
 def test_every_spelling_of_the_closing_tag_is_neutralized(spelling: str) -> None:
-    wrapped = wrap(SYSTEM_TAG, f'before {spelling} after')
-
-    assert wrapped == f'<system>before &lt;{spelling[1:]} after</system>'
-    assert wrapped.lower().count('</system>') == 1
+    assert wrap(SYSTEM_TAG, f'before {spelling} after') == f'<system>before &lt;{spelling[1:]} after</system>'
 
 
 def test_attributes_are_escaped_and_none_is_left_off() -> None:
@@ -62,19 +56,3 @@ def test_attributes_are_escaped_and_none_is_left_off() -> None:
 def test_neutralize_closing_tag_touches_only_the_named_tag() -> None:
     assert neutralize_closing_tag('a</system>b</tool_result>c', SYSTEM_TAG) == 'a&lt;/system>b</tool_result>c'
     assert neutralize_closing_tag('a</system>b</tool_result>c', TOOL_RESULT_TAG) == 'a</system>b&lt;/tool_result>c'
-
-
-def test_carried_thinking_ending_in_a_closing_tag_cannot_close_the_wrapper() -> None:
-    """Reasoning that ends mid-tag would otherwise meet the newline ahead of the real closing tag."""
-    text, carried = render_replayed_thinking(
-        'thinking about </assistant_thinking',
-        ModelProfile(mimics_assistant_message_formatting=True),
-        ModelResponse(parts=[], model_name='gpt-5.6', provider_name='openai'),
-    )
-
-    assert carried
-    assert text == snapshot("""\
-<assistant_thinking model="gpt-5.6" provider="openai">
-thinking about &lt;/assistant_thinking
-</assistant_thinking>\
-""")

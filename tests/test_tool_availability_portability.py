@@ -1699,7 +1699,6 @@ def test_announcement_tool_name_cannot_end_the_system_statement(supports_inline_
     else:
         assert isinstance(part, UserPromptPart)
         assert part.content == f'<system>{announcement}</system>'
-        assert isinstance(part.content, str) and part.content.count('</system>') == 1
 
 
 def test_announcements_render_after_sibling_tool_returns() -> None:
