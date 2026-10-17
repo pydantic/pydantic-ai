@@ -309,7 +309,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
     'ManagedPrompt': Anonymous('one per prompt name'),
     'LogfireMCP': Narrows(
-        'one Logfire connection per id; two that differ need their own ids and PrefixTools',
+        'one Logfire connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'RepoContext': Anonymous('one per workspace root'),
@@ -357,7 +357,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(), cls()),
     ),
     'Notion': Narrows(
-        'one Notion connection per id; two that differ need their own ids and PrefixTools',
+        'one Notion connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'PyaiDocs': Collides('deprecated alias of `PydanticAIDocs`, and collides the same way'),
@@ -370,27 +370,27 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
     ),
     'Linear': Narrows(
-        'one Linear connection per id; two that differ need their own ids and PrefixTools',
+        'one Linear connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Ordinal': Narrows(
-        'one Ordinal connection per id; two that differ need their own ids and PrefixTools',
+        'one Ordinal connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Grain': Narrows(
-        'one Grain connection per id; two that differ need their own ids and PrefixTools',
+        'one Grain connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'DayAI': Narrows(
-        'one DayAI connection per id; two that differ need their own ids and PrefixTools',
+        'one DayAI connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'PostHog': Narrows(
-        'one PostHog connection per id; two that differ need their own ids and PrefixTools',
+        'one PostHog connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'Pylon': Narrows(
-        'one Pylon connection per id; two that differ need their own ids and PrefixTools',
+        'one Pylon connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
@@ -406,7 +406,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
     ),
     'GitHub': Narrows(
-        'one GitHub connection per id; two that differ need their own ids and PrefixTools',
+        'one GitHub connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'YouResearch': Narrows(
@@ -418,7 +418,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
     ),
     'Slack': Narrows(
-        'one Slack connection per id; two that differ need their own ids and PrefixTools',
+        'one Slack connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
 }

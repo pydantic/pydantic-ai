@@ -21,6 +21,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -30,7 +31,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -65,7 +66,10 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 class TestGrain:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
-        [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
+        [
+            (False, '{"grain_read":"read","grain_write":"written","grain_unmarked":"unmarked"}'),
+            (True, '{"grain_read":"read"}'),
+        ],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
         server = FastMCP('grain-fake')
@@ -105,8 +109,7 @@ class TestGrain:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: Grain[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +145,7 @@ class TestGrain:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Grain[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-grain'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-grain'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Grain(auth='grain-token', defer_loading=True)])

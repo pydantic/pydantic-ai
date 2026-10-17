@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -31,6 +31,11 @@ class Linear(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
+    tool_prefix: str | None = 'linear'
+    """Prepended with `_` to the server's tool names, as in `linear_<tool>`, so they don't collide with other tools.
+
+    Give two instances distinct prefixes to use both. `None` keeps the names the server gives its tools.
+    """
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A Linear API key or token, or a function of the run context that returns one.
 
@@ -63,11 +68,12 @@ class Linear(AbstractCapability[AgentDepsT]):
                 self.client, id=id, include_instructions=self.include_instructions
             )
             if self.read_only:
-                return read_only_toolset(toolset)
-            return toolset
-        if callable(self.auth):
-            return DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
-        return self._connect(self.auth)
+                toolset = read_only_toolset(toolset)
+        elif callable(self.auth):
+            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
+        else:
+            toolset = self._connect(self.auth)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
         auth = self.auth(ctx) if callable(self.auth) else self.auth
