@@ -376,15 +376,16 @@ def _image_tools(agent: Agent[None, str]) -> None:
 
 _AGUI_ACTIVITY = (
     '`@ag-ui/client` leaves `activity` messages out of every request it sends (`prepareRunAgentInput`), '
-    'so records the adapter carries as activities never come back; no issue yet'
+    'so records the adapter carries as activities never come back; documented in #10569, carrier design pending'
 )
 _RETRY = (
     'a tool retry loads back as `ToolReturnPart(outcome="failed")` holding the rendered feedback, which '
     'Anthropic and OpenAI send differently from the `RetryPromptPart` the server has; #8094 reworks tool retries'
 )
 _MODEL_NAME = (
-    "UI messages don't carry `ModelResponse.model_name`, which Anthropic writes on another model's thinking "
-    '(`<assistant_thinking model=...>`); no issue yet'
+    "UI messages don't carry `ModelResponse.model_name` or `provider_name`, which Anthropic writes on another "
+    "model's thinking (`<assistant_thinking model=... provider=...>`); pending maintainer decision on "
+    '`model_name` exposure (#5174)'
 )
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
