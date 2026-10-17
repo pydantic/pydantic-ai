@@ -2713,7 +2713,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
     def _history_digest_to_record(
-        self, messages: list[ModelRequest | ModelResponse] | list[ModelMessage], settings: OpenAIResponsesModelSettings
+        self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
     ) -> str | None:
         """The digest of the history a new response is created from, when a later request may continue from it."""
         if settings.get('openai_previous_response_id') is None:
@@ -3753,17 +3753,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # from the message history takes precedence, so we chain to the latest stored
         # response instead of re-sending messages that are already server-side.
         #
-        # A compaction response in the tail is a hard chain boundary even with a
-        # concrete seed: crossing it would re-inject the context that compaction was
-        # meant to replace.
+        # A chain boundary in the tail (a compaction response, or a response whose prior
+        # history has changed) holds even with a concrete seed: crossing it would re-inject
+        # the context that compaction was meant to replace, or drop the change to the history.
         if setting is None:
             return None, messages
-        auto_id, trimmed = self._get_previous_response_id_and_new_messages(
+        auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
             messages, allow_no_new_messages=allow_no_new_messages
         )
         if auto_id is not None:
             return auto_id, trimmed
-        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+        if setting == 'auto' or at_boundary:
             return None, messages
         return setting, messages
 
@@ -3788,22 +3788,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
-    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
-        for index in range(len(messages) - 1, -1, -1):
-            m = messages[index]
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                return bool(m.provider_details and m.provider_details.get('compaction')) or self._history_changed(
-                    m, messages[:index]
-                )
-        return False
-
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
-    ) -> tuple[str | None, list[ModelMessage]]:
+    ) -> tuple[str | None, list[ModelMessage], bool]:
         # Find the most recent `provider_response_id` from messages produced by this
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
-        # `(None, messages)` with the full list unchanged.
+        # `(None, messages)` with the full list unchanged. The third element says whether
+        # the most recent response from this provider is a chain boundary (a compaction, or
+        # a changed history), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for index in range(len(messages) - 1, -1, -1):
@@ -3814,21 +3807,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # the next request must pass the `CompactionPart` via the `input` array
                 # (handled by `_map_messages`) without a `previous_response_id`.
                 if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages
+                    return None, messages, True
                 # The server continues from the history this response was created with, so if the
                 # messages before it have changed since (a history processor redacted or trimmed
                 # them, say), continuing would silently drop the change: resend everything instead.
                 if self._history_changed(m, messages[:index]):
-                    return None, messages
+                    return None, messages, True
                 previous_response_id = m.provider_response_id
                 break
             else:
                 trimmed_messages.append(m)
 
         if previous_response_id and (allow_no_new_messages or trimmed_messages):
-            return previous_response_id, list(reversed(trimmed_messages))
+            return previous_response_id, list(reversed(trimmed_messages)), False
         else:
-            return None, messages
+            return None, messages, False
 
     def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]

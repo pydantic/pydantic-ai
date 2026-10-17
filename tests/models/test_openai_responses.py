@@ -4501,7 +4501,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert not previous_response_id
     assert messages == snapshot(
         [
@@ -4562,7 +4562,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
         [
@@ -15443,7 +15443,7 @@ async def test_openai_responses_compaction_composes_with_auto_chain_boundary(all
         ModelRequest.user_text_prompt('keep tail'),
     ]
 
-    previous_response_id, chain_messages = model._get_previous_response_id_and_new_messages(  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, chain_messages, _ = model._get_previous_response_id_and_new_messages(  # pyright: ignore[reportPrivateUsage]
         messages
     )
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
