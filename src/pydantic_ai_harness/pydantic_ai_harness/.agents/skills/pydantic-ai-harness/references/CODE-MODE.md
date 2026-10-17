@@ -244,7 +244,7 @@ The `run_code` tool return also carries history-only metadata keyed by nested ca
 ```python {test="skip" lint="skip"}
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             tool_calls = part.metadata['tool_calls']    # dict[str, ToolCallPart]
             tool_returns = part.metadata['tool_returns'] # dict[str, ToolReturnPart]
 ```

@@ -137,7 +137,8 @@ class TestRunCodeCallPart:
     async def test_approval_inside_the_sandbox_sees_the_typed_part(self) -> None:
         def lookup(item: str) -> str:
             """Look up an item."""
-            return item  # pragma: no cover - the handler denies it
+            # The handler denies the call, so the tool never runs.
+            return item  # pragma: no cover
 
         requested: list[ToolCallPart] = []
 

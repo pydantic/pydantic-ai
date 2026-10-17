@@ -608,7 +608,7 @@ result = agent.run_sync("What's the weather in Paris?")
 
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             metadata = part.metadata or {}
             tool_calls = metadata['tool_calls']    # dict[str, ToolCallPart]
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]

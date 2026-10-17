@@ -13,9 +13,10 @@ import pytest
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, ToolKind
+from pydantic_ai import Agent, RunContext, Tool, ToolKind, tools
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai._tool_search import TOOL_SEARCH_KIND
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, ValidatedToolArgs, WrapToolExecuteHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -972,9 +973,6 @@ async def test_a_context_tool_can_take_the_kinds_arguments_as_one_parameter() ->
 
 
 def test_the_old_tool_definition_kind_alias_is_deprecated() -> None:
-    from pydantic_ai import tools
-    from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
     with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `ToolDefinitionKind`'):
         assert tools.ToolKind is tools.ToolDefinitionKind
     with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
