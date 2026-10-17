@@ -261,7 +261,7 @@ class WebService:
     async def open(self, conversation_id: str) -> str:
         """Make a saved session live, resumed in a session of its own unless one holds it; its conversation ID.
 
-        A CLAI that opens no other sessions, as with `/web` from a terminal, resumes it in the default
+        A host that cannot open other sessions (its live sessions have no `build`) resumes it in the default
         session instead: the ID is then the default session's, whose watchers get the resumed one next.
         """
         try:
@@ -490,48 +490,56 @@ class WebService:
         """Answer a settings menu's open dialog, or cancel it with `None`."""
         self.dialogs.answer(dialog_id, value)
 
-    # Commands' own menus, such as `/set`'s, which the page shows instead of the terminal.
+    # Commands' own menus, such as `/set`'s, which the page shows instead of the terminal. Each is built
+    # from one live session's commands, so `/model` or `/effort` read and change that session: `session`
+    # is its channel, the default session's for the unprefixed routes.
 
-    def _command_menu(self, name: str) -> SettingsMenu:
+    def _command_menu(self, session: SessionChannel, name: str) -> SettingsMenu:
         """Build the menu bare `/NAME` declares; building may read files, as `/model`'s does, so call it off the loop."""
-        menu = self.host.command_menu(name)
+        menu = session.session.command_menu(name)
         if menu is None:
             raise LookupError(f'/{name} has no menu to show here.')
         return menu
 
-    def _command_info(self, name: str, path: Sequence[str]) -> MenuInfo:
-        return menu_info(self._command_menu(name), path)
+    def _command_info(self, session: SessionChannel, name: str, path: Sequence[str]) -> MenuInfo:
+        return menu_info(self._command_menu(session, name), path)
 
-    async def command_menu(self, name: str, *, path: Sequence[str] = ()) -> MenuInfo:
+    async def command_menu(self, session: SessionChannel, name: str, *, path: Sequence[str] = ()) -> MenuInfo:
         """The menu bare `/NAME` opens, or the one `path`'s rows open from it, with every row's current value."""
-        return await to_thread.run_sync(self._command_info, name, path)
+        return await to_thread.run_sync(self._command_info, session, name, path)
 
     async def edit_command_menu(
-        self, name: str, key: str, value: str | None, *, path: Sequence[str] = ()
+        self, session: SessionChannel, name: str, key: str, value: str | None, *, path: Sequence[str] = ()
     ) -> MenuEdited:
         """Set a row of a command's menu to `value`, or reset it with `None` or empty text, as the terminal's menu does."""
-        return await self._edit_command(name, partial(set_row, path=path, key=key, value=value), path)
+        return await self._edit_command(session, name, partial(set_row, path=path, key=key, value=value), path)
 
-    async def run_command_menu_action(self, name: str, key: str, *, path: Sequence[str] = ()) -> MenuEdited:
+    async def run_command_menu_action(
+        self, session: SessionChannel, name: str, key: str, *, path: Sequence[str] = ()
+    ) -> MenuEdited:
         """Run what a row of a command's menu does when chosen, asking through this page's dialogs."""
-        return await self._edit_command(
-            name, partial(run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}'), path
-        )
+        action = partial(run_action, path=path, key=key, dialogs=self.dialogs, owner=f'/{name}')
+        return await self._edit_command(session, name, action, path)
 
     async def _edit_command(
-        self, name: str, edit: Callable[[SettingsMenu], Awaitable[list[str]]], path: Sequence[str]
+        self,
+        session: SessionChannel,
+        name: str,
+        edit: Callable[[SettingsMenu], Awaitable[list[str]]],
+        path: Sequence[str],
     ) -> MenuEdited:
         """One edit, printed in the terminal too, after which every page reads the settings again."""
         async with self._command_edits:
-            menu = await to_thread.run_sync(self._command_menu, name)
+            menu = await to_thread.run_sync(self._command_menu, session, name)
             try:
                 messages = await edit(menu)
             finally:
+                # Every session's status: a `display.*` setting changes them all.
                 self.settings_changed()
         for message in messages:
             self.host.console.print(message, markup=False, highlight=False)
         # Built again: the edit may have changed what it lists, as adding or removing a model does.
-        return MenuEdited(messages=messages, menu=await to_thread.run_sync(self._command_info, name, path))
+        return MenuEdited(messages=messages, menu=await to_thread.run_sync(self._command_info, session, name, path))
 
     # The Workers tree: the delegated tasks of every live session, by task ID.
 

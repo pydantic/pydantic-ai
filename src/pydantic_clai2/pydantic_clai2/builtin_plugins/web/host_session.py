@@ -7,6 +7,7 @@ from pydantic import JsonValue
 from termflow.tui.completion import Completion
 
 from pydantic_clai2.plugins import Conversation, LiveSession, PluginHost, SessionCatalog, TaskCatalog
+from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.rendering.status import Status
 
 _OPENS_NONE = 'This CLAI opens no other live sessions.'
@@ -63,6 +64,9 @@ class HostSession:
 
     def setting(self, key: str, /) -> JsonValue:
         return self._host.setting(key)
+
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        return self._host.command_menu(name)
 
     def send_input(self, text: str, /) -> None:
         self._host.send_input(text)

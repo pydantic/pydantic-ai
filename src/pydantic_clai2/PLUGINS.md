@@ -2587,7 +2587,7 @@ class Standup(Plugin):
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
 
-### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.plugins`, `host.tasks`
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`
 
 A plugin that is another way to use CLAI, such as a remote UI, drives the same
 prompt the keyboard does:
@@ -2612,7 +2612,9 @@ prompt the keyboard does:
 - `await self.host.default_model()` is the model a new session starts with: the saved `model`
   setting, resolved as `/model NAME` does, else the agent's own. Use it for an agent of your own
   that works for the whole process rather than one session. It returns `None` on a host without
-  CLAI's settings, such as one built in a test without `default_model=`.
+  CLAI's settings, such as one built in a test without `default_model=`. To show that model,
+  `await self.host.default_model_name()` names it as `/model` does (`chain:NAME`,
+  `PROVIDER@PROFILE:NAME`) without building it, so it needs no sign-in and cannot fail.
 - `self.host.command_menu(NAME)` builds the `SettingsMenu` bare `/NAME` opens, as the command
   declares it with `Command.menu`, or returns `None` for a command that declares none, an unknown
   or unavailable one, and on a host without a shell. Edit it as the terminal would, through its

@@ -17,6 +17,7 @@ from starlette.testclient import TestClient, WebSocketTestSession
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
@@ -35,6 +36,8 @@ from .test_web_parts import REQUEST
 
 GLOBAL = {'snapshot', 'orchestrator', 'live', 'sessions', 'plugins', 'settings', 'theme', 'update'}
 """Message types every browser gets, without a `session`."""
+GPT = 'openai:gpt-5.6'
+"""A saved model with settings of its own, as `/effort` shows them."""
 WEB = PluginSettings(id='web', factory='pydantic_clai2.builtin_plugins.web', settings={'open_browser': False})
 
 
@@ -433,14 +436,59 @@ def test_a_conversation_watched_before_a_session_resumes_it_gets_one_snapshot(ma
     assert fleet.launch.loader.live_session.watchers == 0
 
 
+def menu_rows(fleet: Fleet, path: str) -> dict[str, dict[str, JsonValue]]:
+    """A command menu's rows by key, as the Settings window reads them."""
+    response = fleet.get(path)
+    assert response.status_code == 200, response.text
+    fields = at(response.json(), 'fields')
+    assert isinstance(fields, list)
+    return {str(at(field, 'key')): field for field in fields if isinstance(field, dict)}
+
+
+def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> None:
+    """`/model` chosen in session B's menu switches B only, and B's `/effort` reads B's model."""
+    fleet = make_fleet()
+    a = fleet.launch.session.conversation_id
+    b = fleet.new('b')
+    session_a, session_b = fleet.launch.session, fleet.runtimes['b'].session
+    fleet.launch.context.store.add_model(name=GPT)
+    assert 'openai_reasoning_effort' not in menu_rows(fleet, f'/api/sessions/{b}/commands/effort/fields')
+    chosen = fleet.post(f'/api/sessions/{b}/commands/model/fields/model', {'value': GPT})
+    assert chosen.json()['messages'] == ['Saved model. Applied.']
+    assert (session_a.model, session_b.model) == (None, GPT)
+    assert 'openai_reasoning_effort' in menu_rows(fleet, f'/api/sessions/{b}/commands/effort/fields')
+    assert 'openai_reasoning_effort' not in menu_rows(fleet, f'/api/sessions/{a}/commands/effort/fields')
+    # A model's own settings, one menu down, and its action, both through B's commands.
+    nested = f'/api/sessions/{b}/commands/model/fields/openai_reasoning_effort?menu={GPT}'
+    assert fleet.post(nested, {'value': 'low'}).status_code == 200
+    assert fleet.post(f'/api/sessions/{b}/commands/model/fields/add/action?menu=nope').status_code == 404
+    for path in ('commands/model/fields', 'commands/model/fields/model', 'commands/model/fields/add/action'):
+        method = 'GET' if path.endswith('fields') else 'POST'
+        response = fleet.client.request(
+            method, f'/api/sessions/nope/{path}', json={'value': GPT}, headers={HEADER: TOKEN}
+        )
+        assert response.status_code == 404, path
+    # `/set`'s `run.*` rows are per session too.
+    assert fleet.post(f'/api/sessions/{b}/commands/set/fields/run.code_mode', {'value': 'true'}).status_code == 200
+    live_a, live_b = fleet.launch.loader.live_session, fleet.runtimes['b'].loader.live_session
+    assert (live_a.setting('run.code_mode'), live_b.setting('run.code_mode')) == (False, True)
+    # The unprefixed routes drive the default session, now B, the newest; A is untouched.
+    assert fleet.post('/api/commands/model/fields/model', {'value': 'test'}).status_code == 200
+    assert (session_a.model, session_b.model) == (None, 'test')
+
+
 def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet) -> None:
     """Not one session's choice: the saved `model` setting, else the agent's own."""
     fleet = make_fleet()
     host = fleet.plugin.host
     assert fleet.portal.call(host.default_model) is fleet.launch.agent.model
+    assert isinstance(model := fleet.launch.agent.model, Model)
+    assert fleet.portal.call(host.default_model_name) == model.model_name
     fleet.launch.context.store.set('model', 'test')
     assert fleet.portal.call(host.default_model) == 'test'
-    assert fleet.portal.call(PluginHost[None](name='bare', console=Console(), settings={}).default_model) is None
+    assert fleet.portal.call(host.default_model_name) == 'test'
+    bare = PluginHost[None](name='bare', console=Console(), settings={})
+    assert (fleet.portal.call(bare.default_model), fleet.portal.call(bare.default_model_name)) == (None, None)
 
 
 async def test_a_host_outside_the_loader_is_its_one_session() -> None:
@@ -461,6 +509,7 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
     assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
     assert await session.complete('/') == []
+    assert session.command_menu('set') is None, 'a bare host has no commands'
     with pytest.raises(KeyError):
         session.setting('run.code_mode')
     service = WebService(host=host)

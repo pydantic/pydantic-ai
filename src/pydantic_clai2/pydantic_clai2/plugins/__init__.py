@@ -317,6 +317,10 @@ class LiveSession(Protocol):
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
 
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        """The menu bare `/NAME` opens in the session, built now, as `PluginHost.command_menu` builds it."""
+        ...
+
     @property
     def queued(self) -> int:
         """How many inputs wait for the session's running turn or command to end."""
@@ -810,6 +814,7 @@ class PluginHost(Generic[DepsT]):
         workspace: Callable[[], Path] = Path.cwd,
         live: LiveSessions | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
+        default_model_name: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -820,7 +825,8 @@ class PluginHost(Generic[DepsT]):
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
         is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
         directory, each read each time, as the properties of the same names are. `live` is given to a
-        process-scoped plugin's host only. `default_model` resolves the model a new session starts with.
+        process-scoped plugin's host only. `default_model` resolves the model a new session starts with,
+        and `default_model_name` names it without building it.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -852,6 +858,7 @@ class PluginHost(Generic[DepsT]):
         self._tasks = tasks
         self._workspace = workspace
         self._default_model = default_model
+        self._default_model_name = default_model_name
         self.live = live
         """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
 
@@ -923,6 +930,14 @@ class PluginHost(Generic[DepsT]):
         with `default_model=`.
         """
         return None if self._default_model is None else await self._default_model()
+
+    async def default_model_name(self) -> str | None:
+        """The name of the model `default_model` resolves, as `/model` shows it, such as `chain:NAME`.
+
+        Nothing is built, so it never needs a sign-in and never fails on a saved model that no longer
+        resolves; use it to show the model. `None` where `default_model` returns `None`.
+        """
+        return None if self._default_model_name is None else await self._default_model_name()
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.

@@ -259,7 +259,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               )}
             </div>
           ) : (
-            <span className="pill static" title="The orchestrator uses this session's model">
+            <span className="pill static" title="The orchestrator runs on the saved default model, as a new session starts with">
               <span className="model-name">{model}</span>
             </span>
           )}

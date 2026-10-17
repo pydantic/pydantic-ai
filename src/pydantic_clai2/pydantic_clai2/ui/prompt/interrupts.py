@@ -105,16 +105,26 @@ class Interrupts:
             and threading.current_thread() is threading.main_thread()
             and signal.getsignal(signal.SIGINT) is not handler.handle
         ):
+            # Taken before and replaced since: leave that place in the chain before taking the top.
+            self._give(handler)
             handler.previous = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, handler.handle)
+            _TAKEN.append(handler)
 
     def _give(self, handler: '_Handler') -> None:
-        # Only a handler still installed is ours to remove: the session shown now may have replaced it.
+        if handler not in _TAKEN:
+            return
+        _TAKEN.remove(handler)
         if signal.getsignal(signal.SIGINT) is handler.handle:
             signal.signal(signal.SIGINT, handler.previous)
+            return
+        # Another took Ctrl-C over this one, which ends first: that one gives it back to what this one replaced.
+        for other in _TAKEN:
+            if other.previous is handler.handle:
+                other.previous = handler.previous
 
 
-@dataclass(kw_only=True)
+@dataclass(kw_only=True, eq=False)
 class _Handler:
     handle: Callable[[int, FrameType | None], None]
     previous: '_SignalHandler' = signal.SIG_DFL
@@ -122,3 +132,6 @@ class _Handler:
 
 
 _SignalHandler: TypeAlias = Callable[[int, FrameType | None], object] | int | signal.Handlers | None
+
+_TAKEN: list[_Handler] = []
+"""The handlers holding Ctrl-C, oldest first, for every `Interrupts`: the process has one SIGINT handler."""
