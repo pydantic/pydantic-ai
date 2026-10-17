@@ -19,7 +19,7 @@ on:
       recovery_issue:
         type: string
         required: false
-        description: 'Open workflow or task incident to verify with this run'
+        description: 'Open workflow incident to verify with this run'
   # The installed `pydantic-docs` GitHub App has no repository permission.
   # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #

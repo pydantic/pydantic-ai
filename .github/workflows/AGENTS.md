@@ -257,8 +257,7 @@ manual run bypass that matching workflow blocker; it does not close the incident
 
 Task incidents block only the exact task key in their marker. Manual task keys include
 the run ID, so a fresh dispatch has a new identity and can run with healthy quota
-without `recovery_issue`. An exact matching task identity can use `recovery_issue` to
-bypass that task blocker. This input never closes an incident.
+without `recovery_issue`. This input never closes an incident.
 
 For **CI Review**, provide `aw_context` as JSON with `item_type` set to
 `pull_request` and `item_number` set to the PR number. Verify the fresh run executed

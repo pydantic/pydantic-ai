@@ -596,8 +596,8 @@ def test_fresh_manual_task_identity_does_not_match_old_pr_task_incident() -> Non
     assert not health.check_health(workflow, fresh_task_key, 'workflow_dispatch', 1, quota, [provider_incident]).ready
 
 
-def test_health_recovery_bypasses_only_the_selected_single_non_provider_incident() -> None:
-    """A healthy gate passes one explicitly selected workflow/task incident only."""
+def test_health_recovery_bypasses_only_the_selected_single_workflow_incident() -> None:
+    """A healthy gate passes one explicitly selected workflow incident only."""
     incident = _issue(7, health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '8', None))
     selected = health.Health(
         'nightly-sweep',
@@ -614,6 +614,8 @@ def test_health_recovery_bypasses_only_the_selected_single_non_provider_incident
     assert health._health_decision(selected, [incident]).ready  # pyright: ignore[reportPrivateUsage]
     other_incident = _issue(8, health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '9', None))
     assert not health._health_decision(selected, [incident, other_incident]).ready  # pyright: ignore[reportPrivateUsage]
+    task = _issue(7, health.IncidentMarker('task', 'nightly-sweep:task-1', 'timeout', '8', None))
+    assert not health._health_decision(selected, [task]).ready  # pyright: ignore[reportPrivateUsage]
     provider = _issue(7, health.IncidentMarker('provider', 'zai', 'rate_limit', '8', None))
     assert not health._health_decision(selected, [provider]).ready  # pyright: ignore[reportPrivateUsage]
 
@@ -1382,6 +1384,37 @@ def test_check_command_accepts_recovery_issue_only_on_default_dispatch_ref(
     assert decision.ready is (selected is not None)
 
 
+def test_fresh_dispatch_task_key_runs_without_recovery_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Manual task keys include the new run ID, so old task incidents do not block them."""
+    task_key = 'CI Review:workflow_dispatch:main:head-a1b2:38977267972'
+    task_issue = _issue(
+        8,
+        health.IncidentMarker(
+            'task', 'CI Review:CI Review:workflow_dispatch:main:head-a1b2:38977267971', 'timeout', '90', None
+        ),
+    )
+    client = FakeGitHub([task_issue])
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_dispatch')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('GITHUB_RUN_ID', '38977267972')
+    monkeypatch.delenv('PYDANTIC_AI_RECOVERY_ISSUE', raising=False)
+    output = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(output)]) == 0
+    decision = _health_from_json(json.loads(output.read_text()))
+    assert decision.ready
+    assert decision.recovery_issue is None
+
+
 @pytest.mark.parametrize(
     ('event_name', 'raw_issue'),
     [
@@ -1775,6 +1808,71 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
             'name': 'safe_outputs',
             'conclusion': 'failure',
             'steps': [{'name': 'Apply validated maintainer attention', 'conclusion': 'failure'}],
+        }
+    ]
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=42,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=artifact,
+            agent_artifact=log,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    marker = _marker_from_payload(client.posts[0])
+    assert marker == health.IncidentMarker('task', 'Attention:issue-42', 'validation', '42', None, 'validation', 1)
+
+
+def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trusted post-agent decision job reports a failed allowlist restore as validation."""
+    artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        artifact,
+        health.Health(
+            'Attention',
+            'issue-42',
+            'issues',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    log = tmp_path / 'agent-stdio.log'
+    log.write_text(
+        json.dumps(
+            {
+                'type': 'result',
+                'provider_health': {
+                    'workflow': 'Attention',
+                    'task_key': 'issue-42',
+                    'trigger_event': 'issues',
+                    'run_attempt': 1,
+                },
+            }
+        )
+    )
+    client = FakeGitHub()
+    client.jobs[('42', 1)] = [
+        {
+            'name': 'record_attention_decision',
+            'conclusion': 'failure',
+            'steps': [
+                {'name': 'Checkout repository', 'conclusion': 'success'},
+                {'name': 'Install dependencies', 'conclusion': 'success'},
+                {'name': 'Restore exact candidate allowlist', 'conclusion': 'failure'},
+            ],
         }
     ]
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]

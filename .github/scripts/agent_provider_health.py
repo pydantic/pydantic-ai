@@ -635,7 +635,7 @@ def _health_decision(health: Health, issues: list[Issue]) -> Health:
         if (
             health.trigger_event == 'workflow_dispatch'
             and marker is not None
-            and marker.scope != 'provider'
+            and marker.scope == 'workflow'
             and len(matching) == 1
         ):
             incident = None
@@ -805,6 +805,8 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
             if name == 'Restore full history and tags for dynamic versioning':
                 return 'setup'
             if name == 'Restore exact candidate allowlist':
+                if _string(job.get('name')) == 'record_attention_decision':
+                    return 'validation'
                 return 'setup'
             if execution is not None and index < execution:
                 return 'setup'

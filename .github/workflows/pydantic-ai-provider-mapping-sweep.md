@@ -9,7 +9,7 @@ on:
       recovery_issue:
         type: string
         required: false
-        description: 'Open workflow or task incident to verify with this run'
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
