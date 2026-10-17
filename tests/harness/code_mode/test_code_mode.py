@@ -3783,6 +3783,53 @@ class TestDynamicCatalog:
 
         assert ctx.pending_messages == []
 
+    async def test_native_search_in_a_final_response_still_delivers_the_announcement(self) -> None:
+        """A search return in the response that would end the run still gets its announcement into history.
+
+        Already-announced names are read from search returns, which holds only if every search return in
+        history is followed by its announcement. The enqueued announcement redirects the run instead of
+        being lost when the run would otherwise end.
+        """
+        responses = [
+            ModelResponse(
+                parts=[
+                    NativeToolSearchReturnPart(
+                        tool_name='tool_search',
+                        content={'discovered_tools': [{'name': 'weather'}]},
+                        tool_call_id='s1',
+                    ),
+                    TextPart('final answer'),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('done')]),
+        ]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return responses.pop(0)
+
+        def weather(city: str) -> str:
+            """Get the weather."""
+            # Only the signature matters here; the body is never invoked.
+            return f'sunny in {city}'  # pragma: no cover
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(weather, defer_loading=True)],
+            capabilities=[ToolSearch[object](), CodeMode[object](dynamic_catalog=True)],
+        )
+        result = await agent.run('find weather')
+
+        assert result.output == 'done'
+        announcements = [
+            p.content
+            for m in result.all_messages()
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, SystemPromptPart)
+        ]
+        assert len(announcements) == 1
+        assert announcements[0].endswith(': `weather`.')
+
     async def test_announcement_of_ordinary_names(self) -> None:
         """Ordinary names are announced exactly as written."""
         cap = CodeMode[object](dynamic_catalog=True)
