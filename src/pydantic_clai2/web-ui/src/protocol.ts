@@ -209,6 +209,8 @@ export interface OrchestratorState {
   /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
   enabled: boolean
   running: boolean
+  /** The model its next turn runs on: the saved default a new session starts with, not a session's own choice. */
+  model: string | null
   items: Item[]
   questions: Questions[]
 }

@@ -17,6 +17,7 @@ from starlette.testclient import TestClient, WebSocketTestSession
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
@@ -481,9 +482,13 @@ def test_the_orchestrator_runs_on_the_saved_default_model(make_fleet: MakeFleet)
     fleet = make_fleet()
     host = fleet.plugin.host
     assert fleet.portal.call(host.default_model) is fleet.launch.agent.model
+    assert isinstance(model := fleet.launch.agent.model, Model)
+    assert fleet.portal.call(host.default_model_name) == model.model_name
     fleet.launch.context.store.set('model', 'test')
     assert fleet.portal.call(host.default_model) == 'test'
-    assert fleet.portal.call(PluginHost[None](name='bare', console=Console(), settings={}).default_model) is None
+    assert fleet.portal.call(host.default_model_name) == 'test'
+    bare = PluginHost[None](name='bare', console=Console(), settings={})
+    assert (fleet.portal.call(bare.default_model), fleet.portal.call(bare.default_model_name)) == (None, None)
 
 
 async def test_a_host_outside_the_loader_is_its_one_session() -> None:

@@ -633,6 +633,8 @@ class OrchestratorState:
     enabled: bool
     """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
     running: bool
+    model: str | None
+    """The model its next turn runs on: the saved default a new session starts with, not a session's own choice."""
     items: list[Item]
     questions: list[Questions]
 
