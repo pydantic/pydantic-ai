@@ -74,6 +74,7 @@ def check_installed(name: str) -> None:
 def genai_prices_models() -> list[CatalogModel]:
     """Current (not deprecated) models from genai-prices, for providers core can run."""
     providers = runnable_providers()
+    known_names = frozenset(known_model_names())
     found: list[CatalogModel] = []
     for provider in get_snapshot().providers:
         if provider.id not in providers:
@@ -81,9 +82,13 @@ def genai_prices_models() -> list[CatalogModel]:
         for model in provider.models:
             if model.deprecated or ':' in model.id:
                 continue
+            name = f'{provider.id}:{model.id}'
+            # Only known Clef models use the native Cloudflare decision endpoint.
+            if provider.id == 'cloudflare' and name not in known_names:
+                continue
             found.append(
                 CatalogModel(
-                    name=f'{provider.id}:{model.id}',
+                    name=name,
                     provider=provider.id,
                     label=model.name or model.id,
                     context_window=model.context_window,
