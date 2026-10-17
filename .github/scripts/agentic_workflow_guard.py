@@ -966,11 +966,15 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
 
 
 def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
-    """Every Z.AI workflow must expose the incident-bound manual recovery input."""
+    """Z.AI workflows must expose the incident-bound recovery input when dispatch can reach the model."""
     violations: list[Violation] = []
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         frontmatter = parse_frontmatter(source)
         if not _is_zai_workflow(frontmatter):
+            continue
+        # The UI review can reach its model only from a pull request event: its
+        # detect job needs `github.event.pull_request.number` before activation.
+        if source.name == 'pydantic-ai-ui-security-review.md':
             continue
         trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
         recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))

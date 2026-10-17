@@ -1350,6 +1350,60 @@ Prompt
     }
 
 
+def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'pydantic-ai-ui-security-review.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    ordinary = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+    ordinary.write_text(
+        ordinary.read_text(encoding='utf-8').replace(
+            'workflow_dispatch: {}',
+            'workflow_dispatch:\n    inputs:\n      recovery_issue:\n        type: number\n        required: false',
+            1,
+        ),
+        encoding='utf-8',
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+
 def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
