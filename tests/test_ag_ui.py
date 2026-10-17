@@ -2379,6 +2379,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('"just a string"', id='non-dict-string'),
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
+        pytest.param('[' * 1000 + ']' * 1000, id='deeply-nested'),  # triggers RecursionError
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
