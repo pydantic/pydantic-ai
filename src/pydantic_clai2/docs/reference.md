@@ -2304,6 +2304,8 @@ many sessions run at once.
   They also refuse while another session runs a turn, saying how many run, so try
   again when they finish. With `/web` from a terminal, CLAI restarts in the folder it
   started in, so they refuse in a shown session that works in another folder.
+  `/reload` keeps the terminal's conversation but closes the other live sessions and
+  stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
