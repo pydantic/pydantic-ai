@@ -1003,6 +1003,8 @@ def test_model_json_schema_with_capabilities():
                         'cerebras:gemma-4-31b',
                         'cerebras:gpt-oss-120b',
                         'cerebras:zai-glm-4.7',
+                        'cloudflare:@cf/cloudflare/clef',
+                        'cloudflare:@cf/cloudflare/clef-flash',
                         'cohere:c4ai-aya-expanse-32b',
                         'cohere:c4ai-aya-expanse-8b',
                         'cohere:command-nightly',

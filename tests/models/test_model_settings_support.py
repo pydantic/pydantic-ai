@@ -65,7 +65,9 @@ from pydantic_ai import models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.cloudflare import CloudflareClefModel
 from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.providers.cloudflare import CloudflareProvider
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -617,6 +619,13 @@ def _system_one(client: httpx2.AsyncClient) -> Model:
     )
 
 
+def _cloudflare(client: httpx2.AsyncClient) -> Model:
+    return CloudflareClefModel(
+        '@cf/cloudflare/clef-flash',
+        provider=CloudflareProvider(api_key=PROBE_KEY, account_id='probe-account', http_client=client),
+    )
+
+
 def _openai_decisions(client: httpx2.AsyncClient) -> Model:
     return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -667,6 +676,7 @@ CASES = [
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
     Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
+    Case('CloudflareClefModel', ('Cloudflare Clef',), decision_probe(_cloudflare)),
     Case(
         'OpenAIDecisionsModel',
         ('OpenAI Decisions',),
@@ -968,6 +978,7 @@ RETRY_CASES = [
         marks=_needs(typesafe_available, 'typesafe-sdk'),
     ),
     RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
+    RetryCase('CloudflareClefModel', ('Cloudflare Clef',), _cloudflare, (1, 1, 1), decision=True),
 ]
 """Every model reached over a mockable HTTP client.
 
