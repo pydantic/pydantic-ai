@@ -1,13 +1,17 @@
-r"""Pydantic AI gh-aw shim — Claude Code CLI compatibility for gh-aw.
+r"""Claude Code CLI compatibility and shared policy for gh-aw workflows.
 
-gh-aw runs the agent engine like the Claude Code CLI:
+Production workflows load `agent.py` through the public `pydantic-ai` engine.
+This module provides the local/development runner and shared policy helpers
+(`run_request_limit`, `failure_details`, `compact_history`) used by that agent.
+
+The legacy runner accepts Claude Code CLI arguments:
 
     <command> --print --no-chrome --allowed-tools '<csv>' --debug-file <path> \\
       --verbose --permission-mode <mode> --output-format stream-json \\
       --mcp-config <mcp-servers.json> --prompt-file <prompt.txt> \\
       [--model <model>] "<rendered prompt>"
 
-With `engine.command` set, `<command>` is this shim. It speaks Claude
+With `engine.command` pointing to this shim, `<command>` speaks Claude
 Code's argv, recovers the prompt, builds a `pydantic-ai` agent backed by
 the gh-aw-injected Anthropic-compatible proxy, exposes Claude-named
 tools plus gh-aw's MCP servers (GitHub + the `safeoutputs` write-sink),
@@ -16,7 +20,7 @@ enforces gh-aw's `--allowed-tools` allow-list, and emits Claude-compatible
 
 Like Claude Code itself, the shim only talks to Anthropic-shape APIs
 (`ANTHROPIC_BASE_URL` → Anthropic or another Anthropic-compatible endpoint).
-No OpenAI path — the workflow's `engine.id: claude` contract is
+No OpenAI path — the legacy `engine.id: claude` contract is
 Anthropic-shape end to end.
 
 Credentials note: under gh-aw the real API key is *excluded* from the
@@ -948,7 +952,7 @@ def emit_result(
 
     provider_health: dict[str, object] = {
         'workflow': os.environ.get('GITHUB_WORKFLOW'),
-        'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_ID') or os.environ.get('PYDANTIC_AI_TASK_KEY'),
         'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
         'run_attempt': run_attempt,
     }

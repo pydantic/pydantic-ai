@@ -413,15 +413,18 @@ prompt
 # --- prompt paths (the review-context defect, #6766 F3) ----------------------
 
 
-def test_prompt_paths_catches_the_review_context_defect(tmp_path: Path):
+@pytest.mark.parametrize(
+    'path', ['/tmp/gh-aw/.review-context/', '/tmp/gh-aw/agent/open-issues.tsv', '/tmp/gh-aw/agent/issues/1.json']
+)
+def test_prompt_paths_catches_the_review_context_defect(tmp_path: Path, path: str):
     """The prompt told the agent to read a path its file tools cannot open."""
     source = _write(
         tmp_path / 'shared.md',
-        """---
+        f"""---
 name: x
 ---
 
-A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
+A pre-agent step wrote everything you need to `{path}`.
 **Read these files instead of calling the GitHub API.**
 """,
     )
@@ -429,7 +432,7 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     violations = check_prompt_paths(source)
 
     assert [v.check for v in violations] == ['prompt-path-outside-workspace']
-    assert '/tmp/gh-aw/.review-context/' in violations[0].message
+    assert path in violations[0].message
 
 
 def test_prompt_paths_accepts_a_workspace_relative_path(tmp_path: Path):
@@ -515,9 +518,8 @@ A pre-agent step wrote everything you need to `/tmp/gh-aw/.review-context/`.
     [
         # Truncating the match at `:` would leave `/tmp/gh-aw/bin`, which is allowlisted.
         '/tmp/gh-aw/bin:secret/context.json',
-        # A sibling of an allowlisted *file*, the counterpart of `bindings/` vs `bin/`.
-        '/tmp/gh-aw/agent/open-issues.tsv.bak',
-        '/tmp/gh-aw/agent/issues-private/1.json',
+        '/tmp/gh-aw/agent/github-context.bak/1.json',
+        '/tmp/gh-aw/agent/github-context-private/1.json',
     ],
 )
 def test_prompt_paths_flags_a_near_miss_of_an_allowlist_entry(tmp_path: Path, path: str):
@@ -535,8 +537,6 @@ def test_prompt_paths_flags_a_near_miss_of_an_allowlist_entry(tmp_path: Path, pa
         '/tmp/gh-aw/bin',
         '/tmp/gh-aw/bin/pydantic-ai-runner-launch',
         '/tmp/gh-aw/agent/github-context/x.json',
-        '/tmp/gh-aw/agent/open-issues.tsv',
-        '/tmp/gh-aw/agent/issues/1.json',
     ],
 )
 def test_prompt_paths_allows_every_documented_corpus_path(tmp_path: Path, path: str):
@@ -770,6 +770,7 @@ jobs:
           PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
+          PYTHONPATH: /tmp/gh-aw/workflow-python
           PYDANTIC_AI_TASK_ID: stable-task
 """
 
@@ -778,6 +779,21 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     """The public engine retains policy, model and proxy credential exclusion."""
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
     assert check_compiled_runner_contract(lock) == []
+
+
+@pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])
+def test_compiled_runner_contract_rejects_an_unavailable_policy(tmp_path: Path, pythonpath: str | None):
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    env = workflow['jobs']['agent']['steps'][0]['env']
+    if pythonpath is None:
+        del env['PYTHONPATH']
+    else:
+        env['PYTHONPATH'] = pythonpath
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'staged workflow-policy import path' in violations[0].message
 
 
 @pytest.mark.parametrize(

@@ -1325,6 +1325,12 @@ def test_attention_workflow_fetches_tags_before_policy_staging():
         assert checkout_index < staging_index
         assert checkout['with'] == expected_checkout_config
 
+    assert next(
+        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Preinstall Pydantic AI coder agent'
+    ) < next(
+        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Install repository workflow policy'
+    )
+
 
 def test_runner_drops_dynamic_workflow_dependencies():
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
@@ -2374,8 +2380,25 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 # --------------------------------------------------------------------------- #
 # stream-json schema & structured-error guarantee
 # --------------------------------------------------------------------------- #
-def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ('task_id', 'task_key', 'expected_task_key'),
+    [
+        (None, None, None),
+        (None, 'legacy-task', 'legacy-task'),
+        ('task-id', None, 'task-id'),
+        ('task-id', 'legacy-task', 'task-id'),
+        ('', 'legacy-task', 'legacy-task'),
+    ],
+)
+def test_emit_result_matches_claude_stream_json_schema(
+    monkeypatch: pytest.MonkeyPatch, task_id: str | None, task_key: str | None, expected_task_key: str | None
+):
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '3')
+    for name, value in (('PYDANTIC_AI_TASK_ID', task_id), ('PYDANTIC_AI_TASK_KEY', task_key)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
     buf = io.StringIO()
     with redirect_stdout(buf):
         shim.emit_result('answer', usage=None, session_id='run-1')
@@ -2385,6 +2408,7 @@ def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.Monke
     assert obj['is_error'] is False
     assert obj['result'] == 'answer'
     assert obj['provider_health']['run_attempt'] == 3
+    assert obj['provider_health']['task_key'] == expected_task_key
     assert 'failure' not in obj['provider_health']
     for k in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
         assert k in obj['usage']

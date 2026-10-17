@@ -73,15 +73,12 @@ SANDBOX_PREFIX = '/tmp/gh-aw/'
 # These stay outside `$GITHUB_WORKSPACE` while PR review context was moved into it
 # (#6766 F3), so an agent that reaches for `Read` here still hits the old failure.
 # Worth revisiting if a sweep is seen burning turns on them.
-# Every entry ends in `/`, including the one naming a single file, and the candidate
-# path gets one appended before comparison. That makes the match land on a whole path
-# component in both directions: without it `bin` also allows `bindings/`, and
-# `open-issues.tsv` also allows `open-issues.tsv.bak`.
+# Every entry ends in `/`, and the candidate path gets one appended before comparison.
+# That makes the match land on a whole path component in both directions: without it
+# `bin` also allows `bindings/`, and `github-context` also allows `github-context.bak`.
 PROMPT_PATH_ALLOWLIST_PREFIXES = (
     '/tmp/gh-aw/bin/',
     '/tmp/gh-aw/agent/github-context/',
-    '/tmp/gh-aw/agent/open-issues.tsv/',
-    '/tmp/gh-aw/agent/issues/',
 )
 
 # A fenced block opens with three or more backticks or tildes, indented at most three
@@ -554,16 +551,19 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             for command in harness_commands[-1:]
         ):
             missing.append('the public CLAI 2 harness')
-        if env.get('XDG_CONFIG_HOME') != '/tmp/gh-aw/clai2-config':
-            missing.append('isolated CLAI settings for the workflow budgets')
+        for name, expected, description in (
+            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated CLAI settings for the workflow budgets'),
+            ('PYTHONPATH', '/tmp/gh-aw/workflow-python', 'the staged workflow-policy import path'),
+            ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
+        ):
+            if env.get(name) != expected:
+                missing.append(description)
         options = awf[: awf.index('--')] if '--' in awf else awf
         exclusions = {value for flag, value in zip(options, options[1:]) if flag == '--exclude-env'}
         if 'ANTHROPIC_API_KEY' not in exclusions:
             missing.append('AWF exclusion of the provider credential')
         if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
-        if env.get('PAI_AGENT') != 'pydantic_ai_gh_aw_shim.agent:agent':
-            missing.append('the repository workflow policy')
         if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
             missing.append('the unchanged Z.ai model selected through Anthropic')
         if env.get('ANTHROPIC_API_KEY') != '${{ secrets.ZAI_API_KEY }}':
