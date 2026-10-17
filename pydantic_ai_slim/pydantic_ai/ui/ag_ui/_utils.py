@@ -308,7 +308,8 @@ def dump_tool_return_content(content: Any) -> str:
     - A plain string is emitted verbatim, not JSON-wrapped, so the loader hands the original string back.
     - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
       through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
-      that the loader restores to their subclasses.
+      that the loader restores to their subclasses. Nested raw `bytes` use UTF-8, so they can change the
+      model-facing text after a round trip; use `BinaryContent` for binary data.
     - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only. A
       scalar whose JSON form is a string (a `datetime`, say) is emitted as the same unquoted text the model
       sees, so the reloaded `str` renders to the model exactly as the original value did.
@@ -319,6 +320,7 @@ def dump_tool_return_content(content: Any) -> str:
         return ''
     dumped = tool_return_content_ta.dump_json(content)
     if dumped.startswith(b'"'):
+        # The model's adapter uses base64 for bytes; this adapter defaults to UTF-8.
         return _tool_return_text(content)
     return dumped.decode()
 
