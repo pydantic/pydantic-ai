@@ -13,9 +13,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     SystemPromptPart,
     TextContent,
     UserPromptPart,
@@ -53,10 +55,16 @@ def collect_pinned(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
 
 
 def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
-    """Count the leading run of system-only requests (system prompts + a summary message)."""
+    """Count the leading run of system-only requests and summary-only responses."""
     count = 0
     for msg in messages:
         if isinstance(msg, ModelRequest) and msg.parts and all(isinstance(p, SystemPromptPart) for p in msg.parts):
+            count += 1
+        elif (
+            isinstance(msg, ModelResponse)
+            and msg.parts
+            and all(isinstance(p, CompactionPart) and p.provider_name is None for p in msg.parts)
+        ):
             count += 1
         else:
             break

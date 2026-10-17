@@ -36,6 +36,8 @@ To compact on any model, edit the message history yourself with a [history proce
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.
 
+To store a summary you wrote, put it in a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with only `content` set, in a `ModelResponse` that takes the place of the messages it summarizes. A compaction part without a `provider_name` was not produced by any provider's compaction API, so every model receives it as assistant text inside `<conversation_summary>` (with that tag escaped in the summary itself), and, like any compaction part, it is a [visibility boundary](#provider-native-compaction) for tool discoveries and on-demand capability loads. That keeps a model-written summary out of the system prompt. [Pydantic AI Harness](#pydantic-ai-harness)'s `SummarizingCompaction` stores its summaries this way.
+
 ## Pydantic AI Harness
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages a menu of ready-made, model-agnostic [compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/): mostly zero-LLM history editing (sliding-window trimming, clearing old tool results, deduplicating repeated file reads, clamping oversized message parts) plus LLM summarization for when that's not enough, and a `TieredCompaction` orchestrator (the recommended default) that escalates from cheap to expensive strategies only as far as needed to fit the target.

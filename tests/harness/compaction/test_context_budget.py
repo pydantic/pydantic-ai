@@ -17,12 +17,12 @@ import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SpeechPart,
-    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -1739,8 +1739,8 @@ class TestSummarizerMustWriteText:
 
         assert result.output is True
         first = result.all_messages()[0]
-        assert isinstance(first, ModelRequest)
-        assert any(isinstance(part, SystemPromptPart) and 'Summary.' in part.content for part in first.parts)
+        assert isinstance(first, ModelResponse)
+        assert first.parts == [CompactionPart(content='Summary.')]
 
 
 pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')]

@@ -8,10 +8,13 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
+from typing_extensions import TypeIs
+
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -55,7 +58,7 @@ from pydantic_ai_harness.compaction._shared import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, UserContent
+    from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, ModelResponsePart, UserContent
     from pydantic_ai.models import AbstractModel, ModelRequestContext
 
 _DEFAULT_SUMMARY_PROMPT = """\
@@ -96,6 +99,10 @@ _DEFAULT_INSTRUCTIONS = (
 )
 
 _SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
+"""The text opening the summary `SystemPromptPart` that earlier releases wrote.
+
+Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
+"""
 
 # Anchored-incremental update instruction (opencode mechanism): the previous summary is fed
 # back as an anchor to update in place rather than a summary to re-summarize, which avoids
@@ -215,9 +222,7 @@ def _format_messages(
             for part in msg.parts:
                 if isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', _user_prompt_text(part)))
-                elif isinstance(part, SystemPromptPart) and not (
-                    skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX)
-                ):
+                elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and _is_legacy_summary(part)):
                     elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart):
                     content_str = tool_return_text(part)
@@ -228,6 +233,8 @@ def _format_messages(
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     elements.append(_message_element('assistant', part.content))
+                elif _is_summary_part(part) and part.content and not skip_previous_summary:
+                    elements.append(_message_element('summary', part.content))
                 elif isinstance(part, ToolCallPart):
                     elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
     return '\n'.join(elements)
@@ -272,7 +279,7 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
         if not isinstance(msg, ModelRequest):
             break
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart) and not part.content.startswith(_SUMMARY_PREFIX):
+            if isinstance(part, SystemPromptPart) and not _is_legacy_summary(part):
                 parts.append(part)
             elif is_pinned(part) or is_receipt_part(part):
                 continue
@@ -293,9 +300,7 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
         part
         for part in message.parts
         if not is_receipt_part(part)
-        and not (
-            isinstance(part, SystemPromptPart) and (part.content.startswith(_SUMMARY_PREFIX) or part.content in carried)
-        )
+        and not (isinstance(part, SystemPromptPart) and (_is_legacy_summary(part) or part.content in carried))
     ]
     return message if len(kept) == len(message.parts) else replace(message, parts=kept)
 
@@ -303,18 +308,27 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
-    Looks for a `SystemPromptPart` whose content starts with the summary prefix,
-    which indicates it was produced by a prior compaction pass. Each pass puts its
-    summary at the start of the history, so the first one found is the most recent;
-    a history can hold older ones after it, merged into the same request.
+    A summary is a `CompactionPart` that no provider produced, or, in a history saved by an earlier
+    release, a `SystemPromptPart` opening with `_SUMMARY_PREFIX`. Each pass puts its summary at the
+    start of the history, so the first one found is the most recent.
     """
     for msg in messages:
-        if not isinstance(msg, ModelRequest):
-            continue
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX):
+            if _is_summary_part(part) and part.content:
+                return _without_bridge_prefix(part.content)
+            if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
                 return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
     return None
+
+
+def _is_summary_part(part: ModelRequestPart | ModelResponsePart) -> TypeIs[CompactionPart]:
+    """Whether *part* is a compaction summary written outside any provider, like this capability's own."""
+    return isinstance(part, CompactionPart) and part.provider_name is None
+
+
+def _is_legacy_summary(part: SystemPromptPart) -> bool:
+    """Whether *part* is a summary written by a release that stored it as a system prompt."""
+    return part.content.startswith(_SUMMARY_PREFIX)
 
 
 def _without_bridge_prefix(summary: str) -> str:
@@ -325,15 +339,15 @@ def _without_bridge_prefix(summary: str) -> str:
 def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
     """Whether summarizing *message* would add nothing the compacted history does not already hold.
 
-    That is a message kept verbatim alongside the summary, or a request made up only of system
-    prompts (an earlier summary, or prompts copied into the new summary message), pins (reinjected),
-    and receipts (replaced).
+    That is a message kept verbatim alongside the summary, a request made up only of system
+    prompts (prompts copied into the new summary request, or a summary from an earlier release), pins
+    (reinjected), and receipts (replaced), or a response holding only an earlier summary.
     """
     if any(message is retained for retained in kept):
         return True
-    return isinstance(message, ModelRequest) and all(
-        isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts
-    )
+    if isinstance(message, ModelResponse):
+        return all(_is_summary_part(part) for part in message.parts)
+    return all(isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts)
 
 
 def _is_kept_user_message(message: ModelRequest) -> bool:
@@ -607,10 +621,13 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
         summary = self._maybe_bridge_prefix(summary, messages, ctx)
 
-        summary_part = SystemPromptPart(content=f'{_SUMMARY_PREFIX}{summary}')
-        summary_message = ModelRequest(parts=[*system_parts, summary_part])
+        # The summary is model-written text standing in for the turns it replaced, so it is a
+        # `CompactionPart` in a response of its own: core sends it as framed assistant text and treats
+        # it as a compaction boundary, and the standing system prompt stays exactly as it was.
+        summary_message = ModelResponse(parts=[CompactionPart(content=summary)])
+        standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
-        result: list[ModelMessage] = [summary_message, *extra, *preserved]
+        result: list[ModelMessage] = [*standing, summary_message, *extra, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
         if self.receipts:
             result = self._insert_receipt(
@@ -690,7 +707,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     def _insert_receipt(
         self,
-        summary_message: ModelRequest,
+        summary_message: ModelResponse,
         to_summarize: list[ModelMessage],
         result: list[ModelMessage],
         ctx: RunContext[AgentDepsT],

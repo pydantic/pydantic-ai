@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -1017,7 +1018,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume, and puts the tool results in each request in the
+        `TextPart`s that any model can consume, renders each
+        [`CompactionPart`][pydantic_ai.messages.CompactionPart] that no provider produced as a
+        `<conversation_summary>` assistant text, and puts the tool results in each request in the
         order of the calls they answer, so the request bytes (and the provider's prompt cache)
         don't depend on the order a history happened to store them in.
 
@@ -1036,6 +1039,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        messages = _render_unattributed_compaction_parts(messages)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -2506,6 +2510,55 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if response_parts:
                 new_messages.append(replace(message, parts=response_parts))
     return new_messages
+
+
+_CONVERSATION_SUMMARY_CLOSING_TAG = re.compile(r'</(conversation_summary)\s*>', re.IGNORECASE)
+
+
+def _render_unattributed_compaction_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Send each `CompactionPart` that no provider produced as assistant text framed as a summary.
+
+    A part without `provider_name` was written by the application or a framework capability (such as
+    Pydantic AI Harness's `SummarizingCompaction`), not by a provider's compaction API, so no provider
+    has a native block for it and every adapter would otherwise leave it out. It is model-written
+    text standing in for earlier turns, so it goes out in the assistant turn that holds it, never in
+    system voice. Its own closing tag is neutralized, so the summary can't end its frame early.
+    Parts without content have nothing to send and are left for the adapter to omit. Returns the
+    original list when nothing changed.
+    """
+    if not any(
+        _is_unattributed_summary(part)
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+    ):
+        return messages
+    new_messages: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            message = replace(
+                message,
+                parts=[
+                    TextPart(content=_conversation_summary_text(part.content))
+                    if isinstance(part, CompactionPart) and part.provider_name is None and part.content
+                    else part
+                    for part in message.parts
+                ],
+            )
+        new_messages.append(message)
+    return new_messages
+
+
+def _is_unattributed_summary(part: ModelResponsePart) -> bool:
+    """Whether *part* is a compaction summary no provider produced, which every adapter renders as text."""
+    return isinstance(part, CompactionPart) and part.provider_name is None and bool(part.content)
+
+
+def _conversation_summary_text(content: str) -> str:
+    """*content* framed as a summary of the conversation it replaced."""
+    # TODO: switch to the core `wrap()` framing helper once it lands.
+    body = _CONVERSATION_SUMMARY_CLOSING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+    return f'<conversation_summary>\n{body}\n</conversation_summary>'
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:
