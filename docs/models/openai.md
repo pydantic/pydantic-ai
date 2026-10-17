@@ -386,7 +386,7 @@ print(result.output)
 ```
 
 !!! note
-    Referencing a stored response requires the response to have actually been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, chaining is unavailable and the full message history must be sent on every request.
+    Over HTTP or after changing WebSocket connections, a referenced response must have been stored. OpenAI stores responses by default; if you've disabled storage via [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or your organization has Zero Data Retention enabled, send the full message history after such a transport change. On the same live Responses WebSocket, its latest cached response can be used for chaining without storage.
 
 #### Using durable conversations
 
@@ -534,6 +534,56 @@ Because the request is queued server-side, the time to the first token is higher
 
 !!! note
     If a run is suspended mid-request (its final [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state] is `'suspended'`) and persisted in message history, passing that history back resumes the same background response rather than starting a new one. Resuming after the provider's retention window raises [`SuspendedResponseExpired`][pydantic_ai.exceptions.SuspendedResponseExpired]. Abandoning or cancelling the run cancels the server-side background job.
+
+## Responses WebSockets
+
+For consecutive Responses API requests on one connection, install the separate WebSocket extra:
+
+```bash
+pip/uv-add "pydantic-ai-slim[openai-responses-websocket]"
+```
+
+Call [`connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] and pass the yielded model through normal Agent model selection:
+
+```python {test="skip" gateway_toggle="skip"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+
+async def main() -> None:
+    responses_model = OpenAIResponsesModel('{{ openai:medium.name }}')
+    agent = Agent()
+
+    async with responses_model.connect() as connected_model:
+        result = await agent.run('Summarize the latest report.', model=connected_model)
+        await agent.run('Give me three action items.', model=connected_model, conversation=result.conversation)
+
+
+asyncio.run(main())
+```
+
+The source `responses_model` still uses HTTP. The connection belongs to `connected_model` and closes when its context exits. You can also construct `Agent(connected_model)` inside the context or return it from a model-selection capability. An explicit `model=` argument has the usual precedence over a capability's model selection; leave it out when the capability should choose. Selecting an ordinary model uses HTTP even while another model's socket is open.
+
+- One response can be active on a connection at a time. An overlapping request raises before sending a second frame. Open a separate context for each parallel worker.
+- A nested `agent.run()` from a tool may reuse a live connection sequentially. Parallel or background runs need independent models when their requests can overlap or outlive that context.
+- A connected handle cannot be used after its context exits. Closing an unfinished stream closes the socket; open a new context to continue.
+
+!!! note "Continuing after a transport change"
+    The socket can continue a response using a cached response ID while that ID remains on the same connection. Responses created over a socket have [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] with `transport='websocket'` so automatic continuation can identify that connection-local state. If selection moves to HTTP or another socket, [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] sends retained history instead of assuming an ID was stored, including when the request used the default storage setting.
+
+    Set a concrete [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] to use a known stored response across transports. When its response is in the retained history, earlier messages are omitted to avoid duplication. Keep the full conversation or a stored seed when you may change transports, especially with [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store] or zero data retention. The library does not replay a request after an ambiguous disconnect; inspect the run outcome before retrying tools.
+
+Request settings continue to map to `response.create`. The connection has these limits:
+
+- Handshake headers, authentication, the SDK client's WebSocket URL, proxy and TLS configuration are fixed when [`connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] opens. Put shared headers in model settings or [`connect(extra_headers=...)`][pydantic_ai.models.openai.OpenAIResponsesModel.connect]; changing them on an individual run raises before send.
+- WebSocket responses cannot use [`openai_background=True`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_background]. Compaction and token counting use HTTP, including when called on a connected model.
+- The OpenAI API WebSocket endpoint is the supported service. Azure OpenAI models are rejected by `connect()` until their WebSocket behavior is verified. An OpenAI-compatible HTTP endpoint needs its own WebSocket support and client configuration. [`OpenAICodexModel`](openai-codex.md) uses per-request session headers and does not support this persistent connection.
+
+When instrumented, WebSocket model request spans have `pydantic_ai.transport='websocket'`, including transport errors after request preparation. Ordinary HTTP spans keep their existing attributes.
+
+Responses WebSockets carry ordinary text and tool-call responses. They are separate from [Realtime sessions](../realtime/openai.md) for audio and live interaction. See the [OpenAI WebSocket guide](https://developers.openai.com/api/docs/guides/websocket-mode) for endpoint behavior and connection-local state.
 
 ## Chat Completions API
 

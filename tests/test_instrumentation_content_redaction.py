@@ -25,7 +25,14 @@ from opentelemetry.context import Context
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, open_request_policy, span_include_content
+from pydantic_ai._instrumentation import (
+    ContentPolicy,
+    current_model_request_span,
+    include_content_ctx,
+    model_request_span_ctx,
+    open_request_policy,
+    span_include_content,
+)
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
@@ -408,6 +415,22 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_current_model_request_span_requires_the_owned_span() -> None:
+    settings, _ = redacted_setup(include_content=False)
+    tracer = settings.tracer
+    previous = model_request_span_ctx.get()
+    try:
+        assert current_model_request_span() is None
+        with tracer.start_as_current_span('chat') as chat_span:
+            model_request_span_ctx.set(chat_span)
+            assert current_model_request_span() is chat_span
+            with tracer.start_as_current_span('nested span'):
+                assert current_model_request_span() is None
+        assert current_model_request_span() is None
+    finally:
+        model_request_span_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:

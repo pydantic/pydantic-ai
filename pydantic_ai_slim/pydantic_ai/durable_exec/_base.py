@@ -133,7 +133,14 @@ from ._toolset import (
     validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from ._utils import DurableModel, StreamedActivityResult, capture_event_stream, managed_model_scope, unwrap_model
+from ._utils import (
+    DurableModel,
+    StreamedActivityResult,
+    capture_event_stream,
+    managed_model_scope,
+    reject_live_connection,
+    unwrap_model,
+)
 from ._workspace import (
     WORKSPACE_OPERATION_ID,
     DurableWorkspace,
@@ -1648,6 +1655,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     ) -> DurableModel:
         """Assemble the base-owned durable model used before and after the before-hook chain."""
         self._validate_model_request_parameters(request_context.model_request_parameters)
+        reject_live_connection(request_context.model)
         resolved = self._resolved_request_model(request_context.model)
         owned = resolved is not None and not resolved.registered
         model_scope = self._request_model_scope.get()

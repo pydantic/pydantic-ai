@@ -43,6 +43,10 @@ class WrapperModel(Model):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 
+    @property
+    def _contains_live_connection(self) -> bool:
+        return self.wrapped._contains_live_connection
+
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self
