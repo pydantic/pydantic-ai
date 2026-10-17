@@ -11905,6 +11905,40 @@ async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> 
     ] == [[('assistant', 'synthetic'), ('user', 'visible')]]
 
 
+def test_enqueued_messages_after_tool_result_load_after_it() -> None:
+    """Enqueued messages the stream delivered after a step's tool result load after that result.
+
+    This is the shape the AI SDK builds from the stream; `tests/ui_roundtrip` checks it with the real client.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')]),
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                StepStartUIPart(),
+                ToolOutputAvailablePart(type='tool-work', tool_call_id='work-1', input={}, output='started'),
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [{'id': 'bg', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Background'}]}]
+                    },
+                ),
+                StepStartUIPart(),
+                TextUIPart(text='done'),
+            ],
+        ),
+    ]
+
+    assert _model_visible(VercelAIAdapter.load_messages(ui_messages)) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background')]),
+        ('response', [('text', 'done')]),
+    ]
+
+
 def test_enqueued_messages_keep_their_own_message_ids() -> None:
     """The assistant message's id lands on its own response, not on an enqueued message loaded before it."""
     enqueued = VercelAIAdapter.dump_messages(
