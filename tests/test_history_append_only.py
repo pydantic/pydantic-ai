@@ -72,9 +72,7 @@ with try_import() as mcp_imports_successful:
 
     from pydantic_ai.mcp import MCPToolset
 
-pytestmark = pytest.mark.skipif(
-    not (provider_imports_successful() and mcp_imports_successful()), reason='anthropic, openai or mcp not installed'
-)
+pytestmark = pytest.mark.skipif(not provider_imports_successful(), reason='anthropic or openai not installed')
 
 
 def _mcp_server() -> FastMCP[None]:
@@ -199,6 +197,8 @@ async def test_conversation_only_appends(
 ):
     if reason := UNSUPPORTED.get((name, provider)):
         pytest.skip(reason)
+    if name == 'MCP' and not mcp_imports_successful():  # pragma: lax no cover
+        pytest.skip('mcp not installed')
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
     else:
@@ -247,7 +247,7 @@ def _random_instructions(ctx: RunContext[Any]) -> str:
         ),
         pytest.param(
             Capability[Any](instructions='Answer briefly.', id='static'),
-            (Known('prefix', 'example'),),
+            (Known('prefix', 'example', match='rewrote the prefix'),),
             None,
             'fail',
             'no longer fails these checks as expected',

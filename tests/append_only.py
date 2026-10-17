@@ -682,7 +682,7 @@ class Known:
 
     check: Check
     issue: str
-    match: str = ''
+    match: str
     providers: tuple[Provider, ...] = PROVIDERS
 
 
