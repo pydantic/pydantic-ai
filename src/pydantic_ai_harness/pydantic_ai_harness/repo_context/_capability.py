@@ -266,7 +266,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> tuple[str] | tuple[SystemPromptPart, str]:
+    def _render_note(self, context_file: ContextFile) -> Sequence[str | SystemPromptPart]:
         """The file's contents as repository data, or a framework pointer followed by the file's path as data.
 
         The contents and the path are the repository's, not the operator's or the framework's, so they go on
@@ -274,8 +274,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         label = self._label(context_file.path)
         if self.nested_inject == 'contents':
-            return (render_context_file(context_file, label=label),)
-        return SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)
+            return [render_context_file(context_file, label=label)]
+        return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
 
     def _label(self, path: Path) -> str:
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'
