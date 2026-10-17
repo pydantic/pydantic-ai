@@ -68,7 +68,9 @@ documents, uploaded-file references, and model-generated files cannot be seeded.
 
 Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
 audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
-at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+at the model's input sample rate. Assistant speech always needs a transcript for seeding, and an
+interrupted one is seeded with the same interruption note a [text handoff](#handing-off-to-a-text-agent)
+gets, so the model knows the user didn't hear all of it. Check
 `supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
@@ -102,8 +104,9 @@ async def main():
 
 Retained user audio is forwarded to standard models whose profile supports audio input; other models
 receive the transcript. Assistant speech is always handed off as transcript text. Interrupted
-assistant turns receive a readable interruption note when Pydantic AI prepares the text-model
-request.
+assistant turns receive a readable interruption note (such as `[Interrupted after 1200 ms]`) when Pydantic
+AI prepares the text-model request, and when they are seeded into a realtime session or replayed into one
+after a reconnect.
 
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
@@ -226,6 +229,11 @@ History follows the order of the provider's own conversation:
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.
+- A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
+  at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
+  interrupted copy (on models that support output truncation), and a speech part whose
+  [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
+  the latest snapshot rather than appending only the messages past the ones you stored.
 
 - Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run

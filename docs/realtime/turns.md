@@ -206,11 +206,21 @@ response state as interrupted. When this history is sent to a text model, Pydant
 interruption note to the prepared request without modifying stored history.
 
 Models generate audio several times faster than it plays, so the reply the user speaks over has
-usually finished generating already. History is append-only, so that reply keeps its full
-transcript and `complete` state. The barge-in still truncates the provider's copy where playback
-stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
-`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
-generated after it, which the user never heard, at 0.
+usually finished generating already. With `played_bytes` (or `handle_barge_in=True`), on a model whose
+profile sets `supports_output_truncation`, the session still truncates the provider's copy of that reply
+where playback stopped. Any reply generated after it, which the user never heard, is truncated at 0. The
+model then doesn't take either as heard.
+
+History records each of those replies the same way as one cut off while it was being generated: as
+interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
+edited: a later snapshot holds an interrupted copy at the same position (see
+[History](history.md#transcription-and-history-edge-cases)). The transcript stays what the model
+generated, as providers don't report which words were heard. The
+[readable interruption note](history.md#handing-off-to-a-text-agent) is what tells a later model where the
+listener stopped.
+
+With `played_ms`, the session can't tell which reply the position belongs to once it has finished, so a
+finished reply is neither truncated nor recorded as cut.
 
 ## Speaking first
 

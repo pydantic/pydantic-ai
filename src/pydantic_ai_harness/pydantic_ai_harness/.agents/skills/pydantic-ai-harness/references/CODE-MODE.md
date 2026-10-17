@@ -254,5 +254,5 @@ For an offline test that drives `run_code` with a `FunctionModel`, see [Testing 
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/
