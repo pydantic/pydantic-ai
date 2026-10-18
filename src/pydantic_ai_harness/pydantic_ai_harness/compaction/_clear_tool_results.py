@@ -55,6 +55,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         ```
     """
 
+    strategy_id = 'clear_tool_results'
+
     max_messages: int | None = None
     """Trigger clearing when the messages since the last cleared tool result exceed this value. `None` disables.
 
@@ -175,7 +177,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='ClearToolResults',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
