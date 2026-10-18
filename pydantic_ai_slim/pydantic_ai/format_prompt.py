@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
@@ -15,6 +16,26 @@ from pydantic_core import PydanticSerializationError
 __all__ = ('format_as_xml',)
 
 from pydantic.fields import ComputedFieldInfo, FieldInfo
+
+
+# XML 1.0 Name (ASCII + common Unicode word chars): must not allow tag breakout via mapping keys.
+_XML_NAME_RE = re.compile(r'^[:A-Za-z_][\w:.-]*$', re.UNICODE)
+
+
+def _xml_name_from_mapping_key(key: str) -> str:
+    """Validate that a mapping key is a safe XML element name.
+
+    `xml.etree.ElementTree` will happily build elements whose tags contain ``<``,
+    spaces, etc., and `tostring` then emits malformed / injectable markup. Reject
+    those keys the same way we reject unsupported key types.
+    """
+    if _XML_NAME_RE.fullmatch(key):
+        return key
+    raise TypeError(
+        f'Invalid XML element name for mapping key: {key!r}; '
+        'keys must be valid XML names (letters, digits, _, :, ., -; '
+        'must not start with a digit, and must not contain spaces or markup characters)'
+    )
 
 
 def format_as_xml(
@@ -182,7 +203,8 @@ class _ToXml:
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self._to_xml(value=value, path=f'{path}.{key}' if path else key, tag=key))
+            tag = _xml_name_from_mapping_key(key)
+            element.append(self._to_xml(value=value, path=f'{path}.{key}' if path else key, tag=tag))
 
     def _parse_data_structures(
         self,
