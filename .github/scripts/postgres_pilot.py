@@ -313,10 +313,11 @@ def start(cell: Cell, directory: Path, baseline: Path) -> None:
             recorder.sql("""
             SELECT json_build_object(
                 'version', version(), 'version_num', current_setting('server_version_num')::int,
-                'encoding', current_setting('server_encoding'), 'collate', current_setting('lc_collate'),
-                'ctype', current_setting('lc_ctype'), 'timezone', current_setting('TimeZone'),
+                'encoding', current_setting('server_encoding'), 'collate', datcollate,
+                'ctype', datctype, 'timezone', current_setting('TimeZone'),
                 'ordering', (SELECT json_agg(v ORDER BY v) FROM
                     (VALUES ('a'), ('A'), ('z'), ('Z'), ('é'), ('😀')) AS sample(v)))
+            FROM pg_database WHERE datname = current_database()
         """).stdout
         )
         assert trial.server.version_num // 10000 == 16, trial.server.version
