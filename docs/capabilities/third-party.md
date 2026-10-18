@@ -38,6 +38,8 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 * [`pydantic-ai-backend`](https://github.com/vstorm-co/pydantic-ai-backend) - `ConsoleCapability` registers `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute` tools with a fine-grained permission system. Backends include `StateBackend` (in-memory, for testing), `LocalBackend` (real filesystem), `DockerSandbox` (isolated container execution), and `CompositeBackend` (routing across backends). Also available as a lower-level `ConsoleToolset`.
 
+* [`pydantic-ai-lizard`](https://github.com/lizard-build/integrations/tree/main/packages/pydantic-ai-lizard) - `LizardSandbox` supplies a cloud workspace from Lizard (lizard.build) for Harness's `Shell` and `FileSystem` capabilities. Supports commands, binary files, and reconnecting to a saved workspace. Also exposes `LizardSandboxBackend` for direct workspace use. Requires a Lizard account and API key.
+
 ## Agent Skills
 
 Pydantic AI supports [Agent Skills natively](on-demand.md#loading-skills-from-markdown-files) through [on-demand capabilities](on-demand.md), which collapse a skill to a one-line catalog entry until the model loads it, and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships [`Skills`](https://pydantic.dev/docs/ai/harness/skills/), which turns each `SKILL.md` package in a local directory into one of those deferred capabilities. As a community package that builds on `Skills` rather than replacing it:
