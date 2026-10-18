@@ -1585,8 +1585,8 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/postgres:17
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: postgres:17
         ports:
           - 5432:5432
         env:
@@ -1623,8 +1623,8 @@ jobs:
     timeout-minutes: 15
     services:
       redis:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/redis:8
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: redis:8
         ports:
           - 6379:6379
         options: >-

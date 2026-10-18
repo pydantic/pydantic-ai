@@ -249,9 +249,15 @@ diagnostic fields remain valid. Diagnostics explain the unknown result; they do 
 change gate or recovery policy.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
-and enter the incident number as `recover_issue`. A fresh healthy quota check must
-pass before the controller closes that provider incident. Scheduled recovery closes
-only provider rate-limit or quota-exhaustion incidents after a known reset time elapses.
+and enter the incident's number as `recover_issue`. The controller finds that one
+open, marked incident whose provider key matches the currently configured provider.
+It never closes another incident in the same run. A fresh health check must pass
+before the controller closes the named incident. The hourly scheduled run closes Z.ai
+rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+once the recorded reset time has passed or, when none was recorded, once the incident
+is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
+and closes within minutes of opening were followed by a new incident within minutes.
+Credential and configuration incidents need operator attention rather than automatic recovery.
 
 For a workflow-scoped incident, dispatch the affected workflow from the repository's
 default branch and set `recovery_issue` to its incident number. This lets one fresh
@@ -277,9 +283,6 @@ affected stage is not proof.
 Resolve closed-PR tasks as retired only after API verification and representative
 workflow recovery. Record why each task is retired. Do not describe retired tasks as
 same-target recoveries.
-
-Unknown or malformed quota, missing incident reset time, and credential or
-configuration incidents need operator attention rather than automatic recovery.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
