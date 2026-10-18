@@ -39,6 +39,10 @@ budget before anyone noticed, documented in #6766:
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
+- `logfire-import` / `logfire-compiled` / `logfire-network` — three Z.AI
+  workflows reached `main` without the shared Logfire import or compiled OTLP
+  settings, so their runs exported no traces (#19). The compiled firewall must
+  also allow all six Logfire ingest hosts or it can silently block export.
 
 Run over the repo with `python .github/scripts/agentic_workflow_guard.py check`,
 or as policy tests via `test_agentic_workflow_guard.py`.
@@ -740,6 +744,55 @@ def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
     return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
 
 
+def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every Z.AI workflow must compile the shared Logfire export settings."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        if 'shared/otel-logfire.md' not in _as_strings(frontmatter.get('imports')):
+            violations.append(
+                Violation(str(source), 'logfire-import', 'Z.AI workflow does not import `shared/otel-logfire.md`.')
+            )
+
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(lock), 'logfire-compiled', 'Z.AI workflow has no compiled lock.'))
+            continue
+        compiled = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        env = _as_mapping(compiled.get('env'))
+        required = ('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_AW_OTLP_ENDPOINTS')
+        if not all(isinstance(env.get(name), str) and env[name] for name in required):
+            violations.append(
+                Violation(str(lock), 'logfire-compiled', 'Compiled Z.AI workflow lacks shared OTLP export settings.')
+            )
+
+        logfire_hosts = {
+            'logfire-api.pydantic.dev',
+            'logfire-eu.pydantic.dev',
+            'logfire-us.pydantic.dev',
+            'logfire-api.pydantic.info',
+            'logfire-eu.pydantic.info',
+            'logfire-us.pydantic.info',
+        }
+        jobs = _as_mapping(compiled.get('jobs'))
+        allowed_domain_sets: list[set[str]] = []
+        for job in jobs.values():
+            steps_value: object = _as_mapping(job).get('steps')
+            if not _is_object_sequence(steps_value):
+                continue
+            for step in steps_value:
+                domains = _as_mapping(_as_mapping(step).get('env')).get('GH_AW_ALLOWED_DOMAINS')
+                if isinstance(domains, str):
+                    allowed_domain_sets.append(set(domains.split(',')))
+        if not allowed_domain_sets or any(not logfire_hosts <= domains for domains in allowed_domain_sets):
+            violations.append(
+                Violation(str(lock), 'logfire-network', 'Compiled Z.AI workflow firewall omits Logfire ingest hosts.')
+            )
+    return violations
+
+
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """Shared and workflow-local engines must use the shared provider configuration."""
     engine_path = workflows_dir / 'shared' / 'engine-zai.md'
@@ -1335,6 +1388,7 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_logfire_wiring(workflows_dir)
     violations += check_provider_engine_config(workflows_dir)
     violations += check_provider_health_wiring(workflows_dir)
     violations += check_provider_health_identity(workflows_dir)
