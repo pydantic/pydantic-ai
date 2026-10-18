@@ -30,6 +30,7 @@ from agentic_workflow_guard import (
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
+    check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
     check_provider_health_identity,
@@ -1097,6 +1098,49 @@ def test_main_exits_nonzero_and_prints_each_violation(
     err = capsys.readouterr().err
     assert 'w.lock.yml: [dangling-needs] boom' in err
     assert '1 agentic-workflow policy violation(s).' in err
+
+
+def test_zai_workflow_requires_logfire_import(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-attention-triage.md',
+        '---\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
+    )
+    lock = _write(source.with_suffix('.lock.yml'), 'env: {}\n')
+
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-import',
+        'logfire-compiled',
+        'logfire-network',
+    }
+
+    _write(
+        source,
+        source.read_text(encoding='utf-8').replace(
+            '  - shared/engine-zai.md', '  - shared/engine-zai.md\n  - shared/otel-logfire.md'
+        ),
+    )
+    compiled_lock = """env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev
+  OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
+  GH_AW_OTLP_ENDPOINTS: '[{"url":"https://logfire-api.pydantic.dev"}]'
+jobs:
+  agent:
+    steps:
+      - env:
+          GH_AW_ALLOWED_DOMAINS: logfire-api.pydantic.dev,logfire-eu.pydantic.dev,logfire-us.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.info,logfire-us.pydantic.info
+"""
+    _write(lock, compiled_lock)
+    assert check_logfire_wiring(workflows) == []
+
+    _write(lock, compiled_lock.replace(',logfire-us.pydantic.info', ''))
+    assert [violation.check for violation in check_logfire_wiring(workflows)] == ['logfire-network']
+
+    _write(lock, 'env:\n  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev\n')
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-compiled',
+        'logfire-network',
+    }
 
 
 # --- the live repository ------------------------------------------------------
