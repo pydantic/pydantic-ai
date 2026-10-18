@@ -32,6 +32,10 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
 
+For a policy decision on each tool call before it runs, with approvals by a person and a signed record of the run:
+
+* [`tracekit-ai`](https://github.com/Cygnux-Labs/Tracekit) - `Tracekit` capability that sends every tool call, and every output function the model calls through an output tool, to a Tracekit signer for a decision before the function runs: allow, deny (the model reads the reason as the tool result and the run goes on), or wait for a person to approve those exact arguments. Each call, decision and result is recorded in a signed, hash-chained log per run that `tracekit verify` checks offline; the signer runs on your own machines. New in tracekit-ai 1.3. [Setup guide](https://github.com/Cygnux-Labs/Tracekit/blob/main/docs/integrations/pydantic-ai.md).
+
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
