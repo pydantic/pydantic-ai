@@ -35,6 +35,17 @@ never from `github.event`. For the safe outputs specifically that means frontmat
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
 
+The `CI Review` agent job queues in gh-aw's per-workflow engine concurrency group
+(`queue: max`), so one review runs at a time across all PRs. `eligibility` can
+therefore decide hours before the model starts. The pre-agent step `Skip a PR that
+closed or moved on while queued` writes a `noop` to safe outputs when the PR has
+closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
+`noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
+(`hasNoopInSafeOutputs`). Any other engine harness, including
+`src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
+spends a full review. The `noop` does not skip the `detection` job, which still runs
+one threat-detection pass outside the agent slot.
+
 ## What confines `CI Review` to same-repo PRs
 
 Two different gates, guarding two different things. Neither is redundant, and the
@@ -239,11 +250,13 @@ To request manual recovery, run **Agent Provider Health** with `workflow_dispatc
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
-before the controller closes the named incident. A scheduled run automatically closes
-only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
-after a fresh healthy check. Unknown or malformed quota, missing reset time,
-credentials/configuration incidents, and workflow/task incidents need operator
-attention rather than automatic recovery.
+before the controller closes the named incident. The hourly scheduled run closes Z.ai
+rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+once the recorded reset time has passed or, when none was recorded, once the incident
+is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
+and closes within minutes of opening were followed by a new incident within minutes.
+Credentials/configuration incidents and workflow/task incidents need operator attention
+rather than automatic recovery.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
