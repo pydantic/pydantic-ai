@@ -1,8 +1,16 @@
 # PostgreSQL CI pilot
 
-**Recommendation: retain the production Docker service.** Native startup was faster in this batch,
-but database locale/order equivalence failed in every pair. Test-outcome equivalence and the
-immediate post-stop acceptance gate also failed. This experiment does not authorize production adoption.
+**Regular CI uses a locale-matched native PostgreSQL 16 cluster.** The
+[`test-all-extras` job](.github/workflows/ci.yml) pins Ubuntu 24.04, initializes a separate cluster
+with `en_US.utf8`, UTF8 and `Etc/UTC`, and checks the Docker baseline's text ordering. It verifies
+password authentication before running the existing test shards, then waits up to 30 seconds for
+that exact cluster to stop and requires port 5432 to give no response. It pulls no PostgreSQL image
+and installs no server packages.
+
+The baseline below tested runner defaults, not this locale-matched setup. Its failed gates and
+single AWS Lambda test failure remain unchanged; they do not establish equivalence for the adopted
+configuration. Current regular CI validates the adopted cluster and existing PostgreSQL-backed
+suites on every supported Python version.
 
 The [completed baseline run](https://github.com/pydantic/pydantic-ai/actions/runs/39093970886)
 executed all 32 trials on 2026-10-18 UTC at source
@@ -235,14 +243,13 @@ No observations from these attempts enter the baseline statistics above:
 
 </details>
 
-## Deliberate scope and next decision
+## Baseline scope and adoption
 
-Production CI, the PostgreSQL 17/MongoDB/Redis suites, release workflows and product code are
-unchanged. There is no image digest updater, mirror or cache adoption. The experiment keeps the
-native runner defaults and the failed gates; it does not reconfigure locale or replace failed trials.
+The baseline experiment leaves native runner defaults and all failed trial evidence intact. Regular
+CI now creates its own locale-matched cluster and uses an explicit, bounded cluster shutdown rather
+than stopping the parent system unit. The original recommendation to retain Docker applied to the
+unmodified runner-default configuration measured above.
 
-The concrete follow-up recommendation is a separately authorized, locale-matched native cluster
-pilot with explicit cluster-unit evidence and a bounded post-stop check. It must re-verify the same
-test/skip/shard and database semantics before production adoption is reconsidered. The AWS Lambda
-assertion needs independent investigation before it can be classified as a flake. Maintainers decide
-whether those follow-ups are worth pursuing; the current evidence supports retaining Docker.
+The PostgreSQL 17/MongoDB/Redis suites, release workflows and product code remain unchanged.
+Test selection, shard counts, live-database requirements and missing-URL smoke checks are preserved.
+The AWS Lambda assertion still needs independent investigation before it can be classified as a flake.
