@@ -40,15 +40,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 
-pytestmark = pytest.mark.anyio
-
 _P = 'pydantic-ai-harness:step'
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Restrict async tests to asyncio (Agent.run uses `asyncio.create_task`)."""
-    return 'asyncio'
 
 
 class FakeRedis:

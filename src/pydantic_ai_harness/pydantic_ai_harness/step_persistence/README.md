@@ -570,9 +570,20 @@ store = RedisStepStore(client, expire_seconds=3 * 24 * 3600)
 persistence = StepPersistence(store=store, agent_name='support_bot')
 ```
 
-Install and manage the driver in your application (`pip install redis` or
-`uv add redis`), and close the client with `await client.aclose()` during
-shutdown. The store does not manage it.
+Install and manage the driver in your application, and close the client with
+`await client.aclose()` during shutdown. The store does not manage it.
+
+uv:
+
+```bash
+uv add redis
+```
+
+pip:
+
+```bash
+pip install redis
+```
 
 ## Bounding snapshot growth
 

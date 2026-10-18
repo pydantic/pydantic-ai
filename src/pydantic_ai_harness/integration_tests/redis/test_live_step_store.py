@@ -140,7 +140,6 @@ async def _ttls(client: Redis, prefix: str) -> dict[str, int]:
     return {key: await client.ttl(key) for key in keys}
 
 
-@pytest.mark.anyio
 class TestLiveRedisStepStore:
     """What the fake reproduces rather than executes."""
 
