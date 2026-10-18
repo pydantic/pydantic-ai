@@ -241,6 +241,10 @@ class JsonSchemaTransformer(ABC):
         elif items:
             schema['items'] = self._handle(items)
 
+        # The schema at least one item must match: a subschema like `items`, only quantified differently.
+        if (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
+
         return schema
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['allOf', 'anyOf', 'oneOf']) -> JsonSchema:

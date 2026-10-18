@@ -896,3 +896,41 @@ def test_boolean_property_names_round_trips():
     schema = {'type': 'object', 'propertyNames': True}
 
     assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+
+
+CONTAINS_REF_SCHEMA = {
+    'type': 'array',
+    'contains': {'$ref': '#/$defs/Positive'},
+    '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+}
+"""An array that must hold at least one item matching a named definition."""
+
+
+def test_inline_defs_resolves_a_contains_ref():
+    """The `contains` schema of an array is a subschema too: inlining must not leave its `$ref` dangling
+    once the `$defs` block it points into is dropped."""
+    result = InlineDefsJsonSchemaTransformer(deepcopy(CONTAINS_REF_SCHEMA)).walk()
+
+    assert result == snapshot({'type': 'array', 'contains': {'type': 'integer', 'minimum': 1}})
+
+
+def test_contains_is_walked():
+    """`transform` sees the `contains` subschema, as it sees `items`."""
+    seen: list[dict[str, Any]] = []
+
+    class _RecordingTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            seen.append(deepcopy(schema))
+            return schema
+
+    schema = {'type': 'array', 'contains': {'type': 'integer', 'minimum': 1}}
+    _RecordingTransformer(deepcopy(schema)).walk()
+
+    assert {'type': 'integer', 'minimum': 1} in seen
+
+
+def test_boolean_contains_round_trips():
+    """`contains: false` says no array is valid; a boolean node passes through untouched."""
+    schema = {'type': 'array', 'contains': False}
+
+    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
