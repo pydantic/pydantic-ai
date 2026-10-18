@@ -76,7 +76,9 @@ def _quota_response(
     return {'code': code, 'success': success, 'data': {'limits': limits}}
 
 
-def _issue(number: int, marker: health.IncidentMarker, *, body_prefix: str = '') -> health.Issue:
+def _issue(
+    number: int, marker: health.IncidentMarker, *, body_prefix: str = '', created_at: str | None = None
+) -> health.Issue:
     marker_json = json.dumps(
         {
             'version': 1,
@@ -89,7 +91,9 @@ def _issue(number: int, marker: health.IncidentMarker, *, body_prefix: str = '')
         separators=(',', ':'),
     )
     body = f'{body_prefix}{health.MARKER_PREFIX}{marker_json} -->\n'
-    return health.Issue(number, 'Agent workflow incident', body, 'open', f'https://github.com/org/repo/issues/{number}')
+    return health.Issue(
+        number, 'Agent workflow incident', body, 'open', f'https://github.com/org/repo/issues/{number}', created_at
+    )
 
 
 def _marker_from_payload(payload: object) -> health.IncidentMarker | None:
@@ -118,6 +122,7 @@ class FakeGitHub(health.GitHubClient):
                     'body': item.body,
                     'state': item.state,
                     'html_url': item.html_url,
+                    'created_at': item.created_at,
                 }
                 for item in self.issues
             ]
@@ -130,6 +135,7 @@ class FakeGitHub(health.GitHubClient):
                 str(data.get('body')),
                 'open',
                 'https://github.com/org/repo/issues/100',
+                None,
             )
             self.issues.append(issue)
             return {
@@ -1473,18 +1479,102 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
 
 
 def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Scheduled recovery closes elapsed windows but leaves future and unknown resets."""
+    """Scheduled recovery closes elapsed windows but leaves future ones, however old the incident."""
     elapsed = _issue(1, health.IncidentMarker('provider', 'zai', 'rate_limit', '1', '2026-09-30T00:00:00Z'))
-    future = _issue(2, health.IncidentMarker('provider', 'zai', 'quota_exhausted', '2', '2026-12-01T00:00:00Z'))
-    unknown = _issue(3, health.IncidentMarker('provider', 'zai', 'quota_unknown', None, None))
+    future = _issue(
+        2,
+        health.IncidentMarker('provider', 'zai', 'quota_exhausted', '2', '2026-12-01T00:00:00Z'),
+        created_at='2026-09-29T00:00:00Z',
+    )
     retired = _issue(4, health.IncidentMarker('provider', 'minimax', 'rate_limit', '4', '2026-09-30T00:00:00Z'))
-    client = FakeGitHub([elapsed, future, unknown, retired])
+    client = FakeGitHub([elapsed, future, retired])
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
+
+
+@pytest.mark.parametrize('kind', ['rate_limit', 'quota_exhausted', 'quota_unknown'])
+def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A null-reset quota or rate-limit incident closes on a healthy check once it is an hour old."""
+    aged = _issue(1, health.IncidentMarker('provider', 'zai', kind, '1', None), created_at='2026-10-15T11:00:00Z')
+    young = _issue(2, health.IncidentMarker('provider', 'zai', kind, '2', None), created_at='2026-10-15T11:01:00Z')
+    undated = _issue(3, health.IncidentMarker('provider', 'zai', kind, '3', None))
+    client = FakeGitHub([aged, young, undated])
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+
+    def fetch_healthy(*_args: object) -> health.Quota:
+        return health.Quota('healthy')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+    assert client.closed == [1]
+
+
+@pytest.mark.parametrize(
+    'quota', [health.Quota('unknown', diagnostic='timeout'), health.Quota('exhausted', '2026-10-15T17:00:00Z')]
+)
+def test_scheduled_recovery_keeps_aged_null_reset_incident_while_unhealthy(
+    quota: health.Quota, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cool-down alone never closes an incident; the fresh check must also be healthy."""
+    incident = _issue(
+        1, health.IncidentMarker('provider', 'zai', 'rate_limit', '1', None), created_at='2026-10-15T08:00:00Z'
+    )
+    client = FakeGitHub([incident])
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+
+    def fetch_unhealthy(*_args: object) -> health.Quota:
+        return quota
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unhealthy)
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+    assert client.closed == []
+    assert client.posts == []
+
+
+def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Credential, other provider failures, and workflow or task incidents stay manual after the cool-down."""
+    created_at = '2026-10-15T08:00:00Z'
+    client = FakeGitHub(
+        [
+            _issue(1, health.IncidentMarker('provider', 'zai', 'authentication', '1', None), created_at=created_at),
+            _issue(2, health.IncidentMarker('provider', 'zai', 'other', '2', None), created_at=created_at),
+            _issue(3, health.IncidentMarker('workflow', 'nightly-sweep', 'timeout', '3', None), created_at=created_at),
+            _issue(4, health.IncidentMarker('task', 'nightly-sweep:t', 'rate_limit', '4', None), created_at=created_at),
+        ]
+    )
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+
+    def fetch_healthy(*_args: object) -> health.Quota:
+        return health.Quota('healthy')
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
+    assert client.closed == []
+
+
+def test_open_incidents_read_normalized_issue_creation_time() -> None:
+    """Incident age comes from the GitHub issue's `created_at`; a malformed value leaves it unknown."""
+    marker = health.IncidentMarker('provider', 'zai', 'rate_limit', '1', None)
+    client = FakeGitHub(
+        [_issue(1, marker, created_at='2026-10-15T11:00:00+00:00'), _issue(2, marker, created_at='yesterday')]
+    )
+
+    issues = health.GitHubClient.open_incidents(client)
+
+    assert [issue.created_at for issue in issues] == ['2026-10-15T11:00:00Z', None]
 
 
 def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(

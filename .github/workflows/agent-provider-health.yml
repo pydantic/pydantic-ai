@@ -20,7 +20,7 @@ on:
       - Pydantic AI UI Security Review
     types: [completed]
   schedule:
-    - cron: '13 */6 * * *'
+    - cron: '13 * * * *'
   workflow_dispatch:
     inputs:
       recover_issue:
@@ -104,7 +104,7 @@ jobs:
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
           --agent-artifact agent/agent-stdio.log
-      - name: Check quota and recover known elapsed provider windows
+      - name: Check quota and recover elapsed provider incidents
         if: github.event_name == 'schedule'
         env:
           GITHUB_TOKEN: ${{ github.token }}
