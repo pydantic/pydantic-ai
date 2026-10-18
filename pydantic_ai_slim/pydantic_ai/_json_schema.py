@@ -223,6 +223,11 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
+        # The schema of the keys themselves: pydantic emits it for a `dict` whose key type is constrained
+        # or is a named alias, as a `$ref` in the latter case. It is a subschema like any other.
+        if (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:

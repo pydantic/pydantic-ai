@@ -851,3 +851,48 @@ def test_json_pointer_ref_tool_with_inlining_profile():
     agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
 
     assert agent.run_sync('ship it').output == 'done'
+
+
+PROPERTY_NAMES_REF_SCHEMA = {
+    'type': 'object',
+    'additionalProperties': {'type': 'integer'},
+    'propertyNames': {'$ref': '#/$defs/Key'},
+    '$defs': {'Key': {'type': 'string', 'minLength': 1}},
+}
+"""What pydantic emits for `dict[Key, int]` when `Key` is a named alias of a constrained `str`."""
+
+
+def test_inline_defs_resolves_a_property_names_ref():
+    """The key schema of a `dict` is a subschema too: inlining must not leave its `$ref` dangling
+    once the `$defs` block it points into is dropped."""
+    result = InlineDefsJsonSchemaTransformer(deepcopy(PROPERTY_NAMES_REF_SCHEMA)).walk()
+
+    assert result == snapshot(
+        {
+            'type': 'object',
+            'additionalProperties': {'type': 'integer'},
+            'propertyNames': {'type': 'string', 'minLength': 1},
+        }
+    )
+
+
+def test_property_names_is_walked():
+    """`transform` sees the `propertyNames` subschema, as it sees `additionalProperties`."""
+    seen: list[dict[str, Any]] = []
+
+    class _RecordingTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            seen.append(deepcopy(schema))
+            return schema
+
+    schema = {'type': 'object', 'propertyNames': {'type': 'string', 'pattern': '^[a-z]+$'}}
+    _RecordingTransformer(deepcopy(schema)).walk()
+
+    assert {'type': 'string', 'pattern': '^[a-z]+$'} in seen
+
+
+def test_boolean_property_names_round_trips():
+    """`propertyNames: true` says the keys are unconstrained; a boolean node passes through untouched."""
+    schema = {'type': 'object', 'propertyNames': True}
+
+    assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
