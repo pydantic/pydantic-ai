@@ -255,6 +255,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 |---|---|---|
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures, on nine engines: [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), [Prefect](../durable_execution/prefect.md), [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), [Airflow](../durable_execution/airflow.md), and the three Harness engines in the next rows. See the [workspace guide](../workspace.md#durable-execution) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
+| [Restate Durability](restate.md) | Harness | Journal model requests, tool calls, and MCP I/O into [Restate](https://restate.dev) run steps for crash-resume |
 | [Absurd durability](absurd.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [pgtask durability](pgtask.md) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |
 | [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as chained task runs with separate retries, timeouts, and compute settings; retrying the task that runs the agent can repeat completed work |

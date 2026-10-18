@@ -326,6 +326,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
+    'RestateDurability': Rejected(
+        'a durability engine is one per agent; binding rejects a second before any id is consulted'
+    ),
     'AbsurdDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
