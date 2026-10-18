@@ -327,6 +327,8 @@ def start(cell: Cell, directory: Path, baseline: Path) -> None:
             CREATE SCHEMA postgres_pilot;
             CREATE TABLE postgres_pilot.probe (id int PRIMARY KEY, value text, counter int);
             INSERT INTO postgres_pilot.probe VALUES (1, 'café 😀', 0);
+        """)
+        recorder.sql("""
             BEGIN;
             INSERT INTO postgres_pilot.probe VALUES (2, 'rolled back', 0);
             ROLLBACK;

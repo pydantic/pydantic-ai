@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/postgres-pilot.yml
       - .github/scripts/postgres_pilot.py
+      - .github/scripts/shard_durations.py
       - .github/scripts/postgres_pilot_plugin.py
       - .github/scripts/test_postgres_pilot.py
   workflow_dispatch: {}
