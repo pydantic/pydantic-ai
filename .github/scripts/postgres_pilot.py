@@ -444,6 +444,10 @@ def compare(evidence: list[Evidence]) -> Comparison:
             for item in evidence
             if item.trial.cell.strategy == 'native'
         ),
+        'same_docker_image_revision': (
+            len({tuple(item.trial.image_digest) for item in evidence if item.trial.cell.strategy == 'docker'}) == 1
+            and all(item.trial.image_digest for item in evidence if item.trial.cell.strategy == 'docker')
+        ),
         'same_source_and_runner_image': bool(evidence)
         and len(
             {

@@ -147,6 +147,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.pilot
       - name: preserve missing-URL skips
         id: smoke
+        shell: bash
         if: always() && matrix.python == '3.14' && matrix.shard == 1 && steps.start.outcome == 'success'
         run: |
           env -u ABSURD_TEST_DATABASE_URL -u PGTASK_TEST_DATABASE_URL \

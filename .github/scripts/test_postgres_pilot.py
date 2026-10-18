@@ -40,6 +40,7 @@ def evidence() -> list[Evidence]:
                         timezone='Etc/UTC',
                         ordering=['A', 'a'],
                     ),
+                    image_digest=['postgres@sha256:one-revision'] if cell.strategy == 'docker' else [],
                     probes_passed=True,
                     packages_unchanged=True,
                     test_exit=0,
@@ -64,7 +65,7 @@ def test_complete_paired_batch_and_nearest_rank(evidence: list[Evidence]) -> Non
 
 
 @pytest.mark.parametrize(
-    'change', ['missing', 'duplicate', 'collection', 'skip', 'failure', 'locale', 'package', 'slow']
+    'change', ['missing', 'duplicate', 'collection', 'skip', 'failure', 'locale', 'package', 'digest', 'slow']
 )
 def test_reject_invalid_adoption_evidence(evidence: list[Evidence], change: str) -> None:
     """Reject each material correctness or timing failure."""
@@ -84,6 +85,8 @@ def test_reject_invalid_adoption_evidence(evidence: list[Evidence], change: str)
     elif change == 'locale':
         assert native.trial.server is not None
         native.trial.server.collate = 'C.UTF-8'
+    elif change == 'digest':
+        evidence[0].trial.image_digest = ['postgres@sha256:different-revision']
     elif change == 'package':
         native.trial.packages_unchanged = False
     else:
