@@ -74,7 +74,7 @@ jobs:
       SPLITS: ${{ matrix.shards }}
       TEST_PATHS: ${{ matrix.selection == 'harness' && 'tests/harness tests/clai2' || '' }}
       PYTHON_VERSION: ${{ matrix.python }}
-      POSTGRES_PILOT_EVIDENCE: ${{ runner.temp }}/postgres-pilot
+      POSTGRES_PILOT_EVIDENCE: ${{ github.workspace }}/local-notes/postgres-pilot
       CI: true
       COLLECT_COVERAGE: ${{ matrix.python == '3.11' || matrix.python == '3.14' }}
       BLOCKBUSTER_ENABLED: false
@@ -167,7 +167,7 @@ jobs:
         if: always()
         with:
           name: postgres-pilot-${{ matrix.strategy }}-${{ matrix.selection }}-${{ matrix.python }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/postgres-pilot
+          path: ${{ env.POSTGRES_PILOT_EVIDENCE }}
           retention-days: 30
           if-no-files-found: error
 
