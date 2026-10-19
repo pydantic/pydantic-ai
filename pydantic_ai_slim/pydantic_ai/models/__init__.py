@@ -2042,9 +2042,14 @@ def infer_model(  # noqa: C901
     elif model_kind == 'cloudflare':
         from ..providers.cloudflare import CloudflareProvider
         from .cloudflare import CloudflareClefModel
+        from .cloudflare_clairic import CloudflareClairicModel
 
         if not isinstance(provider, CloudflareProvider):
+            if model_name == '@cf/cloudflare/clairic':
+                raise UserError('Cloudflare Clairic models require a `CloudflareProvider`.')
             raise UserError('Cloudflare Clef models require a `CloudflareProvider`.')
+        if model_name == '@cf/cloudflare/clairic':
+            return CloudflareClairicModel(model_name, provider=provider)
         return CloudflareClefModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
         from ..providers.openai_decisions import OpenAIDecisionsProvider

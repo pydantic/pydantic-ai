@@ -285,6 +285,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * Cloudflare Clef
+    * Cloudflare Clairic
     * OpenAI Decisions
     """
 
@@ -535,6 +536,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * Cloudflare Clef
+    * Cloudflare Clairic
     * OpenAI Decisions
     """
 
@@ -672,6 +674,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * Cloudflare Clef
+    * Cloudflare Clairic
     * OpenAI Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,

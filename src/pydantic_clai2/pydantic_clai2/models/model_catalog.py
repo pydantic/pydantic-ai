@@ -83,7 +83,7 @@ def genai_prices_models() -> list[CatalogModel]:
             if model.deprecated or ':' in model.id:
                 continue
             name = f'{provider.id}:{model.id}'
-            # Only known Clef models use the native Cloudflare decision endpoint.
+            # Only known Cloudflare models have a native adapter.
             if provider.id == 'cloudflare' and name not in known_names:
                 continue
             found.append(

@@ -63,6 +63,7 @@ def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.M
     cloudflare = next(provider for provider in snapshot.providers if provider.id == 'cloudflare')
     openai = next(provider for provider in snapshot.providers if provider.id == 'openai')
     cloudflare_ids = (
+        '@cf/cloudflare/clairic',
         '@cf/cloudflare/clef',
         '@cf/cloudflare/clef-flash',
         '@cf/cloudflare/clef-omni',
@@ -76,7 +77,11 @@ def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.M
     monkeypatch.setattr(
         'pydantic_clai2.models.model_catalog.get_snapshot', lambda: replace(snapshot, providers=providers)
     )
-    supported = {'cloudflare:@cf/cloudflare/clef', 'cloudflare:@cf/cloudflare/clef-flash'}
+    supported = {
+        'cloudflare:@cf/cloudflare/clairic',
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+    }
     priced = genai_prices_models()
     assert {model.name for model in priced if model.provider == 'cloudflare'} == supported
     assert 'openai:catalog-only' in {model.name for model in priced}

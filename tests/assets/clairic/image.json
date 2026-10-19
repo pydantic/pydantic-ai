@@ -1,0 +1,23 @@
+{
+  "model": "clairic",
+  "answers": {
+    "fruit_count": {
+      "type": "number",
+      "p_null": 1.969303048099391e-05,
+      "guess": 1,
+      "confidence": 0.9977804057930902,
+      "value": 1,
+      "source": "image"
+    }
+  },
+  "truncated": false,
+  "usage": {
+    "state_tokens": 0,
+    "image_tokens": 342,
+    "schema_tokens": 160,
+    "input_tokens": 502,
+    "output_tokens": 0,
+    "passes": 1
+  },
+  "state_text": ""
+}
