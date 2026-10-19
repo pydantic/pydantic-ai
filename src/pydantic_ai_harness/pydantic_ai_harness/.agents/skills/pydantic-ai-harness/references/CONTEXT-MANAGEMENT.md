@@ -2,7 +2,8 @@
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
 the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
-tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), and the media
+tool returns when they are produced), `WarnOnCacheBusts` (observe cache collapses), `KeepCacheWarm` (refresh an idle cache before it
+expires), and the media
 stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, which needs
 `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
 harness extra). All compaction strategies keep tool-call /
@@ -22,6 +23,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
+| Cache expires while the user thinks or a tool runs (Anthropic 5-minute TTL) | `KeepCacheWarm` |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -323,6 +325,30 @@ Gotchas: reuse one instance across runs (marks are per `conversation_id`, held i
 it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
 it can't tell a moved prefix from an expired cache.
+
+## KeepCacheWarm
+
+After each model request, a background asyncio task replays that request with `max_tokens=1` shortly
+(`margin=30s`) before the provider's cache retention ends, discarding the response; the read restarts
+the provider's timer. The conversation's next model request cancels it. Applies to models with
+`supports_cache` and a known retention (settings, else `default_cache_retention`) whose response
+reported cached tokens; stops `max_idle=30min` after the last real request, on a late wake, or with
+a `CacheWarmingStoppedWarning` when a refresh raises or reads no cache.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+from pydantic_ai_harness import KeepCacheWarm
+
+keep_warm = KeepCacheWarm()
+agent = Agent('test', capabilities=[Caching(), keep_warm])
+# on shutdown: await keep_warm.stop()
+```
+
+Gotchas: needs a running event loop (async apps; not between `run_sync()` calls); not for durable
+execution; Anthropic budget thinking can't replay with `max_tokens=1` (warns, stops). Refresh usage
+is in `keep_warm.usage`, not in run usage. Each refresh is a root `keep_cache_warm` span.
 
 ## Media externalization (not a capability)
 
