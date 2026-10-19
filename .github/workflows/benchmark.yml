@@ -101,8 +101,8 @@ jobs:
     name: Run benchmarks
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
-    runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       id-token: write
       contents: read
@@ -123,5 +123,5 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
-          mode: walltime
+          mode: simulation
           run: uv run pytest tests/benchmarks --codspeed
