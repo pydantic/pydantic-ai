@@ -198,6 +198,7 @@ class SessionPlugins(Generic[DepsT]):
         queued: Callable[[], int] = lambda: 0,
         live_id: str | None = None,
         default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
+        default_model_name: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this CLAI shares.
 
@@ -209,7 +210,7 @@ class SessionPlugins(Generic[DepsT]):
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        `workspace`, `default_model`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
+        `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `queued` how much input waits for it, and `live_id` names the session in
         `host.live`, by default a new ID.
         """
@@ -235,6 +236,7 @@ class SessionPlugins(Generic[DepsT]):
         self._tasks = tasks
         self._workspace = workspace
         self._default_model = default_model
+        self._default_model_name = default_model_name
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -533,6 +535,7 @@ class SessionPlugins(Generic[DepsT]):
             workspace=(lambda: here().workspace) if process else self._workspace,
             live=self._process.live if process else None,
             default_model=self._default_model,
+            default_model_name=self._default_model_name,
         )
         return host
 
