@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import importlib
 import itertools
 import logging
@@ -178,24 +179,25 @@ class TestConformance:
 
 class TestCommands:
     @pytest.mark.parametrize(
-        ('command', 'shell', 'cwd'),
-        [('echo hi', False, None), (['true'], True, None), ([], False, None), (['true'], False, 'relative')],
+        ('command', 'shell'),
+        [('echo hi', False), (['true'], True), ([], False)],
     )
     async def test_invalid_command_args_do_not_create_a_sandbox(
-        self, fake_daytona: FakeDaytona, command: str | list[str], shell: bool, cwd: str | None
+        self, fake_daytona: FakeDaytona, command: str | list[str], shell: bool
     ) -> None:
         backend = DaytonaSandboxBackend()
         with pytest.raises((TypeError, ValueError)):
-            await backend.run(command, shell=shell, cwd=cwd)
+            await backend.run(command, shell=shell)
         assert not fake_daytona.sandboxes
 
     async def test_argv_output_and_context(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
+        backend = DaytonaSandboxBackend(working_dir='/work dir')
+        await backend.get_sandbox()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_stdout = ['out', 'put']
         sandbox.process_stderr = ['error']
         sandbox.process_exit_code = 3
-        result = await backend.run(['printf', 'a b'], cwd='/work dir', env={'A': 'x y'}, timeout=5)
+        result = await backend.run(['printf', 'a b'], env={'A': 'x y'}, timeout=5)
         assert result == type(result)(exit_code=3, stdout='output', stderr='error')
         assert "cd -- '" in sandbox.process_command
         assert 'work dir' in sandbox.process_command
@@ -510,8 +512,6 @@ class TestCommands:
     async def test_a_missing_cwd_is_file_not_found(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         missing = f'{tmp_path.resolve()}/missing'
-        with pytest.raises(FileNotFoundError, match=f'^{re.escape(missing)}$'):
-            await DaytonaSandboxBackend().run(['true'], cwd=missing)
         # An attached sandbox must already have the configured `working_dir`.
         owner = await started()
         attached = DaytonaSandboxBackend(ref=owner.ref, working_dir=missing)
@@ -1026,6 +1026,13 @@ class TestErrorsAndFilesystem:
             'Too many levels of symbolic links', status_code=400
         )
         assert await backend.exists('/loop') is False
+        with pytest.raises(OSError) as raised:
+            await backend.stat('/loop')
+        assert raised.value.errno == errno.ELOOP
+        # Any other path error is not an answer.
+        fake_daytona.sandboxes[0].fs_error = DaytonaValidationError('Permission denied', status_code=400)
+        with pytest.raises(PermissionError):
+            await backend.exists('/locked')
 
     async def test_newline_in_path_is_rejected_before_acquisition(self, fake_daytona: FakeDaytona) -> None:
         backend = DaytonaSandboxBackend()
@@ -1245,7 +1252,8 @@ class TestLazyOperations:
             task.cancel()
             await asyncio.sleep(0)
             gate.set()
-            with pytest.raises(WorkspaceUnavailableError, match='unknown snapshot'):
+            # The caller's cancellation wins; the refusal is retrieved, not reported.
+            with pytest.raises(asyncio.CancelledError):
                 await task
         finally:
             loop.set_exception_handler(previous)
@@ -1253,7 +1261,7 @@ class TestLazyOperations:
 
     async def test_cancellation_during_creation_keeps_the_created_sandbox(self, fake_daytona: FakeDaytona) -> None:
         gate = fake_daytona.create_gate = asyncio.Event()
-        backend = DaytonaSandboxBackend()
+        backend = DaytonaSandboxBackend(working_dir='/work')
         with anyio.CancelScope() as scope:
 
             async def cancel_once_created() -> None:
@@ -1267,6 +1275,9 @@ class TestLazyOperations:
         assert scope.cancelled_caught
         assert backend.ref == WorkspaceRef(provider='daytona', id=fake_daytona.sandboxes[0].id)
         assert fake_daytona.sandboxes[0].process_command == ''
+        # The cancelled call does not make `working_dir`; the next operation does.
+        assert not any(command.startswith('mkdir') for command in fake_daytona.sandboxes[0].exec_commands)
+        assert await backend.working_dir() == '/work'
 
     async def test_deadline_bounds_session_setup(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()

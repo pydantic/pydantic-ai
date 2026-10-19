@@ -42,7 +42,7 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         auto_stop_interval=0,
         working_dir='/work',
         env={'A': 'b'},
-        network_block_all=True,
+        allow_internet_access=False,
     )
     backend = capability.get_workspace(_ctx(), ref=None)
     assert isinstance(backend, DaytonaSandboxBackend)

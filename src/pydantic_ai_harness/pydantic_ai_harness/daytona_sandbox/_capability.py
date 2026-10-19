@@ -64,9 +64,9 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     keeps Daytona's default (15 minutes for a container; a VM pauses after 60 instead). Attaching
     starts a stopped or paused sandbox again."""
 
-    network_block_all: bool = False
-    """Whether to block outbound traffic from a newly created sandbox. On Daytona's Tier 3 and 4
-    this blocks everything; lower tiers keep package registries, GitHub, and AI APIs reachable."""
+    allow_internet_access: bool = True
+    """Whether a newly created sandbox may reach the internet. When `False`, Daytona's Tier 3 and 4
+    block everything; lower tiers keep package registries, GitHub, and AI APIs reachable."""
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own.
@@ -110,7 +110,7 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
             ref=ref,
             snapshot=self.snapshot,
             auto_stop_interval=self.auto_stop_interval,
-            network_block_all=self.network_block_all,
+            allow_internet_access=self.allow_internet_access,
             working_dir=self.working_dir,
             env=self.env,
         )
