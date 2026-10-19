@@ -2042,9 +2042,14 @@ def infer_model(  # noqa: C901
     elif model_kind == 'cloudflare':
         from ..providers.cloudflare import CloudflareProvider
         from .cloudflare import CloudflareClefModel
+        from .cloudflare_clairic import CloudflareClairicModel
 
         if not isinstance(provider, CloudflareProvider):
+            if model_name == '@cf/cloudflare/clairic':
+                raise UserError('Cloudflare Clairic models require a `CloudflareProvider`.')
             raise UserError('Cloudflare Clef models require a `CloudflareProvider`.')
+        if model_name == '@cf/cloudflare/clairic':
+            return CloudflareClairicModel(model_name, provider=provider)
         return CloudflareClefModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
         from ..providers.openai_decisions import OpenAIDecisionsProvider
@@ -2131,6 +2136,8 @@ async def download_item(
     item: FileUrl,
     data_format: Literal['bytes'],
     type_format: Literal['mime', 'extension'] = 'mime',
+    *,
+    max_bytes: int | None = None,
 ) -> DownloadedItem[bytes]: ...
 
 
@@ -2139,6 +2146,8 @@ async def download_item(
     item: FileUrl,
     data_format: Literal['base64', 'base64_uri', 'text'],
     type_format: Literal['mime', 'extension'] = 'mime',
+    *,
+    max_bytes: int | None = None,
 ) -> DownloadedItem[str]: ...
 
 
@@ -2146,6 +2155,8 @@ async def download_item(
     item: FileUrl,
     data_format: Literal['bytes', 'base64', 'base64_uri', 'text'] = 'bytes',
     type_format: Literal['mime', 'extension'] = 'mime',
+    *,
+    max_bytes: int | None = None,
 ) -> DownloadedItem[str] | DownloadedItem[bytes]:
     """Download an item by URL and return the content as a bytes object or a (base64-encoded) string.
 
@@ -2154,7 +2165,7 @@ async def download_item(
     - Private/internal IP addresses are blocked by default
     - Cloud metadata endpoints (169.254.169.254) are always blocked
     - Hostnames are resolved before requests to prevent DNS rebinding
-    - Response bodies are limited to 50 MiB
+    - Response bodies are limited to 50 MiB by default; `max_bytes` can override this limit
 
     Set `item.force_download='allow-local'` to allow private IP addresses.
 
@@ -2168,11 +2179,12 @@ async def download_item(
         type_format: The format to return the media type in:
             - `mime`: The media type as a MIME type.
             - `extension`: The media type as an extension.
+        max_bytes: Maximum response body size in bytes. Defaults to 50 MiB.
 
     Raises:
         UserError: If the URL points to a YouTube video.
         ValueError: If the URL uses an unsupported protocol or targets a private/internal
-            IP address (unless allow-local is set), or the body exceeds 50 MiB.
+            IP address (unless allow-local is set), or the body exceeds `max_bytes`.
     """
     if isinstance(item, VideoUrl) and item.is_youtube:
         raise UserError('Downloading YouTube videos is not supported.')
@@ -2180,7 +2192,11 @@ async def download_item(
     from .._ssrf import safe_download
 
     allow_local = item.force_download == 'allow-local'
-    response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
+    response = await safe_download(
+        item.url,
+        allow_local=allow_local,
+        max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES if max_bytes is None else max_bytes,
+    )
 
     if content_type := response.headers.get('content-type'):
         content_type = content_type.split(';')[0]

@@ -8,6 +8,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.models.cloudflare import CloudflareClefModelName
+from pydantic_ai.models.cloudflare_clairic import CloudflareClairicModelName
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -63,7 +64,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
-    'cloudflare': CloudflareClefModelName,
+    'cloudflare': CloudflareClefModelName | CloudflareClairicModelName,
     'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,

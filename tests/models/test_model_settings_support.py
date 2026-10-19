@@ -66,7 +66,9 @@ from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.cloudflare import CloudflareClefModel
+from pydantic_ai.models.cloudflare_clairic import CloudflareClairicModel
 from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.providers.cloudflare import CloudflareProvider
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.settings import ModelSettings
@@ -286,12 +288,23 @@ class Recorder:
 
 async def run_probe_request(model: Model, settings: ModelSettings) -> None:
     """Make the one request the recorder is there to capture, swallowing its inevitable failure."""
+    parameters = (
+        ModelRequestParameters(
+            output_mode='native',
+            allow_text_output=False,
+            output_object=OutputObjectDefinition(
+                json_schema={'type': 'object', 'properties': {'text': {'type': 'string'}}}
+            ),
+        )
+        if isinstance(model, CloudflareClairicModel)
+        else ModelRequestParameters(function_tools=[PROBE_TOOL])
+    )
     try:
         await model_request(
             model,
             [ModelRequest.user_text_prompt('probe')],
             model_settings=settings,
-            model_request_parameters=ModelRequestParameters(function_tools=[PROBE_TOOL]),
+            model_request_parameters=parameters,
         )
     except Exception:
         pass
@@ -626,6 +639,12 @@ def _cloudflare(client: httpx2.AsyncClient) -> Model:
     )
 
 
+def _cloudflare_clairic(client: httpx2.AsyncClient) -> Model:
+    return CloudflareClairicModel(
+        provider=CloudflareProvider(api_key=PROBE_KEY, account_id='probe-account', http_client=client),
+    )
+
+
 def _openai_decisions(client: httpx2.AsyncClient) -> Model:
     return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -677,6 +696,7 @@ CASES = [
     Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
     Case('CloudflareClefModel', ('Cloudflare Clef',), decision_probe(_cloudflare)),
+    Case('CloudflareClairicModel', ('Cloudflare Clairic',), http_probe(_cloudflare_clairic)),
     Case(
         'OpenAIDecisionsModel',
         ('OpenAI Decisions',),
@@ -979,6 +999,7 @@ RETRY_CASES = [
     ),
     RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
     RetryCase('CloudflareClefModel', ('Cloudflare Clef',), _cloudflare, (1, 1, 1), decision=True),
+    RetryCase('CloudflareClairicModel', ('Cloudflare Clairic',), _cloudflare_clairic, (1, 1, 1)),
 ]
 """Every model reached over a mockable HTTP client.
 

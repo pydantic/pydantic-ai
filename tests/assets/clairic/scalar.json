@@ -1,0 +1,101 @@
+{
+  "model": "clairic",
+  "answers": {
+    "customer": {
+      "type": "text",
+      "p_null": 2.08727738026937e-06,
+      "span": [
+        32,
+        41
+      ],
+      "guess": "Mara Soto",
+      "confidence": 0.9999995231628418,
+      "value": "Mara Soto"
+    },
+    "amount": {
+      "type": "number",
+      "p_null": 8.498292345393565e-07,
+      "guess": 1080.5,
+      "confidence": 0.9999974966105682,
+      "value": 1080.5
+    },
+    "day": {
+      "type": "date",
+      "p_null": 1.6538977831714874e-07,
+      "guess": "2026-10-19",
+      "confidence": 0.9999989271174314,
+      "value": "2026-10-19"
+    },
+    "clock": {
+      "type": "time",
+      "p_null": 7.062737616969628e-10,
+      "guess": "14:30:00",
+      "confidence": 1,
+      "value": "14:30:00"
+    },
+    "instant": {
+      "type": "datetime",
+      "p_null": 1.4008854520852765e-08,
+      "guess": "2026-10-20T14:30:00",
+      "confidence": 0.9999988079082982,
+      "value": "2026-10-20T14:30:00"
+    },
+    "reviewers": {
+      "type": "list",
+      "value": [
+        "Mara S",
+        "Ada Fox",
+        "Ravi Shah"
+      ],
+      "spans": [
+        [
+          32,
+          38
+        ],
+        [
+          182,
+          189
+        ],
+        [
+          194,
+          203
+        ]
+      ],
+      "confidence": 0.5534043557186195
+    },
+    "amounts": {
+      "type": "list",
+      "value": [
+        10.25,
+        20.5
+      ],
+      "confidences": [
+        0.9999628080061852,
+        0.9999995231630194
+      ],
+      "confidence": 0.9998669635242321
+    },
+    "days": {
+      "type": "list",
+      "value": [
+        "2026-10-21",
+        "2026-10-23"
+      ],
+      "confidences": [
+        0.9999990463265931,
+        0.9999990463265931
+      ],
+      "confidence": 0.9999582445602884
+    }
+  },
+  "truncated": false,
+  "usage": {
+    "state_tokens": 134,
+    "image_tokens": 0,
+    "schema_tokens": 650,
+    "input_tokens": 918,
+    "output_tokens": 0,
+    "passes": 2
+  },
+  "state_text": "Fictional lab record. Customer: Mara Soto. Invoice amount: 1080.50 USD. Invoice date: 2026-10-19. Appointment time: 14:30:00. Appointment timestamp: 2026-10-20T14:30:00Z. Reviewers: Ada Fox and Ravi Shah. Line amounts: 10.25 USD and 20.50 USD. Delivery dates: 2026-10-21 and 2026-10-23."
+}

@@ -58,11 +58,12 @@ def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
     assert sonnet.context_window and 'MTok' in (sonnet.prices or '')
 
 
-def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_catalog_excludes_structured_cloudflare_models(monkeypatch: pytest.MonkeyPatch) -> None:
     snapshot = get_snapshot()
     cloudflare = next(provider for provider in snapshot.providers if provider.id == 'cloudflare')
     openai = next(provider for provider in snapshot.providers if provider.id == 'openai')
     cloudflare_ids = (
+        '@cf/cloudflare/clairic',
         '@cf/cloudflare/clef',
         '@cf/cloudflare/clef-flash',
         '@cf/cloudflare/clef-omni',
@@ -76,13 +77,18 @@ def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.M
     monkeypatch.setattr(
         'pydantic_clai2.models.model_catalog.get_snapshot', lambda: replace(snapshot, providers=providers)
     )
-    supported = {'cloudflare:@cf/cloudflare/clef', 'cloudflare:@cf/cloudflare/clef-flash'}
+    structured = {
+        'cloudflare:@cf/cloudflare/clairic',
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+    }
     priced = genai_prices_models()
-    assert {model.name for model in priced if model.provider == 'cloudflare'} == supported
+    assert not any(model.provider == 'cloudflare' for model in priced)
     assert 'openai:catalog-only' in {model.name for model in priced}
-    assert {model.name for model in catalog() if model.provider == 'cloudflare'} == supported
+    assert not any(model.provider == 'cloudflare' for model in catalog())
     custom = 'cloudflare:custom-model'
-    assert {model.name for model in catalog(include=[custom]) if model.provider == 'cloudflare'} == supported | {custom}
+    explicit = structured | {custom}
+    assert explicit <= {model.name for model in catalog(include=explicit)}
 
 
 def test_settings_form_validates_and_converts() -> None:

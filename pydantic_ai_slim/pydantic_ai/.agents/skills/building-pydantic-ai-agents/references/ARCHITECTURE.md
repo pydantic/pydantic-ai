@@ -174,7 +174,7 @@ Need deterministic, fast tests?
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
 | Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
-| Cloudflare Workers AI (Clef; text and image input; structured output only; needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare:` | `cloudflare:@cf/cloudflare/clef-flash` |
+| Cloudflare Workers AI (Clef decisions, Clairic extraction and prediction; text and image input; structured output only; needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare:` | `cloudflare:@cf/cloudflare/clef-flash` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
@@ -194,6 +194,24 @@ Need deterministic, fast tests?
 | Meta (Muse; Responses API) | `meta:` | `meta:muse-spark-1.3` |
 
 **Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
+
+For Cloudflare Clairic, use `Agent('cloudflare:@cf/cloudflare/clairic', output_type=MyModel)`.
+Supply one structured output object. Native structured output is the default.
+Import Clairic types from `pydantic_ai.models.cloudflare_clairic`.
+Use Python text, number, date, time, datetime, timedelta and supported list fields for extraction or computation.
+Use nullable scalar fields for missing information. Native null remains null; guesses do not replace values.
+Use `Annotated[T, ClairicField(...)]` for native controls. Use `Field(description=...)` for task instructions.
+Use `ClairicNumberEstimate`, `ClairicDateEstimate` and `ClairicForecast` for complete native distributions.
+Supply estimate bounds through `ClairicField(min=..., max=...)`. Supply forecast horizon and interval there too.
+Preserve native `value` and `median` independently. Native forecast steps have no required type discriminator.
+Use `timedelta` for durations in seconds. Use numeric duration fields to retain calendar units.
+Use `CloudflareClairicModelSettings` for reference dates, quantiles and returned state text.
+Pass `BinaryContent` or `ImageUrl` for images, including image-only input.
+Inspect `result.response.provider_details` for native answers, uncertainty, source spans, state, truncation and usage.
+Apply source offsets to `state_text`; serialized conversation history can differ from the original document.
+Typed values and confidence do not guarantee correctness.
+Integer lists, arbitrary nested objects, booleans, enums, unsupported schema constraints, tools and streaming are unsupported.
+See the [Cloudflare guide](https://pydantic.dev/docs/ai/models/cloudflare/#clairic-extraction-and-computation).
 
 For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
 

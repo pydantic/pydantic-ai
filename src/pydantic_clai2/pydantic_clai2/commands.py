@@ -17,7 +17,6 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import (
     SETTING_FIELDS,
     STRING_SETTINGS,
@@ -313,9 +312,9 @@ def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> It
     if len(args) == 2 and args[0] == 'display.spinner':
         return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
-        from pydantic_clai2.models.model_catalog import CODEX_MODELS
+        from pydantic_clai2.models.model_catalog import CODEX_MODELS, known_chat_model_names
 
-        names = (*plugin_models, *known_model_names())
+        names = (*plugin_models, *known_chat_model_names())
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):

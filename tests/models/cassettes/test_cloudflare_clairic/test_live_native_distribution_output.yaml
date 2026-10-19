@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/test-account/ai/run/@cf/cloudflare/clairic
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "487"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: clairic
+        state: "Estimate the typical invoice amount from these records: $40, $42, $44, $41, $43."
+        fields:
+          amount:
+            type: estimate
+            max: 100
+            min: 0
+            instructions: |-
+              Field: amount
+
+              Native numeric estimate, also used for each forecast step.
+
+              `value` and `median` are independent provider predictions. Extra native fields are
+              retained. Use `ClairicField(min=..., max=...)` when requesting an estimate.
+        options:
+          return_state_text: true
+          include_quantiles: false
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        result:
+          model: clairic
+          answers:
+            amount:
+              type: estimate
+              value: 42.16179193598299
+              mean: 42.16179193598299
+              median: 42.63988109600768
+              p10: 37.22049029920313
+              p90: 46.34961245651281
+              p_below: 0.000010006851880461907
+              p_above: 0.000010178405318583827
+          truncated: false
+          usage:
+            state_tokens: 30
+            image_tokens: 0
+            schema_tokens: 232
+            input_tokens: 262
+            output_tokens: 0
+            passes: 1
+          state_text: "Estimate the typical invoice amount from these records: $40, $42, $44, $41, $43."
+        success: true
+        errors: []
+        messages: []
+  recorded_at: 2026-10-19T20:33:00.306689+00:00
