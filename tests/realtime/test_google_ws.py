@@ -13,6 +13,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import io
 import json
+import os
 import wave
 from decimal import Decimal
 from pathlib import Path
@@ -1043,3 +1044,104 @@ async def test_extended_thinking_async_tool_round(
     assert final_part.transcript is not None and 'KLM' in final_part.transcript
     # Priced since `genai-prices` 0.1.9, the first release with the Gemini 3.8 Live rates.
     assert final.usage.cost == snapshot(Decimal('0.01005375'))
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the_next_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Text sent right after a tool result cuts off the turn answering the result before it said anything.
+
+    Gemini reports that turn `interrupted` and complete, then answers the text in a turn of its own: the cut-off
+    turn answers nothing, so the wait for the text's reply goes on to that one.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Keep replies to one short sentence. Use the lookup tool for any order.')
+
+    @agent.tool_plain
+    def lookup(order: str) -> str:
+        """Look up an order's status."""
+        return f'Order {order} has shipped and arrives on Friday.'
+
+    result_sent = anyio.Event()
+    turns: list[str] = []
+    """What the session says, in order: the model's words, and each turn it reports complete."""
+
+    async def watch(session: Any) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, FunctionToolResultEvent):
+                result_sent.set()
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                turns.append(event.delta.transcript_delta or '')
+            elif isinstance(event, RealtimeTurnCompleteEvent):
+                turns.append('<turn complete>')
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('What is the status of my order 4411?')
+        with anyio.fail_after(45):
+            await result_sent.wait()
+            await session.send('Also, what is 2 plus 2? Answer with the number.')
+            await session.wait_for_reply()
+            while '<turn complete>' not in turns:
+                await anyio.sleep(0)
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    # The cut-off turn completes no exchange: the turn answering the text does.
+    assert turns == snapshot(['4', '<turn complete>'])
+    assert isinstance(messages[-1], ModelResponse)
+    assert [part.transcript for part in messages[-1].parts if isinstance(part, SpeechPart)] == snapshot(['4'])
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Text that reaches Gemini while it generates a tool call, before the session has read the call.
+
+    Gemini cancels the call, reports the turn `interrupted` and complete, and answers both requests in the turns
+    that follow. The session took the tool-call turn for the text's reply too, as it couldn't tell the text
+    arrived after the turn began: the cancellation says it did, so the text's reply is the one that follows.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Keep replies to one short sentence. Use the lookup tool for any order.')
+
+    calls = 0
+
+    @agent.tool_plain
+    async def lookup(order: str) -> str:
+        """Look up an order's status."""
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Still running when Gemini cancels the call: the session stops it, and no result goes out.
+            await anyio.sleep_forever()
+        return f'Order {order} has shipped and arrives on Friday.'
+
+    said: list[str] = []
+
+    async def watch(session: Any) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                said.append(event.delta.transcript_delta or '')
+            elif isinstance(event, RealtimeTurnCompleteEvent):
+                said.append('<turn complete>')
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('What is the status of my order 4411?')
+        if delay := os.environ.get('GEMINI_CUT_DELAY'):  # pragma: no cover (recording: replay keeps the order)
+            await anyio.sleep(float(delay))
+        await session.send('Also, what is 2 plus 2? Answer with the number.')
+        with anyio.fail_after(45):
+            await session.wait_for_reply()
+            said.append('<wait over>')
+            while '<turn complete>' not in said:
+                await anyio.sleep(0)
+        tasks.cancel_scope.cancel()
+
+    # The wait is over only once the reply to both requests is.
+    assert ''.join(said) == snapshot('Order 4411 4.<turn complete><wait over>')

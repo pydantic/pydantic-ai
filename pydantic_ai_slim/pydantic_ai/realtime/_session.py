@@ -1326,7 +1326,9 @@ class RealtimeSession:
         Returns once the exchange in progress reaches the boundary
         [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] marks — after a
         tool-calling turn, that is the answer that follows the tool results, not the response that
-        called them. Returns immediately when the model owes nothing, so a reply that finished between
+        called them. A reply is the response that answers what was sent, not one that was already under
+        way when it reached the provider (see [The turn boundary](../realtime/events.md#the-turn-boundary)).
+        Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
         the reply can no longer come, or the provider refuses the request for the reply (reported as a
