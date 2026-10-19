@@ -92,8 +92,9 @@ gh-aw parses only that protected stderr capture; the shared terminal log is neve
 to the session parser. A sandboxed tool process can reopen a same-user pipe through `/proc`
 and append to engine stderr, so the parser also verifies Ed25519 signatures and contiguous
 frame numbers. Such writes cannot forge canonical records, terminal status, or usage. Repository
-Python imported through `PAI_AGENT` is trusted engine configuration and runs in the recorder
-interpreter; this boundary does not protect against a deliberately malicious agent module.
+`PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
+Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
+the recorder interpreter. Point either setting only at code you trust.
 The runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when

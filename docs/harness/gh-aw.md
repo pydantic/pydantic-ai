@@ -577,8 +577,9 @@ captures assistant messages, reasoning, tool calls and results (including native
 and usage. The inline parser selects framed records from the protected host capture rather
 than accepting records written by sandboxed tool processes to the shared artifact or
 reconstructing a transcript from terminal output. Repository Python imported through
-`PAI_AGENT` is trusted engine configuration and runs in the recorder interpreter; this
-boundary does not protect against a deliberately malicious agent module.
+`PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
+Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
+the recorder interpreter. Point either setting only at code you trust.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
 includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with

@@ -570,7 +570,9 @@ engine:
         const python = pythonBin ? join(pythonBin, "python3") : "python3";
         env.PATH = [join(homedir(), ".local", "bin"), pythonBin, process.env.PATH || ""].filter(Boolean).join(":");
         // The module is reached through PYTHONPATH rather than by importing it as a
-        // package, and prepending keeps a caller-supplied PYTHONPATH usable.
+        // package, and prepending keeps a caller-supplied PYTHONPATH usable. That
+        // path is trusted in-process configuration: Python can import from it at
+        // startup, before the recorder protects its signing key.
         //
         // The wrapper adds the checkout only when resolving an imported PAI_AGENT,
         // after trusted framework packages have loaded.
