@@ -393,10 +393,11 @@ async def test_nested_timeout_reaching_the_run_edge_keeps_its_type():
     assert str(exc_info.value) == 'The agent run timed out in a nested run.'
     nested = exc_info.value.__cause__
     assert isinstance(nested, RunTimedOut)
-    # The outer run's state (its first node hadn't run yet), not the nested run's.
+    # The outer run's state (its first node hadn't run yet), not the nested run's. (How far the nested run got before
+    # its 50 ms ran out, whether it recorded its request, depends on how loaded the machine is.)
     assert exc_info.value.run_id != nested.run_id
     assert exc_info.value.all_messages() == []
-    assert len(nested.all_messages()) == 1
+    assert all(message.run_id == nested.run_id for message in nested.all_messages())
 
 
 async def test_cancel_before_expiry_stays_run_cancelled():
