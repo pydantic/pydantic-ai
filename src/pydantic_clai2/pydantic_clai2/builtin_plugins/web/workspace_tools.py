@@ -8,6 +8,7 @@ other. Only the orchestrator's own agent gets these tools (`web.orchestrator`), 
 
 import asyncio
 import functools
+from collections import defaultdict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ParamSpec
@@ -20,7 +21,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.client import SessionView
 from pydantic_clai2.builtin_plugins.web.local_client import LocalClient
-from pydantic_clai2.builtin_plugins.web.protocol import Item
+from pydantic_clai2.builtin_plugins.web.protocol import Item, SessionsChanged
 from pydantic_clai2.builtin_plugins.web.workspaces import enabled, workspace_session
 from pydantic_clai2.builtin_plugins.workspaces import Workspaces, describe
 
@@ -130,6 +131,8 @@ class WorkspaceTools:
     def __init__(self, service: 'WebService') -> None:
         self.service = service
         self.links: dict[str, _Link] = {}
+        self._locks: defaultdict[str, anyio.Lock] = defaultdict(anyio.Lock)
+        """One per workspace, so tool calls the model makes at once start and follow one session, not one each."""
 
     def workspaces(self) -> Workspaces:
         """The registry with the kinds the `workspaces` plugin is configured with; `RuntimeError` while it is off."""
@@ -137,20 +140,21 @@ class WorkspaceTools:
 
     async def view(self, workspace_id: str, *, start: bool = False) -> SessionView:
         """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
-        link = self.links.get(workspace_id)
-        if link is not None and not link.view.closed:
-            return link.view
-        await self.disconnect(workspace_id)
-        channel = await workspace_session(self.service, workspace_id, start=start)
-        view = SessionView(LocalClient(self.service, channel.id))
-        task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
-        self.links[workspace_id] = _Link(view=view, task=task)
-        with anyio.move_on_after(CONNECT_TIMEOUT):
-            await view.ready()
-        if view.session is None:
+        async with self._locks[workspace_id]:
+            link = self.links.get(workspace_id)
+            if link is not None and not link.view.closed:
+                return link.view
             await self.disconnect(workspace_id)
-            raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
-        return view
+            channel = await workspace_session(self.service, workspace_id, start=start)
+            view = SessionView(LocalClient(self.service, channel.session.id))
+            task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
+            self.links[workspace_id] = _Link(view=view, task=task)
+            with anyio.move_on_after(CONNECT_TIMEOUT):
+                await view.ready()
+            if view.session is None:
+                await self.disconnect(workspace_id)
+                raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
+            return view
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
@@ -196,6 +200,7 @@ class WorkspaceTools:
         The workspace gets a new branch. Nothing runs in it until `session_start`.
         """
         workspace = await self.workspaces().create(kind=kind, repo=repo, ref=ref, base=self.service.host.workspace)
+        self.service.hub.publish(SessionsChanged())  # The sidebar lists its checkout.
         return f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}.'
 
     async def workspace_destroy(self, ctx: RunContext[None], workspace: str) -> str:
@@ -210,6 +215,7 @@ class WorkspaceTools:
             )
         await self.disconnect(workspace)
         destroyed = await self.workspaces().destroy(workspace, live=self.service.live)
+        self.service.hub.publish(SessionsChanged())
         kept = 'removed' if destroyed.teardown == 'remove' else 'kept'
         return f'Destroyed workspace {destroyed.id}; its checkout at {destroyed.path} was {kept}, its branch kept.'
 
@@ -285,7 +291,7 @@ def _prompt_only(text: str) -> None:
     if text.lstrip().startswith('/'):
         raise ValueError(
             'Send prompts only. A `/command`, such as `/workspaces destroy`, would run in the workspace with no one '
-            "to confirm it; ask the user to type it in the workspace's session."
+            'to confirm it; ask the user to type it themselves.'
         )
 
 

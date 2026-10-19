@@ -33,9 +33,14 @@ async def workspace_session(service: 'WebService', workspace_id: str, *, start: 
     workspace = await workspaces.get(workspace_id)
     if workspace.conversation is not None:
         try:
-            return service.channel(await service.live.open(workspace.conversation))
+            session = await service.live.open(workspace.conversation)
         except LookupError:
             pass
+        else:
+            if (conversation := session.conversation.conversation_id) != workspace.conversation:
+                # Another process holds it, so this one goes on in a copy: the copy is the workspace's from now on.
+                await workspaces.attach(workspace_id, conversation)
+            return service.channel(session)
     if not start:
         raise RuntimeError(f'Workspace {workspace_id} has no session yet. Start one with `session_start`.')
     session = await service.live.new(workspace=workspace.path)

@@ -24,10 +24,17 @@ def new_id(repo: str) -> str:
 
 
 async def close_sessions_in(live: LiveSessions, folder: Path) -> None:
-    """Close each live session working in `folder` or below it; `ValueError` for one only its own driver closes."""
-    for session in live.listing():
-        if session.workspace.resolve().is_relative_to(folder):
-            await live.close(session.id)
+    """Close each live session working in `folder` or below it; each opens again from its saved state.
+
+    Raises `ValueError`, closing none, when the session asking is one of them, since closing it would cancel
+    the asking itself, and `ValueError` for one only its own driver closes, such as the terminal's.
+    """
+    inside = [session for session in live.listing() if session.workspace.resolve().is_relative_to(folder)]
+    current = live.current()
+    if current is not None and any(session.id == current.id for session in inside):
+        raise ValueError(f'This session works in {folder}. Run this from a session outside it.')
+    for session in inside:
+        await live.close(session.id)
 
 
 class Workspaces:
@@ -91,8 +98,8 @@ class Workspaces:
         """Remove the workspace's checkout unless its teardown keeps it, and forget it.
 
         Before a checkout is removed, each of `live`'s sessions working in it closes, so none is left in a folder
-        that is gone. Raises `ValueError`, forgetting nothing, when one of them closes only where it is driven,
-        such as the terminal's, when the checkout is not where workspaces go, or when Git refuses.
+        that is gone (see `close_sessions_in`). Raises `ValueError`, forgetting nothing, when one of them cannot
+        close from here, when the checkout is not where workspaces go, or when Git refuses.
         """
         workspace = await self.get(workspace_id)
         if workspace.teardown == 'remove':

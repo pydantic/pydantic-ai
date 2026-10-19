@@ -20,7 +20,7 @@ import pytest
 from pydantic import TypeAdapter
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -32,6 +32,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web import WebPlugin, live as live_module, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
@@ -486,7 +488,9 @@ async def test_problems_come_back_as_errors(tmp_path: Path, repository: Path, mo
                 [session] = made.sessions_in(path)
                 await made.service.live.close(session.id)
         assert stopped == [f'The session of workspace {workspace} closed.']
-        assert (await tools.session_read(workspace)).startswith(f"Workspace {workspace}: idle; session 'block'.")
+        # A turn cut off by closing may not have saved its end, so it can open again in a fork (`'block (fork)'`).
+        reread = await tools.session_read(workspace)
+        assert reread.startswith(f"Workspace {workspace}: idle; session 'block"), reread
         assert made.built == [path, path], 'opened again in its checkout'
         await tools.disconnect(workspace)
         waited = await tools.session_wait(workspace, timeout=10)
@@ -540,7 +544,9 @@ async def test_the_pages_dialogs_are_not_a_sessions(tmp_path: Path, repository: 
 
         # A bare command that opens a menu in the page is no input for a session.
         with pytest.raises(ValueError, match='/set opens a menu in the page'):
-            await LocalClient(service, view.session.id if view.session else '').send('/set')
+            await LocalClient(service, made.sessions_in((await tools.workspaces().get(workspace)).path)[0].id).send(
+                '/set'
+            )
 
 
 async def test_without_the_workspaces_plugin(tmp_path: Path) -> None:
@@ -611,3 +617,83 @@ async def test_the_page_opens_a_workspaces_session(tmp_path: Path, repository: P
             assert (await page.post(f'/api/workspaces/{workspace}/open')).json()['id'] == opened, 'the same one'
             assert (await page.post('/api/workspaces/nope-1/open')).status_code == 404
         assert made.built == [path]
+
+
+async def sidebar_refreshed(queue: asyncio.Queue[str]) -> None:
+    """Wait for `SessionsChanged`, the other messages skipped."""
+    with anyio.fail_after(5):
+        while not isinstance(WIRE.validate_json(await queue.get()), SessionsChanged):
+            pass
+
+
+async def test_the_sidebar_and_one_session_per_workspace(tmp_path: Path, repository: Path) -> None:
+    """Creating and destroying refresh the sidebar, and tool calls the model makes at once share one session."""
+    async with parent(tmp_path) as made:
+        tools, service = made.tools, made.service
+        with service.hub.subscribe() as client:
+            workspace = await created(tools, repository)
+            await sidebar_refreshed(client.queue)
+        path = (await tools.workspaces().get(workspace)).path
+        first, second = await asyncio.gather(tools.view(workspace, start=True), tools.view(workspace, start=True))
+        assert first is second and made.built == [path]
+
+        # A session that another process holds goes on in a copy here, which is the workspace's from then on.
+        await tools.disconnect(workspace)
+        [session] = made.sessions_in(path)
+        await service.live.close(session.id)
+        copy = await service.live.new(workspace=path)
+        opened = service.live.open
+
+        async def copying(conversation_id: str) -> LiveSession:
+            return (
+                copy
+                if first.session is not None and conversation_id == first.session.id
+                else await opened(conversation_id)
+            )
+
+        with pytest.MonkeyPatch.context() as patched:
+            patched.setattr(service.live, 'open', copying)
+            await tools.view(workspace)
+        assert (await tools.workspaces().get(workspace)).conversation == copy.conversation.conversation_id
+
+        with service.hub.subscribe() as client:
+            confirmed = ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='ask_user_question',
+                        content={f'Destroy workspace {workspace}?': [f'Destroy {workspace}']},
+                        tool_call_id='asked',
+                    )
+                ]
+            )
+            ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[confirmed])
+            assert (await tools.workspace_destroy(ctx, workspace)).startswith(f'Destroyed workspace {workspace};')
+            await sidebar_refreshed(client.queue)
+
+
+async def test_the_workspace_session_is_the_users_too(tmp_path: Path, repository: Path) -> None:
+    """The user can type in the workspace's session: a `/new` there is followed, and a destroy there is refused."""
+    async with parent(tmp_path) as made:
+        tools, service = made.tools, made.service
+        workspace = await created(tools, repository)
+        await tools.session_start(workspace, 'say hi')
+        await tools.session_wait(workspace, timeout=10)
+        view = await tools.view(workspace)
+        [session] = made.sessions_in((await tools.workspaces().get(workspace)).path)
+        channel = service.channel(session)
+        before = channel.id
+
+        channel.send(f'/workspaces destroy {workspace}')
+        with anyio.fail_after(10):
+            while not view.notices:
+                await anyio.sleep(0.01)
+        assert 'Run this from a session outside it.' in view.notices[-1].text
+        assert (await tools.workspaces().get(workspace)).path.exists(), 'nothing was destroyed'
+
+        channel.send('/new')
+        with anyio.fail_after(10):
+            while channel.id == before or view.session is None or view.session.id == before:
+                await anyio.sleep(0.01)
+        assert await tools.view(workspace) is view, 'still followed, in its new conversation'
+        await tools.session_send(workspace, 'again')
+        assert 'Hello from the workspace: again.' in await tools.session_wait(workspace, timeout=10)

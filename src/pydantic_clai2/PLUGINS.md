@@ -1460,7 +1460,7 @@ other worktree, and its sessions are live sessions of the same CLAI.
 |---|---|
 | `/workspaces` or `/workspaces list` | every workspace: its ID, kind, branch, and folder |
 | `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
-| `/workspaces destroy ID` | close this CLAI's live sessions in it, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
+| `/workspaces destroy ID` | close this CLAI's live sessions in it, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept. Run it from a session outside the checkout: in one of its own, it refuses |
 
 **Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
 the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
@@ -1496,7 +1496,8 @@ anything that is not a worktree.
 from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
 `listing()`, `get(id)`, `create(kind=, repo=, ref=, base=host.workspace)` (a relative `repo` is in
 `base`), `attach(id, conversation)`, which records the session run there, and
-`destroy(id, live=host.live)`, which first closes the live sessions in the checkout, each returning
+`destroy(id, live=host.live)`, which first closes the live sessions in the checkout (refusing, with
+none closed, when the session asking is one of them), each returning
 a `Workspace` record. A new backend implements `backend.Backend`: `create` and `destroy`.
 `configured(host.plugins)` builds that `Workspaces` from the loaded plugin's settings, or returns
 `None` while it is off.
@@ -1526,7 +1527,8 @@ Each workspace gets one session, a live session of this CLAI started in its chec
 sidebar lists under its repository with the others; you can open it and type there too. The
 orchestrator follows it in-process as a page would, through `web.local_client.LocalClient`, which
 has `WebClient`'s methods, so the same `SessionView` drives it. A session it is following that
-closes, idle or from the sidebar, opens again from its saved state on the next tool call. A tool
+closes, idle or from the sidebar, opens again from its saved state on the next tool call, and one
+you switch with `/new` or `/resume` is followed into its new conversation. A tool
 card that names a workspace has an **Open** button that shows that session in the main pane.
 
 | Tool | Does |
@@ -1555,7 +1557,7 @@ ask that way. Its questions show only in the orchestrator chat and only you answ
 never the terminal, so the model cannot give the answer itself.
 `session_start` and `session_send` send prompts only: a `/command` would run in the workspace's
 session with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse
-it and the model asks you to type it in that session. A settings dialog you open in the page never
+it and the model asks you to type it yourself. A settings dialog you open in the page never
 shows to the orchestrator.
 
 Problems (an unknown workspace, a session that cannot be followed) come back as `Error: ...` lines

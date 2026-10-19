@@ -25,14 +25,18 @@ _MESSAGE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
 
 class LocalClient:
-    """The live session holding `conversation_id` in `service`'s CLAI, driven as its page drives it."""
+    """The live session `live_id` of `service`'s CLAI, driven as its page drives it.
 
-    def __init__(self, service: 'WebService', conversation_id: str) -> None:
+    It is named by its live ID, which stays the same when the session switches conversation with `/new`
+    or `/resume`; `LookupError` once it closed.
+    """
+
+    def __init__(self, service: 'WebService', live_id: str) -> None:
         self.service = service
-        self.conversation_id = conversation_id
+        self.live_id = live_id
 
     def _channel(self) -> SessionChannel:
-        return self.service.session(self.conversation_id)
+        return self.service.channel(self.service.live.get(self.live_id))
 
     async def send(self, text: str) -> None:
         """Enter a prompt or `/command`; a bare command that opens a menu in the page raises `ValueError`."""
@@ -53,7 +57,7 @@ class LocalClient:
         """The session's messages, its `Snapshot` first; iteration ends once it closes or this falls too far behind."""
         service = self.service
         with service.hub.subscribe() as client:
-            service.watch(client, [self.conversation_id])
+            service.watch(client, [self._channel().id])
             try:
                 yield self._received(client)
             finally:
