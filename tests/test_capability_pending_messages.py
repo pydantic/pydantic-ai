@@ -1536,11 +1536,10 @@ async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_req
             return f'result {call}'
 
         result = await agent.run('Hello')
-
-    assert [[part.part_kind for part in message.parts] for message in result.all_messages()[4:6]] == [
-        ['tool-return'],
-        ['user-prompt'],
-    ]
+        assert [[part.part_kind for part in message.parts] for message in result.all_messages()[4:6]] == [
+            ['tool-return'],
+            ['user-prompt'],
+        ]
 
 
 async def test_enqueue_from_tool_renders_like_its_own_request():
