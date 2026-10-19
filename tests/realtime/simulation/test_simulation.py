@@ -471,9 +471,13 @@ def test_barge_in_on_a_tool_round_releases_the_deferred_request() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('8801')
-def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
-    """#8801's case: the `response.done` of a reply the user cut off arrives after the next reply started."""
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+def test_late_terminal_of_a_barged_in_reply_stays_its_own(dialect: Dialect) -> None:
+    """The `response.done` of a reply the user cut off arrives after the next reply started (#8801).
+
+    Each reply is assembled under its own id: the late terminal and its usage end the reply it names, not the one
+    streaming.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -482,8 +486,47 @@ def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
         sim.speech_start(late=True)
         sim.speech_stop()
         sim.speak()
+        sim.release_late_done()
+        sim.speak()
+        sim.finish()
 
-    reproduce('8801', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+
+
+def test_late_terminal_of_a_barged_in_reply_lands_while_the_next_calls_a_tool() -> None:
+    """The cut-off reply's terminal arrives between the next reply's tool call and its own terminal (#8801).
+
+    It neither closes the tool-call reply early nor lands its usage on it.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start(late=True)
+        sim.speech_stop()
+        sim.speak()
+        sim.call_tool()
+        sim.release_late_done()
+        sim.finish()
+
+    run_clean(OpenAISimulation(), scenario)
+
+
+def test_late_terminal_of_a_barged_in_reply_lands_after_the_next_ended() -> None:
+    """The cut-off reply's terminal arrives only after the next reply ended (#8801): it records the cut-off reply."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start(late=True)
+        sim.speech_stop()
+        sim.speak()
+        sim.finish()
+        sim.release_late_done()
+
+    run_clean(OpenAISimulation(), scenario)
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'xai'])
@@ -833,9 +876,11 @@ def test_late_transcript_holds_back_the_reply_instead_of_being_inserted() -> Non
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('8801')
-def test_known_repeated_terminal_recorded_as_a_new_response() -> None:
-    """A robustness fault, not recorded provider behavior: the server sends a `response.done` twice."""
+def test_repeated_terminal_is_not_recorded_as_a_new_response() -> None:
+    """A robustness fault, not recorded provider behavior: the server sends a `response.done` twice (#8801).
+
+    The repeat is about a response already recorded, so it records nothing, and its usage isn't counted twice.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -843,7 +888,7 @@ def test_known_repeated_terminal_recorded_as_a_new_response() -> None:
         sim.finish()
         sim.repeat_done()
 
-    reproduce('8801', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(), scenario)
 
 
 def test_started_reply_lost_to_a_drop_is_settled_openai() -> None:
