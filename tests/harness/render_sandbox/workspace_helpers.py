@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import pytest
 from render import RenderAsync
@@ -32,7 +33,9 @@ from render.experimental.sandbox import (
 )
 
 from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceRef
-from pydantic_ai_harness.render_sandbox import RenderSandboxBackend, RenderSandboxConfig
+from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
+
+_BACKEND_MODULE = 'pydantic_ai_harness.render_sandbox._backend'
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,6 @@ class DispatchCall:
 @dataclass
 class WorkspaceHarness:
     client: RenderAsync
-    config: RenderSandboxConfig
     root: Path
     isolated_filesystems: bool = False
     share_filesystem: bool = False
@@ -79,19 +81,26 @@ class WorkspaceHarness:
     create_status: str = 'running'
     terminate_gate: asyncio.Event | None = None
     terminate_started: asyncio.Event = field(default_factory=asyncio.Event)
+    # Run shipped helpers as Render does, inline under `python3 -I -c` in the command's directory.
+    inline_helpers: bool = False
+    opened_clients: list[RenderAsync] = field(default_factory=list[RenderAsync])
 
     execute: Callable[..., Awaitable[CommandResult]] = field(init=False)
+    install: Callable[[RenderAsync], None] = field(init=False)
 
-    def backend(self, ref: WorkspaceRef | None = None) -> RenderSandboxBackend:
-        return RenderSandboxBackend(self.client, config=self.config, ref=ref)
+    def backend(self, ref: WorkspaceRef | None = None, **settings: Any) -> RenderSandboxBackend:
+        settings.setdefault('working_dir', str(self.root))
+        return RenderSandboxBackend(client=self.client, ref=ref, **settings)
 
 
 def make_workspace_harness(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, isolated_filesystems: bool = False
 ) -> WorkspaceHarness:
+    # Short bounds keep a regressed stop or readiness wait from stalling the test; no test waits them out.
+    monkeypatch.setattr(f'{_BACKEND_MODULE}._STOP_TIMEOUT', 1)
+    monkeypatch.setattr(f'{_BACKEND_MODULE}._POLL_INTERVAL', 0)
     harness = WorkspaceHarness(
         RenderAsync(token='test-only', owner_id='tea-test'),
-        RenderSandboxConfig(working_dir=str(tmp_path), cleanup_timeout=2, stop_timeout=1, command_interval=0),
         root=tmp_path,
         isolated_filesystems=isolated_filesystems,
     )
@@ -100,14 +109,37 @@ def make_workspace_harness(
     copy_to, copy_from = transfers(harness)
     harness.execute = commands(harness)
     execute = stream(harness)
-    sdk = harness.client.experimental.sandboxes
-    monkeypatch.setattr(sdk, 'copy_to', copy_to)
-    monkeypatch.setattr(sdk, 'copy_from', copy_from)
-    monkeypatch.setattr(sdk, 'create', create)
-    monkeypatch.setattr(sdk, 'from_id', from_id)
-    monkeypatch.setattr(sdk, 'terminate', terminate)
-    monkeypatch.setattr(sdk, 'exec', execute)
+
+    def install(client: RenderAsync) -> None:
+        sdk = client.experimental.sandboxes
+        monkeypatch.setattr(sdk, 'copy_to', copy_to)
+        monkeypatch.setattr(sdk, 'copy_from', copy_from)
+        monkeypatch.setattr(sdk, 'create', create)
+        monkeypatch.setattr(sdk, 'from_id', from_id)
+        monkeypatch.setattr(sdk, 'terminate', terminate)
+        monkeypatch.setattr(sdk, 'exec', execute)
+
+    harness.install = install
+    install(harness.client)
     return harness
+
+
+def use_host_credentials(harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let backends without `client=` open their own clients, each wired to this harness's fake SDK."""
+    monkeypatch.setenv('RENDER_API_KEY', 'test-only')
+    monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-test')
+
+    def open_client() -> RenderAsync:
+        client = RenderAsync(token='test-only', owner_id='tea-test')
+        harness.install(client)
+        harness.opened_clients.append(client)
+        return client
+
+    monkeypatch.setattr(f'{_BACKEND_MODULE}.RenderAsync', open_client)
+
+
+def client_is_closed(client: RenderAsync) -> bool:
+    return client.experimental.sandboxes.client.get_async_httpx_client().is_closed
 
 
 def lifecycle(
@@ -150,6 +182,9 @@ def lifecycle(
             raise harness.terminate_error
         harness.terminated.append(identifier)
         harness.sandboxes[identifier].status = 'terminated'
+        if harness.isolated_filesystems:
+            # Termination deletes the sandbox's filesystem; only isolated roots belong to one sandbox.
+            shutil.rmtree(harness.sandbox_roots[identifier], ignore_errors=True)
 
     return create, from_id, terminate
 
@@ -185,11 +220,11 @@ def local_python_command(argv: list[str]) -> list[str]:
     # Render receives inline source. The local test transport recognizes that exact
     # source and executes its package file with the same arguments and interpreter.
     # Ordinary user commands keep their original arguments.
-    if len(argv) >= 3 and argv[:2] == ['python3', '-c']:
+    if len(argv) >= 4 and argv[:3] == ['python3', '-I', '-c']:
         for name in ('_command_runner.py', '_file_transfer.py'):
             path = files('pydantic_ai_harness.render_sandbox').joinpath(name)
-            if path.read_text() == argv[2]:
-                return [sys.executable, str(path), *argv[3:]]
+            if path.read_text() == argv[3]:
+                return [sys.executable, str(path), *argv[4:]]
     return argv
 
 
@@ -235,19 +270,26 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
         }
         values.update(effective_env)
         original_argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
-        argv = local_python_command(original_argv)
+        if harness.inline_helpers and original_argv[:3] == ['python3', '-I', '-c']:
+            argv = original_argv = [sys.executable, *original_argv[1:]]
+        else:
+            argv = local_python_command(original_argv)
         # The shipped helpers receive absolute file paths or an explicit command
         # directory. Launch their local copies from the repository so CI's relative
         # coverage include patterns still find them; user commands keep their cwd.
         helper_cwd = Path(__file__).resolve().parents[3] if argv != original_argv else working_dir
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=helper_cwd,
-            env=values,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=helper_cwd,
+                env=values,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, PermissionError) as error:
+            # The remote supervisor reports these as the shell's exit codes.
+            return CommandResult(exit_code=127 if isinstance(error, FileNotFoundError) else 126, stdout='', stderr='')
         try:
             async with asyncio.timeout(timeout):
                 stdout, stderr = await process.communicate()
@@ -256,6 +298,9 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
             await process.wait()
             raise
         assert process.returncode is not None
+        if harness.sandboxes[sandbox_id].status != 'running':
+            # Render ends the exec stream with an error when the sandbox is terminated mid-command.
+            raise SandboxNotFoundError('terminated during command')
         return CommandResult(
             exit_code=process.returncode,
             stdout=stdout.decode('utf-8', errors='replace'),
@@ -268,13 +313,13 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
 def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[SandboxExecEvent]]:
     async def execute(identifier: str, launch: str) -> AsyncGenerator[SandboxExecEvent]:
         args = shlex.split(launch)
-        config = json.loads(args[4])
+        operation, config = args[4], json.loads(args[5])
         nonce = config['nonce']
 
         def frame(kind: str, **fields: object) -> SandboxExecOutput:
             return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
 
-        if args[3] == 'stop':
+        if operation == 'stop':
             yield frame('stopped')
             yield SandboxExecExit(0)
             return

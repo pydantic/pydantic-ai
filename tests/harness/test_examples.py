@@ -34,7 +34,6 @@ def _load(path: Path) -> ModuleType:
 def test_examples_present():
     assert [path.name for path in EXAMPLE_FILES] == [
         'coding_agent.py',
-        'render_sandbox.py',
         'research_agent.py',
     ]
 
@@ -57,9 +56,6 @@ def test_example_builds_agent(
     # Keep any filesystem-scoped capabilities and memory stores inside tmp_path.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('SUPPORT_MEMORY_DIR', str(tmp_path / 'memory'))
-    # Construct the Render client with placeholders; building an agent makes no cloud calls.
-    monkeypatch.setenv('RENDER_API_KEY', 'test-only')
-    monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-test')
     try:
         module = _load(path)
         if optional_dependency_error is not None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
@@ -60,22 +60,14 @@ class _CommandView:
 
 
 class NativeFilesystem:
-    def __init__(
-        self,
-        backend: _Commands,
-        client: RenderAsync,
-        timeout: float,
-        pace: Callable[[], Awaitable[None]],
-    ) -> None:
+    def __init__(self, backend: _Commands, timeout: float) -> None:
         self.commands = _CommandView(backend)
         self.metadata = Workspace(self.commands)
-        self.client = client
         self.timeout = timeout
-        self.pace = pace
 
     async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:
         result = await self.commands.run(
-            ['python3', '-c', _HELPER, action, path, directory, str(size)], timeout=self.timeout
+            ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)], timeout=self.timeout
         )
         try:
             value = json.loads(result.stdout)
@@ -87,7 +79,7 @@ class NativeFilesystem:
             pass
         raise WorkspaceError(f'Render file {action} returned an invalid result for {path!r}')
 
-    async def _transfer(self, path: str, data: bytes | None) -> bytes:
+    async def _transfer(self, client: RenderAsync, path: str, data: bytes | None) -> bytes:
         if not path.startswith('/') or '\0' in path:
             raise ValueError('file path must be absolute and contain no NUL')
         await self.commands.working_dir()
@@ -102,14 +94,13 @@ class NativeFilesystem:
                 local = Path(directory) / 'data'
                 if data is not None:
                     await anyio.Path(local).write_bytes(data)
-                await self.pace()
                 # The public SDK has per-connection timeouts but no total file deadline.
                 # Never retry an uncertain upload or hide failure with a shell fallback.
                 async with asyncio.timeout(self.timeout):
                     if data is None:
-                        await self.client.experimental.sandboxes.copy_from(ref.id, f'{remote}/data', local)
+                        await client.experimental.sandboxes.copy_from(ref.id, f'{remote}/data', local)
                     else:
-                        await self.client.experimental.sandboxes.copy_to(ref.id, local, f'{remote}/data')
+                        await client.experimental.sandboxes.copy_to(ref.id, local, f'{remote}/data')
                 if data is None:
                     # Reject a changed snapshot before allocating the returned bytes.
                     if local.is_symlink() or local.stat().st_size != size:
@@ -133,15 +124,17 @@ class NativeFilesystem:
             # Process death can leave staging until the owner terminates the sandbox.
             with anyio.move_on_after(self.timeout, shield=True):
                 try:
-                    await self.commands.run(['python3', '-c', _HELPER, 'cleanup', path, remote], timeout=self.timeout)
+                    await self.commands.run(
+                        ['python3', '-I', '-c', _HELPER, 'cleanup', path, remote], timeout=self.timeout
+                    )
                 except Exception:
                     pass
 
-    async def read_bytes(self, path: str) -> bytes:
-        return await self._transfer(path, None)
+    async def read_bytes(self, client: RenderAsync, path: str) -> bytes:
+        return await self._transfer(client, path, None)
 
-    async def write_bytes(self, path: str, data: bytes) -> None:
-        await self._transfer(path, data)
+    async def write_bytes(self, client: RenderAsync, path: str, data: bytes) -> None:
+        await self._transfer(client, path, data)
 
     async def stat(self, path: str) -> FileEntry:
         return await self.metadata.stat(path)

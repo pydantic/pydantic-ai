@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
+`RenderSandbox` / `SpritesSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -13,7 +13,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | --- | --- |
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
-| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
+| Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `RenderSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -218,14 +218,14 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 
 ## Sandbox workspaces
 
-| | `ModalSandbox` | `E2BSandbox` | `SpritesSandbox` |
-| --- | --- | --- | --- |
-| Extra | `[modal]` | `[e2b]` | `[sprites]` |
-| Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `SPRITE_TOKEN` |
-| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | Unlimited: sleeps when idle, persists until deleted |
-| Default cwd / user | `/root`, `root` | `/home/user`, `user` | `/home/sprite`, `sprite` |
-| `rg` preinstalled | Yes | No | No |
-| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `runtime`, `client` |
+| | `ModalSandbox` | `E2BSandbox` | `RenderSandbox` | `SpritesSandbox` |
+| --- | --- | --- | --- | --- |
+| Extra | `[modal]` | `[e2b]` | `[render-sandbox]` | `[sprites]` |
+| Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` |
+| Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted |
+| Default cwd / user | `/root`, `root` | `/home/user`, `user` | `/workspace` (created) | `/home/sprite`, `sprite` |
+| `rg` preinstalled | Yes | No | Unverified | No |
+| New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access` (default `False`), `client` | `runtime`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`
 (nothing from your machine is passed through). All are asyncio-only and reject `defer_loading=True`.
@@ -454,6 +454,7 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/shell/
 - https://pydantic.dev/docs/ai/harness/modal-sandbox/
 - https://pydantic.dev/docs/ai/harness/e2b-sandbox/
+- https://pydantic.dev/docs/ai/harness/render-sandbox/
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
 - https://pydantic.dev/docs/ai/harness/smol-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
@@ -462,20 +463,3 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/localstack/
 - https://pydantic.dev/docs/ai/harness/clai2/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/
-
-
-## Render Sandbox
-
-`RenderSandbox` from `pydantic_ai_harness` uses the `[render-sandbox]` extra and the host's
-`RENDER_API_KEY` and `RENDER_WORKSPACE_ID`. Compose it with `Coder`, or `Shell` and
-`FileSystem`. Defaults are a 300-second lifetime, denied sandbox egress, and cleanup
-of a fresh owned sandbox after each run. Use `on_finish` to capture output first.
-Attached references stay caller-owned; `auto_cleanup=False` retains a fresh sandbox
-for later attachment, followed by explicit `destroy(ref)`. Native file transfers
-carry contents; command timeouts stop the foreground process group. With
-`RenderWorkflows`, give the sandbox an explicit ID, for example
-`RenderSandbox(id='sandbox')`, and run the agent inside `@workflows.task`. The
-workspace reference crosses task boundaries; owned termination is a child task.
-Root retries can repeat work, and a worker crash can leave cleanup to the sandbox
-lifetime. Other durable engines and agent-spec serialization are unsupported. See the
-[Render Sandbox guide](https://pydantic.dev/docs/ai/harness/render-sandbox/).

@@ -88,12 +88,12 @@ async def live_resources(
 
 @pytest.fixture(scope='module')
 def shared_backend(live_resources: tuple[RenderAsync, ResourceLedger]) -> RenderSandboxBackend:
-    from pydantic_ai_harness.render_sandbox import RenderSandboxBackend, RenderSandboxConfig
+    from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
     client, _ = live_resources
     # The full suite shares one sandbox across many operations. Teardown terminates
-    # it immediately; the longer lifetime is a backstop for an interrupted host.
-    return RenderSandboxBackend(client=client, config=RenderSandboxConfig(lifetime_seconds=3600))
+    # it immediately; the default one-hour lifetime is a backstop for an interrupted host.
+    return RenderSandboxBackend(client=client)
 
 
 @pytest.fixture
@@ -133,12 +133,12 @@ class TestLiveRenderSandboxBackend(WorkspaceBackendSuite):
         live_resources: tuple[RenderAsync, ResourceLedger],
         temporary_backends: list[RenderSandboxBackend],
     ) -> Callable[[], WorkspaceBackend]:
-        from pydantic_ai_harness.render_sandbox import RenderSandboxBackend, RenderSandboxConfig
+        from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
         client, _ = live_resources
 
         def fresh() -> WorkspaceBackend:
-            backend = RenderSandboxBackend(client=client, config=RenderSandboxConfig(lifetime_seconds=3600))
+            backend = RenderSandboxBackend(client=client)
             temporary_backends.append(backend)
             return backend
 
@@ -152,12 +152,10 @@ class TestLiveRenderSandboxBackend(WorkspaceBackendSuite):
     def attach_backend(
         self, live_resources: tuple[RenderAsync, ResourceLedger]
     ) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        from pydantic_ai_harness.render_sandbox import RenderSandboxBackend, RenderSandboxConfig
+        from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
         client, _ = live_resources
-        return lambda ref: RenderSandboxBackend(
-            client=client, ref=ref, config=RenderSandboxConfig(lifetime_seconds=3600)
-        )
+        return lambda ref: RenderSandboxBackend(client=client, ref=ref)
 
     @pytest.fixture
     def destroy_environment(

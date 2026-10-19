@@ -181,7 +181,10 @@ def _run(config: dict[str, object]) -> None:
             _state(claim, pid=process.pid, birth=birth, done=False)
         _frame('started', nonce)
         assert process.stdout is not None and process.stderr is not None
-        _capture(process, claim, nonce, limit, timeout)
+        drain = config['drain']
+        if not isinstance(drain, (float, int)):  # pragma: no cover - the host always supplies a number
+            raise ValueError('Invalid drain grace')
+        _capture(process, claim, nonce, limit, timeout, drain)
     finally:
         if process is not None:
             with _locked(claim):
@@ -200,7 +203,12 @@ def _run(config: dict[str, object]) -> None:
 
 
 def _capture(
-    process: subprocess.Popen[bytes], claim: Path, nonce: str, limit: int, timeout: float | int | None
+    process: subprocess.Popen[bytes],
+    claim: Path,
+    nonce: str,
+    limit: int,
+    timeout: float | int | None,
+    drain: float | int,
 ) -> None:
     assert process.stdout is not None and process.stderr is not None
     pipes: dict[int, tuple[str, IO[bytes]]] = {
@@ -208,6 +216,7 @@ def _capture(
         process.stderr.fileno(): ('stderr', process.stderr),
     }
     started = time.monotonic()
+    drain_deadline: float | None = None
     direct_exit: int | None = None
     terminal: str | None = None
     output_bytes = 0
@@ -223,14 +232,13 @@ def _capture(
                 direct_exit = process.poll()
                 if direct_exit is not None:
                     _state(claim, done=True)
+                    if drain_deadline is None:
+                        drain_deadline = now + drain
                 elif terminal is None and timeout is not None and now - started >= timeout:
                     terminal = 'timeout'
                     _signal_owned(claim)
-            # Once the direct child has exited, all of its bytes are already
-            # in these pipes. Drain ready bytes through EAGAIN, not a clock
-            # deadline: slow transport must never cause truncated success.
             ready = selector.select(0 if direct_exit is not None else 0.02)
-            if direct_exit is not None and (not ready or terminal == 'limit'):
+            if drain_deadline is not None and (not ready or terminal == 'limit' or now >= drain_deadline):
                 break
             for key, _ in ready:
                 fd = key.fd
@@ -256,7 +264,15 @@ def _capture(
                 if output_bytes > limit and terminal is None:
                     terminal = 'limit'
                     with _locked(claim):
-                        _signal_owned(claim)
+                        if direct_exit is None:
+                            _signal_owned(claim)
+                        else:
+                            # The leader is reaped, but a group member still writing to its pipe keeps
+                            # the group ID in use, so it cannot name an unrelated process.
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:  # pragma: lax no cover - the writer can exit first
+                                pass
         # Closing our pipe ends, instead of waiting for EOF, is what permits a
         # normal direct exit while a background child still holds its ends.
         for _, pipe in pipes.values():

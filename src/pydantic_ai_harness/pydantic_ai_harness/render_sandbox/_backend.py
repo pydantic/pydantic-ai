@@ -1,23 +1,24 @@
-"""A lazy Render environment implementing Pydantic AI's public workspace protocols."""
+"""A Render sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
+
+External assumptions verified 2026-10-09 against Render SDK 1.2.0 and
+https://render.com/docs/sandboxes: asynchronous exec streams keep running after the
+client disconnects, `copy_to`/`copy_from` transfer file contents, and the default image
+provides Python 3 on Linux. Recheck them with the live suite when upgrading the
+experimental SDK API.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import math
+import logging
+import os
 import posixpath
 import shlex
-import warnings
-from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from types import MappingProxyType
-from typing import Literal, TypeVar
-from weakref import WeakKeyDictionary
+from typing import TypeVar
 
 import anyio
-from render import RenderAsync
-from render.client.errors import ClientError, RateLimitError
-from render.experimental.sandbox import SandboxNotFoundError
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -28,117 +29,64 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._workspace_provider import absolute_path, check_timeout, command_argv
 
-from ._commands import command_argv, run_command
+try:
+    from render import RenderAsync
+    from render.client.errors import ClientError, RateLimitError
+    from render.experimental.sandbox import SandboxNotFoundError
+except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
+    raise ImportError('Install `pydantic-ai-harness[render-sandbox]` to use RenderSandbox.') from _import_error
+
+from ._commands import run_command
 from ._filesystem import NativeFilesystem
-from ._types import RenderSandboxCleanupError, RenderSandboxEvent
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
 
+DEFAULT_SANDBOX_TIMEOUT = 3_600
+DEFAULT_WORKING_DIR = '/workspace'
+_READINESS_TIMEOUT = 60.0
+_OPERATION_TIMEOUT = 30.0
+_STOP_TIMEOUT = 12.0
+_MAX_OUTPUT_BYTES = 1_048_576
+# Render allows 100 API requests a minute; readiness polling stays well under that.
+_POLL_INTERVAL = 1.0
+_MISSING_CREDENTIALS = 'Set RENDER_API_KEY and RENDER_WORKSPACE_ID in the environment, or pass a configured `client=`.'
 
-def _positive(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f'{name} must be a positive finite number')
-    if not math.isfinite(value) or value <= 0:
-        raise ValueError(f'{name} must be a positive finite number')
-    return float(value)
 
-
-def _environment(env: Mapping[str, str] | None) -> dict[str, str]:
-    if any(not isinstance(key, str) or not isinstance(value, str) for key, value in (env or {}).items()):
-        raise ValueError('env must map strings to strings')
+def _check_env(env: Mapping[str, str] | None) -> dict[str, str]:
     values = dict(env or {})
-    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in values.items()):
-        raise ValueError('env contains an invalid name or NUL')
+    for key, value in values.items():
+        if type(key) is not str or type(value) is not str:
+            raise TypeError('env keys and values must be strings')
+        if not key or '=' in key or '\x00' in key or '\x00' in value:
+            raise ValueError(f'invalid environment variable {key!r}: names must be non-empty without `=`, and no NUL')
     return values
 
 
-@dataclass(frozen=True, kw_only=True)
-class RenderSandboxConfig:
-    """Host-side bounds and explicit settings for newly created environments.
-
-    Command deadlines come from Workspace.run(timeout=...), including Harness tool
-    defaults. A timed-out command stops its process group and leaves the sandbox usable.
-    Normal dispatches share command_interval pacing across one RenderAsync client.
-    Queue time precedes the command deadline; cancellation control bypasses the queue.
-    Separate clients/processes are not coordinated. Set command_interval=0 to disable.
-    """
-
-    lifetime_seconds: int = 300
-    readiness_timeout: float = 60.0
-    operation_timeout: float = 30.0
-    cleanup_timeout: float = 30.0
-    stop_timeout: float = 12.0
-    # Leave room for control requests and other callers sharing the API quota.
-    command_interval: float = 2.5
-    max_output_bytes: int = 1_048_576
-    working_dir: str = '/workspace'
-    network_policy: Literal['allow-all', 'deny-all'] = 'deny-all'
-    env: Mapping[str, str] | None = field(default=None, repr=False)
-
-    def __post_init__(self) -> None:
-        if type(self.lifetime_seconds) is not int or not 1 <= self.lifetime_seconds <= 86_400:
-            raise ValueError('lifetime_seconds must be an integer between 1 and 86400')
-        for name, value in (
-            ('readiness_timeout', self.readiness_timeout),
-            ('operation_timeout', self.operation_timeout),
-            ('cleanup_timeout', self.cleanup_timeout),
-            ('stop_timeout', self.stop_timeout),
-        ):
-            _positive(value, name)
-        if self.command_interval != 0 or isinstance(self.command_interval, bool):
-            _positive(self.command_interval, 'command_interval')
-        if type(self.max_output_bytes) is not int or self.max_output_bytes < 1:
-            raise ValueError('max_output_bytes must be a positive integer')
-        if (
-            not self.working_dir.startswith('/')
-            or '\0' in self.working_dir
-            or '\n' in self.working_dir
-            or '\r' in self.working_dir
-        ):
-            raise ValueError('working_dir must be an absolute POSIX path without NUL or newlines')
-        if self.network_policy not in ('allow-all', 'deny-all'):
-            raise ValueError('network_policy must be allow-all or deny-all')
-        if self.env is not None:
-            object.__setattr__(self, 'env', MappingProxyType(_environment(self.env)))
+def _open_client() -> RenderAsync:
+    if not os.environ.get('RENDER_WORKSPACE_ID'):
+        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS)
+    try:
+        return RenderAsync()
+    except ValueError as error:
+        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS) from error
 
 
-class _DispatchPacer:
-    """Space starts, not command lifetimes, so independent commands can overlap."""
-
-    def __init__(self) -> None:
-        self._lock = anyio.Lock()
-        self._last_dispatch: float | None = None
-        self._last_interval = 0.0
-
-    async def wait(self, interval: float) -> None:
-        async with self._lock:
-            loop = asyncio.get_running_loop()
-            if self._last_dispatch is not None:
-                # Different backend configurations share the client: honor the larger
-                # gap requested by either neighboring dispatch, without reserving slots
-                # for callers cancelled while waiting.
-                delay = self._last_dispatch + max(interval, self._last_interval) - loop.time()
-                if delay > 0:
-                    await asyncio.sleep(delay)
-            self._last_dispatch = loop.time()
-            self._last_interval = interval
+async def _close_client(client: RenderAsync) -> None:
+    # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
+    await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
 
 
-# Weak keys avoid retaining SDK clients after their callers release them. The async
-# SDK client and its pacing lock are used within the same event loop.
-_DISPATCH_PACERS: WeakKeyDictionary[RenderAsync, _DispatchPacer] = WeakKeyDictionary()
-
-
-async def finish_despite_cancellation(operation: Coroutine[object, object, _T]) -> _T:
-    """Finish an already-bounded ownership operation despite repeated cancellation."""
-    task = asyncio.create_task(operation)
+async def _wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
+    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
     cancelled: asyncio.CancelledError | None = None
     with anyio.CancelScope(shield=True):
         while not task.done():
             try:
-                # Wait for completion without forwarding cancellation or installing
-                # shield's Python 3.14+ detached-error logger. Read the result below.
+                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
                 await asyncio.wait((task,))
             except asyncio.CancelledError as error:
                 cancelled = error
@@ -154,166 +102,135 @@ async def finish_despite_cancellation(operation: Coroutine[object, object, _T]) 
 
 
 class RenderSandboxBackend:
-    """One Render environment; construction is lazy and never performs network I/O.
+    """One Render sandbox; construction is lazy and does no network I/O.
 
-    A supplied ref attaches to that environment and never creates a replacement.
-    The backend never destroys itself when a run ends. Call destroy() explicitly to
-    terminate it, including an attached environment, once its owner has finished.
-    File contents use native SDK transfers; metadata uses the public shell fallback.
+    Built without a ref, the first operation creates a sandbox; built with one, it attaches and never
+    creates a replacement. The backend never terminates the sandbox: whoever holds the ref does, with
+    `RenderSandbox.destroy(ref)`.
     """
 
     def __init__(
         self,
-        client: RenderAsync | None = None,
         *,
-        config: RenderSandboxConfig | None = None,
+        client: RenderAsync | None = None,
         ref: WorkspaceRef | None = None,
-        on_sandbox_event: Callable[[RenderSandboxEvent], None] | None = None,
+        allow_internet_access: bool = False,
+        sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        working_dir: str = DEFAULT_WORKING_DIR,
+        env: Mapping[str, str] | None = None,
     ) -> None:
-        if ref is not None and (ref.provider != 'render' or not ref.id):
-            raise ValueError('ref must identify a Render sandbox')
-        self.client = client if client is not None else RenderAsync()
-        self.config = config if config is not None else RenderSandboxConfig()
-        pacer = _DISPATCH_PACERS.get(self.client)
-        if pacer is None:
-            pacer = _DispatchPacer()
-            _DISPATCH_PACERS[self.client] = pacer
-        self._pacer = pacer
-        self._filesystem = NativeFilesystem(self, self.client, self.config.operation_timeout, self._pace_transfer)
+        if ref is not None and ref.provider != 'render':
+            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'render'")
+        self._env = _check_env(env)
+        self._client = client
         self._ref = ref
-        self._owned = ref is None
-        self._observer = on_sandbox_event
-        self._acquire_lock = anyio.Lock()
+        self._allow_internet_access = allow_internet_access
+        self._sandbox_timeout = sandbox_timeout
+        self._working_dir = absolute_path('working_dir', working_dir) or DEFAULT_WORKING_DIR
+        self._filesystem = NativeFilesystem(self, _OPERATION_TIMEOUT)
+        self._lock = anyio.Lock()
         self._create_task: asyncio.Task[None] | None = None
-        self._destroy_task: asyncio.Task[None] | None = None
-        self._active: dict[asyncio.Task[object], asyncio.Event] = {}
-        self._cwd: str | None = None
-        self._terminal = False
-        self._creation_uncertain = False
+        # Without a caller-supplied client, each top-level operation opens its own and closes it when
+        # done, so a backend dropped by a durable task or another event loop leaves no pool behind.
+        self._operation_clients: dict[asyncio.Task[object], RenderAsync] = {}
+        self._resolved_working_dir: str | None = None
+        # A sandbox this backend created still needs its `working_dir` made, even if readiness is retried.
+        self._working_dir_pending = False
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """Stable identity, recorded immediately after create and retained after deletion."""
         return self._ref
 
-    @property
-    def owned(self) -> bool:
-        """Whether this backend was configured to create its own environment."""
-        return self._owned
-
-    def _emit(self, event: str, *, status: str | None = None, exit_code: int | None = None) -> None:
-        if self._observer is not None:
-            try:
-                self._observer(RenderSandboxEvent(event, self._ref.id if self._ref else None, status, exit_code))
-            except Exception:
-                try:
-                    warnings.warn('Sandbox lifecycle observer raised an exception', RuntimeWarning, stacklevel=2)
-                except Exception:
-                    # Warning-as-error policies or warning handlers must not abort termination.
-                    pass
-
     @asynccontextmanager
-    async def _operation(self) -> AsyncGenerator[None]:
-        if self._terminal:
-            raise WorkspaceUnavailableError('This Render workspace has been destroyed')
+    async def _operation(self) -> AsyncGenerator[RenderAsync]:
+        if self._client is not None:
+            yield self._client
+            return
         task = asyncio.current_task()
         assert task is not None
-        # File operations call commands on this same task. Keep the outer call
-        # registered until its transfer and staging cleanup have both finished.
-        if task in self._active:
-            yield
+        # File operations run commands on the same task: they share the outer operation's client.
+        if (client := self._operation_clients.get(task)) is not None:
+            yield client
             return
-        finished = asyncio.Event()
-        self._active[task] = finished
+        client = _open_client()
+        self._operation_clients[task] = client
         try:
-            yield
+            yield client
         finally:
-            self._active.pop(task, None)
-            finished.set()
+            del self._operation_clients[task]
+            with anyio.CancelScope(shield=True):
+                await _close_client(client)
 
-    async def _create(self) -> None:
-        self._emit('creating')
+    async def _create(self, client: RenderAsync) -> None:
         try:
-            async with asyncio.timeout(self.config.operation_timeout):
-                sandbox = await self.client.experimental.sandboxes.create(
-                    timeout_seconds=self.config.lifetime_seconds,
-                    network_policy=self.config.network_policy,
-                    env=dict(self.config.env) if self.config.env is not None else None,
+            async with asyncio.timeout(_OPERATION_TIMEOUT):
+                sandbox = await client.experimental.sandboxes.create(
+                    timeout_seconds=self._sandbox_timeout,
+                    network_policy='allow-all' if self._allow_internet_access else 'deny-all',
+                    env=self._env or None,
                 )
-            self._ref = WorkspaceRef(provider='render', id=sandbox.id)
-            self._emit('created', status=sandbox.status)
         except RateLimitError:
+            # Nothing was created, so the next operation may try again.
+            self._create_task = None
             raise
         except ClientError as error:
-            # Direct API ClientError is a rejected 4xx response. Render also wraps
-            # some transport RequestErrors in ClientError with an explicit cause;
-            # those cannot prove that the provider created nothing.
-            self._creation_uncertain = error.__cause__ is not None
-            message = (
-                'Render sandbox creation outcome is unknown'
-                if self._creation_uncertain
-                else 'Render rejected sandbox creation'
-            )
-            raise WorkspaceUnavailableError(message) from error
-        except Exception:
-            # A lost create response does not prove the provider created nothing.
-            self._creation_uncertain = True
-            raise
+            # A rejected 4xx creates nothing. Render also wraps some transport errors in `ClientError` with a
+            # cause; those, like any other failure, cannot prove that, so the backend never creates again.
+            if error.__cause__ is not None:
+                raise WorkspaceUnavailableError('Render sandbox creation outcome is unknown') from error
+            self._create_task = None
+            raise WorkspaceUnavailableError('Render rejected sandbox creation') from error
+        self._ref = WorkspaceRef(provider='render', id=sandbox.id)
+        self._working_dir_pending = True
+        logger.info('Created Render sandbox %s', sandbox.id)
 
-    async def _await_create(self) -> None:
-        assert self._create_task is not None
-        await asyncio.shield(self._create_task)
-
-    async def _ensure_ready(self) -> str:
-        # The caller's _operation scope already rejects a destroyed workspace.
-        async with self._acquire_lock:
-            if self._cwd is not None:
-                return self._cwd
+    async def _ensure_ready(self, client: RenderAsync) -> str:
+        async with self._lock:
+            if self._resolved_working_dir is not None:
+                return self._resolved_working_dir
             if self._ref is None:
                 if self._create_task is None:
-                    self._create_task = asyncio.create_task(self._create())
-                # On cancellation, wait for the bounded create to record its ID before
-                # releasing this lock. Concurrent first users cannot create twice.
-                await finish_despite_cancellation(self._await_create())
+                    self._create_task = asyncio.create_task(self._create(client))
+                # Wait for the create to record its ref even if this caller is cancelled. The lock keeps
+                # concurrent first operations from creating twice, and this operation's client stays open.
+                await _wait_despite_cancellation(self._create_task)
             assert self._ref is not None
             try:
-                async with asyncio.timeout(self.config.readiness_timeout):
+                async with asyncio.timeout(_READINESS_TIMEOUT):
                     while True:
-                        sandbox = await self.client.experimental.sandboxes.from_id(self._ref.id)
-                        self._emit('status', status=sandbox.status)
+                        sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
                         if sandbox.status == 'running':
                             break
                         if sandbox.status in ('errored', 'terminated'):
                             raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}')
-                        await asyncio.sleep(0.25)
-                path = shlex.quote(self.config.working_dir)
-                prepare = f'mkdir -p -- {path} && ' if self._owned else ''
+                        await asyncio.sleep(_POLL_INTERVAL)
+                path = shlex.quote(self._working_dir)
+                prepare = f'mkdir -p -- {path} && ' if self._working_dir_pending else ''
                 result = await run_command(
-                    self.client,
+                    client,
                     self._ref.id,
-                    command_argv(f'{prepare}cd -- {path} && pwd -P'),
+                    command_argv(f'{prepare}cd -- {path} && pwd -P', shell=True),
                     working_dir='/',
-                    timeout=self.config.operation_timeout,
-                    max_output_bytes=self.config.max_output_bytes,
-                    stop_timeout=self.config.stop_timeout,
-                    pace=self._pace_transfer,
+                    timeout=_OPERATION_TIMEOUT,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    stop_timeout=_STOP_TIMEOUT,
                 )
-                cwd = result.stdout.rstrip('\n')
-                if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd or '\0' in cwd:
-                    raise WorkspaceUnavailableError('The sandbox working directory is unavailable')
-                self._cwd = posixpath.normpath(cwd)
-                self._emit('ready', status='running')
-                return self._cwd
             except RateLimitError:
                 raise
             except (ClientError, SandboxNotFoundError) as error:
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
             except TimeoutError as error:
                 raise WorkspaceUnavailableError('Render sandbox readiness exceeded its deadline') from error
+            cwd = result.stdout.rstrip('\n')
+            if result.exit_code != 0 or not cwd.startswith('/') or '\n' in cwd:
+                raise WorkspaceUnavailableError(f'working_dir {self._working_dir!r} is unavailable in the sandbox')
+            self._working_dir_pending = False
+            self._resolved_working_dir = posixpath.normpath(cwd)
+            return self._resolved_working_dir
 
     async def working_dir(self) -> str:
-        async with self._operation():
-            return await self._ensure_ready()
+        async with self._operation() as client:
+            return await self._ensure_ready(client)
 
     async def run(
         self,
@@ -323,35 +240,23 @@ class RenderSandboxBackend:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        """Run once, with stdin at EOF; timeout and cancellation stop only this command."""
-        if isinstance(command, str):
-            if not shell:
-                raise TypeError('A string command requires shell=True')
-        elif shell:
-            raise TypeError('An argv command requires shell=False')
-        # Validate and copy caller-owned arguments before the first network wait.
-        # Later edits to their list must not change the command we execute remotely.
-        argv = command_argv(command)
-        if timeout is not None:
-            timeout = _positive(timeout, 'timeout')
-        values = _environment(self.config.env)
-        values.update(_environment(env))
-        async with self._operation():
-            cwd = await self._ensure_ready()
+        """Run once with stdin at EOF; a timeout or cancellation stops only this command."""
+        argv = command_argv(command, shell)
+        check_timeout(timeout)
+        values = {**self._env, **_check_env(env)}
+        async with self._operation() as client:
+            cwd = await self._ensure_ready(client)
             assert self._ref is not None
-            # The runner starts its deadline only after this cancellable pacing wait.
-            # Its separate command-stop dispatch deliberately bypasses normal pacing.
             try:
-                result = await run_command(
-                    self.client,
+                return await run_command(
+                    client,
                     self._ref.id,
                     argv,
                     working_dir=cwd,
-                    env=values or None,
+                    env=values,
                     timeout=timeout,
-                    max_output_bytes=self.config.max_output_bytes,
-                    stop_timeout=self.config.stop_timeout,
-                    pace=self._pace_transfer,
+                    max_output_bytes=_MAX_OUTPUT_BYTES,
+                    stop_timeout=_STOP_TIMEOUT,
                 )
             except RateLimitError:
                 raise
@@ -360,10 +265,10 @@ class RenderSandboxBackend:
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError, asyncio.CancelledError):
                 raise
             except Exception as error:
-                # Read status after an uncertain stream; never replay a command.
+                # After an uncertain stream, report a dead sandbox as unavailable; never replay the command.
                 try:
-                    async with asyncio.timeout(self.config.operation_timeout):
-                        sandbox = await self.client.experimental.sandboxes.from_id(self._ref.id)
+                    async with asyncio.timeout(_OPERATION_TIMEOUT):
+                        sandbox = await client.experimental.sandboxes.from_id(self._ref.id)
                 except RateLimitError:
                     raise
                 except (ClientError, SandboxNotFoundError) as status_error:
@@ -371,19 +276,14 @@ class RenderSandboxBackend:
                 if sandbox.status != 'running':
                     raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}') from error
                 raise
-            self._emit('command_finished', exit_code=result.exit_code)
-            return result
-
-    async def _pace_transfer(self) -> None:
-        await self._pacer.wait(self.config.command_interval)
 
     async def read_bytes(self, path: str) -> bytes:
-        async with self._operation():
-            return await self._filesystem.read_bytes(path)
+        async with self._operation() as client:
+            return await self._filesystem.read_bytes(client, path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        async with self._operation():
-            await self._filesystem.write_bytes(path, data)
+        async with self._operation() as client:
+            await self._filesystem.write_bytes(client, path, data)
 
     async def stat(self, path: str) -> FileEntry:
         async with self._operation():
@@ -405,60 +305,16 @@ class RenderSandboxBackend:
         async with self._operation():
             return await self._filesystem.exists(path)
 
-    async def _destroy(self, caller: asyncio.Task[object] | None) -> None:
-        self._terminal = True
-        try:
-            async with asyncio.timeout(self.config.cleanup_timeout):
-                active = [(task, event) for task, event in self._active.items() if task is not caller]
-                for task, _ in active:
-                    task.cancel()
-                if active:
-                    # Drain only the workspace calls, not their caller tasks: a Pydantic
-                    # graph task may itself be waiting for this run hook to finish.
-                    await asyncio.gather(*(event.wait() for _, event in active))
-                if self._create_task is not None:
-                    try:
-                        await asyncio.shield(self._create_task)
-                    except Exception:
-                        pass
-                if self._ref is None:
-                    if self._creation_uncertain:
-                        raise RenderSandboxCleanupError(
-                            'Create outcome is unknown; no ID is available for cleanup. '
-                            f'The requested {self.config.lifetime_seconds}s lifetime remains the bound.'
-                        )
-                    return
-                self._emit('terminating')
-                try:
-                    await self.client.experimental.sandboxes.terminate(self._ref.id)
-                except SandboxNotFoundError:
-                    pass
-                self._emit('termination_acknowledged')
-                while True:
-                    try:
-                        sandbox = await self.client.experimental.sandboxes.from_id(self._ref.id)
-                    except SandboxNotFoundError:
-                        self._emit('terminated', status='not_found')
-                        return
-                    if sandbox.status == 'terminated':
-                        self._emit('terminated', status='terminated')
-                        return
-                    await asyncio.sleep(0.25)
-        except BaseException as error:
-            self._emit('cleanup_failed')
-            if isinstance(error, RenderSandboxCleanupError):
-                raise
-            raise RenderSandboxCleanupError('Render sandbox termination could not be confirmed') from error
 
-    async def _await_destroy(self) -> None:
-        assert self._destroy_task is not None
-        await asyncio.shield(self._destroy_task)
-
-    async def destroy(self) -> None:
-        """Explicitly terminate this environment, whether created here or attached.
-
-        The ref remains available for recovery if termination cannot be confirmed.
-        """
-        if self._destroy_task is None or (self._destroy_task.done() and self._destroy_task.exception()):
-            self._destroy_task = asyncio.create_task(self._destroy(asyncio.current_task()))
-        await finish_despite_cancellation(self._await_destroy())
+async def terminate_sandbox(client: RenderAsync | None, sandbox_id: str) -> None:
+    """Terminate a sandbox by ID; one that no longer exists is already gone."""
+    owned = client is None
+    client = client or _open_client()
+    try:
+        await client.experimental.sandboxes.terminate(sandbox_id)
+    except SandboxNotFoundError:
+        pass
+    finally:
+        if owned:
+            with anyio.CancelScope(shield=True):
+                await _close_client(client)

@@ -13,7 +13,7 @@ import binascii
 import json
 import shlex
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from importlib.resources import files
@@ -25,7 +25,6 @@ from render.experimental.sandbox import SandboxExecExit, SandboxExecOutput
 
 from pydantic_ai.workspaces import (
     CommandResult,
-    WorkspaceCommand,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceTimeoutError,
@@ -36,31 +35,15 @@ _MAX_FRAME_CHARS = 131_072
 # Linux limits each exec argument (including Render's bash -c argument). The raw
 # JSON payload avoids another base64 expansion of Workspace's file-write chunks.
 _MAX_LAUNCH_BYTES = 126_000
-
-
-def command_argv(command: WorkspaceCommand) -> list[str]:
-    """Validate and copy a command before the backend starts any remote work."""
-    if isinstance(command, str):
-        values = ['/bin/sh', '-c', command]
-    elif isinstance(command, Sequence) and not isinstance(command, (bytes, bytearray)):
-        elements: Sequence[object] = command
-        values: list[str] = []
-        for value in elements:
-            if not isinstance(value, str):
-                raise TypeError('command arguments must be strings')
-            values.append(value)
-        if not values:
-            raise ValueError('command argv cannot be empty')
-    else:
-        raise TypeError('command must be text or a sequence of arguments')
-    if any('\0' in value for value in values):
-        raise ValueError('command arguments cannot contain NUL')
-    return values
+# After the direct child exits its bytes are already in the pipes; a background child still writing to
+# an inherited pipe gets this long before the result returns, as core's local backend allows.
+_DRAIN_GRACE = 2.0
 
 
 def _launch(source: str, operation: str, config: Mapping[str, object]) -> str:
     payload = json.dumps(dict(config), separators=(',', ':'), ensure_ascii=True)
-    command = shlex.join(['python3', '-c', source, operation, payload])
+    # -I keeps a module in the working directory, such as a project's json.py, from shadowing the stdlib.
+    command = shlex.join(['python3', '-I', '-c', source, operation, payload])
     if len(command.encode()) > _MAX_LAUNCH_BYTES:
         raise ValueError('Command and environment exceed the remote exec argument limit')
     return command
@@ -216,7 +199,6 @@ async def run_command(
     timeout: float | None = None,
     max_output_bytes: int = 1_048_576,
     stop_timeout: float = 12.0,
-    pace: Callable[[], Awaitable[None]],
 ) -> CommandResult:
     """Run once, preserving the sandbox on timeout, cancellation or stream failure.
 
@@ -238,12 +220,11 @@ async def run_command(
         'env': dict(env or {}),
         'timeout': timeout,
         'limit': max_output_bytes,
+        'drain': _DRAIN_GRACE,
     }
     launch = _launch(source, 'run', config)
     stop = _launch(source, 'stop', {'claim': claim, 'nonce': nonce})
     capture = _Capture(nonce, max_output_bytes)
-    # Prepare the payload before reserving a dispatch slot; the deadline excludes queue time.
-    await pace()
     try:
         deadline = asyncio.timeout(timeout)
         try:

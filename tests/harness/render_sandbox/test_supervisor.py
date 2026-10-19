@@ -13,9 +13,10 @@ import subprocess
 import sys
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
+import anyio
 import pytest
 
 from ...conftest import try_import
@@ -49,23 +50,26 @@ class LocalExec:
     delay_next: bool = False
     delayed: str | None = None
     drain_before_stop: bool = False
+    inline_cwd: Path | None = None
 
     async def exec(self, sandbox_id: str, launch: str) -> AsyncIterator[SandboxExecEvent]:
         argv = shlex.split(launch)
-        config = json.loads(argv[4])
+        operation, config = argv[4], json.loads(argv[5])
         claim = Path(config['claim'])
         self.claims.add(claim)
-        if argv[3] == 'run':
-            self.stop_launches[claim] = shlex.join([*argv[:3], 'stop', argv[4]])
-        if argv[3] == 'run' and self.delay_next:
+        if operation == 'run':
+            self.stop_launches[claim] = shlex.join([*argv[:4], 'stop', argv[5]])
+        if operation == 'run' and self.delay_next:
             self.delay_next = False
             self.delayed = launch
             raise ConnectionError('start response lost before the server launches the command')
-        if argv[3] == 'stop' and self.drain_before_stop:
+        if operation == 'stop' and self.drain_before_stop:
             # A delayed provider stop lets the remote supervisor's own deadline fire.
             await asyncio.gather(*(process.wait() for process in self.processes))
         process = await asyncio.create_subprocess_exec(
-            *local_python_command(argv),
+            # Inline mode runs the launch exactly as Render receives it, in the given directory.
+            *([sys.executable, *argv[1:]] if self.inline_cwd else local_python_command(argv)),
+            cwd=self.inline_cwd,
             # Keep host credentials out; subprocess coverage adds only its bookkeeping.
             env={
                 'PATH': os.defpath,
@@ -78,7 +82,7 @@ class LocalExec:
         assert process.stdout is not None and process.stderr is not None
         while line := await process.stdout.readline():
             frame = json.loads(line)
-            if argv[3] == 'run' and frame['kind'] == 'output':
+            if operation == 'run' and frame['kind'] == 'output':
                 self.output.put_nowait(base64.b64decode(frame['data']))
             yield SandboxExecOutput('stdout', line.decode())
         stderr = await process.stderr.read()
@@ -166,7 +170,6 @@ async def test_supervisor_stops_the_real_foreground_process(
         if not task.done():  # pragma: no cover - independent cleanup after a regression
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await backend.destroy()
 
 
 async def test_supervisor_returns_after_direct_exit_with_inherited_pipe(
@@ -189,7 +192,6 @@ async def test_supervisor_returns_after_direct_exit_with_inherited_pipe(
                 os.kill(int(background_pid.read_text()), signal.SIGKILL)
             except ProcessLookupError:  # pragma: lax no cover - OS may already have reaped the background child
                 pass
-        await backend.destroy()
 
 
 async def test_stop_fence_prevents_a_delayed_launch(
@@ -199,18 +201,15 @@ async def test_stop_fence_prevents_a_delayed_launch(
     await backend.working_dir()
     sentinel = tmp_path / 'must-not-run'
     local_exec.delay_next = True
-    try:
-        with pytest.raises(ConnectionError, match='start response lost'):
-            await backend.run(['touch', str(sentinel)])
-        assert local_exec.delayed is not None
-        events = [event async for event in local_exec.exec('sb-1', local_exec.delayed)]
-        frames = [json.loads(event.data) for event in events if isinstance(event, SandboxExecOutput)]
-        assert [frame['kind'] for frame in frames] == ['fenced']
-        assert isinstance(events[-1], SandboxExecExit) and events[-1].exit_code == 0
-        assert not sentinel.exists()
-        assert (await backend.run(['printf', 'still alive'])).stdout == 'still alive'
-    finally:
-        await backend.destroy()
+    with pytest.raises(ConnectionError, match='start response lost'):
+        await backend.run(['touch', str(sentinel)])
+    assert local_exec.delayed is not None
+    events = [event async for event in local_exec.exec('sb-1', local_exec.delayed)]
+    frames = [json.loads(event.data) for event in events if isinstance(event, SandboxExecOutput)]
+    assert [frame['kind'] for frame in frames] == ['fenced']
+    assert isinstance(events[-1], SandboxExecExit) and events[-1].exit_code == 0
+    assert not sentinel.exists()
+    assert (await backend.run(['printf', 'still alive'])).stdout == 'still alive'
 
 
 @pytest.mark.parametrize('failure', ['missing', 'permission', 'format'])
@@ -222,32 +221,26 @@ async def test_supervisor_reports_executable_startup_failure(
         executable.write_text('not an executable format')
         executable.chmod(0o700 if failure == 'format' else 0o600)
     backend = workspace_harness.backend()
-    try:
-        if failure == 'format':
-            with pytest.raises(WorkspaceError, match='supervisor failed'):
-                await backend.run([str(executable)])
-        else:
-            result = await backend.run([str(executable)])
-            assert result.exit_code == (127 if failure == 'missing' else 126)
-        assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
-    finally:
-        await backend.destroy()
+    if failure == 'format':
+        with pytest.raises(WorkspaceError, match='supervisor failed'):
+            await backend.run([str(executable)])
+    else:
+        result = await backend.run([str(executable)])
+        assert result.exit_code == (127 if failure == 'missing' else 126)
+    assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
 async def test_supervisor_output_bound_preserves_captured_prefix(
-    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workspace_harness.config = replace(workspace_harness.config, max_output_bytes=512)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MAX_OUTPUT_BYTES', 512)
     backend = workspace_harness.backend()
-    try:
-        with pytest.raises(WorkspaceOutputLimitError) as caught:
-            await backend.run(['sh', '-c', 'printf "%05000d" 0'])
-        assert caught.value.limit == 512
-        assert caught.value.stdout == '0' * 512
-        await local_exec.wait()
-        assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
-    finally:
-        await backend.destroy()
+    with pytest.raises(WorkspaceOutputLimitError) as caught:
+        await backend.run(['sh', '-c', 'printf "%05000d" 0'])
+    assert caught.value.limit == 512
+    assert caught.value.stdout == '0' * 512
+    await local_exec.wait()
+    assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
 async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(
@@ -277,16 +270,79 @@ async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(
         if not pending.done():  # pragma: no cover - independent cleanup after a regression
             pending.cancel()
         await asyncio.gather(pending, return_exceptions=True)
-        await backend.destroy()
 
 
 async def test_supervisor_drains_closed_stdout_and_separate_stderr(
     workspace_harness: WorkspaceHarness, local_exec: LocalExec
 ) -> None:
     backend = workspace_harness.backend()
+    # Closing one pipe while the child is alive must not discard the other pipe.
+    result = await backend.run(['sh', '-c', 'exec 1>&-; sleep 0.1; printf stderr >&2'])
+    assert (result.exit_code, result.stdout, result.stderr) == (0, '', 'stderr')
+
+
+async def test_project_module_does_not_shadow_supervisor_imports(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path
+) -> None:
+    # A project's `json.py` in the exec's directory must not replace the stdlib module the supervisor imports.
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'json.py').write_text("raise SystemExit('project json.py was imported')\n")
+    local_exec.inline_cwd = project
+    backend = workspace_harness.backend()
+    assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
+
+
+async def test_background_writer_on_inherited_pipe_does_not_hold_up_exit(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # After the direct child exits, the supervisor drains for a bounded grace, not until a writer stops.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 0.05)
+    background_pid = tmp_path / 'writer.pid'
+    backend = workspace_harness.backend()
     try:
-        # Closing one pipe while the child is alive must not discard the other pipe.
-        result = await backend.run(['sh', '-c', 'exec 1>&-; sleep 0.1; printf stderr >&2'])
-        assert (result.exit_code, result.stdout, result.stderr) == (0, '', 'stderr')
+        result = await asyncio.wait_for(
+            backend.run(
+                [
+                    'sh',
+                    '-c',
+                    '(while :; do echo x; sleep 0.01; done) & echo $! > "$1"; exit 3',
+                    'sh',
+                    str(background_pid),
+                ]
+            ),
+            timeout=10,
+        )
+        assert result.exit_code == 3
     finally:
-        await backend.destroy()
+        if background_pid.exists():  # pragma: no branch - absent only if command startup regresses
+            with suppress(ProcessLookupError):
+                os.kill(int(background_pid.read_text()), signal.SIGKILL)
+
+
+async def test_output_limit_after_direct_exit_stops_the_background_writer(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MAX_OUTPUT_BYTES', 512)
+    writer_pid = tmp_path / 'writer.pid'
+    # The writer stays in the command's process group and starts flooding only once the direct shell is gone.
+    script = (
+        'sh -c \'while kill -0 "$1" 2>/dev/null; do :; done; while :; do printf "%01000d" 0; done\' sh $$ & '
+        'echo $! > "$1"; exit 0'
+    )
+    backend = workspace_harness.backend()
+    try:
+        with pytest.raises(WorkspaceOutputLimitError):
+            await asyncio.wait_for(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]), timeout=10)
+        pid = int(writer_pid.read_text())
+        with anyio.fail_after(10):
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                await anyio.sleep(0.05)
+    finally:
+        if writer_pid.exists():  # pragma: no branch - absent only if command startup regresses
+            with suppress(ProcessLookupError):
+                os.kill(int(writer_pid.read_text()), signal.SIGKILL)

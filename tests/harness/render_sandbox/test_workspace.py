@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-from typing import Literal
 
 import pytest
 
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError, ServerError
     from render.experimental.sandbox import Sandbox, SandboxNotFoundError
 
@@ -26,9 +23,9 @@ with try_import() as imports_successful:
         WorkspaceTimeoutError,
         WorkspaceUnavailableError,
     )
-    from pydantic_ai_harness.render_sandbox import RenderSandboxCleanupError, RenderSandboxConfig
+    from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
-    from .workspace_helpers import WorkspaceHarness
+    from .workspace_helpers import WorkspaceHarness, client_is_closed, use_host_credentials
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='render not installed'),
@@ -49,8 +46,6 @@ async def test_lazy_and_concurrent_first_use_share_one_sandbox(
     assert workspace_harness.created == ['sb-1']
     assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
     assert workspace_harness.terminated == []
-    await backend.destroy()
-    assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
 
 
 async def test_command_form_cwd_env_and_nonzero_result(workspace_harness: WorkspaceHarness) -> None:
@@ -58,7 +53,7 @@ async def test_command_form_cwd_env_and_nonzero_result(workspace_harness: Worksp
     for command, shell in [('true', False), (['true'], True)]:
         with pytest.raises(TypeError):
             await backend.run(command, shell=shell)
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         await backend.run([])
     assert workspace_harness.created == []
     literal = 'literal $() `quoted`; &&'
@@ -72,28 +67,31 @@ async def test_command_form_cwd_env_and_nonzero_result(workspace_harness: Worksp
     assert (await backend.run(['pwd', '-P'])).stdout.strip() == await backend.working_dir()
 
 
+async def test_configured_env_reaches_create_and_every_command(workspace_harness: WorkspaceHarness) -> None:
+    backend = workspace_harness.backend(env={'BASE': 'base', 'SHARED': 'configured'})
+    result = await backend.run('printf %s-%s "$BASE" "$SHARED"', shell=True, env={'SHARED': 'command'})
+    assert result.stdout == 'base-command'
+    assert workspace_harness.create_calls['sb-1'].env == {'BASE': 'base', 'SHARED': 'configured'}
+
+
 async def test_command_arguments_are_copied_before_sandbox_creation(workspace_harness: WorkspaceHarness) -> None:
     # Hold sandbox creation at the fake SDK boundary so another caller can edit
     # its command list while this operation is waiting for the remote environment.
     backend = workspace_harness.backend()
     command = ['printf', '%s', 'original']
     workspace_harness.create_gate = asyncio.Event()
-    try:
-        # The task group waits for the command on every exit. Opening the gate in
-        # finally also lets acquisition finish if the readiness assertion fails.
-        async with asyncio.TaskGroup() as tasks:
-            pending = tasks.create_task(backend.run(command))
-            try:
-                async with asyncio.timeout(10):
-                    await workspace_harness.create_started.wait()
-                command[-1] = 'changed'
-            finally:
-                workspace_harness.create_gate.set()
-        # The command must use the arguments supplied when the operation began.
-        assert pending.result().stdout == 'original'
-    finally:
-        # This test owns its backend, including when the regression assertion fails.
-        await backend.destroy()
+    # The task group waits for the command on every exit. Opening the gate in
+    # finally also lets acquisition finish if the readiness assertion fails.
+    async with asyncio.TaskGroup() as tasks:
+        pending = tasks.create_task(backend.run(command))
+        try:
+            async with asyncio.timeout(10):
+                await workspace_harness.create_started.wait()
+            command[-1] = 'changed'
+        finally:
+            workspace_harness.create_gate.set()
+    # The command must use the arguments supplied when the operation began.
+    assert pending.result().stdout == 'original'
 
 
 @pytest.mark.parametrize(
@@ -104,19 +102,40 @@ async def test_command_arguments_are_copied_before_sandbox_creation(workspace_ha
         (float('inf'), None),
         (float('nan'), None),
         (None, {'BAD=NAME': 'value'}),
+        (None, {'': 'value'}),
         (None, {'KEY': 'nul\0value'}),
     ],
 )
 async def test_invalid_command_settings_create_no_sandbox(
     workspace_harness: WorkspaceHarness, timeout: float | None, env: dict[str, str] | None
 ) -> None:
-    # Invalid deadlines and environment values must fail before any paid resource
-    # is created, even when command validation moves between internal helpers.
+    # Invalid deadlines and environment values must fail before any paid resource is created.
     backend = workspace_harness.backend()
     with pytest.raises(ValueError):
         await backend.run(['true'], timeout=timeout, env=env)
     assert backend.ref is None
     assert workspace_harness.created == []
+
+
+@pytest.mark.parametrize('env', [{1: 'value'}, {'name': 1}])
+async def test_non_string_command_env_creates_no_sandbox(
+    workspace_harness: WorkspaceHarness, env: dict[str, str]
+) -> None:
+    backend = workspace_harness.backend()
+    with pytest.raises(TypeError, match='env keys and values must be strings'):
+        await backend.run(['true'], env=env)
+    assert workspace_harness.created == []
+
+
+@pytest.mark.parametrize(
+    ('env', 'error'),
+    [({1: 'value'}, TypeError), ({'name': 1}, TypeError), ({'A=B': 'value'}, ValueError), ({'K': '\0'}, ValueError)],
+)
+def test_invalid_configured_env_is_rejected_at_construction(
+    workspace_harness: WorkspaceHarness, env: dict[str, str], error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        workspace_harness.backend(env=env)
 
 
 async def test_native_filesystem_handles_binary_large_files_and_errors(
@@ -132,30 +151,24 @@ async def test_native_filesystem_handles_binary_large_files_and_errors(
     with pytest.raises(FileNotFoundError):
         await workspace.read_bytes('missing')
     assert (await workspace.list_dir('nested'))[0].name == 'binary.dat'
+    assert (await workspace.stat('nested')).is_dir
+    await workspace.make_dir('made/deeper')
+    assert await workspace.exists('made/deeper')
     await workspace.remove('nested')
     assert not await workspace.exists('nested')
 
 
-async def test_attachment_never_recreates_and_explicit_destroy_retains_ref(
-    workspace_harness: WorkspaceHarness,
-) -> None:
+async def test_attachment_never_recreates(workspace_harness: WorkspaceHarness) -> None:
     owned = workspace_harness.backend()
     await owned.working_dir()
     assert owned.ref is not None
     attached = workspace_harness.backend(owned.ref)
-    assert not attached.owned
     assert await attached.working_dir() == await owned.working_dir()
-    assert len(workspace_harness.created) == 1
-    await attached.destroy()
     assert attached.ref == owned.ref
-    with pytest.raises(WorkspaceUnavailableError):
-        await workspace_harness.backend(owned.ref).working_dir()
     assert len(workspace_harness.created) == 1
 
 
-async def test_cancelled_create_keeps_ref_without_automatic_destruction(
-    workspace_harness: WorkspaceHarness,
-) -> None:
+async def test_cancelled_create_keeps_ref_without_destroying(workspace_harness: WorkspaceHarness) -> None:
     workspace_harness.create_gate = asyncio.Event()
     backend = workspace_harness.backend()
     task = asyncio.create_task(backend.working_dir())
@@ -167,20 +180,58 @@ async def test_cancelled_create_keeps_ref_without_automatic_destruction(
         await task
     assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
     assert workspace_harness.terminated == []
-    assert await backend.working_dir() == workspace_harness.config.working_dir
+    assert await backend.working_dir() == str(workspace_harness.root)
     assert len(workspace_harness.created) == 1
-    await backend.destroy()
 
 
 @pytest.mark.parametrize('status', ['errored', 'terminated'])
-async def test_readiness_failure_retains_owned_ref(workspace_harness: WorkspaceHarness, status: str) -> None:
+async def test_readiness_failure_retains_created_ref(workspace_harness: WorkspaceHarness, status: str) -> None:
     workspace_harness.create_status = status
     backend = workspace_harness.backend()
-    with pytest.raises(WorkspaceUnavailableError):
+    with pytest.raises(WorkspaceUnavailableError, match=status):
         await backend.working_dir()
-    assert backend.ref is not None
+    assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
     assert workspace_harness.terminated == []
-    await backend.destroy()
+
+
+async def test_readiness_retry_after_create_still_makes_working_dir(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = workspace_harness.client.experimental.sandboxes.from_id
+    failures = [ServerError('status unavailable')]
+
+    async def flaky(identifier: str) -> Sandbox:
+        if failures:
+            raise failures.pop()
+        return await original(identifier)
+
+    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', flaky)
+    working_dir = workspace_harness.root / 'project'
+    backend = workspace_harness.backend(working_dir=str(working_dir))
+    with pytest.raises(ServerError):
+        await backend.working_dir()
+    assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
+    assert not working_dir.exists()
+    assert await backend.working_dir() == str(working_dir)
+    assert working_dir.is_dir()
+    assert workspace_harness.created == ['sb-1']
+
+
+async def test_readiness_polls_until_running(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    statuses = ['creating', 'creating', 'running']
+    original = workspace_harness.client.experimental.sandboxes.from_id
+
+    async def warming(identifier: str) -> Sandbox:
+        sandbox = await original(identifier)
+        sandbox.status = statuses.pop(0)
+        return sandbox
+
+    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', warming)
+    backend = workspace_harness.backend()
+    assert await backend.working_dir() == str(workspace_harness.root)
+    assert statuses == []
 
 
 @pytest.mark.parametrize('error', [ClientError('authentication rejected'), SandboxNotFoundError('gone')])
@@ -212,65 +263,24 @@ async def test_command_limits_leave_backend_available(workspace_harness: Workspa
     assert workspace_harness.terminated == []
 
 
-async def test_destroy_interrupts_active_operation_without_waiting_for_its_caller(
-    workspace_harness: WorkspaceHarness,
+@pytest.mark.parametrize('error', [ClientError('auth'), RateLimitError('try later')])
+async def test_certain_create_failure_lets_a_later_operation_create(
+    workspace_harness: WorkspaceHarness, error: Exception
 ) -> None:
+    # A rejected or rate-limited create made nothing, so trying again cannot leave two sandboxes.
+    workspace_harness.create_error = error
     backend = workspace_harness.backend()
-    workspace_harness.block_commands = True
-    task = asyncio.create_task(backend.run(['blocked']))
-    await workspace_harness.command_started.wait()
-    await asyncio.wait_for(backend.destroy(), 1)
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert workspace_harness.terminated == ['sb-1']
-    with pytest.raises(WorkspaceUnavailableError):
-        await backend.run(['true'])
-
-
-async def test_cleanup_failure_is_explicit_and_can_be_retried(
-    workspace_harness: WorkspaceHarness,
-) -> None:
-    backend = workspace_harness.backend()
-    await backend.working_dir()
-    workspace_harness.terminate_error = ClientError('denied')
-    with pytest.raises(RenderSandboxCleanupError):
-        await backend.destroy()
-    assert backend.ref is not None
-    workspace_harness.terminate_error = None
-    await backend.destroy()
-    assert workspace_harness.terminated == ['sb-1']
-
-
-async def test_create_auth_failure_does_not_claim_unknown_resource(
-    workspace_harness: WorkspaceHarness,
-) -> None:
-    workspace_harness.create_error = ClientError('auth')
-    backend = workspace_harness.backend()
-    with pytest.raises(WorkspaceUnavailableError):
+    with pytest.raises((WorkspaceUnavailableError, RateLimitError)):
         await backend.working_dir()
     assert backend.ref is None
-    await backend.destroy()
-    assert workspace_harness.created == []
-
-
-def test_config_copies_env_and_redacts_values() -> None:
-    values = {'PRIVATE': 'secret-value'}
-    config = RenderSandboxConfig(env=values)
-    values['PRIVATE'] = 'changed'
-    assert config.env == {'PRIVATE': 'secret-value'}
-    assert 'secret-value' not in repr(config)
-    with pytest.raises(ValueError):
-        RenderSandboxConfig(max_output_bytes=0)
-    with pytest.raises(ValueError):
-        RenderSandboxConfig(working_dir='relative')
-    with pytest.raises(ValueError):
-        RenderSandboxConfig(stop_timeout=float('inf'))
+    workspace_harness.create_error = None
+    await backend.working_dir()
+    assert workspace_harness.created == ['sb-1']
+    assert backend.ref == WorkspaceRef(provider='render', id='sb-1')
 
 
 @pytest.mark.parametrize('error', [ServerError('response lost'), TimeoutError('no response')])
-async def test_ambiguous_create_is_not_replayed_and_cleanup_reports_uncertainty(
-    workspace_harness: WorkspaceHarness, error: Exception
-) -> None:
+async def test_ambiguous_create_is_not_replayed(workspace_harness: WorkspaceHarness, error: Exception) -> None:
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
     with pytest.raises(type(error)):
@@ -279,66 +289,43 @@ async def test_ambiguous_create_is_not_replayed_and_cleanup_reports_uncertainty(
     with pytest.raises(type(error)):
         await backend.working_dir()
     assert workspace_harness.created == []
-    with pytest.raises(RenderSandboxCleanupError, match='outcome is unknown'):
-        await backend.destroy()
 
 
-async def test_chained_client_create_error_is_conservatively_uncertain(
-    workspace_harness: WorkspaceHarness,
-) -> None:
+async def test_chained_client_create_error_is_reported_as_uncertain(workspace_harness: WorkspaceHarness) -> None:
     error = ClientError('request failed')
     error.__cause__ = OSError('transport failure')
     workspace_harness.create_error = error
     backend = workspace_harness.backend()
     with pytest.raises(WorkspaceUnavailableError, match='outcome is unknown'):
         await backend.working_dir()
-    with pytest.raises(RenderSandboxCleanupError, match='outcome is unknown'):
-        await backend.destroy()
+    workspace_harness.create_error = None
+    # The create may have succeeded, so the backend never creates again.
+    with pytest.raises(WorkspaceUnavailableError, match='outcome is unknown'):
+        await backend.working_dir()
+    assert workspace_harness.created == []
 
 
-async def test_interrupted_stream_during_termination_is_unavailable(
-    workspace_harness: WorkspaceHarness,
-) -> None:
+async def test_interrupted_stream_on_a_stopped_sandbox_is_unavailable(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
     await backend.working_dir()
-    assert backend.ref is not None
-    workspace_harness.command_error = RuntimeError('stream lost')
 
     # Simulate status changing after exec starts, before the backend audits it.
     async def fail(*args: object, **kwargs: object) -> CommandResult:
-        assert backend.ref is not None
-        workspace_harness.sandboxes[backend.ref.id].status = 'terminating'
+        workspace_harness.sandboxes['sb-1'].status = 'terminating'
         raise RuntimeError('stream lost')
 
-    original = workspace_harness.execute
     workspace_harness.execute = fail
-    try:
-        with pytest.raises(WorkspaceUnavailableError, match='terminating'):
-            await backend.run(['true'])
-    finally:
-        workspace_harness.execute = original
+    with pytest.raises(WorkspaceUnavailableError, match='terminating'):
+        await backend.run(['true'])
     assert workspace_harness.created == ['sb-1']
 
 
-async def test_repeated_native_cancellation_waits_for_explicit_cleanup(
-    workspace_harness: WorkspaceHarness,
-) -> None:
+async def test_interrupted_stream_on_a_running_sandbox_propagates(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
     await backend.working_dir()
-    workspace_harness.terminate_gate = asyncio.Event()
-    task = asyncio.create_task(backend.destroy())
-    await workspace_harness.terminate_started.wait()
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    await asyncio.sleep(0)
-    assert not task.done()
-    workspace_harness.terminate_gate.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert workspace_harness.terminated == ['sb-1']
-    await backend.destroy()
-    assert workspace_harness.terminated == ['sb-1']
+    workspace_harness.command_error = RuntimeError('stream lost')
+    with pytest.raises(RuntimeError, match='stream lost'):
+        await backend.run(['true'])
 
 
 @pytest.mark.parametrize('phase', ['create', 'readiness', 'run', 'status_audit'])
@@ -366,130 +353,6 @@ async def test_rate_limit_is_propagated_unchanged_without_replay(
     assert workspace_harness.commands.count(['printf', 'never replay']) <= 1
 
 
-async def test_normal_dispatch_is_paced_across_backends_sharing_client(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    interval = 0.03
-    loop = asyncio.get_running_loop()
-    now = loop.time()
-    started = now
-    sleeps: list[float] = []
-    real_sleep = asyncio.sleep
-
-    async def advance_clock(delay: float) -> None:
-        # Advance only when pacing requests a wait. Yield so concurrent callers still
-        # exercise the shared lock, without measuring time spent decoding fake commands.
-        nonlocal now
-        sleeps.append(delay)
-        now += delay
-        await real_sleep(0)
-
-    monkeypatch.setattr(loop, 'time', lambda: now)
-    monkeypatch.setattr(asyncio, 'sleep', advance_clock)
-    workspace_harness.config = replace(workspace_harness.config, command_interval=interval)
-    first = workspace_harness.backend()
-    second = workspace_harness.backend()
-    dispatches: list[float] = []
-    command_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def record(
-        client: RenderAsync,
-        sandbox_id: str,
-        command: WorkspaceCommand,
-        **kwargs: object,
-    ) -> CommandResult:
-        dispatches.append(asyncio.get_running_loop().time())
-        if kwargs['working_dir'] == '/':
-            return CommandResult(exit_code=0, stdout=workspace_harness.config.working_dir + '\n', stderr='')
-        if command == ['long']:
-            command_started.set()
-            await release.wait()
-        return CommandResult(exit_code=0, stdout='done', stderr='')
-
-    monkeypatch.setattr(workspace_harness, 'execute', record)
-    await asyncio.gather(first.working_dir(), second.working_dir())
-    long = asyncio.create_task(first.run(['long']))
-    try:
-        await command_started.wait()
-        # Dispatch pacing must not lock the long-running command's entire lifetime.
-        assert (await second.run(['short'])).stdout == 'done'
-        assert not long.done()
-    finally:
-        # Release the pending command even if a regression fails an assertion.
-        release.set()
-        await long
-    assert [dispatch - started for dispatch in dispatches] == pytest.approx([0, interval, 2 * interval, 3 * interval])
-    assert sleeps == pytest.approx([interval] * 3)
-
-
-async def test_pacing_wait_does_not_spend_command_deadline(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    interval = 0.05
-    workspace_harness.config = replace(workspace_harness.config, command_interval=interval)
-    backend = workspace_harness.backend()
-    await backend.working_dir()
-    timeouts: list[object] = []
-
-    async def fast(*args: object, **kwargs: object) -> CommandResult:
-        timeouts.append(kwargs['timeout'])
-        return CommandResult(exit_code=0, stdout='done', stderr='')
-
-    monkeypatch.setattr(workspace_harness, 'execute', fast)
-    # Establish the preceding start with the immediate fake, independent of how
-    # long the real local setup command took on this host.
-    await backend.run(['establish dispatch'])
-    timeouts.clear()
-    started = asyncio.get_running_loop().time()
-    assert (await backend.run(['quick'], timeout=0.001)).stdout == 'done'
-    assert asyncio.get_running_loop().time() - started >= interval - 0.01
-    assert timeouts == [0.001]
-
-
-async def test_cancellation_in_dispatch_queue_sends_no_command_and_cleanup_bypasses_queue(
-    workspace_harness: WorkspaceHarness,
-) -> None:
-    workspace_harness.config = replace(workspace_harness.config, command_interval=10)
-    backend = workspace_harness.backend()
-    await backend.working_dir()
-    dispatched = len(workspace_harness.commands)
-    task = asyncio.create_task(backend.run(['must not start']))
-    await asyncio.sleep(0)
-    assert not task.done()
-    # destroy() cancels a queued caller promptly; no slot or remote command is consumed.
-    await asyncio.wait_for(backend.destroy(), 0.5)
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert len(workspace_harness.commands) == dispatched
-    assert workspace_harness.terminated == ['sb-1']
-
-
-@pytest.mark.parametrize('interval', [-1, float('inf'), float('nan'), True])
-def test_invalid_command_interval_is_rejected(interval: float) -> None:
-    with pytest.raises(ValueError, match='command_interval'):
-        RenderSandboxConfig(command_interval=interval)
-
-
-@pytest.mark.parametrize('env', [{1: 'value'}, {'name': 1}])
-def test_environment_types_are_validated_before_resource_creation(env: dict[str, str]) -> None:
-    # Python callers can bypass annotations; reject invalid variable names and values.
-    with pytest.raises(ValueError, match='env must map strings to strings'):
-        RenderSandboxConfig(env=env)
-
-
-@pytest.mark.parametrize('lifetime', [0, 86401, True, 1.5])
-def test_invalid_lifetime_is_rejected(lifetime: int) -> None:
-    with pytest.raises(ValueError, match='lifetime_seconds'):
-        RenderSandboxConfig(lifetime_seconds=lifetime)
-
-
-@pytest.mark.parametrize('limit', [0, -1, True, 1.5])
-def test_invalid_output_limit_is_rejected(limit: int) -> None:
-    with pytest.raises(ValueError, match='max_output_bytes'):
-        RenderSandboxConfig(max_output_bytes=limit)
-
-
 @pytest.mark.parametrize(
     ('command', 'error'),
     [([1], TypeError), (b'not argv', TypeError), (['printf', '\0'], ValueError)],
@@ -503,21 +366,14 @@ async def test_invalid_command_shape_is_rejected_before_creation(
     assert workspace_harness.created == []
 
 
-@pytest.mark.parametrize('ref', [WorkspaceRef(provider='other', id='sb-1'), WorkspaceRef(provider='render', id='')])
-def test_backend_rejects_invalid_attachment_identity(workspace_harness: WorkspaceHarness, ref: WorkspaceRef) -> None:
-    with pytest.raises(ValueError, match='identify a Render sandbox'):
-        workspace_harness.backend(ref)
-    assert workspace_harness.created == []
+def test_backend_rejects_a_foreign_ref(workspace_harness: WorkspaceHarness) -> None:
+    with pytest.raises(ValueError, match="expected 'render'"):
+        workspace_harness.backend(WorkspaceRef(provider='other', id='sb-1'))
 
 
-def test_backend_default_client_uses_host_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
-
-    # Client construction reads credentials but does not contact Render or create a sandbox.
-    monkeypatch.setenv('RENDER_API_KEY', 'test-only')
-    backend = RenderSandboxBackend()
-    assert backend.ref is None
-    assert isinstance(backend.client, RenderAsync)
+def test_backend_rejects_a_relative_working_dir() -> None:
+    with pytest.raises(ValueError, match='working_dir'):
+        RenderSandboxBackend(working_dir='relative')
 
 
 async def test_cancelled_creation_preserves_provider_failure_as_cause(
@@ -549,10 +405,43 @@ async def test_missing_attachment_does_not_create_replacement(workspace_harness:
     assert backend.ref == WorkspaceRef(provider='render', id='missing')
 
 
-@pytest.mark.parametrize('policy', ['invalid', ''])
-def test_invalid_network_policy_is_rejected(policy: Literal['allow-all', 'deny-all']) -> None:
-    with pytest.raises(ValueError, match='network_policy'):
-        RenderSandboxConfig(network_policy=policy)
+async def test_attached_sandbox_without_working_dir_is_unavailable(workspace_harness: WorkspaceHarness) -> None:
+    owned = workspace_harness.backend()
+    await owned.working_dir()
+    assert owned.ref is not None
+    # An attached sandbox is not prepared: its working directory must already exist.
+    attached = RenderSandboxBackend(
+        client=workspace_harness.client, ref=owned.ref, working_dir=str(workspace_harness.root / 'absent')
+    )
+    with pytest.raises(WorkspaceUnavailableError, match='is unavailable in the sandbox'):
+        await attached.working_dir()
+
+
+async def test_each_operation_opens_and_closes_its_own_client(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_host_credentials(workspace_harness, monkeypatch)
+    backend = RenderSandboxBackend(working_dir=str(workspace_harness.root))
+    path = str(workspace_harness.root / 'data.txt')
+    await backend.write_bytes(path, b'contents')
+    # The write's readiness check and helper commands ran on that one operation's client.
+    assert len(workspace_harness.opened_clients) == 1
+    assert await backend.read_bytes(path) == b'contents'
+    assert len(workspace_harness.opened_clients) == 2
+    assert all(client_is_closed(client) for client in workspace_harness.opened_clients)
+
+
+@pytest.mark.parametrize('missing', ['RENDER_API_KEY', 'RENDER_WORKSPACE_ID'])
+async def test_missing_credentials_fail_on_first_use(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.setenv('RENDER_API_KEY', 'test-only')
+    monkeypatch.setenv('RENDER_WORKSPACE_ID', 'tea-test')
+    monkeypatch.delenv(missing)
+    backend = RenderSandboxBackend()
+    with pytest.raises(WorkspaceUnavailableError, match='RENDER_API_KEY and RENDER_WORKSPACE_ID'):
+        await backend.working_dir()
+    assert workspace_harness.created == []
 
 
 async def test_local_command_cancellation_reaps_its_process(
@@ -595,13 +484,21 @@ async def test_local_command_cancellation_reaps_its_process(
             if process.returncode is None:  # pragma: no cover - independent regression cleanup
                 process.kill()
                 await process.wait()
-        await backend.destroy()
 
 
 async def test_ordinary_inline_python_command_keeps_its_arguments(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend()
-    try:
-        assert (await backend.run(['python3', '-c', 'print("ordinary")'])).stdout == 'ordinary\n'
-        assert workspace_harness.commands[-1] == ['python3', '-c', 'print("ordinary")']
-    finally:
-        await backend.destroy()
+    assert (await backend.run(['python3', '-c', 'print("ordinary")'])).stdout == 'ordinary\n'
+    assert workspace_harness.commands[-1] == ['python3', '-c', 'print("ordinary")']
+
+
+async def test_project_module_does_not_shadow_file_helper_imports(workspace_harness: WorkspaceHarness) -> None:
+    # The helper runs inline in the agent's working directory; a project's own `json.py`
+    # there must not replace the stdlib module the helper imports.
+    workspace_harness.inline_helpers = True
+    (workspace_harness.root / 'json.py').write_text("raise SystemExit('project json.py was imported')\n")
+    (workspace_harness.root / 'data.txt').write_text('contents')
+    workspace = Workspace(workspace_harness.backend())
+    assert await workspace.read_text('data.txt') == 'contents'
+    await workspace.write_text('out.txt', 'written')
+    assert (workspace_harness.root / 'out.txt').read_text() == 'written'

@@ -1,24 +1,16 @@
-"""Render sandbox workspace provider for standard Harness tools.
+"""Render sandbox capability: runs an agent's commands and file edits in a Render sandbox.
 
-External assumptions verified 2026-10-09 against Render SDK 1.2.0 and
-https://render.com/docs/sandboxes: asynchronous exec streams remain running after
-client disconnect, and copy_to/copy_from transfer file contents. The remote image
-provides Python 3 on Linux. Recheck these contracts with the live workspace suite
-when upgrading the experimental SDK API.
+`RenderSandbox` is the supported entry point; build an agent with it and add tools
+that use the workspace, such as `Coder`.
+`RenderSandboxBackend` is the Render implementation of Pydantic AI's workspace backend protocol,
+public for applications that want to create or attach to a sandbox themselves and pass it to
+a run as `workspace=`.
 """
 
-try:
-    from ._backend import RenderSandboxBackend, RenderSandboxConfig
-except ImportError as exc:
-    raise ImportError('Install `pydantic-ai-harness[render-sandbox]` to use RenderSandbox.') from exc
-
-from ._capability import RenderSandbox
-from ._types import RenderSandboxCleanupError, RenderSandboxEvent
+from pydantic_ai_harness.render_sandbox._backend import RenderSandboxBackend
+from pydantic_ai_harness.render_sandbox._capability import RenderSandbox
 
 __all__ = [
     'RenderSandbox',
     'RenderSandboxBackend',
-    'RenderSandboxConfig',
-    'RenderSandboxCleanupError',
-    'RenderSandboxEvent',
 ]

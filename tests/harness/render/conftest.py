@@ -6,7 +6,6 @@ import json
 import os
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Concatenate, ParamSpec, Protocol, TypeAlias, TypeGuard, TypeVar, overload
@@ -145,21 +144,6 @@ class RecordingTaskContext(TaskContext):
         if inspect.isawaitable(result):
             return json_round_trip(await result)
         return json_round_trip(result)
-
-
-class WorkspaceTaskContext(RecordingTaskContext):
-    """Expose whether the shared provider is being reached from a child task."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.in_child_task = ContextVar('render_workspace_child_task', default=False)
-
-    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        token = self.in_child_task.set(True)
-        try:
-            return await super().run(task, *args, **kwargs)
-        finally:
-            self.in_child_task.reset(token)
 
 
 def json_round_trip(value: R) -> R:
