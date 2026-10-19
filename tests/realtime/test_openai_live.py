@@ -3270,8 +3270,13 @@ async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: O
             messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
         ) as connection:
             assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
-            with pytest.raises(websockets.ConnectionClosedError):
-                await _first_events(connection, 1)
+            assert [event async for event in connection] == snapshot(
+                [
+                    RealtimeSessionErrorEvent(
+                        message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+                    )
+                ]
+            )
 
 
 async def test_a_session_with_no_history_reconnects_to_an_unseeded_session(model: OpenAILiveModel) -> None:
@@ -3495,12 +3500,16 @@ async def test_a_drop_while_continuing_a_delegation_reconnects() -> None:
     assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
+async def test_a_drop_while_continuing_without_a_policy_ends_the_session() -> None:
     ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
     connection = OpenAILiveConnection(ws)  # pyright: ignore[reportArgumentType]
     connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(websockets.ConnectionClosedError):
-        await _first_events(connection, 2)
+    events = await _first_events(connection, 2)
+    assert events[-1] == snapshot(
+        RealtimeSessionErrorEvent(
+            message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+        )
+    )
 
 
 async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:
