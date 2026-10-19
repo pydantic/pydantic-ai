@@ -21,6 +21,7 @@ from pydantic_core import PydanticSerializationError, to_json
 from pydantic_graph._utils import get_traceparent
 
 from ._genai_prices import best_effort_price
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
 if TYPE_CHECKING:
     from typing import Self
@@ -639,9 +640,11 @@ class _FinishModelRequestSpan(Protocol):
 def _prepare_model_request_span_context(
     settings: InstrumentationSettings, request_context: ModelRequestContext
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
-    prepared_settings, prepared_parameters = request_context.model.prepare_request(
-        request_context.model_settings, request_context.model_request_parameters
-    )
+    # The model warns about ignored settings when it prepares the request to send it.
+    with suppress_unsupported_setting_warnings():
+        prepared_settings, prepared_parameters = request_context.model.prepare_request(
+            request_context.model_settings, request_context.model_request_parameters
+        )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
     json_schema_properties: dict[str, dict[str, str]] = {}
