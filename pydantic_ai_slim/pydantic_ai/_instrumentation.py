@@ -221,8 +221,6 @@ def model_request_parameters_attributes(
         return {}
     if not include_content:
         serialized = _redact_model_request_parameters(serialized)
-        if serialized is None:
-            return {}
     return {'model_request_parameters': to_json(serialized).decode()}
 
 
@@ -262,8 +260,8 @@ def request_telemetry_sensitive_ids(parameters: ModelRequestParameters) -> set[s
     }
 
 
-def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
-    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+def _redact_model_request_parameters(parameters: dict[str, object]) -> dict[str, object]:
+    """Drop the prompt text the user wrote from the reviewed request parameters.
 
     Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
     the prompted-output template. Instruction parts keep their origin and ids. Tool and output
@@ -271,12 +269,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
 
     The telemetry serializer withholds the whole attribute when it cannot serialize a field.
     """
-    if not isinstance(serialized_parameters, dict):
-        return None
-    parameters = cast('dict[str, Any]', serialized_parameters)
     parts = parameters.get('instruction_parts')
     if isinstance(parts, list):
-        # Each part is an `InstructionPart`, inferred as its fields, so a mapping with `content`.
+        # The request projection validates each instruction part before applying the content policy.
         for part in cast('list[dict[str, Any]]', parts):
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:

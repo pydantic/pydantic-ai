@@ -4074,6 +4074,7 @@ async def test_request_params_preserve_telemetry_sensitive_ids() -> None:
 @pytest.mark.parametrize('legacy_payload', [True, False])
 async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool) -> None:
     identity = 'mcp.example.test-SENTINEL-path-token'
+    native_identity = 'mcp.example.test-SENTINEL-native-token'
     observed_ids: list[set[str]] = []
 
     def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4083,7 +4084,9 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
         serialized = attributes['model_request_parameters']
         assert isinstance(serialized, str)
         assert identity not in serialized
+        assert native_identity not in serialized
         assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+        assert json.loads(serialized)['function_tools'][1]['with_native'] == 'mcp_server:[REDACTED]'
         return ModelResponse(parts=[TextPart('ok')])
 
     model = FunctionModel(respond)
@@ -4098,10 +4101,15 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
         messages=[ModelRequest.user_text_prompt('hello')],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
-            function_tools=[ToolDefinition(name='ping', capability_id=identity)],
-            telemetry_sensitive_ids={identity},
+            function_tools=[
+                ToolDefinition(name='ping', capability_id=identity),
+                ToolDefinition(
+                    name='ordinary', unless_native='web_search', with_native=f'mcp_server:{native_identity}'
+                ),
+            ],
+            telemetry_sensitive_ids={identity, native_identity},
         ),
-        telemetry_sensitive_ids={identity},
+        telemetry_sensitive_ids={identity, native_identity},
         serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
     )
     wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
@@ -4110,7 +4118,7 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
     decoded = TypeAdapter(_RequestParams).validate_python(wire)
     await ActivityEnvironment().run(temporal_model.request_activity, decoded, None)
 
-    assert observed_ids == [{identity}]
+    assert observed_ids == [{identity, native_identity}]
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:

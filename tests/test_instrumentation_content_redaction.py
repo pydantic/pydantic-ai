@@ -20,12 +20,21 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Annotated, Literal
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, PlainSerializer, TypeAdapter
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+    _instrumentation,
+)
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     include_content_ctx,
@@ -173,14 +182,70 @@ def test_new_request_parameter_fields_are_withheld_from_telemetry(monkeypatch: p
     assert 'SENTINEL-future-parameters' in str(adapter.dump_python(parameters, mode='json'))
     assert 'SENTINEL-future-tool' in str(adapter.dump_python(parameters, mode='json'))
 
-    from pydantic_ai import _instrumentation
-
     monkeypatch.setattr(_instrumentation, '_model_request_parameters_adapter', lambda: adapter)
     serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
     assert isinstance(serialized, str)
     assert 'SENTINEL-future-parameters' not in serialized
     assert 'SENTINEL-future-tool' not in serialized
     assert '"name":"lookup"' in serialized
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize(
+    ('field_name', 'value'),
+    [
+        pytest.param(None, [], id='root'),
+        pytest.param('function_tools', None, id='function-tools-collection'),
+        pytest.param('function_tools', [None], id='function-tool-entry'),
+        pytest.param('output_tools', None, id='output-tools-collection'),
+        pytest.param('output_tools', [None], id='output-tool-entry'),
+        pytest.param('native_tools', None, id='native-tools-collection'),
+        pytest.param('native_tools', [], id='native-tools-count'),
+        pytest.param('native_tools', [None], id='native-tool-entry'),
+        pytest.param('native_tools', [{'headers': 'SENTINEL-invalid'}], id='native-tool-headers'),
+        pytest.param('output_object', 'SENTINEL-invalid', id='output-object'),
+        pytest.param('instruction_parts', [None], id='instruction-entry'),
+        pytest.param('instruction_parts', 'SENTINEL-invalid', id='instruction-collection'),
+    ],
+)
+def test_unexpected_request_serialization_is_withheld(
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str | None,
+    value: JsonValue,
+    include_content: bool,
+) -> None:
+    """Custom serializers must not bypass the reviewed shape with arbitrary JSON.
+
+    A provider cassette cannot check this boundary: the projection is only used for telemetry.
+    """
+    parameters = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://mcp.example.test')])
+    serialized: JsonValue
+    if field_name is None:
+        serialized = value
+    else:
+        fields: dict[str, JsonValue] = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
+        fields[field_name] = value
+        serialized = fields
+    adapter = TypeAdapter[ModelRequestParameters](
+        Annotated[ModelRequestParameters, PlainSerializer(lambda _parameters: serialized)]
+    )
+    monkeypatch.setattr(_instrumentation, '_model_request_parameters_adapter', lambda: adapter)
+
+    assert model_request_parameters_attributes(parameters, include_content=include_content) == {}
+
+
+@pytest.mark.parametrize('kind', ['future_tool', 'web_search'])
+def test_unreviewed_native_tool_kinds_are_withheld(kind: str) -> None:
+    """Unknown kinds and mismatched kind/class pairs cannot opt into a reviewed projection."""
+    tool = MCPServerTool(id='docs', url='https://mcp.example.test', kind=kind)
+    parameters = ModelRequestParameters(native_tools=[tool])
+
+    with pytest.warns(UserWarning, match='Pydantic serializer warnings'):
+        serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'] == []
+    assert tool.kind == kind
 
 
 @pytest.mark.parametrize('include_content', [True, False])
