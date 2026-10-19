@@ -6127,7 +6127,7 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
     ]
     ws = FakeWebSocket(frames)
-    conn = OpenAIRealtimeConnection(ws, prune_tool_items={'keep_me'})  # type: ignore[arg-type]
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items=True, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
     await collect_codec_events(conn)
     # Content the tool returned besides its output follows it as a user message, which goes with the call too.
     await conn.send(ToolResult(tool_call_id='c1', output='Taken.', content=['A photo of the table.']))
@@ -6146,9 +6146,9 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
         {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
     ]
-    # With the setting off, nothing is deleted.
+    # With pruning off, nothing is deleted: kept tools alone don't turn it on.
     off_ws = FakeWebSocket(frames)
-    off = OpenAIRealtimeConnection(off_ws)  # type: ignore[arg-type]
+    off = OpenAIRealtimeConnection(off_ws, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
     await collect_codec_events(off)
     assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
     assert not [frame for frame in off_ws.sent if 'item.delete' in frame]

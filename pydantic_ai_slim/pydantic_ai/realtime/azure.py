@@ -315,8 +315,8 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     `input_transcription_model`, `output_modality`, `max_tokens`, `parallel_tool_calls`, `tool_choice`,
     and tools, plus the `azure_voice_live_*` settings.
 
-    The remaining inherited fields — `openai_output_speed`, `openai_truncation` and `openai_prune_tool_items` — are
-    **silently ignored** under Voice Live; they still apply on the GA path.
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, `openai_prune_tool_items` and
+    `openai_keep_tool_items` — are **silently ignored** under Voice Live; they still apply on the GA path.
     Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
     `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """

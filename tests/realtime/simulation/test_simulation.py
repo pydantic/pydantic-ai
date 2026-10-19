@@ -169,6 +169,22 @@ def test_pruned_tool_round_leaves_the_server_conversation_and_stays_in_history()
     run_clean(OpenAISimulation(openai=OpenAIOptions(prune_tool_items=True)), scenario)
 
 
+def test_kept_tool_round_stays_in_the_server_conversation() -> None:
+    """A tool named in `openai_keep_tool_items` keeps its round in the server conversation while pruning."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.settle()  # (the server answers the result)
+        assert not sim.truth.pruned, 'the kept round stays'
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(prune_tool_items=True, keep_tool_items=frozenset({'lookup'}))), scenario
+    )
+
+
 @known('SIM-10')
 def test_known_late_cancel_drops_a_finished_reply() -> None:
     """The reply finished on the server before the cancel reached it, but the client hadn't read it yet."""

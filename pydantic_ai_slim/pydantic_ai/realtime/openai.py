@@ -254,17 +254,22 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
     """
-    openai_prune_tool_items: bool | AbstractSet[str]
+    openai_prune_tool_items: bool
     """Whether to delete a tool round's items from the server conversation once the model is done with them.
 
     The OpenAI Realtime API bills every response for the whole conversation it keeps, so a tool-heavy agent pays
     for every earlier `function_call` and `function_call_output` item again on each later response. With this set,
     once a response completes without calling a tool, the session deletes the items of the calls the model has
     answered (each call with its output and any content the tool returned besides it, never one without the other),
-    so later responses no longer read them.
-    `True` prunes every tool's items; a set of tool names prunes all but those tools', whose results the model may
-    need again. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps everything, and a
-    reconnect's replay leaves the pruned items out. Off by default.
+    so later responses no longer read them. To keep some tools' items, name them in `openai_keep_tool_items`.
+    [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps everything, and a reconnect's replay
+    leaves the pruned items out. Off by default.
+    """
+    openai_keep_tool_items: AbstractSet[str]
+    """The tools whose items `openai_prune_tool_items` leaves in the server conversation, for results the model may
+    need to refer back to.
+
+    Only applies with `openai_prune_tool_items` set to `True`; without it, nothing is pruned and this is ignored.
     """
     openai_truncation: RealtimeTruncationParam
     """How the session truncates conversation context once it exceeds the model's window.
@@ -474,11 +479,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
         audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
-        prune_tool_items: bool | AbstractSet[str] = False,
+        prune_tool_items: bool = False,
+        keep_tool_items: AbstractSet[str] = frozenset(),
     ) -> None:
         self._ws = ws
-        # See `OpenAIRealtimeModelSettings.openai_prune_tool_items`.
+        # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
         self._prune_tool_items = prune_tool_items
+        self._keep_tool_items = keep_tool_items
         # The items of each tool call in the server conversation, by call id, while pruning (see `_track_tool_item`).
         self._tool_items: dict[str, _ToolItems] = {}
         self._interrupts_response_on_speech = interrupts_response_on_speech
@@ -709,12 +716,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
 
     @property
     def _prunes_tool_calls(self) -> bool:
-        return bool(self._prune_tool_items)
-
-    @property
-    def _kept_tools(self) -> AbstractSet[str]:
-        """The tools whose items `openai_prune_tool_items` keeps."""
-        return self._prune_tool_items if isinstance(self._prune_tool_items, AbstractSet) else frozenset()
+        return self._prune_tool_items
 
     def _track_tool_item(self, data: dict[str, Any]) -> None:
         """Remember the id of a tool call's item, or its output's, as it joins the server conversation, to prune it."""
@@ -728,7 +730,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if item.call_id is None or item.id is None:
             return
         if item.type == 'function_call':
-            if item.name not in self._kept_tools:
+            if item.name not in self._keep_tool_items:
                 self._tool_items[item.call_id] = _ToolItems(call=item.id)
         elif item.type == 'function_call_output' and (items := self._tool_items.get(item.call_id)) is not None:
             items.output = item.id
@@ -1654,6 +1656,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name_getter=lambda: server_model,
                 observes_output_audio=False,
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
+                keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -1728,6 +1731,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name_getter=model_name_getter,
                 audio_output_sample_rate=self.audio_output_sample_rate,
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
+                keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             )
 
         async with connect_openai_protocol(

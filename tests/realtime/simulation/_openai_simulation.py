@@ -42,6 +42,8 @@ class OpenAIOptions:
     """Server VAD's `create_response`: whether the user stopping answers their turn (xAI answers regardless)."""
     prune_tool_items: bool = False
     """`openai_prune_tool_items`: whether answered tool rounds are deleted from the server conversation."""
+    keep_tool_items: frozenset[str] = frozenset()
+    """`openai_keep_tool_items`: the tools whose rounds pruning leaves in the server conversation."""
 
 
 class OpenAISimulation(Simulation):
@@ -128,6 +130,8 @@ class OpenAISimulation(Simulation):
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         if self.openai.prune_tool_items:
             settings['openai_prune_tool_items'] = True
+        if self.openai.keep_tool_items:
+            settings['openai_keep_tool_items'] = self.openai.keep_tool_items
         vad = self.openai
         if (
             vad.turn_detection == 'server_vad'
