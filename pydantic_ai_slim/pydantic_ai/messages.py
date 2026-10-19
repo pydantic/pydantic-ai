@@ -2973,6 +2973,28 @@ class ModelResponse:
     started with `workspace='new'`. Not sent to the model.
     """
 
+    history_digest: str | None = None
+    """A digest of the history this response was created from: the messages before it, as they were sent.
+
+    Set by models that continue server-side state, such as
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    so a later request continues from this response only while the messages before it are unchanged.
+    The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
+    the model, so they're left out, and changing them doesn't count as a change.
+    Not sent to the model.
+
+    Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
+    can use to test guesses at content that was redacted from it later, such as a PIN or an account
+    number. If you redact history after it was sent, give the model a key. Don't just clear this
+    field: a response without one is trusted and continued from, and the provider still holds the
+    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
+    nothing continues from them.
+
+    Computing it serializes the whole history before the response on every request that continues
+    server-side state, so it costs local work proportional to the conversation's length.
+    """
+
     failed_attempts: list[ModelRequestAttempt] | None = None
     """Earlier attempts at this request that failed before this response was produced, in order.
 
@@ -4842,10 +4864,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The model exchange is over: generation and tool work are complete.
+    """The model exchange is over: what `RealtimeSession.wait_for_reply()` waits for has come.
 
-    It is synthesized by the session once no tool calls are still running and no further response is
-    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
+    input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
+    still under way. Input transcription can finish after this event. On WebRTC sidebands, provider playback
     can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 
