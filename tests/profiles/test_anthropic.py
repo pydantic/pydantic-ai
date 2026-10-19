@@ -169,8 +169,8 @@ def test_strict_true_described_options():
 
     Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
     `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
-    which would leave the option unconstrained. A unit test, so the shape of the schema is pinned directly
-    rather than through a cassette whose matcher may not compare request bodies.
+    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+    on the generated schema, which is where the error was raised, so no request is needed.
     """
 
     class Ticket(BaseModel):
