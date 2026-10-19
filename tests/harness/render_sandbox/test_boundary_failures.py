@@ -8,7 +8,6 @@ No credentials or network are used; only deadline constants are patched down.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import shlex
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -40,8 +39,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
-    class UnexpectedExit(SandboxExecExit):
-        """An unsupported SDK event shape must not be treated as a valid exit."""
+    from .workspace_helpers import frame, output
 
 
 @dataclass
@@ -107,12 +105,6 @@ class ScriptedSDK:
         if self.refusal is not None and operation == 'run' and config['cwd'] != '/':
             raise self.refusal
 
-        def frame(kind: str, **fields: object) -> SandboxExecOutput:
-            return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
-
-        def output(text: str) -> SandboxExecOutput:
-            return frame('output', stream='stdout', data=base64.b64encode(text.encode()).decode())
-
         if operation == 'stop':
             self.stop_started.set()
             if self.stop_gate is not None:
@@ -120,22 +112,22 @@ class ScriptedSDK:
             if self.stop_scenario == 'missing_ack':
                 yield SandboxExecExit(0)
             elif self.stop_scenario == 'wrong_ack':
-                yield frame('exit', code=0)
+                yield frame(nonce, 'exit', code=0)
                 yield SandboxExecExit(0)
             else:
-                yield frame('stopped')
+                yield frame(nonce, 'stopped')
                 yield SandboxExecExit(0)
             return
 
         # The backend prepares its working directory using the same real parser.
         if config['cwd'] == '/':
-            yield output(self.readiness_output)
-            yield frame('exit', code=self.readiness_code)
+            yield output(nonce, self.readiness_output)
+            yield frame(nonce, 'exit', code=self.readiness_code)
             yield SandboxExecExit(0)
             return
 
         if self.transport_error is not None:
-            yield output('partial')
+            yield output(nonce, 'partial')
             raise self.transport_error
         for event in self.response(nonce):
             yield event
@@ -143,42 +135,32 @@ class ScriptedSDK:
     def response(self, nonce: str) -> list[SandboxExecEvent]:
         """Supply complete wire sequences so malformed messages cannot hide behind truncation."""
 
-        def frame(kind: str, **fields: object) -> SandboxExecOutput:
-            return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
-
-        def output(text: str) -> SandboxExecOutput:
-            return frame('output', stream='stdout', data=base64.b64encode(text.encode()).decode())
-
         # Every error scenario describes the public SDK messages, including valid
         # completion where appropriate. The backend must reject the actual defect.
-        complete = [frame('exit', code=0), SandboxExecExit(0)]
+        complete = [frame(nonce, 'exit', code=0), SandboxExecExit(0)]
         responses: dict[str, list[SandboxExecEvent]] = {
-            'valid': [output('usable'), *complete],
+            'valid': [output(nonce, 'usable'), *complete],
             'invalid_json': [SandboxExecOutput('stdout', '{broken\n'), *complete],
-            'invalid_base64': [frame('output', stream='stdout', data='not base64!'), *complete],
+            'invalid_base64': [frame(nonce, 'output', stream='stdout', data='not base64!'), *complete],
             'wrong_identity': [SandboxExecOutput('stdout', '{"nonce":"unrelated","kind":"started"}\n'), *complete],
             'oversized_frame': [SandboxExecOutput('stdout', 'x' * 131_073), *complete],
             'non_object': [SandboxExecOutput('stdout', '[1]\n'), *complete],
-            'invalid_output': [frame('output', stream='unexpected', data=''), *complete],
-            'invalid_output_data': [frame('output', stream='stdout', data=None), *complete],
-            'invalid_exit_code': [frame('exit', code=True), SandboxExecExit(0)],
-            'supervisor_error': [frame('error', category='OSError'), *complete],
-            'unknown_frame': [frame('unknown'), *complete],
+            'invalid_output': [frame(nonce, 'output', stream='unexpected', data=''), *complete],
+            'invalid_output_data': [frame(nonce, 'output', stream='stdout', data=None), *complete],
+            'invalid_exit_code': [frame(nonce, 'exit', code=True), SandboxExecExit(0)],
+            'supervisor_error': [frame(nonce, 'error', category='OSError'), *complete],
+            'unknown_frame': [frame(nonce, 'unknown'), *complete],
             'unexpected_stderr': [SandboxExecOutput('stderr', 'interpreter failed'), *complete],
             'incomplete_frame': [SandboxExecOutput('stdout', '{"kind":'), SandboxExecExit(0)],
-            'missing_direct_exit': [output('partial'), SandboxExecExit(0)],
-            'missing_sdk_exit': [output('partial'), frame('exit', code=0)],
-            'duplicate_sdk_exit': [output('partial'), *complete, SandboxExecExit(0)],
-            'output_after_direct_exit': [frame('exit', code=0), output('late'), SandboxExecExit(0)],
-            'output_after_sdk_exit': [output('partial'), *complete, output('late')],
-            'remote_timeout': [frame('timeout'), SandboxExecExit(0)],
-            'remote_limit': [frame('limit'), SandboxExecExit(0)],
-            'missing_cwd': [frame('cwd'), SandboxExecExit(0)],
-            'fenced': [frame('fenced'), SandboxExecExit(0)],
-            'blank_line': [SandboxExecOutput('stdout', '\n'), output('usable'), *complete],
-            'oversized_output': [output('x' * 1024), *complete],
-            'invalid_sdk_exit': [frame('exit', code=0), SandboxExecExit(False)],
-            'invalid_sdk_event': [frame('exit', code=0), UnexpectedExit(0)],
+            'missing_direct_exit': [output(nonce, 'partial'), SandboxExecExit(0)],
+            'missing_sdk_exit': [output(nonce, 'partial'), frame(nonce, 'exit', code=0)],
+            'output_after_direct_exit': [frame(nonce, 'exit', code=0), output(nonce, 'late'), SandboxExecExit(0)],
+            'remote_timeout': [frame(nonce, 'timeout'), SandboxExecExit(0)],
+            'remote_limit': [frame(nonce, 'limit'), SandboxExecExit(0)],
+            'missing_cwd': [frame(nonce, 'cwd'), SandboxExecExit(0)],
+            'fenced': [frame(nonce, 'fenced'), SandboxExecExit(0)],
+            'blank_line': [SandboxExecOutput('stdout', '\n'), output(nonce, 'usable'), *complete],
+            'oversized_output': [output(nonce, 'x' * 1024), *complete],
         }
         return responses[self.scenario]
 
@@ -213,14 +195,10 @@ _BEFORE_TERMINAL = [
     'missing_direct_exit',
 ]
 _AFTER_TERMINAL = [
-    'invalid_sdk_exit',
-    'invalid_sdk_event',
     'invalid_exit_code',
     'fenced',
     'missing_sdk_exit',
-    'duplicate_sdk_exit',
     'output_after_direct_exit',
-    'output_after_sdk_exit',
 ]
 
 

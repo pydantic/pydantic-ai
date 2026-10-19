@@ -32,7 +32,7 @@ async def test_transfer_deadline_grows_with_the_file_size(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A fixed deadline would make a large file on a slow link impossible to transfer.
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._filesystem._MIN_BYTES_PER_SECOND', 1)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MIN_BYTES_PER_SECOND', 1)
     deadlines: list[float | None] = []
     real_timeout = asyncio.timeout
 
@@ -206,20 +206,6 @@ async def test_malformed_file_helper_result_cannot_replace_existing_file(
         await backend.write_bytes(str(target), b'replacement')
     assert target.read_bytes() == b'original'
     assert workspace_harness.transfers == []
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason='root bypasses file write permissions')
-async def test_native_write_respects_existing_file_permissions(workspace_harness: WorkspaceHarness) -> None:
-    target = workspace_harness.root / 'protected'
-    target.write_bytes(b'original')
-    target.chmod(0o400)
-    backend = workspace_harness.backend()
-    try:
-        with pytest.raises(PermissionError):
-            await backend.write_bytes(str(target), b'replacement')
-        assert target.read_bytes() == b'original'
-    finally:
-        target.chmod(0o600)
 
 
 @pytest.mark.parametrize('operation', ['read', 'write'])

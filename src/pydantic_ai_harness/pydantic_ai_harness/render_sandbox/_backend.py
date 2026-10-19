@@ -10,12 +10,16 @@ experimental SDK API.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TypeVar
+from uuid import uuid4
 
 import anyio
 
@@ -27,6 +31,7 @@ from pydantic_ai.workspaces import (
     SupportsFilesystem,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -44,12 +49,11 @@ from pydantic_ai_harness._workspace_provider import (
 try:
     from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError, RenderError
-    from render.experimental.sandbox import SandboxNotFoundError
+    from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
 from ._commands import client_scope, prepare_command, run_command
-from ._filesystem import NativeFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,9 @@ _READINESS_TIMEOUT = 60.0
 _OPERATION_TIMEOUT = 30.0
 # Render allows 100 API requests a minute; readiness polling stays well under that.
 _POLL_INTERVAL = 1.0
+# Transfers get the base timeout plus this much per byte, as E2B's uploads do, so large files can finish.
+_MIN_BYTES_PER_SECOND = 256 * 1024
+_HELPER = Path(__file__).with_name('_file_transfer.py').read_text()
 
 
 def _check_env(env: Mapping[str, str] | None) -> dict[str, str]:
@@ -149,7 +156,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._sandbox_timeout = sandbox_timeout
         absolute_path('working_dir', working_dir)
         self._working_dir = working_dir
-        self._filesystem = NativeFilesystem(self, _OPERATION_TIMEOUT)
         # Metadata operations use core's shell implementation over this backend's commands, as Sprites does.
         self._shell = _ShellFilesystem(self)
         self._lock = anyio.Lock()
@@ -191,7 +197,6 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 sandbox = await client.experimental.sandboxes.create(
                     timeout_seconds=self._sandbox_timeout,
                     network_policy='allow-all' if self._allow_internet_access else 'deny-all',
-                    env=self._env or None,
                 )
         except RateLimitError:
             # Nothing was created, so the next operation may try again.
@@ -297,13 +302,81 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     raise WorkspaceUnavailableError(f'Render sandbox is {sandbox.status}') from error
                 raise
 
+    def _deadline(self, size: int) -> float:
+        return _OPERATION_TIMEOUT + size / _MIN_BYTES_PER_SECOND
+
+    async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:
+        result = await self.run(
+            ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)], timeout=self._deadline(size)
+        )
+        try:
+            value = json.loads(result.stdout)
+            if result.exit_code == 1 and type(value.get('errno')) is int:
+                raise OSError(value['errno'], value.get('message', 'File operation failed'), path)
+            if result.exit_code == 0 and type(value.get('size')) is int and value['size'] >= 0:
+                return value['size']
+        except (ValueError, AttributeError):
+            pass
+        raise WorkspaceError(f'Render file {action} returned an invalid result for {path!r}')
+
+    async def _transfer(self, client: RenderAsync, path: str, data: bytes | None) -> bytes:
+        if not path.startswith('/') or '\0' in path:
+            raise ValueError('file path must be absolute and contain no NUL')
+        await self.working_dir()
+        ref = self._ref
+        assert ref is not None
+        # Known before dispatch, so cancellation before acknowledgement still permits
+        # cleanup. Never put agent file bytes in command arguments or command output.
+        remote = f'/tmp/.render-pydantic-{uuid4().hex}'
+        try:
+            size = await self._helper('read' if data is None else 'prepare', path, remote)
+            with TemporaryDirectory(prefix='render-pydantic-') as directory:
+                local = Path(directory) / 'data'
+                if data is not None:
+                    await anyio.Path(local).write_bytes(data)
+                # The public SDK has per-connection timeouts but no total file deadline.
+                # Never retry an uncertain upload or hide failure with a shell fallback.
+                async with asyncio.timeout(self._deadline(size if data is None else len(data))):
+                    if data is None:
+                        await client.experimental.sandboxes.copy_from(ref.id, f'{remote}/data', local)
+                    else:
+                        await client.experimental.sandboxes.copy_to(ref.id, local, f'{remote}/data')
+                if data is None:
+                    # Reject a changed snapshot before allocating the returned bytes.
+                    if local.is_symlink() or local.stat().st_size != size:
+                        raise WorkspaceError('Render file download size did not match its snapshot')
+                    return await anyio.Path(local).read_bytes()
+                await self._helper('commit', path, remote, len(data))
+                return b''
+        except SandboxFileNotFoundError as error:
+            raise FileNotFoundError(path) from error
+        except SandboxNotFoundError as error:
+            raise WorkspaceUnavailableError('Render sandbox is unavailable') from error
+        except TimeoutError as error:
+            raise WorkspaceTimeoutError(f'Render file transfer timed out for {path!r}') from error
+        except RateLimitError:
+            raise
+        except (ClientError, SandboxDownloadError) as error:
+            # A rejected request or an unsafe download; transient SDK errors propagate for durable engines to retry.
+            raise WorkspaceError(f'Render file transfer failed for {path!r}') from error
+        finally:
+            # Shield bounded best-effort staging cleanup, preserving the original error.
+            # Process death can leave staging until the owner terminates the sandbox.
+            with anyio.move_on_after(_OPERATION_TIMEOUT, shield=True):
+                try:
+                    await self.run(
+                        ['python3', '-I', '-c', _HELPER, 'cleanup', path, remote], timeout=_OPERATION_TIMEOUT
+                    )
+                except Exception:
+                    pass
+
     async def read_bytes(self, path: str) -> bytes:
         async with self._operation() as client:
-            return await self._filesystem.read_bytes(client, path)
+            return await self._transfer(client, path, None)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         async with self._operation() as client:
-            await self._filesystem.write_bytes(client, path, data)
+            await self._transfer(client, path, data)
 
     async def stat(self, path: str) -> FileEntry:
         return await self._shell.stat(path)

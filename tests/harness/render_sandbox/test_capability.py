@@ -88,12 +88,11 @@ async def test_settings_shape_a_new_sandbox(
         allow_internet_access=allow_internet_access,
         sandbox_timeout=120,
         working_dir=str(workspace_harness.root),
-        env={'FOO': 'bar'},
     )
     backend = capability.get_workspace(_ctx(), ref=None)
     assert backend is not None
     assert (await backend.working_dir()) == str(workspace_harness.root)
-    assert workspace_harness.create_calls['sb-1'] == CreateCall(120, policy, {'FOO': 'bar'})
+    assert workspace_harness.create_calls['sb-1'] == CreateCall(120, policy)
 
 
 async def test_backend_attaches_without_creating(workspace_harness: WorkspaceHarness) -> None:

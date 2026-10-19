@@ -45,11 +45,20 @@ FILE_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transf
 SUPERVISOR = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py')
 
 
+def frame(nonce: str, kind: str, **fields: object) -> SandboxExecOutput:
+    """One supervisor control frame, as the shipped supervisor prints it."""
+    return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
+
+
+def output(nonce: str, text: str, stream: str = 'stdout') -> SandboxExecOutput:
+    """A supervisor output frame carrying `text` on `stream`."""
+    return frame(nonce, 'output', stream=stream, data=base64.b64encode(text.encode()).decode())
+
+
 @dataclass(frozen=True)
 class CreateCall:
     timeout_seconds: int
     network_policy: str
-    env: dict[str, str]
 
 
 @dataclass
@@ -174,7 +183,7 @@ def client_is_closed(client: RenderAsync) -> bool:
 def lifecycle(
     harness: WorkspaceHarness,
 ) -> tuple[Callable[..., Awaitable[Sandbox]], Callable[[str], Awaitable[Sandbox]], Callable[[str], Awaitable[None]]]:
-    async def create(*, timeout_seconds: int, network_policy: str, env: dict[str, str] | None) -> Sandbox:
+    async def create(*, timeout_seconds: int, network_policy: str) -> Sandbox:
         harness.create_started.set()
         if harness.create_gate is not None:
             await harness.create_gate.wait()
@@ -182,7 +191,7 @@ def lifecycle(
             raise harness.create_error
         identifier = f'sb-{len(harness.created) + 1}'
         sandbox = Sandbox(identifier, harness.create_status, 'starter', 'deny-all', 'oregon', 300, datetime.now(UTC))
-        harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy, dict(env or {}))
+        harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy)
         harness.sandbox_roots[identifier] = harness.root / identifier
         harness.sandboxes[identifier] = sandbox
         harness.created.append(identifier)
@@ -278,7 +287,6 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
         if helper:
             argv = [sys.executable, *argv[1:]]
         values = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
-        values.update(harness.create_calls[sandbox_id].env)
         values.update(env)
         process = await asyncio.create_subprocess_exec(
             *argv,
@@ -311,10 +319,6 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
         args = shlex.split(launch)
         operation, config = args[4], json.loads(args[5])
         nonce = config['nonce']
-
-        def frame(kind: str, **fields: object) -> SandboxExecOutput:
-            return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
-
         argv = config.get('argv', [])
         helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
         if harness.supervised and not (operation == 'run' and (config['cwd'] == '/' or helper)):
@@ -322,17 +326,15 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
                 yield event
             return
         if operation == 'stop':
-            yield frame('stopped')
+            yield frame(nonce, 'stopped')
             yield SandboxExecExit(0)
             return
         invocation = argv[2] if argv[:2] == ['/bin/sh', '-c'] else argv
         result = await harness.execute(identifier, invocation, working_dir=config['cwd'], env=config['env'])
         for name, value in [('stdout', result.stdout), ('stderr', result.stderr)]:
             for start in range(0, len(value), 16384):
-                yield frame(
-                    'output', stream=name, data=base64.b64encode(value[start : start + 16384].encode()).decode()
-                )
-        yield frame('exit', code=result.exit_code)
+                yield output(nonce, value[start : start + 16384], name)
+        yield frame(nonce, 'exit', code=result.exit_code)
         yield SandboxExecExit(0)
 
     return execute
@@ -351,7 +353,6 @@ async def _supervise(harness: WorkspaceHarness, identifier: str, launch: str) ->
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     if harness.measure_supervisor and 'COVERAGE_PROCESS_CONFIG' in os.environ:
         env['COVERAGE_PROCESS_CONFIG'] = os.environ['COVERAGE_PROCESS_CONFIG']
-    env.update(harness.create_calls[identifier].env)
     env.update(harness.sandbox_env)
     # Inline mode runs the received source as Render does; otherwise the package file, so coverage has a path.
     argv = [sys.executable, *args[1:]] if harness.inline_cwd else [sys.executable, str(SUPERVISOR), *args[4:]]

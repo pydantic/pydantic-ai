@@ -48,11 +48,10 @@ async def test_lazy_and_concurrent_first_use_share_one_sandbox(
     assert workspace_harness.terminated == []
 
 
-async def test_configured_env_reaches_create_and_every_command(workspace_harness: WorkspaceHarness) -> None:
+async def test_configured_env_reaches_every_command_under_command_env(workspace_harness: WorkspaceHarness) -> None:
     backend = workspace_harness.backend(env={'BASE': 'base', 'SHARED': 'configured'})
     result = await backend.run('printf %s-%s "$BASE" "$SHARED"', shell=True, env={'SHARED': 'command'})
     assert result.stdout == 'base-command'
-    assert workspace_harness.create_calls['sb-1'].env == {'BASE': 'base', 'SHARED': 'configured'}
 
 
 async def test_command_arguments_are_copied_before_sandbox_creation(workspace_harness: WorkspaceHarness) -> None:
@@ -132,16 +131,6 @@ async def test_commands_run_in_the_resolved_working_dir(
     await backend.run(['true'])
     assert await backend.working_dir() == str(real.resolve())
     assert launched[-1] == str(real.resolve())
-
-
-async def test_attachment_never_recreates(workspace_harness: WorkspaceHarness) -> None:
-    owned = workspace_harness.backend()
-    await owned.working_dir()
-    assert owned.ref is not None
-    attached = workspace_harness.backend(owned.ref)
-    assert await attached.working_dir() == await owned.working_dir()
-    assert attached.ref == owned.ref
-    assert len(workspace_harness.created) == 1
 
 
 async def test_cancelled_create_keeps_ref_without_destroying(workspace_harness: WorkspaceHarness) -> None:

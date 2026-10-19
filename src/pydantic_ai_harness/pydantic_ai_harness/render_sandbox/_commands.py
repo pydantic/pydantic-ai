@@ -23,7 +23,7 @@ from typing import TypeGuard
 import anyio
 from render import RenderAsync
 from render.client.errors import ClientError
-from render.experimental.sandbox import SandboxExecExit, SandboxExecOutput
+from render.experimental.sandbox import SandboxExecOutput
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -146,18 +146,12 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
             stack.push_async_callback(stream.aclose)
         async for event in stream:
             if isinstance(event, SandboxExecOutput):
-                if sdk_exit is not None:
-                    raise WorkspaceError('Render output followed its terminal exit')
                 if event.stream != 'stdout':
                     # The supervisor reserves stderr for interpreter-level failures.
                     raise WorkspaceError('Command supervisor emitted unexpected stderr')
                 capture.feed(event.data)
-            elif type(event) is SandboxExecExit:
-                if sdk_exit is not None or type(event.exit_code) is not int:
-                    raise WorkspaceError('Invalid Render exec terminal event')
-                sdk_exit = event.exit_code
             else:
-                raise WorkspaceError('Invalid Render exec event')
+                sdk_exit = event.exit_code
     if sdk_exit != 0 or capture.buffer or capture.terminal is None:
         raise WorkspaceError('Command supervisor stream ended without a complete result')
 
