@@ -23,6 +23,7 @@ from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, re
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
+from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
@@ -275,7 +276,8 @@ class FallbackModel(Model):
             start = AttemptStart()
             deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
             try:
-                _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 with enforce_request_deadline(deadline):
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
@@ -306,7 +308,8 @@ class FallbackModel(Model):
             prepared_parameters = model_request_parameters
             start = AttemptStart()
             try:
-                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings)
@@ -378,7 +381,8 @@ class FallbackModel(Model):
                 start = AttemptStart()
                 deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
                 try:
-                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                     streamed_response = await stack.enter_async_context(
                         _request_stream_until_first_event(
@@ -425,7 +429,8 @@ class FallbackModel(Model):
                 prepared_parameters = model_request_parameters
                 start = AttemptStart()
                 try:
-                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
                     deadline = start_request_deadline(model, model_settings)
                     streamed_response = await stack.enter_async_context(

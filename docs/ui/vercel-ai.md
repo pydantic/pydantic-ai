@@ -54,7 +54,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 ### Cancellation
 
-When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint, or a [`timeout=`](../timeouts.md#bounding-a-whole-run) running out — the adapter emits a Vercel `abort` chunk, whose `reason` says whether the run was cancelled or timed out. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
@@ -277,7 +277,7 @@ return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
 ) : null;
 ```
 
-`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta`. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
+`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta.ui`, which holds the CSP and permissions the renderer applies to the iframe. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
 
 ## Tool Approval
 

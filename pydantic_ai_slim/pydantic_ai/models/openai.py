@@ -600,6 +600,11 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
+    """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
+    return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
+
+
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
@@ -1228,6 +1233,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'top_k'})
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1348,6 +1355,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     async def request(
         self,
@@ -2372,6 +2382,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'stop_sequences', 'top_k'}
+    )
+
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
@@ -2461,6 +2475,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     @property
     def system(self) -> str:
@@ -2789,8 +2806,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
         """Map a complete Responses API response object to provider details.
 
-        Subclasses may override this hook. It handles complete response objects, not live response event streams.
-        Built-in provider details take precedence on key collisions.
+        Subclasses may override this hook. It's called with the complete response, and when streaming, with the
+        complete response carried by the terminal event that ends the stream. Built-in provider details take
+        precedence on key collisions.
         """
         return None
 
@@ -3019,6 +3037,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
+            _process_provider_details=self._process_provider_details,
         )
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
@@ -4818,6 +4837,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
+    _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
@@ -4860,6 +4880,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+        # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
+        # the stream, like `finish_reason`, do too.
+        if hook_provider_details := self._process_provider_details(response):
+            self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     async def close_stream(self) -> None:
         await self._response.source.close()

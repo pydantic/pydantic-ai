@@ -1385,3 +1385,54 @@ def test_a_lifecycle_event_the_core_does_not_know_is_refused() -> None:
 
     with pytest.raises(TypeError, match='no handling for the lifecycle event'):
         core().apply(_Unknown())
+
+
+def test_a_turn_dropped_after_its_transcript_started_streaming_ends_its_part() -> None:
+    """A turn that never joined the conversation isn't recorded, but the part it streamed still ends."""
+    session_core = feed(core(), UserTurnStarted(turn_id='u1'), InputTranscript('Hel', item_id='u1'), AudioCleared())
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
+    )
+    assert session_core.all_messages() == []
+
+
+def test_tools_see_what_a_response_under_way_said_and_called() -> None:
+    """A tool runs while the response that called it can still be under way: what it said and called is in view."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Let me check.', 'item_1'),
+        ToolCall(tool_call_id='c1', tool_name='lookup', args='{}', response_id='r1'),
+        said('r1', 'Still checking.', 'item_2'),
+    )
+    assert summary(session_core.conversation_so_far()) == snapshot(
+        ['r1 [assistant:Let me check., call:c1, assistant:Still checking.] complete None']
+    )
+    assert session_core.all_messages() == []
+
+
+def test_a_native_part_ends_under_the_index_it_started_with_after_its_response_ended() -> None:
+    """A connection can end a native part in a later frame than its response: it still closes the part it opened."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(
+        core(), started('r1'), PartStartEvent(index=7, part=call), ended('r1'), PartEndEvent(index=7, part=call)
+    )
+    indexes = [
+        (type(effect).__name__, effect.index)
+        for effect in session_core.take_effects()
+        if isinstance(effect, (PartStartEvent, PartEndEvent))
+    ]
+    assert indexes == snapshot([('PartStartEvent', 0), ('PartEndEvent', 0)])
+
+
+def test_stripping_a_message_without_tracked_audio_frees_nothing() -> None:
+    message = ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hi.')])
+    budget = RetainedAudioBudget(10, input_sample_rate=24000, output_sample_rate=24000)
+    assert budget.strip(message) == (message, 0)
+
+
+def test_a_native_part_with_no_response_to_join_streams_neither_its_start_nor_its_end() -> None:
+    """A native part the core drops (no single response under way) doesn't leave an end for a start never streamed."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(core(), PartStartEvent(index=7, part=call), PartEndEvent(index=7, part=call))
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == []
