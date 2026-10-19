@@ -28,6 +28,13 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -376,3 +383,21 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     second = await agent.run('And who wrote it?', message_history=first.all_messages())
     assert second.conversation_id == first.conversation_id
     assert describer.calls == 1
+
+
+@pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')
+@pytest.mark.vcr()
+async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
+):
+    # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
+    claude = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    gemini = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
+
+    result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
+
+    assert result.output == snapshot(
+        'A professional camera rig records a scenic desert landscape with a winding path leading toward distant snowy mountains during golden hour.'
+    )
+    assert result.usage.requests == 2
