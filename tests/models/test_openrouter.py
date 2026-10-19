@@ -1214,7 +1214,7 @@ def test_openrouter_glm_thinking_false(model_name: str) -> None:
 
     assert params.thinking is False
     assert prepared is not None
-    assert prepared['extra_body'] == {'reasoning': {'effort': 'none'}}
+    assert prepared.get('extra_body') == {'reasoning': {'effort': 'none'}}
 
 
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
