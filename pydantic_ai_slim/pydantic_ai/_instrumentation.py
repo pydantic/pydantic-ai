@@ -605,12 +605,31 @@ def mcp_telemetry_sensitive_ids(
 
 
 def request_telemetry_sensitive_ids(parameters: ModelRequestParameters) -> set[str]:
-    """Include native MCP tool IDs even for direct model requests without an agent capability."""
+    """Include native MCP IDs, and withhold unknown-provenance IDs on direct model requests."""
     from pydantic_ai.native_tools import MCPServerTool
 
-    return parameters.telemetry_sensitive_ids | {
-        tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)
-    }
+    sensitive_ids = parameters.telemetry_sensitive_ids
+    if sensitive_ids is None:
+        # Direct model calls do not have an Agent to identify MCP-owned function tools.
+        # A toolset or capability ID can be derived from an MCP URL, so omit IDs whose
+        # provenance is unknown rather than exporting them as apparently harmless text.
+        sensitive_ids = set[str]()
+        for tool in (*parameters.function_tools, *parameters.output_tools):
+            if tool.toolset_id:
+                sensitive_ids.add(tool.toolset_id)
+            if tool.capability_id:
+                sensitive_ids.add(tool.capability_id)
+            for native_name in (tool.unless_native, tool.with_native):
+                if native_name and native_name.startswith('mcp_server:'):
+                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
+        sensitive_ids.update(parameters.deferred_capability_ids)
+        for part in parameters.instruction_parts or ():
+            if part.id is not None:
+                for source in ('toolset:', 'capability:'):
+                    if str(part.id).startswith(source):
+                        sensitive_ids.add(str(part.id).removeprefix(source).partition(':')[0])
+
+    return sensitive_ids | {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
 
 
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:

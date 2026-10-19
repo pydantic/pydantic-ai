@@ -1873,6 +1873,7 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
 
     def check_parameters(info: AgentInfo) -> None:
         parameters = info.model_request_parameters
+        assert parameters.telemetry_sensitive_ids is not None
         observed_ids.append(parameters.telemetry_sensitive_ids)
         attributes = model_request_parameters_attributes(parameters)
         assert identity not in str(attributes)
@@ -1940,8 +1941,9 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
     assert observed_ids == [{identity}]
 
 
+@pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('compact', [True, False])
-def test_legacy_temporal_transport_restores_request_telemetry_ids(compact: bool) -> None:
+def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
     identity = 'mcp.example.test-SENTINEL-path-token'
     model = TestModel()
     ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
@@ -1956,14 +1958,16 @@ def test_legacy_temporal_transport_restores_request_telemetry_ids(compact: bool)
     if compact:
         payload = _CompactMessagesParams(**common, streaming=False, instructions=None)
         wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
-        wire.pop('telemetry_sensitive_ids')
+        if legacy_payload:
+            wire.pop('telemetry_sensitive_ids')
         decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
         loaded = _CompactMessagesTransport(durability).load((decoded, None), runtime=object())
         restored = loaded.request_context.model_request_parameters
     else:
         payload = _RequestParams(**common)
         wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
-        wire.pop('telemetry_sensitive_ids')
+        if legacy_payload:
+            wire.pop('telemetry_sensitive_ids')
         decoded = TypeAdapter(_RequestParams).validate_python(wire)
         loaded = _ModelRequestTransport(durability, result_type=ModelResponse).load((decoded, None), runtime=object())
         restored = loaded.model_request_parameters

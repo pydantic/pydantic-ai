@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 from pydantic import ConfigDict, with_config
 
 from pydantic_ai import messages as _messages
+from pydantic_ai._instrumentation import request_telemetry_sensitive_ids
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
@@ -26,7 +27,6 @@ from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallPara
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
-from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -265,21 +265,8 @@ def restore_telemetry_sensitive_ids(parameters: ModelRequestParameters, sensitiv
     identities, so conservatively withhold all such identities from request telemetry on replay.
     """
     if sensitive_ids is None:
-        sensitive_ids = {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
-        for tool in (*parameters.function_tools, *parameters.output_tools):
-            if tool.toolset_id:
-                sensitive_ids.add(tool.toolset_id)
-            if tool.capability_id:
-                sensitive_ids.add(tool.capability_id)
-            for native_name in (tool.unless_native, tool.with_native):
-                if native_name and native_name.startswith('mcp_server:'):
-                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
-        sensitive_ids.update(parameters.deferred_capability_ids)
-        for part in parameters.instruction_parts or ():
-            if part.id is not None:
-                for source in ('toolset:', 'capability:'):
-                    if str(part.id).startswith(source):
-                        sensitive_ids.add(str(part.id).removeprefix(source).partition(':')[0])
+        parameters.telemetry_sensitive_ids = None
+        sensitive_ids = request_telemetry_sensitive_ids(parameters)
     parameters.telemetry_sensitive_ids = sensitive_ids
 
 

@@ -2939,7 +2939,9 @@ async def test_an_mcp_call_awaiting_approval_is_denied(reported: bool) -> None:
     assert ws.sent_frames() == [{'type': 'mcp_tool_approval_result', 'tool_call_id': 'mcp_1', 'is_approved': False}]
     outcome = [_mcp_call('failure', error_message='Rejected by the user.')] if reported else []
     rest = await _next_frames(frames, ws, [*outcome, _agent_response('I cannot look that up.'), _VOICED])
-    returns = [part for part in _native_parts(rest) if isinstance(part, NativeToolReturnPart)]
+    returns: list[NativeToolReturnPart[object]] = [
+        part for part in _native_parts(rest) if isinstance(part, NativeToolReturnPart)
+    ]
     assert [part.outcome for part in returns] == ['denied']
     assert 'Pydantic AI MCP toolset' in str(returns[0].content)
     ended = [event for frame in [*first, *rest] for event in frame if isinstance(event, ResponseEnded)]
@@ -2961,7 +2963,9 @@ async def test_an_mcp_call_denied_before_a_drop_keeps_its_denial() -> None:
     with pytest.warns(UserWarning, match='cannot do, so the call was denied'):
         ws._incoming.append(json.dumps(_mcp_call('awaiting_approval')))  # pyright: ignore[reportPrivateUsage]
         frames = [frame async for frame in connection.frames()]
-    returns = [part for part in _native_parts(frames) if isinstance(part, NativeToolReturnPart)]
+    returns: list[NativeToolReturnPart[object]] = [
+        part for part in _native_parts(frames) if isinstance(part, NativeToolReturnPart)
+    ]
     assert [(part.tool_call_id, part.outcome) for part in returns] == [('mcp_1', 'denied')]
     ended = [event for frame in frames for event in frame if isinstance(event, ResponseEnded)]
     assert [event.status for event in ended] == ['lost']

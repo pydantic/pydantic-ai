@@ -418,6 +418,41 @@ async def test_direct_mcp_toolset_masks_url_derived_identity(include_content: bo
     assert '"toolset_id":"[REDACTED]"' in serialized
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+def test_direct_request_with_unknown_tool_provenance_redacts_structural_ids(include_content: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-mcp-path-token'
+    tool = ToolDefinition(
+        name='lookup',
+        toolset_id=identity,
+        capability_id=identity,
+        unless_native=f'mcp_server:{identity}',
+        with_native=f'mcp_server:{identity}',
+    )
+    parameters = ModelRequestParameters(function_tools=[tool])
+
+    serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
+        'model_request_parameters'
+    ]
+    assert isinstance(serialized, str)
+    assert identity not in serialized
+    assert '"toolset_id":"[REDACTED]"' in serialized
+    assert '"capability_id":"[REDACTED]"' in serialized
+    assert '"unless_native":"mcp_server:[REDACTED]"' in serialized
+    assert '"with_native":"mcp_server:[REDACTED]"' in serialized
+    assert tool.toolset_id == identity
+
+
+def test_known_non_mcp_toolset_identity_remains_in_request_telemetry() -> None:
+    identity = 'ordinary-toolset'
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='lookup', toolset_id=identity)], telemetry_sensitive_ids=set()
+    )
+
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert identity in serialized
+
+
 @pytest.mark.anyio
 async def test_direct_instrumented_model_preserves_provider_authored_arguments() -> None:
     tool = MCPServerTool(id='SENTINEL-mcp-server-id', url='https://mcp.example.test/private')
