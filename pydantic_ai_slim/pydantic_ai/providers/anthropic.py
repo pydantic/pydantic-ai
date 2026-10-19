@@ -119,9 +119,14 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                # Request-scoped (`clear_at`) entries are published for the same models and transports as
+                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
+                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
+                # the same reason it's left out above.
+                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
             # Prompt caching is likewise a fact about the Messages API rather than the model family.
-            # `AnthropicModel` narrows `supports_auto_cache` per client (the Bedrock and Vertex SDK clients don't
+            # `AnthropicModel` narrows `supports_auto_cache` per client (the legacy Bedrock SDK client doesn't
             # support the top-level automatic caching parameter), and `supported_cache_retentions` on Bedrock, which
             # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
             # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching

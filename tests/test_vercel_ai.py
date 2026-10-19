@@ -19,7 +19,7 @@ from pydantic_ai._deferred_capabilities import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -69,7 +69,7 @@ from pydantic_ai.messages import (
     VideoUrl,
     sanitize_messages,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -11813,6 +11813,37 @@ def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tup
         )
         for message in messages
     ]
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `data-enqueued-messages` part at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6, manage_system_prompt=manage_system_prompt
+    )
+
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert 'Reminder' not in json.dumps(chunks)
 
 
 @pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])

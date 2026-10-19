@@ -115,6 +115,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_inline_system_prompts': False,
+    'supports_request_scoped_system_prompts': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -767,14 +768,16 @@ def test_xai_grok_3_mini():
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot({'tool_call_id_length': 9, 'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_small_latest():
     """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
     profile = MistralProvider.model_profile('mistral-small-latest')
-    assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot(
+        {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
@@ -982,6 +985,7 @@ def test_bedrock_mistral_large():
     profile = BedrockProvider.model_profile('mistral.mistral-large-2407-v1:0')
     assert _normalize(profile) == snapshot(
         {
+            'tool_call_id_length': 9,
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_format': 'json',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -1321,6 +1325,7 @@ def test_openrouter_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1662,6 +1667,7 @@ def test_azure_mistral_prefix():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1675,6 +1681,7 @@ def test_azure_mistral_small_latest():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1688,6 +1695,7 @@ def test_azure_ministral_3b():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1701,6 +1709,7 @@ def test_azure_magistral_small_latest():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
@@ -2017,6 +2026,7 @@ def test_litellm_magistral():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'supports_thinking': True,
             'thinking_always_enabled': True,
         }
@@ -2038,6 +2048,7 @@ def test_litellm_mistral_small_latest():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'tool_call_id_length': 9,
         }
     )
 
