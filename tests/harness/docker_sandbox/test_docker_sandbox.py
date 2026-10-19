@@ -87,16 +87,21 @@ async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: Fa
     assert docker.containers() == []
 
 
-async def test_a_failed_create_is_unavailable_and_retried_on_the_next_use(docker: FakeDocker) -> None:
-    backend = DockerSandboxBackend('missing-image')
+async def test_a_failed_create_is_unavailable(docker: FakeDocker) -> None:
+    with pytest.raises(
+        WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
+    ):
+        await DockerSandboxBackend('missing-image').working_dir()
 
-    for _ in range(2):
-        with pytest.raises(
-            WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
-        ):
-            await backend.working_dir()
 
-    assert sum(call.startswith('run ') for call in docker.calls) == 2
+async def test_a_failed_create_is_retried_on_the_next_use(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('flaky-image', working_dir=str(container_dir))
+    with pytest.raises(WorkspaceUnavailableError, match='could not create a container from flaky-image'):
+        await backend.working_dir()
+
+    await backend.working_dir()
+
+    assert backend.ref is not None and docker.containers() == [backend.ref.id]
 
 
 async def test_a_cancelled_create_keeps_the_ref_so_the_container_can_be_removed(
