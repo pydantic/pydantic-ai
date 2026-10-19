@@ -393,6 +393,8 @@ def test_agent_data_uses_content_only_route(tmp_path: Path, changed_files: list[
         ('docs/harness/filesystem.md', 'false'),
         ('docs/navigation.yml', 'false'),
         ('docs/img/logo.svg', 'false'),
+        ('examples/README.md', 'false'),
+        ('examples/guide.mdc', 'false'),
         ('pydantic_ai_slim/README.md', 'false'),
         ('pydantic_evals/pydantic_evals/README.md', 'false'),
         ('pydantic_graph/README.md', 'false'),

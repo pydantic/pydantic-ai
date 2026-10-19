@@ -73,7 +73,7 @@ jobs:
               # These test inputs also include the root fixtures and their imports.
               tests/harness/*|tests/clai2/*|tests/clai/*) return 1 ;;
               tests/*) return 0 ;;
-              docs/*|agent_docs/*) return 1 ;;
+              docs/*|agent_docs/*|examples/*.md|examples/*.mdc) return 1 ;;
               .agents/*.md|.agents/*.tsv|.claude/*.md) return 1 ;;
               src/pydantic_ai_harness/*|src/pydantic_clai2/*|clai/*) return 1 ;;
               pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) return 1 ;;
