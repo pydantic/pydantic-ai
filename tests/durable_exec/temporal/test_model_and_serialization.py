@@ -72,6 +72,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -1637,6 +1638,34 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.model_name == 'alt-model'
         assert temporal_model_with_registry.system == alt_model.system
         assert temporal_model_with_registry.profile == alt_model.profile
+
+
+class _NoRestrictionsTestModel(TestModel):
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+def test_temporal_model_unsupported_native_tool_settings_follow_active_model():
+    """The native tool settings check asks the active model, so a swapped-in model's limits are the ones applied.
+
+    A raw model string has no model class to ask, so it reports none; the activity's concrete model decides.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__unsupported_native_tool_settings',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': _NoRestrictionsTestModel(model_name='alt-model')},
+    )
+    web_search = WebSearchTool(allowed_domains=['pydantic.dev'])
+
+    assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset({'allowed_domains'})
+
+    with temporal_model.using_model('google-gla:gemini-2.5-flash'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
 
 
 class DefaultHostModel(TestModel):

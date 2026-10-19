@@ -400,6 +400,28 @@ async def test_an_unreadable_terminal_still_ends_the_response_it_closed() -> Non
     )
 
 
+async def test_an_unreadable_terminal_ends_a_response_created_without_an_id() -> None:
+    stream = Stream(
+        created(None),
+        {'type': 'response.done', 'response': 'garbled'},
+        created('resp_2'),
+        done('resp_2'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1'),
+            ResponseEnded(response_id='pydantic_ai_response_1', status='lost'),
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_2'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
 async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     stream = Stream({'type': 'input_audio_buffer.committed'}, created('resp_1'), done('resp_1'))
     assert await stream.rest() == snapshot(

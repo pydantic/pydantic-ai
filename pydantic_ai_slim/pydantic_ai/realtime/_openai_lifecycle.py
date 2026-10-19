@@ -263,7 +263,12 @@ class OpenAILifecycle:
         self._pending.append(self._end(response_id, status, finish_reason, provider_details))
 
     def response_unreadable(self, active_response_id: str | None) -> None:
-        """A `response.done` too malformed to name its response: it still ended the one being generated."""
+        """A `response.done` too malformed to name its response: it still ended the one being generated.
+
+        A response whose `response.created` carried no id is the current synthetic one.
+        """
+        if active_response_id is None:
+            active_response_id, self._current_synthetic = self._current_synthetic, None
         if active_response_id is not None and active_response_id in self._open:
             self._pending.append(self._end(active_response_id, 'lost', None, None))
 
