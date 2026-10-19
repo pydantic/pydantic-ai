@@ -118,7 +118,7 @@ class WorkspaceHarness:
     async def aclose(self) -> None:
         """Reap every supervisor and remove its claim; the tests stop each command they leave running."""
         for _, config, process in self.supervisors:
-            if process.returncode is None:  # pragma: no cover - only after a regression leaves a command running
+            if process.returncode is None:  # pragma: lax no cover - a stop may still be finishing
                 process.kill()
             await process.communicate()
             shutil.rmtree(config['claim'], ignore_errors=True)
