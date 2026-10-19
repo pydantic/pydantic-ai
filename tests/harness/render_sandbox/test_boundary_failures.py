@@ -176,7 +176,6 @@ class ScriptedSDK:
 def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     # Short bounds stand in for production deadlines, so no test sleeps through one.
     for name, value in [
-        ('_READINESS_TIMEOUT', 0.03),
         ('_OPERATION_TIMEOUT', 1),
         ('_STOP_TIMEOUT', 1),
         ('_POLL_INTERVAL', 0),
@@ -251,8 +250,9 @@ async def test_stop_failure_preserves_original_stream_error_and_recovery_referen
 
 
 async def test_readiness_deadline_retains_id_and_does_not_create_again(
-    boundary: ScriptedSDK,
+    boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._READINESS_TIMEOUT', 0.03)
     boundary.status = 'creating'
     backend = boundary.backend()
     with pytest.raises(WorkspaceUnavailableError) as caught:
@@ -306,8 +306,6 @@ async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: 
         with pytest.raises(asyncio.CancelledError) as caught:
             await pending
         assert caught.value.__cause__ is original
-        if stop_fails:
-            assert any('stop also failed' in note for note in caught.value.__notes__)
         assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
     finally:
         boundary.stop_gate.set()

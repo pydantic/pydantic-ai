@@ -22,7 +22,10 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, TypeGuard
+from typing import IO, TYPE_CHECKING
+
+if TYPE_CHECKING:  # Only for annotations: the sandbox's Python may predate `typing.TypeGuard`.
+    from typing import TypeGuard
 
 _CHUNK_SIZE = 16_384
 
@@ -88,7 +91,15 @@ def _signal_owned(claim: Path) -> None:
     except FileNotFoundError:
         return  # The stop fence prevents a not-yet-registered launcher from starting.
     if record.get('done') is True:
-        return  # Direct command already exited. Its background jobs may continue.
+        group = record.get('draining_group')
+        if isinstance(group, int):
+            # The leader is reaped but output is still draining: a group member holding the pipe keeps the
+            # group ID in use, so it cannot name an unrelated process.
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:  # pragma: lax no cover - the last member can exit first
+                pass
+        return  # Otherwise the drain is over; background jobs may continue.
     pid, birth = record.get('pid'), record.get('birth')
     if not isinstance(pid, int) or not isinstance(birth, str):  # pragma: no cover - private registration corruption
         raise TypeError('Invalid process registration')
@@ -124,12 +135,15 @@ def _json_array(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
 
-def _spawn(config: dict[str, object]) -> subprocess.Popen[bytes]:
+def _argv(config: dict[str, object]) -> list[str]:
     values = config['argv']
     if not _json_array(values):  # pragma: no cover - the host always supplies its validated argument list
         raise TypeError('argv must be a list')
     arguments: list[object] = values
-    argv = [_text(value) for value in arguments]
+    return [_text(value) for value in arguments]
+
+
+def _spawn(config: dict[str, object], argv: list[str]) -> subprocess.Popen[bytes]:
     supplied = _mapping(config['env'])
     env = {key: _text(value) for key, value in supplied.items()}
     return subprocess.Popen(
@@ -165,15 +179,19 @@ def _run(config: dict[str, object]) -> None:
             if (claim / 'stopped').exists():  # pragma: lax no cover - the stop fence can win mkdir or registration
                 _frame('fenced', nonce)
                 return
+            argv = _argv(config)
             try:
-                process = _spawn(config)
-            except FileNotFoundError:
+                process = _spawn(config, argv)
+            except (FileNotFoundError, PermissionError) as error:
                 _state(claim, done=True)
-                _frame('exit', nonce, code=127)
-                return
-            except PermissionError:
-                _state(claim, done=True)
-                _frame('exit', nonce, code=126)
+                if error.filename != argv[0]:
+                    # The working directory is gone or unusable; that is not a missing program.
+                    _frame('cwd', nonce)
+                    return
+                missing = isinstance(error, FileNotFoundError)
+                message = f'{argv[0]}: {"command not found" if missing else "Permission denied"}\n'
+                _frame('output', nonce, stream='stderr', data=base64.b64encode(message.encode()).decode('ascii'))
+                _frame('exit', nonce, code=127 if missing else 126)
                 return
             birth = _identity(process.pid)
             if birth is None:  # pragma: no cover - the new Linux child cannot be reaped before registration
@@ -231,7 +249,8 @@ def _capture(
                 # so the stop process never signals a reused PID after reaping.
                 direct_exit = process.poll()
                 if direct_exit is not None:
-                    _state(claim, done=True)
+                    # A stop that arrives while output drains still kills the command's process group.
+                    _state(claim, done=True, draining_group=process.pid)
                     if drain_deadline is None:
                         drain_deadline = now + drain
                 elif terminal is None and timeout is not None and now - started >= timeout:
@@ -265,20 +284,14 @@ def _capture(
                 if output_bytes > limit and terminal is None:
                     terminal = 'limit'
                     with _locked(claim):
-                        if direct_exit is None:
-                            _signal_owned(claim)
-                        else:
-                            # The leader is reaped, but a group member still writing to its pipe keeps
-                            # the group ID in use, so it cannot name an unrelated process.
-                            try:
-                                os.killpg(process.pid, signal.SIGKILL)
-                            except ProcessLookupError:  # pragma: lax no cover - the writer can exit first
-                                pass
+                        _signal_owned(claim)
         # Closing our pipe ends, instead of waiting for EOF, is what permits a
         # normal direct exit while a background child still holds its ends.
         for _, pipe in pipes.values():
             pipe.close()
-    _frame(terminal or 'exit', nonce, code=direct_exit)
+    # Popen reports a signal death as -N; shells and core's local backend report 128+N.
+    code = 128 - direct_exit if direct_exit is not None and direct_exit < 0 else direct_exit
+    _frame(terminal or 'exit', nonce, code=code)
 
 
 def main() -> None:

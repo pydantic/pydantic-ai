@@ -16,7 +16,6 @@ import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from typing import TypeVar
 
 import anyio
 
@@ -48,12 +47,10 @@ try:
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
-from ._commands import prepare_command, run_command
+from ._commands import prepare_command, run_command, wait_despite_cancellation
 from ._filesystem import NativeFilesystem
 
 logger = logging.getLogger(__name__)
-
-_T = TypeVar('_T')
 
 DEFAULT_SANDBOX_TIMEOUT = 3_600
 DEFAULT_WORKING_DIR = '/workspace'
@@ -100,27 +97,6 @@ def _open_client() -> RenderAsync:
 async def _close_client(client: RenderAsync) -> None:
     # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
     await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
-
-
-async def _wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
-    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
-    cancelled: asyncio.CancelledError | None = None
-    with anyio.CancelScope(shield=True):
-        while not task.done():
-            try:
-                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
-                await asyncio.wait((task,))
-            except asyncio.CancelledError as error:
-                cancelled = error
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancelled is not None:
-            raise cancelled from error
-        raise
-    if cancelled is not None:
-        raise cancelled
-    return result
 
 
 class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -236,7 +212,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     self._create_task = asyncio.create_task(self._create(client))
                 # Wait for the create to record its ref even if this caller is cancelled. The lock keeps
                 # concurrent first operations from creating twice, and this operation's client stays open.
-                await _wait_despite_cancellation(self._create_task)
+                await wait_despite_cancellation(self._create_task)
             assert self._ref is not None
             try:
                 async with asyncio.timeout(_READINESS_TIMEOUT):

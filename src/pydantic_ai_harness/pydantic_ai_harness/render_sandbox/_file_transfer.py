@@ -10,7 +10,6 @@ import os
 import shutil
 import stat
 import sys
-import tempfile
 
 
 def regular_file(path: str) -> int:
@@ -57,11 +56,18 @@ def destination(path: str) -> str:
     return target
 
 
-def commit(path: str, staged: str, size: int) -> None:
+def sibling(path: str, directory: str) -> str:
+    # Named after the staging directory, so `cleanup` can remove it even if a stop killed `commit`.
+    return os.path.join(os.path.dirname(os.path.realpath(path)), '.render-pydantic-' + os.path.basename(directory))
+
+
+def commit(path: str, directory: str, size: int) -> None:
     target = destination(path)
+    staged = os.path.join(directory, 'data')
     # Stage beside the destination so replacement is atomic across mount points.
     # A failed upload or interrupted copy cannot truncate the user's old file.
-    fd, temporary = tempfile.mkstemp(prefix='.render-pydantic-', dir=os.path.dirname(target))
+    temporary = sibling(path, directory)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(fd, 'wb') as output, os.fdopen(regular_file(staged), 'rb') as source:
             if os.fstat(source.fileno()).st_size != size:
@@ -80,6 +86,10 @@ def main() -> None:
     staged = os.path.join(directory, 'data')
     if action == 'cleanup':
         shutil.rmtree(directory, ignore_errors=True)
+        try:
+            os.unlink(sibling(path, directory))
+        except OSError:
+            pass
         return
     try:
         if action == 'read':
@@ -90,7 +100,7 @@ def main() -> None:
             os.mkdir(directory, 0o700)
             result = 0
         elif action == 'commit':
-            commit(path, staged, int(sys.argv[4]))
+            commit(path, directory, int(sys.argv[4]))
             result = 0
         else:
             raise ValueError('Unknown file operation')  # pragma: no cover - private dispatch selects a fixed operation

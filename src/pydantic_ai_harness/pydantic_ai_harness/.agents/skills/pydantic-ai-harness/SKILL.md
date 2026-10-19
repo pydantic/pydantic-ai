@@ -84,7 +84,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox`, `SpritesSandbox`, and `SmolSandbox` (a local microVM) work the same way. See
+`E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, and `SmolSandbox` (a local microVM) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -241,7 +241,7 @@ dependencies. Supporting types such as stores and policies are only in the submo
 
 - **Check whether core is enough first.** Web search, web fetch, MCP, thinking, tool search, and workspaces are core capabilities in `pydantic_ai.capabilities`, and provider-native compaction is core too (`OpenAICompaction`, `AnthropicCompaction`), as is `ProcessHistory(processor)` for hand-rolled history trimming. Reach for the harness when the agent should edit files, run commands or code, delegate, remember, or run long.
 - **Attach a workspace for workspace capabilities.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` act in the run's workspace, and none picks one for you. Add `LocalWorkspace(...)` from `pydantic_ai.capabilities` or a sandbox capability, or the run fails at its start with a message naming what to attach.
-- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `SpritesSandbox`, or `SmolSandbox` when the agent's commands must not reach the host.
+- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `RenderSandbox`, `SpritesSandbox`, or `SmolSandbox` when the agent's commands must not reach the host.
 - **Read the reference before writing code.** Each capability has its own parameters, extras, and limits; load the matching reference from the routing table first.
 - **Combine instead of rebuilding.** `Coder` and `Researcher` are combined capabilities; start from one and add capabilities next to it, or rebuild it from its parts when a setting must change.
 - **Plan for long runs.** For multi-hour agents pair a workspace stack with context management (`ClearToolResults`, `SummarizingCompaction`, `ToolOutputLimits`) and, where runs must survive restarts, durable execution or `StepPersistence`.

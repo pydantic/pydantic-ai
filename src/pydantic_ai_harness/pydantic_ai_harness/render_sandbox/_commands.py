@@ -17,7 +17,7 @@ from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from importlib.resources import files
-from typing import TypeGuard
+from typing import TypeGuard, TypeVar
 
 import anyio
 from render import RenderAsync
@@ -28,7 +28,10 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
 )
+
+_T = TypeVar('_T')
 
 _CLAIM_ROOT = '/tmp'
 _MAX_FRAME_CHARS = 131_072
@@ -118,7 +121,7 @@ class _Capture:
             if len(data) > remaining:
                 raise self.overflow()
             return
-        if kind in ('exit', 'limit', 'timeout', 'stopped', 'fenced'):
+        if kind in ('exit', 'limit', 'timeout', 'stopped', 'fenced', 'cwd'):
             assert isinstance(kind, str)
             self.terminal = kind
             if kind == 'exit':
@@ -156,9 +159,28 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
         raise WorkspaceError('Command supervisor stream ended without a complete result')
 
 
-async def _stop_shielded(
-    client: RenderAsync, sandbox_id: str, launch: str, nonce: str, stop_timeout: float
-) -> asyncio.CancelledError | None:
+async def wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
+    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
+    cancelled: asyncio.CancelledError | None = None
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
+                await asyncio.wait((task,))
+            except asyncio.CancelledError as error:
+                cancelled = error
+    try:
+        result = task.result()
+    except BaseException as error:
+        if cancelled is not None:
+            raise cancelled from error
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
+async def _stop_shielded(client: RenderAsync, sandbox_id: str, launch: str, nonce: str, stop_timeout: float) -> None:
     async def stop() -> None:
         async with asyncio.timeout(stop_timeout):
             capture = _Capture(nonce, 4096)
@@ -166,26 +188,8 @@ async def _stop_shielded(
             if capture.terminal != 'stopped':
                 raise WorkspaceError('Command stop did not acknowledge its fence')
 
-    # The child task owns the timeout. Neither AnyIO level cancellation nor
-    # repeated native Task.cancel calls may abandon an already-dispatched stop.
-    task = asyncio.create_task(stop())
-    interrupted: asyncio.CancelledError | None = None
-    with anyio.CancelScope(shield=True):
-        while not task.done():
-            try:
-                # Wait for completion without forwarding cancellation or installing
-                # shield's Python 3.14+ detached-error logger. Read the result below.
-                await asyncio.wait((task,))
-            except asyncio.CancelledError as exc:
-                interrupted = exc
-    try:
-        task.result()
-    except BaseException as error:
-        if interrupted is not None:
-            interrupted.add_note('Command stop also failed; inspect the retained sandbox reference')
-            raise interrupted from error
-        raise
-    return interrupted
+    # The child task owns the timeout, so no cancellation can abandon an already-dispatched stop.
+    await wait_despite_cancellation(asyncio.create_task(stop()))
 
 
 _SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
@@ -262,6 +266,8 @@ async def run_command(
         stdout, stderr = capture.text()
         if capture.terminal == 'limit':
             raise capture.overflow()
+        if capture.terminal == 'cwd':
+            raise WorkspaceUnavailableError('The working directory no longer exists or is not usable in the sandbox')
         if capture.terminal == 'timeout':
             raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr)
         if capture.terminal != 'exit' or capture.exit_code is None:
@@ -269,11 +275,11 @@ async def run_command(
         return CommandResult(exit_code=capture.exit_code, stdout=stdout, stderr=stderr)
     except BaseException as original:
         try:
-            interrupted = await _stop_shielded(client, sandbox_id, stop, nonce, stop_timeout)
+            await _stop_shielded(client, sandbox_id, stop, nonce, stop_timeout)
+        except asyncio.CancelledError as cancelled:
+            # A cancellation that arrives during the stop takes priority.
+            raise cancelled from original
         except BaseException as stop_error:
-            if isinstance(stop_error, asyncio.CancelledError) and not isinstance(original, asyncio.CancelledError):
-                # A new cancellation during failure cleanup still takes priority.
-                raise stop_error from original
             original.add_note(
                 f'Command stop was not confirmed in sandbox {sandbox_id}; '
                 'retain its reference for inspection or explicit disposal'
@@ -281,6 +287,4 @@ async def run_command(
             # Preserve cancellation and provider exception identity. Frameworks
             # may overwrite implicit __context__, so make cleanup evidence explicit.
             raise original from stop_error
-        if interrupted is not None and not isinstance(original, asyncio.CancelledError):
-            raise interrupted from original
         raise

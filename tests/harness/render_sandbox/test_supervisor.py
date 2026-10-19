@@ -25,7 +25,12 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from render.experimental.sandbox import SandboxExecEvent, SandboxExecExit, SandboxExecOutput
 
-    from pydantic_ai.workspaces import WorkspaceError, WorkspaceOutputLimitError, WorkspaceTimeoutError
+    from pydantic_ai.workspaces import (
+        WorkspaceError,
+        WorkspaceOutputLimitError,
+        WorkspaceTimeoutError,
+        WorkspaceUnavailableError,
+    )
 
     from .workspace_helpers import WorkspaceHarness
 
@@ -61,6 +66,7 @@ class LocalExec:
     delayed: str | None = None
     drain_before_stop: bool = False
     inline_cwd: Path | None = None
+    sandbox_env: dict[str, str] = field(default_factory=dict[str, str])
 
     async def exec(self, sandbox_id: str, launch: str) -> AsyncIterator[SandboxExecEvent]:
         argv = shlex.split(launch)
@@ -84,6 +90,7 @@ class LocalExec:
             env={
                 'PATH': os.defpath,
                 **{key: value for key, value in os.environ.items() if key == 'COVERAGE_PROCESS_CONFIG'},
+                **self.sandbox_env,
             },
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -140,13 +147,8 @@ async def test_supervisor_stops_the_real_foreground_process(
     # Discard the readiness probe's cwd output before observing the command PID.
     while not local_exec.output.empty():
         local_exec.output.get_nowait()
-    command = [
-        sys.executable,
-        '-c',
-        'import os,subprocess,time; child=subprocess.Popen(["sleep", "60"]); '
-        'print(os.getpid(), child.pid, flush=True); time.sleep(60)',
-    ]
-    task = asyncio.create_task(backend.run(command, timeout=1 if interrupt == 'timeout' else None))
+    command = ['sh', '-c', 'sleep 60 & echo $$ $!; wait']
+    task = asyncio.create_task(backend.run(command, timeout=0.2 if interrupt == 'timeout' else None))
     pid: int | None = None
     child_pid: int | None = None
     try:
@@ -237,7 +239,8 @@ async def test_supervisor_reports_executable_startup_failure(
             await backend.run([str(executable)])
     else:
         result = await backend.run([str(executable)])
-        assert result.exit_code == (127 if failure == 'missing' else 126)
+        expected = (127, 'command not found') if failure == 'missing' else (126, 'Permission denied')
+        assert (result.exit_code, result.stderr) == (expected[0], f'{executable}: {expected[1]}\n')
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
@@ -262,7 +265,7 @@ async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(
     while not local_exec.output.empty():
         local_exec.output.get_nowait()
     local_exec.drain_before_stop = True
-    pending = asyncio.create_task(backend.run(['sh', '-c', 'echo $$; exec sleep 60'], timeout=1))
+    pending = asyncio.create_task(backend.run(['sh', '-c', 'echo $$; exec sleep 60'], timeout=0.2))
     pid: int | None = None
     try:
         async with asyncio.timeout(10):
@@ -367,3 +370,66 @@ async def test_background_output_within_the_drain_grace_is_captured(
     script = 'echo a; (while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo b) &'
     result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=10)
     assert result.stdout == 'a\nb\n'
+
+
+async def test_signal_death_reports_128_plus_signal(workspace_harness: WorkspaceHarness, local_exec: LocalExec) -> None:
+    backend = workspace_harness.backend()
+    result = await backend.run(['sh', '-c', 'kill -KILL $$'])
+    assert result.exit_code == 128 + signal.SIGKILL
+
+
+async def test_missing_working_dir_raises_unavailable(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path
+) -> None:
+    # A deleted working directory is not a missing program, so it must not look like exit 127.
+    project = tmp_path / 'project'
+    project.mkdir()
+    backend = workspace_harness.backend(working_dir=str(project))
+    await backend.working_dir()
+    project.rmdir()
+    with pytest.raises(WorkspaceUnavailableError, match='working directory'):
+        await backend.run(['true'])
+
+
+async def test_commands_keep_the_sandbox_environment(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+) -> None:
+    # Per-command `env` is layered over the sandbox's own environment, not a replacement for it.
+    local_exec.sandbox_env = {'SANDBOX_MARKER': 'inherited'}
+    backend = workspace_harness.backend()
+    result = await backend.run(['sh', '-c', 'printf %s-%s "$SANDBOX_MARKER" "$ADDED"'], env={'ADDED': 'added'})
+    assert result.stdout == 'inherited-added'
+
+
+async def test_cancellation_during_drain_stops_the_background_writer(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path
+) -> None:
+    # The direct shell exits while a same-group child keeps the pipe open; cancelling during the drain kills it.
+    writer_pid = tmp_path / 'writer.pid'
+    backend = workspace_harness.backend()
+    await backend.working_dir()
+    while not local_exec.output.empty():
+        local_exec.output.get_nowait()
+    # The child announces itself only once the direct shell is gone, so the cancel lands during the drain.
+    script = '(while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo started; while :; do sleep 0.01; done) & '
+    script += 'echo $! > "$1"; exit 0'
+    pending = asyncio.create_task(backend.run(['sh', '-c', script, 'sh', str(writer_pid)]))
+    try:
+        async with asyncio.timeout(10):
+            assert await local_exec.output.get() == b'started\n'
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        pid = int(writer_pid.read_text())
+        with anyio.fail_after(10):
+            while True:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                await anyio.sleep(0.05)  # pragma: lax no cover - the writer is often gone by the first check
+    finally:
+        if writer_pid.exists():  # pragma: no branch - absent only if command startup regresses
+            with suppress(ProcessLookupError):
+                os.kill(int(writer_pid.read_text()), signal.SIGKILL)
+        await asyncio.gather(pending, return_exceptions=True)

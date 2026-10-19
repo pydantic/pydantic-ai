@@ -274,3 +274,36 @@ async def test_destination_becoming_dangling_link_does_not_create_its_target(
     assert caught.value.errno == errno.ELOOP
     assert not (workspace_harness.root / 'must-not-create').exists()
     assert workspace_harness.transfers == []
+
+
+async def test_cleanup_removes_the_temporary_file_a_killed_commit_left(workspace_harness: WorkspaceHarness) -> None:
+    import errno
+
+    target = workspace_harness.root / 'existing'
+    target.write_bytes(b'original')
+
+    def kill_during_commit(child: pytest.MonkeyPatch, action: str) -> None:
+        if action == 'commit':
+            # A stop kills the helper before its `finally` runs: the replace fails and the temporary file stays.
+            def killed(source: str, destination: str) -> None:
+                raise OSError(errno.EIO, 'killed')
+
+            def never_exists(path: str) -> bool:
+                return False
+
+            child.setattr(os, 'replace', killed)
+            child.setattr(os.path, 'lexists', never_exists)
+
+    workspace_harness.helper_fault = kill_during_commit
+    with pytest.raises(OSError):
+        await workspace_harness.backend().write_bytes(str(target), b'replacement')
+    assert sorted(path.name for path in workspace_harness.root.iterdir()) == ['existing']
+    assert target.read_bytes() == b'original'
+
+
+async def test_new_file_gets_the_default_mode(workspace_harness: WorkspaceHarness) -> None:
+    umask = os.umask(0)
+    os.umask(umask)
+    target = workspace_harness.root / 'new'
+    await workspace_harness.backend().write_bytes(str(target), b'data')
+    assert target.stat().st_mode & 0o777 == 0o666 & ~umask
