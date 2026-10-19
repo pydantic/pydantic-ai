@@ -130,12 +130,12 @@ class _Queue:
 _QueueKey = tuple[str, str]
 """The provider and `group` of a queue's requests: groups are only comparable within one provider."""
 
-_BatchKey = tuple[str, str]
-"""The provider and ID of a batch: IDs are only unique within one provider."""
+_BatchKey = tuple[str, str, str]
+"""The provider, group and ID of a batch: IDs are only unique within one provider account."""
 
 
 def _batch_key(batch: Batch) -> _BatchKey:
-    return batch.provider_name, batch.id
+    return batch.provider_name, batch.group, batch.id
 
 
 def _take(queues: dict[_QueueKey, _Queue], key: _QueueKey) -> _Queue:

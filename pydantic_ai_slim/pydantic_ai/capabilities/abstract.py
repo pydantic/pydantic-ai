@@ -681,8 +681,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset].
 
         Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an
-        activity, step or task), so this is called there too, with the model the unit rebuilds. Return a wrapper
-        that doesn't do I/O when it's created. The wrapper that's applied outside the unit answers questions like
+        activity, step or task), so this is called there too, with the model the unit rebuilds; in a Temporal
+        activity, on the agent's own capabilities rather than ones
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returned. Return a wrapper that doesn't do
+        I/O when it's created. The wrapper that's applied outside the unit answers questions like
         [`continuation_delay`][pydantic_ai.models.Model.continuation_delay] without sending anything.
 
         Not called for a capability with

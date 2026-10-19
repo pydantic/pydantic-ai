@@ -564,6 +564,17 @@ async def test_exiting_the_capability_ends_its_queued_and_running_work() -> None
     assert asyncio.all_tasks() - tasks_before == {asyncio.current_task()} - tasks_before
 
 
+async def test_only_the_outermost_exit_ends_queued_work() -> None:
+    wrapped = SlowBatchTestModel()
+    batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
+    async with batching:
+        async with batching:
+            run = asyncio.create_task(Agent(wrapped, capabilities=[batching]).run('Hello'))
+            await wrapped.wait_until(lambda m: m.encoded == 1)
+        await batching.flush()
+        assert (await run).output == 'success (no tool calls)'
+
+
 async def test_model_request_batch_validates_its_input() -> None:
     @dataclass(init=False)
     class NoBatchModel(TestModel):

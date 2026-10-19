@@ -64,6 +64,7 @@ class BatchModelRequests(AbstractCapability[Any]):
     """The longest wait between checks of a submitted batch."""
 
     _pool: BatchPool = field(init=False, repr=False, compare=False)
+    _entered: int = field(default=0, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self._pool = BatchPool(
@@ -88,6 +89,7 @@ class BatchModelRequests(AbstractCapability[Any]):
         await self._pool.flush()
 
     async def __aenter__(self) -> Self:
+        self._entered += 1
         return self
 
     async def __aexit__(
@@ -96,5 +98,7 @@ class BatchModelRequests(AbstractCapability[Any]):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Fail the requests still queued, and cancel the submissions and checks still running on this event loop."""
-        await self._pool.close()
+        """Once the outermost `async with` exits, fail the queued requests and cancel the running submissions and checks."""
+        self._entered -= 1
+        if self._entered == 0:
+            await self._pool.close()
