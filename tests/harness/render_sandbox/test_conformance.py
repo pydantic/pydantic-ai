@@ -1,7 +1,8 @@
 """Pydantic AI's workspace backend conformance suite, run against `RenderSandboxBackend`.
 
-`TestFakeRenderSandboxBackend` runs everywhere: the fake Render SDK in `workspace_helpers.py` runs
-commands as local subprocesses under a temporary host directory, and the shipped file helper in-process.
+`TestFakeRenderSandboxBackend` runs everywhere: the fake Render SDK in `workspace_helpers.py` runs every
+command under the shipped supervisor in a child interpreter, in a temporary host directory per sandbox,
+and the shipped file helper in-process.
 `TestLiveRenderSandboxBackend` runs the same rules against a real sandbox, gated in `conftest.py`.
 """
 
@@ -29,7 +30,6 @@ class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):
     # Isolated roots give each fake sandbox its own directory, which termination deletes.
     @pytest.fixture
     def backend(self, isolated_workspace_harness: WorkspaceHarness) -> RenderSandboxBackend:
-        isolated_workspace_harness.supervised = True
         return isolated_workspace_harness.backend()
 
     @pytest.fixture

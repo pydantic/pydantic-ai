@@ -1,7 +1,7 @@
 """A fake Render SDK whose sandboxes are local directories.
 
 User commands run as local subprocesses, or with `supervised` under the shipped supervisor in a child
-interpreter, as Render runs them. The shipped file helper runs in-process, so its coverage needs no child
+interpreter, as Render runs them; the supervised transport also offers the knobs the supervisor tests use. The shipped file helper runs in-process, so its coverage needs no child
 interpreter; `inline_helpers` runs it as Render does instead, under `python3 -I -c` in the command's
 directory. Isolation mode gives each fake sandbox its own root.
 """
@@ -16,9 +16,10 @@ import os
 import runpy
 import shlex
 import shutil
+import signal
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.resources import files
@@ -79,16 +80,35 @@ class WorkspaceHarness:
     opened_clients: list[RenderAsync] = field(default_factory=list[RenderAsync])
     # Run user commands under the shipped supervisor in a child interpreter, as Render does.
     supervised: bool = False
-    supervisors: list[tuple[dict[str, Any], asyncio.subprocess.Process]] = field(
-        default_factory=list[tuple[dict[str, Any], asyncio.subprocess.Process]]
+    supervisors: list[tuple[str, dict[str, Any], asyncio.subprocess.Process]] = field(
+        default_factory=list[tuple[str, dict[str, Any], asyncio.subprocess.Process]]
     )
+    # Supervised transport knobs. `output` receives each user command's output bytes as they stream.
+    output: asyncio.Queue[bytes] = field(default_factory=asyncio.Queue[bytes])
+    # Variables the sandbox itself has, which the backend's `env` does not supply.
+    sandbox_env: dict[str, str] = field(default_factory=dict[str, str])
+    # Measure the supervisor child's coverage; off by default to keep the conformance suite cheap.
+    measure_supervisor: bool = False
+    # Run the launch exactly as Render receives it (`python3 -I -c <source>`) in this directory.
+    inline_cwd: Path | None = None
+    # Lose the next run's start response before launching it, keeping its launch for a later replay.
+    delay_next: bool = False
+    delayed: str | None = None
+    # Hold a stop until every running command has exited, as a delayed provider stop would.
+    drain_before_stop: bool = False
 
     execute: Callable[..., Awaitable[CommandResult]] = field(init=False)
     install: Callable[[RenderAsync], None] = field(init=False)
 
+    async def wait_supervisors(self) -> None:
+        # Every test command either finishes or receives the backend's stop first.
+        async with asyncio.timeout(10):
+            for _, _, process in self.supervisors:
+                await process.wait()
+
     async def aclose(self) -> None:
         """Reap every supervisor and remove its claim; the tests stop each command they leave running."""
-        for config, process in self.supervisors:
+        for _, config, process in self.supervisors:
             if process.returncode is None:  # pragma: no cover - only after a regression leaves a command running
                 process.kill()
             await process.communicate()
@@ -178,6 +198,12 @@ def lifecycle(
             raise harness.terminate_error
         harness.terminated.append(identifier)
         harness.sandboxes[identifier].status = 'terminated'
+        for sandbox_id, config, process in harness.supervisors:
+            if sandbox_id == identifier and process.returncode is None:
+                # Termination ends everything in the sandbox: the command's process group and its supervisor.
+                with suppress(FileNotFoundError, KeyError, ProcessLookupError):
+                    os.killpg(json.loads((Path(config['claim']) / 'state.json').read_text())['pid'], signal.SIGKILL)
+                process.kill()
         if harness.isolated_filesystems:
             # Termination deletes the sandbox's filesystem; only isolated roots belong to one sandbox.
             shutil.rmtree(harness.sandbox_roots[identifier], ignore_errors=True)
@@ -271,9 +297,6 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
                 await process.communicate()
             raise
         assert process.returncode is not None
-        if harness.sandboxes[sandbox_id].status != 'running':
-            # Render ends the exec stream with an error when the sandbox is terminated mid-command.
-            raise SandboxNotFoundError('terminated during command')
         return CommandResult(
             exit_code=process.returncode,
             stdout=stdout.decode('utf-8', errors='replace'),
@@ -295,7 +318,7 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
         argv = config.get('argv', [])
         helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
         if harness.supervised and not (operation == 'run' and (config['cwd'] == '/' or helper)):
-            async for event in _supervise(harness, identifier, operation, config):
+            async for event in _supervise(harness, identifier, launch):
                 yield event
             return
         if operation == 'stop':
@@ -315,26 +338,42 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
     return execute
 
 
-async def _supervise(
-    harness: WorkspaceHarness, identifier: str, operation: str, config: dict[str, Any]
-) -> AsyncGenerator[SandboxExecEvent]:
-    """Run the shipped supervisor in a child interpreter with the sandbox's create-time environment."""
+async def _supervise(harness: WorkspaceHarness, identifier: str, launch: str) -> AsyncGenerator[SandboxExecEvent]:
+    """Run the shipped supervisor in a child interpreter with the sandbox's own environment."""
+    args = shlex.split(launch)
+    operation, config = args[4], json.loads(args[5])
+    if operation == 'run' and harness.delay_next:
+        harness.delay_next = False
+        harness.delayed = launch
+        raise ConnectionError('start response lost before the server launches the command')
+    if operation == 'stop' and harness.drain_before_stop:
+        await asyncio.gather(*(process.wait() for _, _, process in harness.supervisors))
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    if harness.measure_supervisor and 'COVERAGE_PROCESS_CONFIG' in os.environ:
+        env['COVERAGE_PROCESS_CONFIG'] = os.environ['COVERAGE_PROCESS_CONFIG']
     env.update(harness.create_calls[identifier].env)
+    env.update(harness.sandbox_env)
+    # Inline mode runs the received source as Render does; otherwise the package file, so coverage has a path.
+    argv = [sys.executable, *args[1:]] if harness.inline_cwd else [sys.executable, str(SUPERVISOR), *args[4:]]
     process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        str(SUPERVISOR),
-        operation,
-        json.dumps(config),
+        *argv,
+        cwd=harness.inline_cwd,
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     # Render keeps an exec running after the client disconnects; the backend's stop or `aclose` ends it.
-    harness.supervisors.append((config, process))
+    harness.supervisors.append((identifier, config, process))
     assert process.stdout is not None and process.stderr is not None
     while line := await process.stdout.readline():
+        frame = json.loads(line)
+        if operation == 'run' and frame['kind'] == 'output':
+            harness.output.put_nowait(base64.b64decode(frame['data']))
         yield SandboxExecOutput('stdout', line.decode())
     stderr = await process.stderr.read()
+    exit_code = await process.wait()
+    if harness.sandboxes[identifier].status != 'running':
+        # Render ends the exec stream with an error when the sandbox is terminated mid-command.
+        raise SandboxNotFoundError('terminated during command')
     assert not stderr, stderr.decode()
-    yield SandboxExecExit(await process.wait())
+    yield SandboxExecExit(exit_code)

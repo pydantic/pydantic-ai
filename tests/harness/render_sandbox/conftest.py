@@ -26,6 +26,8 @@ async def isolated_workspace_harness(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> AsyncIterator[WorkspaceHarness]:
     harness = make_workspace_harness(monkeypatch, tmp_path, isolated_filesystems=True)
+    # The conformance suite's commands, including the destroy-during-command rule, run under the shipped supervisor.
+    harness.supervised = True
     yield harness
     await harness.aclose()
 

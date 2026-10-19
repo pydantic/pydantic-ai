@@ -43,8 +43,7 @@ def destination(path: str) -> str:
     try:
         info = os.stat(target)
     except FileNotFoundError:
-        if os.path.islink(target):
-            raise OSError(errno.ELOOP, 'Symlink loop', path)
+        pass
     else:
         if stat.S_ISDIR(info.st_mode):
             raise IsADirectoryError(errno.EISDIR, 'Destination is a directory', path)

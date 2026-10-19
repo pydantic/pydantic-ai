@@ -48,7 +48,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
-from ._commands import client_scope, close_client, open_client, prepare_command, run_command
+from ._commands import client_scope, prepare_command, run_command
 from ._filesystem import NativeFilesystem
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._ref = ref
         self._allow_internet_access = allow_internet_access
         self._sandbox_timeout = sandbox_timeout
-        self._working_dir = absolute_path('working_dir', working_dir) or DEFAULT_WORKING_DIR
+        absolute_path('working_dir', working_dir)
+        self._working_dir = working_dir
         self._filesystem = NativeFilesystem(self, _OPERATION_TIMEOUT)
         # Metadata operations use core's shell implementation over this backend's commands, as Sprites does.
         self._shell = _ShellFilesystem(self)
@@ -177,14 +178,12 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         if (client := self._operation_clients.get(task)) is not None:
             yield client
             return
-        client = open_client()
-        self._operation_clients[task] = client
-        try:
-            yield client
-        finally:
-            del self._operation_clients[task]
-            with anyio.CancelScope(shield=True):
-                await close_client(client)
+        async with client_scope(None) as client:
+            self._operation_clients[task] = client
+            try:
+                yield client
+            finally:
+                del self._operation_clients[task]
 
     async def _create(self, client: RenderAsync) -> None:
         try:

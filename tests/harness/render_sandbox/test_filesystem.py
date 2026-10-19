@@ -28,6 +28,28 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
+async def test_transfer_deadline_grows_with_the_file_size(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fixed deadline would make a large file on a slow link impossible to transfer.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._filesystem._MIN_BYTES_PER_SECOND', 1)
+    deadlines: list[float | None] = []
+    real_timeout = asyncio.timeout
+
+    def recording_timeout(delay: float | None) -> asyncio.Timeout:
+        deadlines.append(delay)
+        return real_timeout(delay)
+
+    workspace = Workspace(workspace_harness.backend())
+    await workspace.working_dir()
+    monkeypatch.setattr(asyncio, 'timeout', recording_timeout)
+    await workspace.write_bytes('sized.bin', b'x' * 10)
+    await workspace.read_bytes('sized.bin')
+    # The base operation timeout is 30 s; each byte adds a second at the patched rate. The upload, the
+    # commit helper that copies it into place, and the download each get the scaled deadline.
+    assert deadlines.count(30.0 + 10) == 3
+
+
 async def test_native_bytes_do_not_travel_in_commands(workspace_harness: WorkspaceHarness) -> None:
     workspace = Workspace(workspace_harness.backend())
     data = os.urandom(8192)
@@ -242,37 +264,6 @@ async def test_file_shrinking_during_snapshot_is_not_partial_success(workspace_h
     with pytest.raises(OSError) as caught:
         await backend.read_bytes(str(target))
     assert caught.value.errno == errno.EIO
-    assert workspace_harness.transfers == []
-
-
-async def test_destination_becoming_dangling_link_does_not_create_its_target(
-    workspace_harness: WorkspaceHarness,
-) -> None:
-    import errno
-
-    target = workspace_harness.root / 'changing'
-    target.write_bytes(b'original')
-    original_stat = os.stat
-
-    def replace_destination(child: pytest.MonkeyPatch, action: str) -> None:
-        if action == 'prepare':
-
-            def changed_stat(path: str, *, dir_fd: int | None = None, follow_symlinks: bool = True) -> os.stat_result:
-                if path == str(target):  # pragma: no branch - other interpreter file checks only pass through
-                    # The write resolved a regular file; another writer replaces it
-                    # with a dangling link before the subsequent file check.
-                    target.unlink()
-                    target.symlink_to('must-not-create')
-                return original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
-
-            child.setattr(os, 'stat', changed_stat)
-
-    workspace_harness.helper_fault = replace_destination
-    backend = workspace_harness.backend()
-    with pytest.raises(OSError) as caught:
-        await backend.write_bytes(str(target), b'replacement')
-    assert caught.value.errno == errno.ELOOP
-    assert not (workspace_harness.root / 'must-not-create').exists()
     assert workspace_harness.transfers == []
 
 

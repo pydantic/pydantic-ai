@@ -22,6 +22,8 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
+# Transfers get the base timeout plus this much per byte, as E2B's uploads do, so large files can finish.
+_MIN_BYTES_PER_SECOND = 256 * 1024
 _HELPER = Path(__file__).with_name('_file_transfer.py').read_text()
 
 
@@ -34,9 +36,12 @@ class NativeFilesystem:
         self.commands = backend
         self.timeout = timeout
 
+    def _deadline(self, size: int) -> float:
+        return self.timeout + size / _MIN_BYTES_PER_SECOND
+
     async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:
         result = await self.commands.run(
-            ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)], timeout=self.timeout
+            ['python3', '-I', '-c', _HELPER, action, path, directory, str(size)], timeout=self._deadline(size)
         )
         try:
             value = json.loads(result.stdout)
@@ -65,7 +70,7 @@ class NativeFilesystem:
                     await anyio.Path(local).write_bytes(data)
                 # The public SDK has per-connection timeouts but no total file deadline.
                 # Never retry an uncertain upload or hide failure with a shell fallback.
-                async with asyncio.timeout(self.timeout):
+                async with asyncio.timeout(self._deadline(size if data is None else len(data))):
                     if data is None:
                         await client.experimental.sandboxes.copy_from(ref.id, f'{remote}/data', local)
                     else:
@@ -82,7 +87,7 @@ class NativeFilesystem:
         except SandboxNotFoundError as error:
             raise WorkspaceUnavailableError('Render sandbox is unavailable') from error
         except TimeoutError as error:
-            raise WorkspaceTimeoutError(f'Render file transfer exceeded {self.timeout}s') from error
+            raise WorkspaceTimeoutError(f'Render file transfer timed out for {path!r}') from error
         except RateLimitError:
             raise
         except (ClientError, SandboxDownloadError) as error:
