@@ -15,12 +15,14 @@ from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
+    compact_with_events,
     compact_with_span,
     context_for_request,
     estimate_context_tokens,
     estimate_token_count,
     record_compaction_reclaim,
     resolve_token_trigger,
+    strategy_id,
     validate_token_trigger,
 )
 
@@ -38,6 +40,8 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     fails. Entries must derive from `Exception`, so cancellation and other `BaseException`
     subclasses are never caught.
     """
+
+    strategy_id = 'fallback'
 
     fallback_chain: Sequence[CompactionStrategy[AgentDepsT]]
     fallback_on: tuple[type[Exception], ...] = (ModelAPIError, FallbackExceptionGroup)
@@ -85,7 +89,14 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         last_error: Exception | None = None
         for strategy in self.fallback_chain:
             try:
-                return await strategy.compact(list(messages), ctx)
+                attempt_messages = list(messages)
+                return await compact_with_events(
+                    ctx,
+                    strategy=strategy_id(strategy),
+                    messages=attempt_messages,
+                    compact=lambda: strategy.compact(attempt_messages, ctx),
+                    tokenizer=self.tokenizer,
+                )
             except self.fallback_on as error:
                 last_error = error
         assert last_error is not None
@@ -112,7 +123,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             return request_context
         compacted = await compact_with_span(
             request_ctx,
-            strategy='FallbackCompaction',
+            strategy=self.strategy_id,
             messages=messages,
             compact=lambda: self._compact_pinned(messages, request_ctx),
             tokenizer=self.tokenizer,

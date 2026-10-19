@@ -38,6 +38,7 @@ from .abstract import (
 from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
+from .compaction import COMPACTION_EVENT_NAMESPACE, CompactionEndEvent, CompactionStartEvent
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
@@ -134,6 +135,9 @@ __all__ = [
     'Caching',
     'Capability',
     'CAPABILITY_TYPES',
+    'COMPACTION_EVENT_NAMESPACE',
+    'CompactionEndEvent',
+    'CompactionStartEvent',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
