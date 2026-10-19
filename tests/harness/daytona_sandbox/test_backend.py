@@ -503,22 +503,45 @@ class TestCommands:
         assert sandbox.process_sessions == set()
         assert sandbox.process_delete_calls == 1
 
-    async def test_a_stopped_sandbox_that_cannot_be_checked_is_unavailable(self, fake_daytona: FakeDaytona) -> None:
+    async def test_a_stopped_sandbox_that_cannot_be_checked_keeps_the_setup_error(
+        self, fake_daytona: FakeDaytona
+    ) -> None:
+        # The lookup is inconclusive, so the setup failure decides, and a transient one stays retryable.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = daytona.SandboxState.STOPPED
-        sandbox.refresh_error = error = DaytonaConnectionError('control plane down')
-        with pytest.raises(
-            WorkspaceUnavailableError, match=r"^Could not restart stopped Daytona sandbox 'sb-1'\.$"
-        ) as exc_info:
+        sandbox.refresh_error = DaytonaConnectionError('control plane down')
+        with pytest.raises(DaytonaError, match=r'^sandbox stopped$'):
             await backend.run(['true'])
-        assert exc_info.value.__cause__ is error
         assert sandbox.start_calls == []
 
-    async def test_stopped_sandbox_restarts_for_held_backend(self, fake_daytona: FakeDaytona) -> None:
+    @pytest.mark.parametrize(
+        ('start_error', 'expected'),
+        [
+            (DaytonaConnectionError('control plane down'), DaytonaConnectionError),
+            (DaytonaError('sandbox is in an error state', status_code=400), WorkspaceUnavailableError),
+            (DaytonaAuthenticationError('bad key', status_code=401), WorkspaceUnavailableError),
+        ],
+    )
+    async def test_a_failed_restart_keeps_transient_errors(
+        self, fake_daytona: FakeDaytona, start_error: Exception, expected: type[Exception]
+    ) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = daytona.SandboxState.STOPPED
+        sandbox.start_error = start_error
+        with pytest.raises(expected) as exc_info:
+            await backend.run(['true'])
+        assert start_error in (exc_info.value, exc_info.value.__cause__)
+
+    @pytest.mark.parametrize('state', [daytona.SandboxState.STOPPED, daytona.SandboxState.PAUSED])
+    async def test_stopped_sandbox_restarts_for_held_backend(
+        self, fake_daytona: FakeDaytona, state: daytona.SandboxState
+    ) -> None:
+        # Daytona stops an idle container and pauses an idle VM; a start request resumes either.
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.state = state
         result = await backend.run(['true'])
         assert result.exit_code == 0
         assert sandbox.start_calls

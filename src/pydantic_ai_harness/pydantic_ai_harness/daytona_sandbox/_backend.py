@@ -19,9 +19,10 @@ External assumptions last verified 2026-09-08 against Daytona Python SDK 0.198.0
   finished command's output comes from it.
 * `sandbox.fs` provides metadata, byte upload/download, and directory operations:
   https://www.daytona.io/docs/en/python-sdk/async/async-file-system/
-* `auto_stop_interval` is a creation-time setting; left unset, Daytona stops an idle sandbox after
-  15 minutes, archives it after 7 days stopped, and never deletes it:
-  https://www.daytona.io/docs/en/python-sdk/async/async-daytona/
+* `auto_stop_interval` is a creation-time setting; left unset, Daytona stops an idle container
+  sandbox after 15 minutes and archives it after 7 days stopped, pauses an idle VM sandbox after
+  60 minutes instead, and never deletes either. Starting a paused sandbox resumes it:
+  https://www.daytona.io/docs/en/persistence/
 * `FileInfo` has `is_dir`, and the SDK does not say whether it follows a symlink.
 * SDK errors are typed by HTTP status (`DaytonaNotFoundError` 404, `DaytonaAuthenticationError`
   401, `DaytonaAuthorizationError` 403, `DaytonaValidationError` 400, `DaytonaConflictError` 409,
@@ -419,7 +420,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         ref: Identity of an existing sandbox to attach to on first use.
         snapshot: Daytona snapshot a newly created sandbox starts from; Daytona's default when `None`.
         auto_stop_interval: Idle minutes before Daytona stops a newly created sandbox; `0` disables
-            it, and `None` keeps Daytona's default (15 minutes).
+            it, and `None` keeps Daytona's default (15 minutes for a container; a VM pauses after 60
+            instead).
         working_dir: Absolute directory commands start in and relative paths resolve against; the
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
@@ -1019,20 +1021,35 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
 
 
 async def _restart_if_stopped(sandbox: AsyncSandbox) -> bool:
+    """Start a sandbox Daytona stopped, archived, or paused (a VM) while idle; report whether it did.
+
+    An inconclusive state lookup leaves the original error to decide. A failed start propagates a
+    transient error unchanged and reports a refused one as `WorkspaceUnavailableError`.
+    """
     try:
         with anyio.fail_after(_REQUEST_TIMEOUT):
             await sandbox.refresh_data(request_timeout=_REQUEST_TIMEOUT)
-        if sandbox.state not in (
-            daytona.SandboxState.STOPPED,
-            daytona.SandboxState.STOPPING,
-            daytona.SandboxState.ARCHIVED,
-        ):
-            return False
+    except Exception:
+        return False
+    if sandbox.state not in (
+        daytona.SandboxState.STOPPED,
+        daytona.SandboxState.STOPPING,
+        daytona.SandboxState.ARCHIVED,
+        daytona.SandboxState.PAUSED,
+        daytona.SandboxState.PAUSING,
+    ):
+        return False
+    try:
         with anyio.fail_after(_LIFECYCLE_TIMEOUT):
             await sandbox.start(timeout=_LIFECYCLE_TIMEOUT)
-        return True
     except Exception as error:
+        translated = _translated(error, 'Could not restart the Daytona sandbox')
+        if translated is error:
+            raise
+        if isinstance(translated, WorkspaceUnavailableError):
+            raise translated from error
         raise WorkspaceUnavailableError(f'Could not restart stopped Daytona sandbox {sandbox.id!r}.') from error
+    return True
 
 
 def _in_deleted_state(sandbox: AsyncSandbox) -> bool:

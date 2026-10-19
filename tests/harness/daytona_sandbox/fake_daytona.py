@@ -84,7 +84,7 @@ class FakeProcess:
 
     async def create_session(self, session_id: str, request_timeout: float | None = None) -> None:
         self.owner.check_alive()
-        if self.owner.state == SandboxState.STOPPED:
+        if self.owner.state in (SandboxState.STOPPED, SandboxState.PAUSED):
             raise DaytonaError('sandbox stopped')
         if self.owner.process_create_gate is not None:
             await self.owner.process_create_gate.wait()
@@ -453,6 +453,7 @@ class FakeSandbox:
         self.gone_error: Exception | None = None
         self.download_error: Exception | None = None
         self.start_calls: list[float | None] = []
+        self.start_error: Exception | None = None
         self.files: dict[str, bytes] = {}
         self.directories: set[str] = set()
         self.exec_error: Exception | None = None
@@ -496,6 +497,8 @@ class FakeSandbox:
 
     async def start(self, timeout: float | None = 60) -> None:
         self.start_calls.append(timeout)
+        if self.start_error is not None:
+            raise self.start_error
         self.started = True
         self.state = SandboxState.STARTED
 

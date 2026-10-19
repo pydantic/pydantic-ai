@@ -142,7 +142,7 @@ The run uses the backend as it is, so `DaytonaSandbox`'s settings don't apply to
 
 ## Clean up
 
-Pydantic AI never stops or deletes the sandbox. Daytona stops it after 15 idle minutes by default (set `auto_stop_interval=` to change that, or `0` to keep it running), and a later run starts it again. A stopped sandbox keeps its disk and is archived after 7 days, but Daytona never deletes it. Delete it with the ref you stored:
+Pydantic AI never stops or deletes the sandbox. Daytona stops a container sandbox, such as one from the default snapshot, after 15 idle minutes by default (set `auto_stop_interval=` to change that, or `0` to keep it running). A stopped sandbox keeps its disk and is archived after 7 days. A sandbox from a VM snapshot is paused after 60 idle minutes instead, and is never archived. Either way, a later run starts it again, and Daytona never deletes it. Delete it with the ref you stored:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -187,8 +187,8 @@ A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed w
 | --- | --- |
 | `client` | A `daytona.AsyncDaytona` to share across runs on one event loop, or to configure its API URL or target. Default: `None`, a client each run opens from `DAYTONA_API_KEY` and closes when it ends. You close a client you pass; `DaytonaSandbox` never does. |
 | `snapshot` | Daytona snapshot a new sandbox starts from. Default: `None`, Daytona's default. An unknown snapshot fails on first use. |
-| `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox; `0` disables it. Default: `None`, Daytona's 15 minutes. |
-| `network_block_all` | Block outbound traffic from a new sandbox. Daytona still allows package registries, GitHub, and AI APIs, so this is not an exfiltration boundary; see [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `False`. |
+| `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox; `0` disables it. Default: `None`, Daytona's default: 15 minutes for a container, while a VM pauses after 60 minutes instead. |
+| `network_block_all` | Block outbound traffic from a new sandbox. What it blocks depends on your Daytona organization's tier: on Tier 3 and 4 it blocks everything, including package registries, GitHub, and AI APIs, while lower tiers keep those reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `False`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 
