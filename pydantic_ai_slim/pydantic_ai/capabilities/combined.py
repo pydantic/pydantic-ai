@@ -225,6 +225,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_on_model_request_error for c in self.capabilities)
 
     @property
+    def _has_prepare_model_request(self) -> bool:
+        return any(c._has_prepare_model_request for c in self.capabilities)
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return any(c.has_wrap_run_event_stream for c in self.capabilities)
 

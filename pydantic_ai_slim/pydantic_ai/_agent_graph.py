@@ -413,9 +413,16 @@ class _AttemptBaseline:
     """The resolved settings the hooks removed."""
     layered_settings: ModelSettings | None
     """The step's settings from the agent, capabilities and run, without the step model's own `settings`."""
+    copy_tool_definitions: bool = False
+    """Whether each attempt gets its own copies of the tool definitions, schemas included.
+
+    Only when a `prepare_model_request` hook could edit them for one attempt, to keep the common path cheap.
+    """
 
     @classmethod
-    def capture(cls, request_context: ModelRequestContext, step_settings: StepModelSettings) -> _AttemptBaseline:
+    def capture(
+        cls, request_context: ModelRequestContext, step_settings: StepModelSettings, *, copy_tool_definitions: bool
+    ) -> _AttemptBaseline:
         """Capture the request as the hooks left it, and what they changed in the step's resolved settings.
 
         A hook that sets a value equal to the one the step already resolved to counts as leaving it unchanged,
@@ -431,6 +438,7 @@ class _AttemptBaseline:
             hook_settings={key: value for key, value in final.items() if key not in resolved or resolved[key] != value},
             hook_removed_settings={key for key in resolved if key not in final},
             layered_settings=step_settings.layered,
+            copy_tool_definitions=copy_tool_definitions,
         )
 
     def settings_for(self, model: models.Model) -> ModelSettings | None:
@@ -467,7 +475,8 @@ class _AttemptBaseline:
     def restore(self, request_context: ModelRequestContext) -> None:
         # Fresh containers, down to the lists, dicts and sets inside the settings and parameters at any depth, so
         # a hook that edits them in place for one attempt doesn't change what the next attempt starts from. The
-        # messages, tool definitions and other items they hold are shared, as `before_model_request` shares them.
+        # messages and other items they hold are shared, as `before_model_request` shares them; so are the tool
+        # definitions, unless a `prepare_model_request` hook could edit them in place.
         request_context.messages = list(self.messages)
         settings = self.settings_for(request_context.model)
         request_context.model_settings = (
@@ -476,16 +485,30 @@ class _AttemptBaseline:
             else None
         )
         parameters = self.model_request_parameters
+        copy_tools = _copy_tool_definition if self.copy_tool_definitions else _same_tool_definition
         request_context.model_request_parameters = replace(
             parameters,
-            function_tools=list(parameters.function_tools),
+            function_tools=[copy_tools(tool) for tool in parameters.function_tools],
             native_tools=list(parameters.native_tools),
             tool_visibility=_copy_container(parameters.tool_visibility),
             revealed_tool_names=set(parameters.revealed_tool_names),
             deferred_capability_ids=set(parameters.deferred_capability_ids),
-            output_tools=list(parameters.output_tools),
+            output_tools=[copy_tools(tool) for tool in parameters.output_tools],
             instruction_parts=_copy_container(parameters.instruction_parts),
         )
+
+
+def _copy_tool_definition(tool: ToolDefinition) -> ToolDefinition:
+    """A copy of `tool` whose JSON schema and metadata can be edited in place without sharing."""
+    return replace(
+        tool,
+        parameters_json_schema=_copy_container(tool.parameters_json_schema),
+        metadata=_copy_container(tool.metadata),
+    )
+
+
+def _same_tool_definition(tool: ToolDefinition) -> ToolDefinition:
+    return tool
 
 
 def _copy_container(value: T) -> T:
@@ -1864,14 +1887,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             _handler_request_context = req_ctx
-            baseline = _AttemptBaseline.capture(req_ctx, self._step_model_settings)
+            baseline = _AttemptBaseline.capture(
+                req_ctx,
+                self._step_model_settings,
+                copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+            )
             try:
                 async with AsyncExitStack() as stream_stack:
-                    sr, req_ctx, request_start = await self._open_stream(
+                    # `described_attempts` are the attempts this step's loop moved on from, whose usage was committed
+                    # when they failed. Attempts the model itself carries on the stream are counted with it.
+                    sr, req_ctx, request_start, described_attempts = await self._open_stream(
                         ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                     )
-                    # The step's failed attempts the stream was handed over with, committed when they failed.
-                    described_attempts = list(sr.failed_attempts or ())
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
@@ -2205,7 +2232,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         starts empty: a response a hook rejected must not survive into history, though its usage, already
         committed at the provider boundary, stays counted.
         """
-        baseline = _AttemptBaseline.capture(request_context, self._step_model_settings)
+        baseline = _AttemptBaseline.capture(
+            request_context,
+            self._step_model_settings,
+            copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+        )
         failed = _FailedAttempts()
         state.described_attempts = failed.log.attempts
         while True:
@@ -2680,7 +2711,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         baseline: _AttemptBaseline,
         stream_stack: AsyncExitStack,
         handoff: _StreamHandoff,
-    ) -> tuple[models.StreamedResponse, ModelRequestContext, float]:
+    ) -> tuple[models.StreamedResponse, ModelRequestContext, float, list[_messages.ModelRequestAttempt]]:
         """Open the stream for this request step, re-attempting while a hook asks for another attempt.
 
         When an `on_model_request_error` hook exists, each attempt's stream is primed before it's handed
@@ -2690,7 +2721,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         again. Without such a hook, the stream opens lazily once the consumer iterates it. Once events
         have reached the consumer there is nothing to rewind, so a later failure propagates (tracked
         separately by #4140). Returns the open stream, the context of the attempt
-        that produced it, and the instant the request was issued.
+        that produced it, the instant the request was issued, and the attempts this loop moved on from.
         """
         failed = _FailedAttempts()
         while True:
@@ -2751,10 +2782,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     replay_events=True,
                 )
                 failed.log.attach_to_stream(replay)
-                return replay, request_context, request_start
+                return replay, request_context, request_start, failed.log.attempts
             stream_stack.push_async_exit(attempt_stack)
             failed.log.attach_to_stream(sr)
-            return sr, request_context, request_start
+            return sr, request_context, request_start, failed.log.attempts
 
     async def _start_next_attempt(
         self,

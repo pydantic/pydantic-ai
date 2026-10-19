@@ -163,6 +163,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_prepare_model_request(self) -> bool:
+        return (
+            type(self).prepare_model_request is not WrapperCapability.prepare_model_request
+            or self.wrapped._has_prepare_model_request
+        )
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return (
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream

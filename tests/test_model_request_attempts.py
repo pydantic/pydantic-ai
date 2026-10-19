@@ -5,8 +5,10 @@ The `Fallback` capability built on these is tested in `test_capability_fallback.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -14,8 +16,10 @@ import pytest
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.messages import AgentStreamEvent, ModelRequestAttempt
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 
@@ -567,3 +571,74 @@ async def test_nested_settings_edited_in_place_do_not_reach_the_next_attempt():
     assert (await agent.run('x')).output == 'hello'
     original = "{'nested': {'x': 'original'}, 'tags': {'original'}}"
     assert seen == [original, original]
+
+
+async def test_tool_schema_edits_in_place_do_not_reach_the_next_attempt():
+    """A tool definition a `prepare_model_request` hook edits in place, schema included, is fresh for the next attempt."""
+    seen: list[tuple[int, str | None, list[str]]] = []
+
+    class EditToolInPlaceThenSwitch(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            tool = request_context.model_request_parameters.function_tools[0]
+            properties = cast(dict[str, Any], tool.parameters_json_schema['properties'])
+            seen.append((request_context.attempt, tool.description, sorted(properties)))
+            if request_context.attempt == 1:
+                tool.description = 'edited'
+                properties['injected'] = {'type': 'string'}
+                raise RetryModelRequest(FunctionModel(success, model_name='other'))
+            return request_context
+
+    agent = Agent(FunctionModel(failure), deps_type=type(None), capabilities=[EditToolInPlaceThenSwitch()])
+
+    @agent.tool_plain
+    def lookup(query: str) -> str:
+        """Look something up."""
+        return query  # pragma: no cover
+
+    assert (await agent.run('x')).output == 'hello'
+    assert seen == [(1, 'Look something up.', ['query']), (2, 'Look something up.', ['query'])]
+
+
+async def test_failed_attempts_a_streamed_model_carries_are_counted():
+    """A stream a model hands over with failed attempts of its own, billed by that model, counts their usage.
+
+    Only the attempts the agent's own attempt loop moved on from were counted already.
+    """
+    attempt = ModelRequestAttempt(
+        model_name='inner',
+        provider_name='inner',
+        outcome='rejected',
+        timestamp=datetime.now(UTC),
+        duration=timedelta(seconds=1),
+        usage=RequestUsage(input_tokens=100, output_tokens=200),
+    )
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    class AttemptCarryingModel(FunctionModel):
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                streamed_response.failed_attempts = [attempt]
+                yield streamed_response
+
+    async def consume(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    model = AttemptCarryingModel(stream_function=stream_fn)
+    for capabilities in ([], [RetrySameModelOnError()]):
+        agent = Agent(model, deps_type=type(None), capabilities=capabilities)
+        result = await agent.run('x', event_stream_handler=consume)
+        assert (result.usage.input_tokens, result.usage.output_tokens) == (150, 201)

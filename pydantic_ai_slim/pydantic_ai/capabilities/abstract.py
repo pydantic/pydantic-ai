@@ -369,6 +369,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
     @property
+    def _has_prepare_model_request(self) -> bool:
+        return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
