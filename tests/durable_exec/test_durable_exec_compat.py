@@ -556,8 +556,10 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -629,8 +631,10 @@ def test_capability_operation_result_payload_golden() -> None:
         'usage_delta': {
             'input_tokens': 3,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
