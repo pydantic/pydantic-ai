@@ -32,6 +32,7 @@ LANE_VARS = (
     'PYTEST_TEST_BUDGET_SECONDS',
     'PYTEST_COLLECT_BUDGET_SECONDS',
     'TYPECHECK_EXAMPLES',
+    'RENDER_LOCAL_RUNTIME',
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 
