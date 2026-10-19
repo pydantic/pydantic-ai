@@ -105,7 +105,7 @@ def test_tool_call_id_length(model_name: str):
 
 
 def test_zai_glm_5_3_inlines_defs_for_tool_schemas():
-    """Mistral serves GLM-5.3 unchanged, so nested tool schemas must not use `$defs` references."""
+    """GLM-5.3 nested tool schemas must not use `$defs` references."""
     assert mistral_model_profile('zai-glm-5-3').get('json_schema_transformer') == InlineDefsJsonSchemaTransformer
     assert (
         MistralProvider.model_profile('zai-glm-5-3').get('json_schema_transformer') == InlineDefsJsonSchemaTransformer

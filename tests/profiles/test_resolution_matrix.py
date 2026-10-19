@@ -1345,15 +1345,12 @@ def test_openrouter_mistral_large():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_zai_glm_5_3():
-    """OpenRouter routes `z-ai/glm-5.3` through its Z.AI family profile."""
+    """OpenRouter inlines GLM-5.3 schemas while retaining its own reasoning settings."""
     profile = OpenRouterProvider.model_profile('z-ai/glm-5.3')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
