@@ -31,6 +31,8 @@ its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker
   its start and its end;
 - `lifecycle.unknown_answer`: a response answers an input the connection was never sent;
 - `lifecycle.input_settled_twice`: an input is answered, refused, or lost more than once;
+- `lifecycle.bad_revision`: an `AnswersRevised` claims an input for a response that isn't under way, or releases one
+  the response wasn't answering;
 - `lifecycle.input_added_twice`: an input joins the conversation twice;
 - `lifecycle.turn_started_twice` / `lifecycle.turn_end_without_start`: a spoken turn isn't bracketed by
   one start and one end (or discard);
@@ -45,6 +47,7 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from pydantic_ai.realtime._lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputLost,
     LifecycleEvent,
@@ -97,6 +100,8 @@ class LifecycleChecker:
     only in their terminal."""
     _responses_ended: set[str] = field(default_factory=set[str])
     _settled_inputs: set[int] = field(default_factory=set[int])
+    _answers: dict[str, set[int]] = field(default_factory=dict[str, set[int]])
+    """The inputs each response answers, as revised."""
     _added_inputs: set[int] = field(default_factory=set[int])
     _turns: set[str] = field(default_factory=set[str])
     _open_turns: set[str] = field(default_factory=set[str])
@@ -176,6 +181,7 @@ class LifecycleChecker:
             sent = self.inputs_sent() if self.inputs_sent is not None else 0
             if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
                 issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
+            self._answers[event.response_id] = set(event.answers)
             self._settle(event.answers, issue)
         elif isinstance(event, ResponseEnded):
             if event.response_id in self._responses_ended:
@@ -190,6 +196,8 @@ class LifecycleChecker:
             if event.input_id in self._added_inputs:
                 issue('lifecycle.input_added_twice', f'input {event.input_id} joined the conversation twice')
             self._added_inputs.add(event.input_id)
+        elif isinstance(event, AnswersRevised):
+            self._feed_revision(event, issue)
         elif isinstance(event, OutputItemDetails):
             if event.response_id not in self._open_responses:
                 issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
@@ -216,6 +224,18 @@ class LifecycleChecker:
                 issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} closed without starting')
             self._open_turns.discard(event.turn_id)
             self._joined_turns.discard(event.turn_id)
+
+    def _feed_revision(self, event: AnswersRevised, issue: Callable[[str, str], None]) -> None:
+        answers = self._answers.setdefault(event.response_id, set())
+        if event.claimed and event.response_id not in self._open_responses:
+            issue('lifecycle.bad_revision', f'{event.response_id!r} claims {event.claimed} while not under way')
+        if stray := [input_id for input_id in event.released if input_id not in answers]:
+            issue('lifecycle.bad_revision', f'{event.response_id!r} releases {stray}, which it was not answering')
+        # A released input is owed again, and settled by whatever answers it next.
+        answers.difference_update(event.released)
+        self._settled_inputs.difference_update(event.released)
+        answers.update(event.claimed)
+        self._settle(event.claimed, issue)
 
     def _settle(self, input_ids: tuple[int, ...], issue: Callable[[str, str], None]) -> None:
         # Checked one at a time, so an event naming an input twice settles it twice too.

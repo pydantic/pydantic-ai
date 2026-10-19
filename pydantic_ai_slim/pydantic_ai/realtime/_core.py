@@ -1706,8 +1706,9 @@ class SessionCore:
         }
         return owed | {
             Owed('input', str(input_id), epoch)
-            for input_id, response_id in self._answered_by.items()
-            if response_id in revisable and self._obligations.get(input_id) == 'answered'
+            for response_id in revisable
+            for input_id in self._responses[response_id].answers
+            if self._answered_by.get(input_id) == response_id
         }
 
     def still_owed(self, tokens: frozenset[Owed]) -> frozenset[Owed]:

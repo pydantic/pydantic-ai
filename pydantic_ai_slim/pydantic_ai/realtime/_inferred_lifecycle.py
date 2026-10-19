@@ -96,9 +96,7 @@ class InferredLifecycle:
       or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is
       made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
-      answered when it started (`ResponseStarted.basis='inferred'`). One that is cut off answers only the oldest of
-      them: an input that reaches the provider mid-generation cuts it off, and the next response answers the rest
-      ([`AnswersRevised.released`][pydantic_ai.realtime.lifecycle.AnswersRevised.released]).
+      answered when it started (`ResponseStarted.basis='inferred'`).
     - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
       has its whole transcript once that reply ends, unless the transcript is marked final before. A turn the
       provider identifies (its transcripts carry an `item_id`) is named by that id, and waits for its final
@@ -116,6 +114,8 @@ class InferredLifecycle:
       whether output audio is the model speaking, so a response starts with it.
     - [`untranscribed_audio_is_a_turn`][pydantic_ai.realtime.lifecycle.InferredLifecycle.untranscribed_audio_is_a_turn]
       (`True`): whether audio the model replies to before any transcript of it came is a spoken turn of its own.
+    - [`inputs_cut_off_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.inputs_cut_off_replies]
+      (`False`): whether an input that reaches the provider mid-generation cuts the reply off, leaving it to the next.
     - [`takes_turn(codec)`][pydantic_ai.realtime.lifecycle.InferredLifecycle.takes_turn] (`False`): whether a
       provider message has the model take the turn, whatever its output shows.
     """
@@ -133,6 +133,16 @@ class InferredLifecycle:
 
     A subclass for a provider whose output is a continuous track, silent between replies, sets it to `False`, and
     says where the model takes the turn with `takes_turn` instead.
+    """
+
+    inputs_cut_off_replies: ClassVar[bool] = False
+    """Whether an input that reaches the provider while it generates a reply cuts that reply off.
+
+    The next reply then answers the input, so a reply cut off (`ResponseStarted` through a cancelled `ResponseEnded`)
+    answers only the oldest input it was taken to answer, as that one started it, or none if it said nothing; and a
+    reply whose tool calls the provider cancels answers only the oldest too. The rest are released
+    ([`AnswersRevised.released`][pydantic_ai.realtime.lifecycle.AnswersRevised.released]) to the next reply. A
+    subclass for a provider that cuts its reply off this way (Gemini Live's 3.x models do) sets it to `True`.
     """
 
     untranscribed_audio_is_a_turn: ClassVar[bool] = True
@@ -723,10 +733,10 @@ class InferredLifecycle:
         self._open = None
         answers, self._open_answers = self._open_answers, ()
         said, self._open_said = self._open_said, False
-        if status == 'cancelled':
+        if status == 'cancelled' and self.inputs_cut_off_replies:
             # Cut off: it answers what started it, if it said anything, and the next response answers the rest.
             self._release(events, response_id, answers if not said else answers[1:])
-        elif finish_reason == 'tool_call':
+        elif finish_reason == 'tool_call' and self.inputs_cut_off_replies:
             # Its reply goes on in the answer to its calls, unless the provider cancels them (see `_calls_cancelled`).
             self._calling = (response_id, answers)
         self._cut_off = False

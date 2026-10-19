@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -888,6 +889,7 @@ async def test_text_sent_mid_reply_is_answered_by_that_reply(
     )
     agent = Agent(_BACKEND, instructions='Keep replies short.')
 
+    messages: list[ModelMessage] = []
     speaking = anyio.Event()
 
     async def watch(session: Any) -> None:

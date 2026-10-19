@@ -185,6 +185,10 @@ class _RawSocket:  # pragma: lax no cover (for #9065, which writes a tool result
 class GeminiBehavior:
     """Which Gemini Live model family the simulated server behaves like."""
 
+    text_cuts_off_reply: bool = False
+    """Cut the reply under way off for a typed turn, cancelling the calls it waits on, and answer it next
+    (`gemini-3.1-flash-live-preview`, seen live). 3.8 and Vertex's half-cascade model cut a reply off too, but leave
+    the calls it waits on to finish; the native-audio models finish the reply and answer the text after it."""
     closes_tool_turn_separately: bool = False
     """Send a `turn_complete` when the last tool result arrives, before the answer (Vertex `gemini-live-2.5-flash`)."""
     handles_at_turn_start: bool = False
@@ -212,7 +216,23 @@ class GeminiBehavior:
             return 'gemini-live-2.5-flash'
         if self.handles_at_turn_start:
             return 'gemini-3.8-live'
+        if self.text_cuts_off_reply:
+            return 'gemini-3.1-flash-live-preview'
         return 'gemini-2.5-flash-native-audio-latest'
+
+    @property
+    def cuts_off_reply(self) -> bool:
+        """Whether a typed turn cuts the reply under way off (seen live on all but the native-audio models).
+
+        (A native-audio model running tool calls asynchronously is still modeled cutting it off, as before: what it
+        does with a typed turn during such a round isn't recorded.)
+        """
+        return (
+            self.text_cuts_off_reply
+            or self.handles_at_turn_start
+            or self.closes_tool_turn_separately
+            or self.talks_through_tool_calls
+        )
 
 
 @dataclass
@@ -339,7 +359,10 @@ class GeminiServer:
         text = ''.join(part.text or '' for turn in turns for part in turn.parts or [])
         self.truth.add_input(text, 'text' if turn_complete else 'context', solicits=turn_complete)
         if turn_complete:
-            self._barge_in(session)
+            turn = session.turn
+            awaiting = turn is not None and bool(turn.awaiting)
+            if self.behavior.cuts_off_reply and (self.behavior.text_cuts_off_reply or not awaiting):
+                self._barge_in(session)
             session.triggers.append(text)
 
     def on_tool_response(self, session: _ServerSession, responses: list[gt.FunctionResponse]) -> None:

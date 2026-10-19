@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -890,6 +891,8 @@ def test_profile_allow_seeding() -> None:
         # 2.5 rejects function parts in seeded turns, so seeded tool calls go in as text.
         google_supports_seeding_function_parts=False,
         google_closes_tool_call_turn_separately=False,
+        # The native-audio models finish a reply an input reaches mid-generation, rather than cutting it off.
+        google_input_cuts_off_reply=False,
     )
 
 
@@ -1064,6 +1067,7 @@ async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the
         """Look up an order's status."""
         return f'Order {order} has shipped and arrives on Friday.'
 
+    messages: list[ModelMessage] = []
     result_sent = anyio.Event()
     turns: list[str] = []
     """What the session says, in order: the model's words, and each turn it reports complete."""
@@ -1105,7 +1109,7 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
     that follow. The session took the tool-call turn for the text's reply too, as it couldn't tell the text
     arrived after the turn began: the cancellation says it did, so the text's reply is the one that follows.
     """
-    provider, cassette = gemini_ws_cassette
+    provider, _ = gemini_ws_cassette
     model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
     agent = Agent(instructions='Keep replies to one short sentence. Use the lookup tool for any order.')
 

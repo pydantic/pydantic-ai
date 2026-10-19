@@ -289,7 +289,7 @@ def test_gemini_cut_off_tool_turn_leaves_the_wait_to_the_reply() -> None:
         sim.wait_for_reply()
         sim.settle()
 
-    run_accepting(GeminiSimulation(), scenario, 'SIM-39')
+    run_accepting(GeminiSimulation(behavior=GeminiBehavior(text_cuts_off_reply=True)), scenario, 'SIM-39')
 
 
 def async_gemini() -> GeminiSimulation:
@@ -480,7 +480,7 @@ def test_gemini_cut_off_unstarted_turn_leaves_the_wait_to_the_reply() -> None:
         sim.wait_for_reply()
         sim.settle()
 
-    run_accepting(GeminiSimulation(), scenario, 'SIM-39')
+    run_accepting(GeminiSimulation(behavior=GeminiBehavior(text_cuts_off_reply=True)), scenario, 'SIM-39')
 
 
 def test_gemini_async_batch_of_three_is_answered_once() -> None:

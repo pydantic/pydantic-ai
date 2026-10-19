@@ -279,15 +279,18 @@ def _tool_round_reply_taken(sim: Simulation, violation: InvariantViolation) -> b
 RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     id='8763c #3',
     title=(
-        'on GPT-Live, a delegation the model starts on its own while a delegated tool round is owed its answer is '
-        'taken for that answer, so `wait_for_reply()` returns when it ends (the rest of 8763c #3, text taking a '
-        'reply already under way, is fixed: the OpenAI protocol asks again for a request server VAD overtook, '
-        'Gemini hands an input that cuts a reply off to the next, and Live answers text in the reply under way)'
+        'where the provider gives no signal, a response it started before an input arrived, but that the client '
+        "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
+        'native-audio model (which finishes its reply rather than cutting it off for the input), on ElevenLabs '
+        'Agents, and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed '
+        'its answer (fixed where the provider says: the OpenAI protocol asks again for a request server VAD '
+        'overtook, Gemini 3.x and Vertex hand an input that cut a reply off to the next, and GPT-Live answers text '
+        'in the reply under way)'
     ),
-    tracked_by='delegated tool rounds mapped to the delegation that answers them',
+    tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
     codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
-    providers=frozenset({'gpt-live'}),
+    providers=frozenset({'gpt-live', 'gemini', 'elevenlabs-agents'}),
     matches=_reply_taken_by_earlier_response,
 )
 

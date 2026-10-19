@@ -213,6 +213,7 @@ is a spoken turn. A provider that departs from that gets a subclass overriding `
 points: [`transcripts_lag_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.transcripts_lag_replies],
 [`audio_starts_response`][pydantic_ai.realtime.lifecycle.InferredLifecycle.audio_starts_response],
 [`untranscribed_audio_is_a_turn`][pydantic_ai.realtime.lifecycle.InferredLifecycle.untranscribed_audio_is_a_turn],
+[`inputs_cut_off_replies`][pydantic_ai.realtime.lifecycle.InferredLifecycle.inputs_cut_off_replies],
 and [`takes_turn()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.takes_turn].
 
 Which inputs a response answers settles each input's reply obligation, which is what
@@ -221,7 +222,8 @@ Which inputs a response answers settles each input's reply obligation, which is 
 answers an input may name it. A connection that can't tell yet names its best guess in `ResponseStarted.answers`
 (with `basis='inferred'`) and corrects it with an
 [`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] once it can: `released` hands inputs the response
-turned out not to answer to a later one, as `InferredLifecycle` does for a response an input cut off, and `claimed`
+turned out not to answer to a later one, as `InferredLifecycle` does for a response an input cut off (with
+`inputs_cut_off_replies`), and `claimed`
 settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
 in the reply it is giving. Neither moves anything in history.
 

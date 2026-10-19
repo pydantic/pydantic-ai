@@ -353,6 +353,14 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     boundary, so the exchange isn't reported complete before the answer is spoken. Set by default on
     Vertex AI only, where it was verified.
     """
+    google_input_cuts_off_reply: bool
+    """Whether text or a tool result that reaches the model mid-generation cuts the reply off. Default: `False`.
+
+    The model then reports the reply `interrupted` and complete (cancelling the tool calls it was waiting on, on
+    `gemini-3.1-flash-live-preview`) and answers the input in the next turn, so the cut-off reply answers only the
+    request that started it. Verified live for `gemini-3.1-flash-live-preview`, `gemini-3.8-live`, and Vertex's
+    `gemini-live-2.5-flash`; the native-audio models finish the reply instead, and answer the input after it.
+    """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
 
@@ -1446,6 +1454,15 @@ class _TypedTurn:
     sending: bool = True
 
 
+class _CutOffLifecycle(InferredLifecycle):
+    """The inferred lifecycle of a Gemini Live model that cuts its reply off for an input that reaches it mid-generation.
+
+    See `GoogleRealtimeModelProfile.google_input_cuts_off_reply`.
+    """
+
+    inputs_cut_off_replies = True
+
+
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
@@ -1543,7 +1560,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # completes.
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `frames()`).
-        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled)
+        cuts_off = cast('GoogleRealtimeModelProfile', self._profile).get('google_input_cuts_off_reply', False)
+        self._lifecycle = (_CutOffLifecycle if cuts_off else InferredLifecycle)(transcribes=input_transcription_enabled)
 
     @property
     def _can_reconnect(self) -> bool:
