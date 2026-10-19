@@ -478,12 +478,12 @@ class TestCommands:
         with anyio.fail_after(5):
             await entered.wait()
             task.cancel()
-            assert not backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+            assert not backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
         assert sandbox.process_sessions == set()
-        assert backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+        assert backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_a_missing_cwd_is_file_not_found(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
@@ -503,13 +503,13 @@ class TestCommands:
         sandbox.process_status_gate = gate = asyncio.Event()
         runs = [asyncio.create_task(backend.run(['true'])) for _ in range(2)]
         with anyio.fail_after(5):
-            while backend._active_runs < 2:  # pyright: ignore[reportPrivateUsage]
+            while backend._operations < 2:  # pyright: ignore[reportPrivateUsage]
                 await asyncio.sleep(0)
-            assert not backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+            assert not backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
             gate.set()
             results = await asyncio.gather(*runs)
         assert [result.exit_code for result in results] == [0, 0]
-        assert backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+        assert backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
 
     async def test_cancellation_as_the_command_is_accepted_kills_it(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -1265,6 +1265,33 @@ async def test_aclose_closes_the_owned_client_and_later_use_reattaches(fake_dayt
     assert await backend.read_bytes('/note') == b'kept'
     assert fake_daytona.sandboxes[0].client is not first
     assert len(fake_daytona.create_params) == 1
+
+
+async def test_aclose_waits_for_an_in_flight_file_operation(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = DaytonaSandboxBackend()
+    await backend.write_bytes('/note', b'kept')
+    sandbox = fake_daytona.sandboxes[0]
+    original = sandbox.fs.download_file
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_download(path: str, timeout: int | None = None) -> bytes:
+        entered.set()
+        await release.wait()
+        return await original(path, timeout)
+
+    monkeypatch.setattr(sandbox.fs, 'download_file', held_download)
+    read = asyncio.create_task(backend.read_bytes('/note'))
+    with anyio.fail_after(5):
+        await entered.wait()
+        close = asyncio.create_task(backend.aclose())
+        await asyncio.sleep(0.01)
+        assert fake_daytona.closed_clients == 0
+        release.set()
+        assert await read == b'kept'
+        await close
+    assert fake_daytona.closed_clients == 1
 
 
 async def test_working_dir_is_reverified_after_aclose(fake_daytona: FakeDaytona) -> None:

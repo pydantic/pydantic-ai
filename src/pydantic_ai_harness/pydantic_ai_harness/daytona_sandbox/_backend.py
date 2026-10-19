@@ -485,9 +485,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         # operation in flight ends, so a dropped backend leaves no open connection behind.
         self._close_after_operation = False
         self._operations = 0
-        self._active_runs = 0
-        self._runs_drained = anyio.Event()
-        self._runs_drained.set()
+        self._operations_drained = anyio.Event()
+        self._operations_drained.set()
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -601,10 +600,11 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             return
 
         async def close() -> None:
-            # Agent cancellation may unwind the run before a tool's stop child deletes its
-            # session. Give that child a chance to finish before closing its HTTP client.
+            # Agent cancellation may unwind the run before a tool's stop child deletes its session,
+            # and a caller may close while a file operation is in flight. Give them a chance to finish
+            # before closing their HTTP client.
             with anyio.move_on_after(_TEARDOWN_TIMEOUT):
-                await self._runs_drained.wait()
+                await self._operations_drained.wait()
             async with self._lock:
                 if (client := self._client) is not None and await _close_quietly(client):
                     # Dropped only once closed, so a failed close is retried by the next `aclose()`. The
@@ -618,10 +618,14 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     @asynccontextmanager
     async def _operation(self) -> AsyncGenerator[None]:
         self._operations += 1
+        if self._operations == 1:
+            self._operations_drained = anyio.Event()
         try:
             yield
         finally:
             self._operations -= 1
+            if self._operations == 0:
+                self._operations_drained.set()
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
@@ -930,31 +934,23 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     return '', ''
                 return _until_marker(process.stdout, process.marker), _until_marker(process.stderr, process.marker)
 
-            self._active_runs += 1
-            if self._active_runs == 1:
-                self._runs_drained = anyio.Event()
-            try:
-                async with command_deadline(timeout, stop=stop, output=output):
-                    try:
-                        process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
-                    except Exception:
-                        # A held handle may outlive Daytona's idle auto-stop; only retry setup,
-                        # where no command was accepted, so the command cannot be duplicated.
-                        if not await _restart_if_stopped(sandbox):
-                            raise
-                        process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
-                    result = await process.wait()
-                    if f'{process.marker}-cwd' in result.stderr:
-                        # The command never started: the directory it was to start in is missing.
-                        raise FileNotFoundError(checked_cwd or self._working_dir)
-                # Native Task.cancel() pierces AnyIO shields. Keep the bounded stop in a child
-                # and wait for it before reporting runs drained or releasing the HTTP client.
-                await run_to_completion(lambda: stop_shielded(stop))
-                return result
-            finally:
-                self._active_runs -= 1
-                if not self._active_runs:
-                    self._runs_drained.set()
+            async with command_deadline(timeout, stop=stop, output=output):
+                try:
+                    process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
+                except Exception:
+                    # A held handle may outlive Daytona's idle auto-stop; only retry setup,
+                    # where no command was accepted, so the command cannot be duplicated.
+                    if not await _restart_if_stopped(sandbox):
+                        raise
+                    process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
+                result = await process.wait()
+                if f'{process.marker}-cwd' in result.stderr:
+                    # The command never started: the directory it was to start in is missing.
+                    raise FileNotFoundError(checked_cwd or self._working_dir)
+            # Native Task.cancel() pierces AnyIO shields. Keep the bounded stop in a child
+            # and wait for it before reporting operations drained or releasing the HTTP client.
+            await run_to_completion(lambda: stop_shielded(stop))
+            return result
 
     async def _start(
         self,
