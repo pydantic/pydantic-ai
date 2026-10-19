@@ -2347,7 +2347,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelSettings:
         """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
         self._step_model_settings = ctx.deps.get_model_settings(run_context)
-        model_settings = self._step_model_settings.merged or ModelSettings()
+        # A copy, so a hook editing the request's settings in place leaves the resolved ones to compare against.
+        model_settings = ModelSettings(**(self._step_model_settings.merged or {}))
         run_context.model_settings = model_settings
         return model_settings
 

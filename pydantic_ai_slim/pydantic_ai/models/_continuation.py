@@ -441,8 +441,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         messages = self.base_messages
         if (seed := self.initial_suspended_response) is not None:
-            if delay := self.model.continuation_delay(seed):
-                await self.sleep_func(delay)
+            try:
+                if delay := self.model.continuation_delay(seed):
+                    await self.sleep_func(delay)
+            except BaseException:
+                # Nothing will continue the job now, so cancel it, as a failure to open the segment does.
+                await cancel_suspended_job(self.model, seed)
+                raise
             messages = [*self.base_messages, seed]
         stack = AsyncExitStack()
         try:
@@ -463,6 +468,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 await cancel_suspended_job(self.model, seed)
             raise
         self._primed_segment = (stack, sub)
+        # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
+        # job, and `get()` sees what it has produced.
+        self._current_sub = sub
 
     async def release_primed_segment(self) -> None:
         """Close the segment `prime()` opened if iteration never took it over.
@@ -472,6 +480,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if (primed := self._primed_segment) is not None:
             self._primed_segment = None
+            self._current_sub = None
             with self.segment_context():
                 await primed[0].aclose()
 

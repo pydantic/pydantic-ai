@@ -1157,25 +1157,34 @@ async def test_settings_a_hook_sets_reach_every_candidate():
 
     @dataclass
     class SetRetriesAndDropTemperature(AbstractCapability[Any]):
+        in_place: bool
+
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
+            if self.in_place:
+                assert request_context.model_settings is not None
+                request_context.model_settings['max_retries'] = 3
+                del request_context.model_settings['temperature']
+                return request_context
             settings = dict(request_context.model_settings or {})
             settings['max_retries'] = 3
             del settings['temperature']
             return replace(request_context, model_settings=cast(ModelSettings, settings))
 
-    agent = Agent(
-        respond('first', True, {'max_retries': 2, 'temperature': 0.5}),
-        model_settings={'temperature': 0.1},
-        capabilities=[
-            SetRetriesAndDropTemperature(),
-            Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
-        ],
-    )
-    assert (await agent.run('x')).output == 'hello'
-    # Dropping the agent's `temperature` leaves each candidate's own, which it merges in itself.
-    assert seen == [('first', 3, 0.5), ('last', 3, 0.9)]
+    for in_place in (False, True):
+        seen.clear()
+        agent = Agent(
+            respond('first', True, {'max_retries': 2, 'temperature': 0.5}),
+            model_settings={'temperature': 0.1},
+            capabilities=[
+                SetRetriesAndDropTemperature(in_place),
+                Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
+            ],
+        )
+        assert (await agent.run('x')).output == 'hello'
+        # Dropping the agent's `temperature` leaves each candidate's own, which it merges in itself.
+        assert seen == [('first', 3, 0.5), ('last', 3, 0.9)]
 
 
 async def test_callable_model_settings_resolve_once_per_step():
@@ -1219,3 +1228,44 @@ async def test_a_streamed_request_a_wrapper_answers_without_calling_the_model():
     )
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'cached'
+
+
+async def test_cancelling_a_primed_stream_before_iterating_cancels_its_job():
+    """A stream `Fallback` primed is in flight, so cancelling it before iteration starts cancels its server-side job."""
+    served = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['partial '], state='suspended', provider_response_id='job-1', input_tokens=1, output_tokens=1
+            )
+        ]
+    )
+    agent = Agent(served, capabilities=[Fallback(FunctionModel(success))])
+    async with agent.iter('x') as run:
+        async for node in run:  # pragma: no branch
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    await stream.cancel()
+                break
+    assert [response.provider_response_id for response in served.cancelled] == ['job-1']
+
+
+async def test_a_failed_continuation_delay_before_priming_cancels_the_resumed_job():
+    """If waiting out a resumed job's continuation delay fails, the job is cancelled, as when its segment fails to open."""
+
+    class DelayedModel(ScriptedContinuationModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 0.001
+
+    async def failing_sleep(delay: float) -> None:
+        raise RuntimeError('sleep failed')
+
+    served = DelayedModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='job-1'),
+    ]
+    agent = Agent(served, capabilities=[Fallback(FunctionModel(success))])
+    with Agent.using_sleep(failing_sleep), pytest.raises(RuntimeError, match='sleep failed'):
+        async with agent.run_stream(message_history=history) as stream:
+            await stream.get_output()  # pragma: no cover
+    assert [response.provider_response_id for response in served.cancelled] == ['job-1']
