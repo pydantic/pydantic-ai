@@ -143,7 +143,7 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | `elevenlabs_agents_dynamic_variables` | Values substituted into `{{placeholders}}` in the agent's prompts and messages |
 | `elevenlabs_agents_custom_llm_extra_body` | Extra request body for an agent backed by a custom LLM; gated by its own security toggle |
 | `elevenlabs_agents_user_id` | Opaque end-user identifier for ElevenLabs-side analytics |
-| `elevenlabs_agents_strip_audio_tags` | Removes expressive audio tags such as `[laughs]` from the agent's transcripts; see [Provider-specific quirks](#provider-specific-quirks) |
+| `elevenlabs_agents_strip_audio_tags` | Whether expressive audio tags such as `[laughs]` are removed from the agent's transcripts (`True` by default); see [Provider-specific quirks](#provider-specific-quirks) |
 | `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
 | `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
@@ -288,12 +288,12 @@ itself closes has none), and the live connection has it as
   before or during its audio; only text-only mode streams it. Synthesis outruns playback, so a spoken
   response is usually delivered in full while the user is still hearing its first words.
 - With a TTS model that voices expressive audio tags, such as `eleven_v3_conversational` or `eleven_v4_turbo`,
-  the agent's LLM writes the tags into its reply, and they are part of the response's transcript
-  (`[laughs] Hi there.`), as ElevenLabs sends it. To show or store the transcript as plain text, set
-  `elevenlabs_agents_strip_audio_tags=True`: the tags are removed from the streamed transcript and the one in
-  history alike, and kept, in order and without brackets, in the response's `provider_details['audio_tags']`
+  the agent's LLM writes tags like `[laughs]` into its reply to direct the delivery, and ElevenLabs sends them as
+  part of the response's transcript. Pydantic AI removes them, from the streamed transcript and the one in history
+  alike, and keeps them, in order and without brackets, in the response's `provider_details['audio_tags']`
   (`['laughs']`). Only lowercase words in square brackets count as tags, so citations (`[1]`), Markdown links,
-  and placeholders like `[Your Name]` stay in the text.
+  and placeholders like `[Your Name]` stay in the text. Set `elevenlabs_agents_strip_audio_tags=False` to keep the
+  transcript as ElevenLabs sends it (`[laughs] Hi there.`).
 - A barge-in on a response still being generated ends it with the transcript cut down to what the
   user heard (or, when ElevenLabs sends a correction instead, with the cut-down text in
   `provider_details['corrected_agent_response']`). One on a response already delivered keeps its full

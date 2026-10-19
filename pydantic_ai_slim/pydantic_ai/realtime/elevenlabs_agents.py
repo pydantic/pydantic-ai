@@ -294,13 +294,14 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
       the session's history.
     """
     elevenlabs_agents_strip_audio_tags: bool
-    """Whether to remove expressive audio tags such as `[laughs]` from the agent's transcripts. Defaults to `False`.
+    """Whether to remove expressive audio tags such as `[laughs]` from the agent's transcripts. Defaults to `True`.
 
     With an expressive TTS model such as `eleven_v3_conversational`, the agent's LLM writes tags into its reply to
-    direct the delivery, and they are part of the transcript ElevenLabs sends. With this on, they are removed from
-    the transcript, streamed and in history alike, and the tags a response's transcript held are kept, in order
-    and without brackets, in its `provider_details['audio_tags']`. Only lowercase words in square brackets count
-    as tags, so citations (`[1]`), Markdown links, and placeholders like `[Your Name]` are kept.
+    direct the delivery, and they are part of the transcript ElevenLabs sends, though they aren't spoken. They are
+    removed from the transcript, streamed and in history alike, and the tags a response's transcript held are kept,
+    in order and without brackets, in its `provider_details['audio_tags']`. Only lowercase words in square brackets
+    count as tags, so citations (`[1]`), Markdown links, and placeholders like `[Your Name]` are kept. Set this to
+    `False` to keep the transcript exactly as ElevenLabs sends it, tags included.
     """
     elevenlabs_agents_config_override: dict[str, Any]
     """Raw values deep-merged last into `conversation_config_override`, the escape hatch mirroring
@@ -1502,7 +1503,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 ws,
                 conversation_id=metadata.conversation_id,
                 text_output=settings.get('output_modality', 'audio') == 'text',
-                strip_audio_tags=settings.get('elevenlabs_agents_strip_audio_tags', False),
+                strip_audio_tags=settings.get('elevenlabs_agents_strip_audio_tags', True),
             )
         finally:
             if ws is not None:
@@ -1533,7 +1534,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         *,
         conversation_id: str | None = None,
         text_output: bool = False,
-        strip_audio_tags: bool = False,
+        strip_audio_tags: bool = True,
     ) -> None:
         self._ws = ws
         self._conversation_id = conversation_id

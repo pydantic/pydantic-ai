@@ -1999,13 +1999,35 @@ def test_streamed_tag_stripping_adds_up_to_the_whole_text_stripped(text: str) ->
             assert len(whole) - len(streamed) <= 52
 
 
-async def test_audio_tags_are_kept_by_default() -> None:
-    events, _ = await _events([{'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi!'}}])
-    assert events == [OutputTranscript(text='[laughs] Hi!', is_final=True)]
+async def test_audio_tags_are_kept_when_stripping_is_off() -> None:
+    ws = FakeWebSocket(
+        [
+            {'type': 'agent_chat_response_part', 'text_response_part': {'text': '[laughs] Hi', 'type': 'delta'}},
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi!'}},
+        ]
+    )
+    connection = ElevenLabsAgentsRealtimeConnection(ws, text_output=True, strip_audio_tags=False)  # type: ignore[arg-type]
+    events = await collect_codec_events(connection)
+    assert events == [
+        OutputTranscript(text='[laughs] Hi', output_text=True),
+        OutputTranscript(text='[laughs] Hi!', is_final=True, output_text=True),
+        ResponseDone(),
+    ]
+
+
+async def test_the_strip_audio_tags_setting_reaches_the_connection() -> None:
+    model = _model(RestRecorder(agent_json()))
+    for settings, strips in [
+        (ElevenLabsAgentsRealtimeModelSettings(), True),
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_strip_audio_tags=False), False),
+    ]:
+        with patched_connect(FakeWebSocket([HANDSHAKE_FRAME])):
+            async with _connect(model, model_settings=settings) as connection:
+                assert (connection._tag_stripper is not None) is strips  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stripped_audio_tags_ride_on_the_response() -> None:
-    # Audio mode: the whole text arrives at once, and the correction of a reply cut off is stripped as well.
+    # On by default. Audio mode: the whole text arrives at once, and the correction of a reply cut off is stripped as well.
     ws = FakeWebSocket(
         [
             {'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi! [whispers] Listen.'}},
@@ -2018,7 +2040,7 @@ async def test_stripped_audio_tags_ride_on_the_response() -> None:
             _VOICED,
         ]
     )
-    connection = ElevenLabsAgentsRealtimeConnection(ws, strip_audio_tags=True)  # type: ignore[arg-type]
+    connection = ElevenLabsAgentsRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(connection)
     assert events == [
         OutputTranscript(text='Hi! Listen.', is_final=True),
@@ -2056,7 +2078,7 @@ async def test_streamed_text_and_history_agree_on_stripped_audio_tags() -> None:
     )
     ws.hold_open = True
     model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED)))
-    settings = ElevenLabsAgentsRealtimeModelSettings(output_modality='text', elevenlabs_agents_strip_audio_tags=True)
+    settings = ElevenLabsAgentsRealtimeModelSettings(output_modality='text')
     agent: Agent[None, str] = Agent()
     streamed = ''
     with patched_connect(ws):
