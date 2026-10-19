@@ -292,7 +292,12 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
         if not isinstance(msg, ModelRequest):
             continue
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX):
+            # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
+            if (
+                isinstance(part, SystemPromptPart)
+                and part.scope != 'request'
+                and part.content.startswith(_SUMMARY_PREFIX)
+            ):
                 return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
     return None
 
