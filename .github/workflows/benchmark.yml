@@ -1,0 +1,123 @@
+name: CodSpeed
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: codspeed-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_benchmarks: ${{ steps.classify.outputs.run_benchmarks }}
+    steps:
+      - name: Classify pull request changes
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Keep classification inline so this token-bearing job never executes PR-authored files.
+          run_benchmarks() {
+            echo 'run_benchmarks=true' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_benchmarks
+            exit 0
+          fi
+
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]] || [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+
+          mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
+            echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+
+          affects_benchmarks() {
+            case "$1" in
+              # Installation and test configuration can affect every benchmark, even in skipped packages.
+              pyproject.toml|*/pyproject.toml|uv.lock|*/uv.lock|uv.toml|*/uv.toml|.python-version|*/.python-version) return 0 ;;
+              requirements*.txt|*/requirements*.txt|requirements*.in|*/requirements*.in) return 0 ;;
+              setup.py|*/setup.py|setup.cfg|*/setup.cfg|pytest.ini|*/pytest.ini|tox.ini|*/tox.ini) return 0 ;;
+              package.json|*/package.json|package-lock.json|*/package-lock.json|pnpm-lock.yaml|*/pnpm-lock.yaml|yarn.lock|*/yarn.lock|bun.lock|*/bun.lock) return 0 ;;
+              # These test inputs also include the root fixtures and their imports.
+              tests/harness/*|tests/clai2/*|tests/clai/*) return 1 ;;
+              tests/*) return 0 ;;
+              docs/*|agent_docs/*|examples/*.md|examples/*.mdc) return 1 ;;
+              .agents/*.md|.agents/*.tsv|.claude/*.md) return 1 ;;
+              src/pydantic_ai_harness/*|src/pydantic_clai2/*|clai/*) return 1 ;;
+              pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) return 1 ;;
+              *.md) [[ "$1" == */* ]] ;;
+              *) return 0 ;;
+            esac
+          }
+
+          run_benchmarks=false
+          for changed_file in "${changed_files[@]}"; do
+            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            if affects_benchmarks "$filename" || \
+              { [ -n "$previous_filename" ] && affects_benchmarks "$previous_filename"; }; then
+              run_benchmarks=true
+              break
+            fi
+          done
+          echo "run_benchmarks=$run_benchmarks" >> "$GITHUB_OUTPUT"
+
+  benchmarks:
+    name: Run benchmarks
+    needs: classify
+    if: always() && !cancelled() && needs.classify.outputs.run_benchmarks != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: '3.14'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
+        with:
+          mode: simulation
+          run: uv run pytest tests/benchmarks --codspeed

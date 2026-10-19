@@ -1,3 +1,7 @@
+---
+description: "Pydantic AI's version policy: no intentional breaking changes in minor releases, how deprecations work, and when the next major version can ship after V2."
+---
+
 # Version Policy
 
 Pydantic AI V1 was released in September 2025, and the stable V2.0 was released on June 23, 2026; see the [Upgrade Guide](changelog.md) for what's in V2, how to install it, and how to upgrade.
@@ -16,6 +20,8 @@ The following changes will **NOT** be considered breaking changes, and may occur
 * Changing how `__repr__` behaves, even of public classes.
 
 In all cases we will aim to minimize churn and do so only when justified by the increase of quality of Pydantic AI for users.
+
+When one of these permitted changes requires existing code to change, its pull request and release note will include a prominent **compatibility impact** warning and migration guidance.
 
 ## Beta Features
 

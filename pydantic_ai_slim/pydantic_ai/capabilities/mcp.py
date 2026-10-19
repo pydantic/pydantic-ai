@@ -14,13 +14,9 @@ from pydantic_ai.toolsets import AbstractToolset
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
+    # Imported lazily at runtime: `pydantic_ai.mcp` pulls in `fastmcp` and `mcp`, which would
+    # otherwise dominate the time it takes to `import pydantic_ai`.
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
-else:
-    try:
-        from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
-    except ImportError:  # pragma: lax no cover
-        MCPToolset = Any
-        MCPToolsetClient = Any
 
 
 @dataclass(init=False)
@@ -84,21 +80,38 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
         self.url = url
         self.native = native
+        # A server's identity is its URL, so the capability takes the same derived id its toolset
+        # does rather than leaving the capability anonymous and the leaf named. Without it the run
+        # falls back to a positional `mcp` / `mcp_2`, which reorders when the capability list does
+        # -- no use as a durable-operation name or an instruction key, and nothing a user could
+        # write down. `None` stays `None` when there is nothing to derive from (a local client that
+        # carries its own connection, with no `url=` and no explicit `native=MCPServerTool(...)`).
+        #
+        # Not derived for a deferred capability, which keeps needing an explicit `id`. A deferred
+        # capability's id is listed for the model in the `load_capability` catalog, and the derived
+        # one carries the URL's last path segment -- a signed path or a token-in-path server would
+        # be disclosing that segment to the model. Deriving an id is for naming a durable operation,
+        # which is ours to see; putting one in the prompt is the user's call to make deliberately.
+        self.id = id if id is not None else (None if defer_loading else self._derive_id(url))
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
         # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
         # toolsets, callables, bools, and `None` pass through to `NativeOrLocalTool` unchanged.
         # Reaching this branch implies a fastmcp-typed object, which can only exist when the `mcp`
-        # extra (and hence fastmcp) is installed; the module-level `MCPToolset` is the real class.
+        # extra (and hence fastmcp) is installed, so the import below succeeds.
         if (
             local is not None
             and not isinstance(local, (bool, str))
             and not isinstance(local, AbstractToolset)
             and not callable(local)
         ):
-            local = MCPToolset(local, include_instructions=True)
+            from pydantic_ai.mcp import MCPToolset
+
+            # Stamp the derived id so this leaf can be used with durable execution too. `self.url` is
+            # usually `None` here (the input carries its own connection), so the id comes from an
+            # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
+            local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
         self.local = local
-        self.id = id
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
@@ -106,22 +119,42 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.defer_loading = defer_loading
         self.__post_init__()
 
-    @cached_property
-    def _resolved_id(self) -> str:
-        if self.id:
+    def _derive_id(self, url: str | None) -> str | None:
+        """Derive a stable id for this capability from `url`.
+
+        Precedence: explicit `id` → the native `MCPServerTool`'s id → a host+slug derived from `url`.
+        Returns `None` only when there's nothing to derive from — no `id`, no native `MCPServerTool`,
+        and `url is None` (e.g. a non-URL `local=` client that carries its own connection).
+        """
+        if self.id is not None:
             return self.id
         # An explicit `native=MCPServerTool(id=...)` carries its own id; key off it so the local
         # fallback's `unless_native` marker matches the native tool that's actually advertised.
         if isinstance(self.native, MCPServerTool):
             return self.native.id
-        # Otherwise `_resolved_id` is only read through native paths, which require a URL (enforced in `__init__`).
-        assert self.url is not None
+        if url is None:
+            return None
         # Include hostname to avoid collisions (e.g. two /sse URLs on different hosts)
-        parsed = urlparse(self.url)
+        parsed = urlparse(url)
         path = parsed.path.rstrip('/')
         slug = path.split('/')[-1] if path else ''
         host = parsed.hostname or ''
-        return f'{host}-{slug}' if slug else host or self.url
+        return f'{host}-{slug}' if slug else host or url
+
+    @cached_property
+    def _resolved_id(self) -> str:
+        # Read by `_default_native()` (only when `native is True`, which requires `url=`) and by
+        # `_native_unique_id()` (whenever `native is not False`, including a `native=<callable>`
+        # factory). The callable-native path can reach here with no `url=`, no `id=`, and a
+        # non-`MCPServerTool` native, leaving nothing to derive a stable id from.
+        resolved = self._derive_id(self.url)
+        if resolved is None:
+            raise UserError(
+                'MCP(native=<callable>) paired with a local fallback needs a stable `id` to tie the '
+                'two together (the local fallback is tagged with the native id via `unless_native`). '
+                'Pass `url=`, `id=`, or use an explicit `native=MCPServerTool(...)` instead of a callable.'
+            )
+        return resolved
 
     def _default_native(self) -> MCPServerTool:
         # `native is True` requires `url is not None` (enforced in `__init__`).
@@ -170,7 +203,10 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # `MCPToolset` infers SSE vs Streamable HTTP from the URL.
             from pydantic_ai.mcp import MCPToolset
 
-            return MCPToolset(url, headers=local_headers or None, include_instructions=True)
+            # Stamp the derived id onto the local toolset so it can be used with durable execution
+            # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
+            # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
+            return MCPToolset(url, headers=local_headers or None, include_instructions=True, id=self._derive_id(url))
         except ImportError as e:
             raise UserError(
                 'Please install the `mcp` package to run MCP servers locally, you can use the '

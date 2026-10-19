@@ -20,6 +20,7 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
 
+    from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 
@@ -52,7 +53,7 @@ def test_huggingface_provider_pass_http_client() -> None:
         ValueError,
         match=re.escape('`http_client` is ignored for HuggingFace provider, please use `hf_client` instead'),
     ):
-        HuggingFaceProvider(http_client=http_client, api_key='api-key')  # type: ignore
+        HuggingFaceProvider(http_client=http_client, api_key='api-key')  # pyright: ignore[reportCallIssue]
 
 
 def test_huggingface_provider_pass_hf_client() -> None:
@@ -164,6 +165,14 @@ def test_huggingface_provider_base_url_fallback():
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
     with pytest.raises(UserError, match='Unable to determine base URL'):
         provider.base_url
+
+
+def test_huggingface_model_profile_without_base_url():
+    mock_client = Mock(spec=AsyncInferenceClient, model=None, provider=None)
+    model = HuggingFaceModel(
+        'unknown-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
+    )
+    assert model.profile.get('context_window') is None
 
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):

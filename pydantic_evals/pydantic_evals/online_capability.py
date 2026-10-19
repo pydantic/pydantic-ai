@@ -58,9 +58,9 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
     !!! note
         [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation]
-        wraps [`agent.run()`][pydantic_ai.Agent.run],
-        [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and
-        [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a
+        wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and
+        [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a
         final result.
         For streaming runs, evaluators are dispatched only after the final
         result is available and the surrounding context manager exits.

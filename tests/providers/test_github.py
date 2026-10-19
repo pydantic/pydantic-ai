@@ -5,6 +5,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -18,13 +19,21 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    # `GitHubProvider` is deprecated (GitHub Models was retired 2026-07-30); the deprecation itself
+    # is asserted in `test_github_provider_deprecated` below. This covers the incidental
+    # constructions in the other tests, which exercise provider behavior rather than the deprecation.
+    pytest.mark.filterwarnings(
+        'ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
+    ),
+]
 
 
 def test_github_provider():
-    provider = GitHubProvider(api_key='ghp_test_token')
+    provider = GitHubProvider(api_key='ghp_test_token')  # pyright: ignore[reportDeprecated]
     assert provider.name == 'github'
     assert provider.base_url == 'https://models.github.ai/inference'
     assert isinstance(provider.client, openai.AsyncOpenAI)
@@ -40,23 +49,29 @@ def test_github_provider_need_api_key(env: TestEnv) -> None:
             ' to use the GitHub Models provider.'
         ),
     ):
-        GitHubProvider()
+        GitHubProvider()  # pyright: ignore[reportDeprecated]
 
 
 def test_github_provider_pass_http_client() -> None:
     http_client = httpx.AsyncClient()
-    provider = GitHubProvider(http_client=http_client, api_key='ghp_test_token')
+    provider = GitHubProvider(http_client=http_client, api_key='ghp_test_token')  # pyright: ignore[reportDeprecated]
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_github_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='ghp_test_token')
-    provider = GitHubProvider(openai_client=openai_client)
+    provider = GitHubProvider(openai_client=openai_client)  # pyright: ignore[reportDeprecated]
     assert provider.client == openai_client
 
 
+def test_github_provider_deprecated() -> None:
+    """`GitHubProvider` is deprecated because GitHub Models was retired on 2026-07-30."""
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`GitHubProvider` is deprecated.*GitHub Models was retired'):
+        GitHubProvider(api_key='ghp_test_token')  # pyright: ignore[reportDeprecated]
+
+
 def test_github_provider_model_profile(mocker: MockerFixture):
-    provider = GitHubProvider(api_key='ghp_test_token')
+    provider = GitHubProvider(api_key='ghp_test_token')  # pyright: ignore[reportDeprecated]
 
     ns = 'pydantic_ai.providers.github'
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)

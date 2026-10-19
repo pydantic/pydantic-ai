@@ -1,0 +1,110 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '140'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 17 * 23?
+        role: user
+      model: deepseek-v4-flash
+      reasoning:
+        effort: high
+      stream: false
+    uri: https://api.deepseek.com/responses
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '1468'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      completed_at: 1785967721
+      content_filters: null
+      created_at: 1785967721
+      error: null
+      frequency_penalty: 0.0
+      id: 7a293ad0-b030-4055-a857-894eec88f488
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: deepseek-v4-flash
+      moderation: null
+      object: response
+      output:
+      - content:
+        - text: We need answer simple. Need comply. 17*23 = 391. final.
+          type: reasoning_text
+        id: 99b90f85-3f3e-400c-b826-147f81c4672f
+        status: completed
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: '391'
+          type: output_text
+        id: d7c69e03-b418-418f-98ab-fe09ad528cc0
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: null
+      reasoning:
+        effort: high
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: null
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 91
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 20
+        output_tokens_details:
+          reasoning_tokens: 18
+        total_tokens: 111
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

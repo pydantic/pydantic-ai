@@ -179,7 +179,7 @@ async def get_multiple_items():
 
 
 @mcp.tool()
-async def get_log_level(ctx: Context) -> str:  # type: ignore
+async def get_log_level(ctx: Context) -> str:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
     """Get the current log level.
 
     Returns:

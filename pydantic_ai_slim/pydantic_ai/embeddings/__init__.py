@@ -139,7 +139,10 @@ def infer_embedding_model(
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
 
-@dataclass(init=False)
+# `eq=False`: a facade over a live model and the provider client behind it compares by identity.
+# `instrument` is its only dataclass field, so generated field equality would compare two embedders
+# over different models as equal, and would leave the class unhashable.
+@dataclass(init=False, eq=False)
 class Embedder:
     """High-level interface for generating text embeddings.
 
@@ -169,7 +172,7 @@ class Embedder:
     If this isn't set, then the last value set by
     [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all]
     will be used, which defaults to False.
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False

@@ -1,0 +1,205 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      baggage:
+      - gen_ai.agent.name=agent,gen_ai.agent.call.id=01a07d0a-5a56-710d-a723-671226902aac,gen_ai.conversation.id=01a07d0a-5a56-710d-a723-671380a1a8c7
+      connection:
+      - keep-alive
+      content-length:
+      - '584'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+      session-id:
+      - 01a07d0a-5a56-710d-a723-671380a1a8c7
+      thread-id:
+      - 01a07d0a-5a56-710d-a723-671380a1a8c7
+      traceparent:
+      - 00-00000000000000000000000000000001-0000000000000005-01
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use your moo tool.
+        role: user
+      instructions: Call the moo tool exactly once, then reply with its result verbatim and nothing else.
+      model: gpt-6-astra
+      prompt_cache_key: 01a07d0a-5a56-710d-a723-671380a1a8c7
+      reasoning:
+        context: all_turns
+      store: false
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: Return a cheerful cow sound.
+        name: moo
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0a2b8707bead5918016a9efc82a4ec87d2ac2b061f424960ef","object":"response","created_at":1788804226,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0a2b8707bead5918016a9efc82a4ec87d2ac2b061f424960ef","object":"response","created_at":1788804226,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3","type":"function_call","status":"in_progress","arguments":"","call_id":"call_CuBuoNBH7dlDdxmB8wYIbYiX","name":"moo"},"output_index":0,"sequence_number":2}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","delta":"{}","item_id":"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3","obfuscation":"6ttmO13zCG4y9s","output_index":0,"sequence_number":3}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","arguments":"{}","item_id":"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3","output_index":0,"sequence_number":4}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3","type":"function_call","status":"completed","arguments":"{}","call_id":"call_CuBuoNBH7dlDdxmB8wYIbYiX","name":"moo"},"output_index":0,"sequence_number":5}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0a2b8707bead5918016a9efc82a4ec87d2ac2b061f424960ef","object":"response","created_at":1788804226,"status":"completed","background":false,"completed_at":1788804230,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"attribution":{"items":{"msg_0a2b8707bead5918016a9efc82ade887d283acc4b8a2a7d40c":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":9,"output_tokens":0}],"input_tokens":9,"output_tokens":0},"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":2,"output_tokens":14}},"request_fields":{"tools":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":29,"output_tokens":0},"instructions":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":22,"output_tokens":0}}},"input_tokens":62,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":14,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":76},"user":null,"metadata":{}},"sequence_number":6}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=emMLdKxqKgp5eM1RheITTYkoCZBGosPiDXu%2F19JRYTMkeRSR%2B7lYS2unSMzYl8oYwCrcx0m7jn1JDc8D7jiUK%2BBw2OMrDl3osmTCeLv%2F9CdwZuCrqEsQc9%2FYVLO9"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      baggage:
+      - gen_ai.agent.name=agent,gen_ai.agent.call.id=01a07d0a-5a56-710d-a723-671226902aac,gen_ai.conversation.id=01a07d0a-5a56-710d-a723-671380a1a8c7
+      connection:
+      - keep-alive
+      content-length:
+      - '848'
+      content-type:
+      - application/json
+      host:
+      - chatgpt.com
+      originator:
+      - pydantic-ai
+      session-id:
+      - 01a07d0a-5a56-710d-a723-671380a1a8c7
+      thread-id:
+      - 01a07d0a-5a56-710d-a723-671380a1a8c7
+      traceparent:
+      - 00-00000000000000000000000000000001-000000000000000b-01
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Use your moo tool.
+        role: user
+      - arguments: '{}'
+        call_id: call_CuBuoNBH7dlDdxmB8wYIbYiX
+        id: fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3
+        name: moo
+        type: function_call
+      - call_id: call_CuBuoNBH7dlDdxmB8wYIbYiX
+        output: Moo!
+        type: function_call_output
+      instructions: Call the moo tool exactly once, then reply with its result verbatim and nothing else.
+      model: gpt-6-astra
+      prompt_cache_key: 01a07d0a-5a56-710d-a723-671380a1a8c7
+      reasoning:
+        context: all_turns
+      store: false
+      stream: true
+      tool_choice: auto
+      tools:
+      - description: Return a cheerful cow sound.
+        name: moo
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://chatgpt.com/backend-api/codex/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"resp_0a2b8707bead5918016a9efc8890ac87d284e02fe7c7fbe3a9","object":"response","created_at":1788804232,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"resp_0a2b8707bead5918016a9efc8890ac87d284e02fe7c7fbe3a9","object":"response","created_at":1788804232,"status":"in_progress","background":false,"completed_at":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"auto","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","type":"message","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":3}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"M","item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","logprobs":[],"obfuscation":"8paoSCeskxS6Twd","output_index":0,"sequence_number":4}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"oo","item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","logprobs":[],"obfuscation":"cfkfaJGedVkwNa","output_index":0,"sequence_number":5}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"!","item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","logprobs":[],"obfuscation":"4hu0m18y52ZS3ZZ","output_index":0,"sequence_number":6}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","logprobs":[],"output_index":0,"sequence_number":7,"text":"Moo!"}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","output_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"Moo!"},"sequence_number":8}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"id":"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"Moo!"}],"phase":"final_answer","role":"assistant"},"output_index":0,"sequence_number":9}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"resp_0a2b8707bead5918016a9efc8890ac87d284e02fe7c7fbe3a9","object":"response","created_at":1788804232,"status":"completed","background":false,"completed_at":1788804234,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":"Call the moo tool exactly once, then reply with its result verbatim and nothing else.","max_output_tokens":null,"max_tool_calls":null,"model":"gpt-6-astra","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":"01a07d0a-5a56-710d-a723-671380a1a8c7","prompt_cache_retention":"24h","reasoning":{"context":"all_turns","effort":"medium","mode":"standard","summary":null},"safety_identifier":"scrubbed","service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":"medium"},"tool_choice":"auto","tool_usage":{"image_gen":{"input_tokens":0,"input_tokens_details":{"image_tokens":0,"text_tokens":0},"output_tokens":0,"output_tokens_details":{"image_tokens":0,"text_tokens":0},"total_tokens":0},"web_search":{"num_requests":0}},"tools":[{"type":"function","description":"Return a cheerful cow sound.","name":"moo","output_schema":null,"parameters":{"additionalProperties":false,"properties":{},"type":"object"},"strict":false}],"top_logprobs":0,"top_p":0.98,"truncation":"disabled","usage":{"attribution":{"items":{"msg_0a2b8707bead5918016a9efc8898d087d28601ee223489d5a6":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":9,"output_tokens":0}],"input_tokens":9,"output_tokens":0},"fc_0a2b8707bead5918016a9efc86696087d28cafa9b1494adea3":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":16,"output_tokens":0},"fc_0a2b8707bead5918016a9efc8898fc87d2827648461735de81":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":12,"output_tokens":0}],"input_tokens":12,"output_tokens":0},"msg_0a2b8707bead5918016a9efc89fc8887d288500e19fc186e5f":{"cache_write_tokens":0,"cached_tokens":0,"content":[{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":2,"output_tokens":7}],"input_tokens":2,"output_tokens":7}},"request_fields":{"tools":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":29,"output_tokens":0},"instructions":{"cache_write_tokens":0,"cached_tokens":0,"input_tokens":22,"output_tokens":0}}},"input_tokens":90,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":97},"user":null,"metadata":{}},"sequence_number":10}
+
+    headers:
+      connection:
+      - keep-alive
+      cross-origin-opener-policy:
+      - same-origin-allow-popups
+      nel:
+      - '{"report_to":"cf-nel","success_fraction":0.01,"max_age":604800}'
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      report-to:
+      - '{"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=U43EEuwUN2siH1OxVMtJh0IAAha73OGp%2BFzIKv%2Bg8L2pp6ThcmaXQQBDUGq4sisCClgXtramTWwfMHM%2BpNIZ%2FnfSK%2BZ2qmfLea5X2x8fcG8qOJ1b5oWh0%2B6hjt17"}]}'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

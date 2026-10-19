@@ -1,0 +1,123 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1955'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Find the exchange-rate tool.
+        role: user
+      - parts:
+        - functionCall:
+            args:
+              queries:
+              - exchange rate
+            id: search_call_1
+            name: search_tools
+          thoughtSignature: c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
+        role: model
+      - parts:
+        - functionResponse:
+            id: search_call_1
+            name: search_tools
+            response:
+              return_value: Found one matching tool.
+        role: user
+      - parts:
+        - text: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+        - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1199'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1430
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I have the `lookup_exchange_rate` tool available, which can be used to look up exchange rates for a specified
+              currency.
+            thoughtSignature: EuMDCuADARFNMg85KFKVOLp8OyVtjmWYnCILVrEnaw1VXgGXqVljo2ysooa9fatFxw12BPTp4fYa2yg2EnVjLzFi7zamRDuthvFy2f2a03ZHgQ/zbDq9R5fNHLnnwdc/lAeZTTLtYA4kKLWNTIYdqIX6BC5K5qSnOEG4nmiF0e+zdxQX23QhhfWuX135OQdaYEAN2mdBcAtCGN/j21EIQs+ZAAQe/osC7nwX9+R92edxOYgp4kUCsQnnjGhRXPrIXfBCEmk5WPaDgY/SYWBCxzToya+Mi+/Uz26zdwYL7la5WTiWJpORou9Z/aP0q1rIAldC42NILCQghxKNnpXjowOfCYGZLxgbfPMGFyBzZ9YxzAg/41HjBaM99OoEqLhDedeQ4A52kXUgOElioXZ5wu+v5YOh5+//qvdvUp72G0Pu0Dc1xOY64abpFjuiFid5VbrNNoGbvchSkNxetGevWt3r0EhlveQKvF1/W9LG5okXi8ezaeNWygBdkiNxar5G8z3jl6Zb3iJP8odVLFK4QEHRLPpF0TvgXYVGshQludOYw0cJwPHcwmd7G38K/2RAqw4hdqfplrGknrbIOCAeGcxyb6TCTSgq6Kyu3oKojyYkksiytN7wS03cez1UB71CwkWDbQI1
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: CgVsapXKJcDiz7IPks-jqA4
+      usageMetadata:
+        candidatesTokenCount: 27
+        promptTokenCount: 292
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 292
+        serviceTier: standard
+        thoughtsTokenCount: 106
+        totalTokenCount: 425
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -9,15 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._run_context import RunContext as RunContextClass
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-
-pytestmark = pytest.mark.anyio
 
 
 def _tool_recording_agent(seen: list[UsageLimits | None]) -> Agent[Any]:

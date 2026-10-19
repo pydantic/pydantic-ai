@@ -1,296 +1,358 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '649'
+      - "649"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: country_source
-        strict: true
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            country:
-              type: string
-          required:
-          - country
-          type: object
-        name: capital_lookup
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Use the registered tools and respond exactly as `Capital: <city>`."
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        system: >-
+          Always call `country_source` first, then call `capital_lookup` with that result
+          before replying.
+        tool_choice:
+          type: auto
+        tools:
+        - name: country_source
+          description: ""
+          input_schema:
+            type: object
+            properties: {}
+            additionalProperties: false
+          strict: true
+        - name: capital_lookup
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '562'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '4'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-91ed81553e846e1ad462f1525ab7e3e9-fad117522e65febd-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: I'll help you find the capital city using the available tools.
-        type: text
-      - id: toolu_01Ttepb9joVoQFHP568v7UAL
-        input: {}
-        name: country_source
-        type: tool_use
-      id: msg_01CTV3rhAAYCrzRGTEoJbJt7
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 628
-        output_tokens: 50
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pMyrKcdJrp7JuYo2W","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":628,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll help you find the capital city"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" using"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the available tools."}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01CsJF6okxx2a9FpMte1wJoq","name":"country_source","input":{},"caller":{"type":"direct"}} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":628,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50}       }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:31:03.162490+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '996'
+      - "1021"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
-          type: text
-        role: user
-      - content:
-        - text: I'll help you find the capital city using the available tools.
-          type: text
-        - id: toolu_01Ttepb9joVoQFHP568v7UAL
-          input: {}
-          name: country_source
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Japan
-          is_error: false
-          tool_use_id: toolu_01Ttepb9joVoQFHP568v7UAL
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: country_source
-        strict: true
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            country:
-              type: string
-          required:
-          - country
-          type: object
-        name: capital_lookup
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Use the registered tools and respond exactly as `Capital: <city>`."
+            type: text
+        - role: assistant
+          content:
+          - text: I'll help you find the capital city using the available tools.
+            type: text
+          - id: toolu_01CsJF6okxx2a9FpMte1wJoq
+            type: tool_use
+            name: country_source
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01CsJF6okxx2a9FpMte1wJoq
+            type: tool_result
+            content:
+            - text: Japan
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        system: >-
+          Always call `country_source` first, then call `capital_lookup` with that result
+          before replying.
+        tool_choice:
+          type: auto
+        tools:
+        - name: country_source
+          description: ""
+          input_schema:
+            type: object
+            properties: {}
+            additionalProperties: false
+          strict: true
+        - name: capital_lookup
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '491'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '52'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e040a8ef4de2e6378146bbd80d417b1c-eed1074829f2258d-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
-        input:
-          country: Japan
-        name: capital_lookup
-        type: tool_use
-      id: msg_01KgnnRwGgZEK3kvEGM5nbW8
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 691
-        output_tokens: 53
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3qb89EFdPNHvTFN9e1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":691,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01AzHYDPqnxziM9V5iMPLxHd","name":"capital_lookup","input":{},"caller":{"type":"direct"}}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"count"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ry\": \"J"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"apan\"}"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":691,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":53}            }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T16:31:04.881970+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1272'
+      - "1322"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Use the registered tools and respond exactly as `Capital: <city>`.'
-          type: text
-        role: user
-      - content:
-        - text: I'll help you find the capital city using the available tools.
-          type: text
-        - id: toolu_01Ttepb9joVoQFHP568v7UAL
-          input: {}
-          name: country_source
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Japan
-          is_error: false
-          tool_use_id: toolu_01Ttepb9joVoQFHP568v7UAL
-          type: tool_result
-        role: user
-      - content:
-        - id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
-          input:
-            country: Japan
-          name: capital_lookup
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Tokyo
-          is_error: false
-          tool_use_id: toolu_011j5uC2Tg3TZJo3nmLtJ8Mm
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      system: Always call `country_source` first, then call `capital_lookup` with that result before replying.
-      tool_choice:
-        type: auto
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: country_source
-        strict: true
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            country:
-              type: string
-          required:
-          - country
-          type: object
-        name: capital_lookup
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Use the registered tools and respond exactly as `Capital: <city>`."
+            type: text
+        - role: assistant
+          content:
+          - text: I'll help you find the capital city using the available tools.
+            type: text
+          - id: toolu_01CsJF6okxx2a9FpMte1wJoq
+            type: tool_use
+            name: country_source
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01CsJF6okxx2a9FpMte1wJoq
+            type: tool_result
+            content:
+            - text: Japan
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: toolu_01AzHYDPqnxziM9V5iMPLxHd
+            type: tool_use
+            name: capital_lookup
+            input:
+              country: Japan
+        - role: user
+          content:
+          - tool_use_id: toolu_01AzHYDPqnxziM9V5iMPLxHd
+            type: tool_result
+            content:
+            - text: Tokyo
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        system: >-
+          Always call `country_source` first, then call `capital_lookup` with that result
+          before replying.
+        tool_choice:
+          type: auto
+        tools:
+        - name: country_source
+          description: ""
+          input_schema:
+            type: object
+            properties: {}
+            additionalProperties: false
+          strict: true
+        - name: capital_lookup
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              country:
+                type: string
+            required:
+            - country
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '420'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '36'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7ef3cffbe86c0677991535d1fcf4f11f-4179ec7c0e7030ee-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: 'Capital: Tokyo'
-        type: text
-      id: msg_0111CmwjQHh6LerTTnrW2GPi
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 757
-        output_tokens: 6
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3qiZ88wLAxRHumTZqj","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":757,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Capital"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":": Tokyo"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":757,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":6}           }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:31:06.056360+00:00

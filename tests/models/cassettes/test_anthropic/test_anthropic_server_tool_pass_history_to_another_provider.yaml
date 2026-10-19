@@ -1,190 +1,227 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '321'
+      - "291"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What day is today?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - allowed_domains: null
-        blocked_domains: null
-        max_uses: null
-        name: web_search
-        type: web_search_20250305
-        user_location: null
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What day is today?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tools:
+        - name: web_search
+          type: web_search_20250305
+          max_uses: null
+          allowed_domains: null
+          blocked_domains: null
+          user_location: null
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '435'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
-      retry-after:
-      - '58'
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-65ff2cb3bac89a559f3853341a5f767a-aa3656257e1c30ae-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: Today is November 19, 2025.
-        type: text
-      id: msg_01SXTNg1wjy1KU6g4DM3b5h3
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 2218
-        output_tokens: 13
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY5YeDCc9j927dnbYMNr","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2218,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Today"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is September"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 29, 2026."}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2218,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":13}          }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T16:53:28.143701+00:00
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '286'
+      - "287"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      input:
-      - content: What day is today?
-        role: user
-      - content: Today is November 19, 2025.
-        role: assistant
-      - content: What day is tomorrow?
-        role: user
-      model: gpt-4.1
-      stream: false
-      tool_choice: auto
-      tools:
-      - search_context_size: medium
-        type: web_search
-    uri: https://api.openai.com/v1/responses
+    body:
+      type: json
+      content:
+        input:
+        - role: user
+          content: What day is today?
+        - role: assistant
+          content: Today is September 29, 2026.
+        - role: user
+          content: What day is tomorrow?
+        model: gpt-4.1
+        stream: false
+        tool_choice: auto
+        tools:
+        - type: web_search
+          search_context_size: medium
   response:
+    status: 200
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '1736'
       content-type:
       - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '1712'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      - "820"
       openai-version:
-      - '2020-10-01'
+      - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      background: false
-      billing:
-        payer: developer
-      created_at: 1763595668
-      error: null
-      id: resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f
-      incomplete_details: null
-      instructions: null
-      max_output_tokens: null
-      max_tool_calls: null
-      metadata: {}
-      model: gpt-4.1-2025-04-14
-      object: response
-      output:
-      - content:
-        - annotations: []
-          logprobs: []
-          text: Tomorrow is November 20, 2025.
-          type: output_text
-        id: msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a
-        role: assistant
+    body:
+      type: json
+      content:
+        id: resp_0e0e591ccbb9a83b006abbed08a2c087d181de454e7af3081e
+        object: response
+        created_at: 1790700808
         status: completed
-        type: message
-      parallel_tool_calls: true
-      previous_response_id: null
-      prompt_cache_key: null
-      prompt_cache_retention: null
-      reasoning:
-        effort: null
-        summary: null
-      safety_identifier: null
-      service_tier: default
-      status: completed
-      store: true
-      temperature: 1.0
-      text:
-        format:
-          type: text
-        verbosity: medium
-      tool_choice: auto
-      tools:
-      - filters: null
-        search_context_size: medium
-        type: web_search
-        user_location:
-          city: null
-          country: US
-          region: null
-          timezone: null
-          type: approximate
-      top_logprobs: 0
-      top_p: 1.0
-      truncation: disabled
-      usage:
-        input_tokens: 329
-        input_tokens_details:
-          cached_tokens: 0
-        output_tokens: 12
-        output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 341
-      user: null
-    status:
-      code: 200
-      message: OK
-version: 1
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790700809
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-2025-04-14
+        moderation: null
+        output:
+        - id: msg_0e0e591ccbb9a83b006abbed09350487d1a8216dcff0cebc51
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Tomorrow will be September 30, 2026.
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: web_search
+          return_token_budget: default
+          search_content_types:
+          - text
+          search_context_size: medium
+          user_location:
+            type: approximate
+            city: null
+            country: US
+            region: null
+            timezone: null
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 329
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 13
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 342
+        user: null
+        metadata: {}
+  recorded_at: 2026-09-29T16:53:29.513178+00:00

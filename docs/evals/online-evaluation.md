@@ -1,3 +1,7 @@
+---
+description: "Evaluate Pydantic AI agents and functions in production with Pydantic Evals: score every call or a sample in the background and emit OpenTelemetry events."
+---
+
 # Online Evaluation
 
 Online evaluation lets you attach evaluators to production (or staging) functions so that every call (or a sampled subset) is automatically evaluated in the background. The same [`Evaluator`][pydantic_evals.evaluators.Evaluator] classes used with [`Dataset.evaluate()`][pydantic_evals.dataset.Dataset.evaluate] work here; the difference is just in how they're wired up.
@@ -770,13 +774,13 @@ async def main():
         'span_abc': _make_context(
             inputs={'query': 'What is AI?'},
             output='AI is artificial intelligence.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=1.2,
         ),
         'span_def': _make_context(
             inputs={'query': 'What is ML?'},
             output='ML is machine learning.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=0.8,
         ),
     })
@@ -818,7 +822,7 @@ ctx = EvaluatorContext[dict[str, str], str, dict[str, str]](
     inputs={'query': 'What is AI?'},
     output='AI is artificial intelligence.',
     expected_output=None,
-    metadata={'model': 'gpt-4o'},
+    metadata={'model': '{{ openai:medium.name }}'},
     duration=1.2,
     _span_tree=SpanTree(),
     attributes={},
@@ -993,7 +997,7 @@ class OutputNotEmpty(Evaluator):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='assistant',
     capabilities=[OnlineEvaluation(evaluators=[OutputNotEmpty()])],
 )
@@ -1013,7 +1017,7 @@ To attach additional sinks or override sampling defaults, pass an [`OnlineEvalCo
 The capability supports all the same features as the [`@evaluate()`][pydantic_evals.online.evaluate] decorator: sampling, per-evaluator sinks, concurrency control, and error handling. The `config` parameter is optional and defaults to the global [`DEFAULT_CONFIG`][pydantic_evals.online.DEFAULT_CONFIG].
 
 !!! note
-    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], and [`agent.iter()`][pydantic_ai.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.Agent.iter] run to completion, which is generally the preferred streaming API.
+    [`OnlineEvaluation`][pydantic_evals.online_capability.OnlineEvaluation] wraps [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] when the run reaches a final result. For streaming runs, evaluators are dispatched only after the final result is available and the surrounding context manager exits. The same delayed-dispatch behavior applies when driving an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run to completion, which is generally the preferred streaming API.
 
 ## API Reference
 

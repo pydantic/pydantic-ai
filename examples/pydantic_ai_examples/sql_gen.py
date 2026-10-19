@@ -25,6 +25,7 @@ from devtools import debug
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -93,14 +94,15 @@ class InvalidRequest(BaseModel):
 Response: TypeAlias = Success | InvalidRequest
 agent = Agent[Deps, Response](
     'google:gemini-3-flash-preview',
-    # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
-    output_type=Response,  # type: ignore
+    # Pass the union members directly: a `Response` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
+    output_type=Success | InvalidRequest,
     deps_type=Deps,
+    capabilities=[Caching()],
 )
 
 
-@agent.system_prompt
-async def system_prompt() -> str:
+@agent.instructions
+async def instructions() -> str:
     return f"""\
 Given the following PostgreSQL table of records, your job is to
 write a SQL query that suits the user's request.

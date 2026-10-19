@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from .._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
@@ -28,16 +27,12 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
         result: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in tools.items():
             tool_def = tool.tool_def
-            metadata = tool_def.metadata
-            if defer_loading:
-                metadata = {**(metadata or {}), DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True}
             result[name] = replace(
                 tool,
                 tool_def=replace(
                     tool_def,
                     capability_id=tool_def.capability_id if tool_def.capability_id is not None else capability_id,
                     defer_loading=defer_loading or tool_def.defer_loading,
-                    metadata=metadata,
                 ),
             )
         return result
@@ -47,7 +42,7 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         if self.capability.defer_loading is True:
             return None
-        return await self.wrapped.get_instructions(ctx)
+        return await super().get_instructions(ctx)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)
@@ -68,20 +63,33 @@ def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapab
     )
 
 
-# This is the wire-side resolver: `ToolSearchToolset.get_tools` calls it to decide which
-# capability-owned deferred tools to actually surface in the request this turn. It is deliberately
-# separate from `RunContext.available_tool_names` (the read-side resolver hooks query) — the two
-# answer different questions (what to send vs. what the user can observe) over different inputs
-# (the toolset's tool defs vs. the run context), so they aren't duplicated logic to fold together.
-def tool_defs_for_loaded_capabilities(
-    ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
-) -> dict[str, ToolDefinition]:
-    """Return resolved function-tool definitions owned by loaded deferred capabilities, keyed by name."""
-    return {
-        tool_def.name: tool_def
-        for tool_def in tool_defs
-        if (capability_id := tool_def.capability_id) is not None
-        and capability_id in ctx.available_capability_ids
+def is_gated_by_deferred_capability(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    """Whether an on-demand capability decides when this tool becomes available.
+
+    Such a tool is hidden until its owning capability loads, and it is never searchable: no query
+    should surface it, because the model isn't meant to reach it by asking. That's the line between
+    the two things a deferred tool can be — hidden until something reveals it, which every deferred
+    tool is, and a member of the searchable corpus, which only the ungated ones are. Which side a
+    tool falls on depends on how the run is configured, not on the model serving it, so it's settled
+    here rather than in `Model.prepare_request`.
+    """
+    return (
+        (capability_id := tool_def.capability_id) is not None
         and (cap := ctx.capabilities.get(capability_id)) is not None
         and cap.defer_loading is True
-    }
+    )
+
+
+def tool_defs_from_pre_definition_load_returns(
+    ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
+) -> dict[str, ToolDefinition]:
+    """Reconstruct definitions for histories serialized before load returns carried tool definitions."""
+    result: dict[str, ToolDefinition] = {}
+    for tool_def in tool_defs:
+        capability_id = tool_def.capability_id
+        if capability_id is None or capability_id not in ctx.loaded_capability_ids:
+            continue
+        capability = ctx.capabilities.get(capability_id)
+        if capability is not None and capability.defer_loading is True:
+            result[tool_def.name] = tool_def
+    return result

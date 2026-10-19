@@ -1,0 +1,147 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "266"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: What's 2+2? Consult your advisor first.
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        tools:
+        - type: advisor_20260301
+          name: advisor
+          model: claude-opus-4-8
+          max_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f6a7ac15c9ce5e83bb8517c272d78612-9473ef43a4e33fd9-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3cq3CJuHD718JvVhvj","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1128,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EugCCpABCBIYAipA+SfOi1sMO7p0OtKlw6rbK2q++rhXjrPY2fM/aymWi6UQhZEoq2l91XFrsXT6h6orTbtQ58GW0roS4+NmTwWFeTIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAZvO79UGEgwpBkWGWaEnwNbvOhsaDJtRFA+sBFrIa/qIHCIwIgK0pnZNTxvUZ2Qih3yeKcTPEzrgSYnpdAots/Xa1nmmd17/uvWXGV2QxCoEvnBPKoQBJKxJFma5fGIsDQGMFjc14LVL5zEw5edZbIbAq9bL4HIhYcv8tKqEF8YRfMK0PDof/ihNrb6uAWkis48UrqbypxFKPsEnsFuiQGK+FnfmnEjoeqo++bMOvT4P56evFMHl6N/qYb3af5IVZ6OxMRNTMrDdXwLfhT3zBwLfEo9KKF0F4+9yGAE="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Task: answ"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"er \"What"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s 2+2?\" My"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" initial read: this is tr"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ivial ar"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ithmetic, the answer"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" is 4. Let me cons"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ult the advisor as"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" instructed before fin"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"alizing."}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01FCBmB6dDfP3MKtdHon3q4b","name":"advisor","input":{}}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"advisor_tool_result","tool_use_id":"srvtoolu_01FCBmB6dDfP3MKtdHon3q4b","content":{"type":"advisor_result","text":"4.\n\nThe answer is 4 — that's certain, no verification needed. Ship it.","stop_reason":"end_turn"}} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"2"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":" + 2 = "}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"4"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2406,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":130,"output_tokens_details":{"thinking_tokens":35},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"iterations":[{"input_tokens":1128,"output_tokens":119,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"},{"input_tokens":2527,"output_tokens":29,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"advisor_message","model":"claude-opus-4-8"},{"input_tokens":1278,"output_tokens":11,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"}]}     }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-29T16:28:13.777367+00:00

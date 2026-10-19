@@ -1,3 +1,7 @@
+---
+description: "Control how many Pydantic Evals cases run in parallel with max_concurrency, to balance evaluation throughput against provider rate limits and resource use."
+---
+
 # Concurrency & Performance
 
 Control how evaluation cases are executed in parallel.
@@ -157,7 +161,7 @@ def my_task(inputs: str) -> str:
 
 dataset = Dataset(
     name='evaluator_concurrency',
-    cases=[Case(inputs=f'test{i}') for i in range(100)],  # 100 cases
+    cases=[Case(inputs=f'test{i}') for i in range(40)],  # 40 cases
     evaluators=[
         LLMJudge(rubric='Quality check'),  # Makes API calls
     ],

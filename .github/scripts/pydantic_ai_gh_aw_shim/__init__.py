@@ -9,7 +9,9 @@ callable, then add the `(name, callable, description)` row in
 `_BASE_TOOLS`.
 
 To replace a tool: edit the matching `<tool>.py` file. The signature is
-what gh-aw / Claude pass; the docstring becomes the tool's description.
+what gh-aw / Claude pass; the docstring becomes the tool's description. Tools
+that touch the workspace take a leading `RunContext` (injected by pydantic-ai,
+never shown to the model) and act on its `ctx.workspace`.
 
 Two tools are *not* in this package:
 
@@ -27,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
 from pydantic_ai import RunContext
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -50,8 +53,8 @@ from .write import write_file
 # `(command, timeout?)`, `MultiEdit` takes `(file_path, edits)`, etc.), so the
 # precise per-tool shape is enforced at the tool's own definition site — at the
 # registry layer the meaningful contract is "callable that returns (or awaits)
-# a string the model can read".
-ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str]]
+# a string the model can read", or for `Read`, an image or PDF it can view.
+ClaudeCodeToolFn: TypeAlias = Callable[..., str | Awaitable[str | list[str | BinaryContent]]]
 
 # `Task` is async like the harness-backed file/shell tools, but unlike them its
 # signature is fully pinned here (it takes a `RunContext`) so that consumers of

@@ -2,9 +2,8 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -18,6 +17,10 @@ except ImportError as _import_error:
         'Please install the `cohere` package to use the Cohere provider, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 class CohereProvider(Provider[AsyncClientV2]):
@@ -85,7 +88,8 @@ class CohereProvider(Provider[AsyncClientV2]):
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx.AsyncClient)
         self._client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
         if self._v1_client is not None:  # pragma: no branch
             self._v1_client._client_wrapper.httpx_client.httpx_client = http_client  # pyright: ignore[reportPrivateUsage]

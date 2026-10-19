@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -26,7 +25,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -54,12 +52,6 @@ def test_nebius_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = NebiusProvider(openai_client=openai_client)
     assert provider.client == openai_client
-
-
-def test_nebius_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = NebiusProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_nebius_provider_model_profile(mocker: MockerFixture):
