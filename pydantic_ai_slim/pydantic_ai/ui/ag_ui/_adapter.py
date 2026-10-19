@@ -299,8 +299,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
     ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
     serialized as sidecar activity messages on `dump_messages` and reconstructed on
-    `load_messages`. A frontend only completes the round-trip if it echoes these activity
-    messages back on the next request.
+    `load_messages`. A frontend only completes the round-trip if it sends these activity
+    messages back on the next request, which `@ag-ui/client` doesn't do; see
+    [Records carried as activity messages](../ui/ag-ui.md#activity-records).
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
     `UploadedFile` still requires
@@ -605,7 +606,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
                         metadata = {}
                     builder.add(
                         ThinkingPart(
