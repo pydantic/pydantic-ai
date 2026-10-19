@@ -5,6 +5,14 @@ kind: SandboxTemplate
 metadata:
   name: python
 spec:
+  # agent-sandbox's default policy admits only its router. An in-cluster connection comes straight
+  # to sandboxd, so admit it on sandboxd's ports, as the docs tell users to; CI connects from the
+  # host over a route, from outside the pod network. Egress stays open.
+  networkPolicy:
+    ingress:
+      - from: [{ipBlock: {cidr: 0.0.0.0/0}}]
+        ports: [{port: 8080}, {port: 9090}]
+    egress: [{}]
   podTemplate:
     spec:
       automountServiceAccountToken: false
@@ -48,6 +56,14 @@ kind: SandboxTemplate
 metadata:
   name: sandboxd-other-ports
 spec:
+  # agent-sandbox's default policy admits only its router. An in-cluster connection comes straight
+  # to sandboxd, so admit it on sandboxd's ports, as the docs tell users to; CI connects from the
+  # host over a route, from outside the pod network. Egress stays open.
+  networkPolicy:
+    ingress:
+      - from: [{ipBlock: {cidr: 0.0.0.0/0}}]
+        ports: [{port: 8181}, {port: 9191}]
+    egress: [{}]
   podTemplate:
     spec:
       automountServiceAccountToken: false

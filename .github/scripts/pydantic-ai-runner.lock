@@ -1143,7 +1143,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "json-repair", specifier = ">=0.58.0" },
-    { name = "k8s-agent-sandbox", extras = ["async"], marker = "extra == 'kubernetes'", specifier = ">=1.0.6" },
+    { name = "k8s-agent-sandbox", extras = ["async"], marker = "extra == 'kubernetes'", specifier = ">=1.0.6,<2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
