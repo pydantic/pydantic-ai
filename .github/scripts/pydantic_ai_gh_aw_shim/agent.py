@@ -151,7 +151,11 @@ def build_agent() -> Agent[None, str]:
             LocalWorkspace('.', env=env, read_only=attention),
             # Checkout guidance accompanies file traversal, as in the read-only
             # delegates; it must not become the reviewer's system instructions.
-            RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            *(
+                []
+                if attention
+                else [RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents')]
+            ),
             Coder(sub_agents=False, caching=False, repo_context=False),
         ],
     )

@@ -195,6 +195,35 @@ async def test_checkout_guidance_stays_out_of_system_instructions(tmp_path: Path
     assert requests == 2
 
 
+async def test_attention_snapshot_read_does_not_load_checkout_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attention reads its candidate snapshot without importing repository guidance."""
+    monkeypatch.setenv('GITHUB_WORKFLOW', cli.ATTENTION_WORKFLOW)
+    guidance = 'Repository guidance outside the Attention candidate snapshot'
+    (tmp_path / 'AGENTS.md').write_text(guidance)
+    (tmp_path / 'attention-candidates.json').write_text('{"candidates": []}')
+    sink = tmp_path / 'safeoutputs.jsonl'
+    sink.write_text('{"type":"noop"}\n')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    requests = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        assert guidance not in (info.instructions or '')
+        assert guidance not in str(messages)
+        if requests == 1:
+            return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'attention-candidates.json'})])
+        return ModelResponse(parts=[TextPart('No candidates to triage')])
+
+    agent = workflow.build_agent()
+    with agent.override(model=streaming_model(respond)):
+        result = await agent.run('Read the Attention candidate snapshot')
+    assert result.output == 'No candidates to triage'
+    assert requests == 2
+
+
 async def test_deadline_reports_time_limit_without_waiting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
