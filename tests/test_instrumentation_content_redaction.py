@@ -119,7 +119,10 @@ def test_mcp_server_credentials_never_reach_request_parameters_attribute(include
         id='docs',
         url='https://mcp.example.com?access_token=SENTINEL-mcp-url-token',
         authorization_token='SENTINEL-mcp-token',
+        description='Docs MCP server',
+        allowed_tools=['search'],
         headers={'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'},
+        optional=True,
     )
     parameters = ModelRequestParameters(native_tools=[tool])
 
@@ -136,6 +139,9 @@ def test_mcp_server_credentials_never_reach_request_parameters_attribute(include
     assert '"url":"[REDACTED]"' in serialized
     assert '"X-Api-Key":"[REDACTED]"' in serialized
     assert '"Authorization":"[REDACTED]"' in serialized
+    assert '"description":"Docs MCP server"' in serialized
+    assert '"allowed_tools":["search"]' in serialized
+    assert '"optional":true' in serialized
     assert tool.authorization_token == 'SENTINEL-mcp-token'
     assert tool.url == 'https://mcp.example.com?access_token=SENTINEL-mcp-url-token'
     assert tool.headers == {'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'}

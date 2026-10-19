@@ -117,15 +117,19 @@ def model_request_parameters_attributes(
     from pydantic_ai.native_tools import MCPServerTool
 
     if any(isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools):
-        # Redact before serialization, including its fallback, without changing the provider request.
+        # Build a telemetry-only copy from approved fields so newly added MCP fields stay out by default.
         model_request_parameters = replace(
             model_request_parameters,
             native_tools=[
-                replace(
-                    tool,
+                MCPServerTool(
+                    id=tool.id,
                     url='[REDACTED]',
                     authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+                    description=tool.description,
+                    allowed_tools=tool.allowed_tools,
                     headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+                    kind=tool.kind,
+                    optional=tool.optional,
                 )
                 if isinstance(tool, MCPServerTool)
                 else tool
