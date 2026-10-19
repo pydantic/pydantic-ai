@@ -7902,9 +7902,9 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     """A tool raising `ToolFailed` yields a `failed`, error-key-wrapped result — not a crashed session.
 
     `tool_manager.handle_call` raises `ToolFailedError` for a `ToolFailed`; the session must answer with
-    the failed result (like `run`/`iter`) rather than let it tear down the session. Realtime providers
+    the failed result (like `run`/`iter`) rather than let it tear down the session. Most realtime providers
     have no native failed-tool flag, so the failure is wrapped in an `{"error": ...}` object on the
-    string-only tool channel.
+    string-only tool channel, and flagged for the ones that do.
     """
     agent: Agent[None, str] = Agent()
 
@@ -7921,6 +7921,7 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     assert result.part.outcome == 'failed'
     sent = next(s for s in conn.sent if isinstance(s, ToolResult))
     assert '"error"' in sent.output  # wrapped so the model sees the failure over the string-only channel
+    assert sent.failed
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
@@ -8726,7 +8727,7 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
     retried = results[0]
     assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
     assert str(retried.content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str())]
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True)]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -8855,7 +8856,9 @@ async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry
 
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
     assert (result.part.tool_name, result.part.outcome) == ('buy', 'retried')
-    assert conn.sent == snapshot([ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}')])
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}', failed=True)]
+    )
 
 
 # --- declarative `requires_approval=True` gating ------------------------------------------------
