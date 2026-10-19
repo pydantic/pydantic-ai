@@ -385,18 +385,17 @@ class TestSkillInvocationFrontmatter:
         assert list(loaded.commands) == []
         assert '- background: Background.' in seen.instructions
 
-    async def test_ignored_frontmatter_is_reported_at_load(self, project: Path) -> None:
+    async def test_frontmatter_for_other_clients_loads_without_a_notice(self, project: Path) -> None:
         library = project / '.agents' / 'skills'
         (library / 'review').mkdir(parents=True)
         (library / 'review' / 'SKILL.md').write_text(
             '---\ndescription: Review.\nallowed-tools: Read\ncontext: fork\n---\n', encoding='utf-8'
         )
 
-        _, output = await load_coder()
+        loaded, output = await load_coder()
 
-        assert output.getvalue() == (
-            'Ignoring unsupported Agent Skill behavioral frontmatter fields: review: allowed-tools, context\n'
-        )
+        assert [command.name for command in loaded.commands] == ['review']
+        assert output.getvalue() == ''
 
 
 class TestSkillCatalog:
