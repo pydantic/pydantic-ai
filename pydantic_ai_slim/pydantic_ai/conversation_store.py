@@ -178,8 +178,10 @@ class ConversationStore(ABC):
                 one with its `conversation_id` already exists when it wasn't loaded from the store.
         """
         conversation_id = conversation.conversation_id
+        # Read once: a concurrent save of the same object advances it while this one awaits the store.
+        expected_revision = conversation.revision
         record = await self.read_record(conversation_id)
-        if (record.revision if record is not None else None) != conversation.revision:
+        if (record.revision if record is not None else None) != expected_revision:
             raise ConversationConflict(conversation_id)
         history = await self._history_of(record) if record is not None else []
         if history is None:
@@ -203,7 +205,7 @@ class ConversationStore(ABC):
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
         )
-        await self.write_record(updated, new_entries=new_entries, expected_revision=conversation.revision)
+        await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
         conversation.revision = updated.revision
         return updated
 
@@ -226,16 +228,19 @@ class ConversationStore(ABC):
         Raises:
             UserError: If the store doesn't have the conversation, or `at` is out of range.
         """
-        record = await self.read_record(conversation_id)
-        if record is None:
-            raise UserError(f'Conversation {conversation_id!r} is not in the store.')
-        history = await self.read_history(record.head_id)
+        while True:
+            record = await self.read_record(conversation_id)
+            if record is None:
+                raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+            history = await self._history_of(record)
+            if history is not None:
+                break
         keep = len(history) if at is None else at
         if not 0 <= keep <= len(history):
             raise UserError(f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.')
         head_id = history[keep - 1].id if keep else None
         fork = ConversationRecord(
-            conversation_id=new_conversation_id or str(uuid7()),
+            conversation_id=new_conversation_id if new_conversation_id is not None else str(uuid7()),
             head_id=head_id,
             usage=dataclasses.replace(record.usage) if keep == len(history) else _usage.RunUsage(),
             deferred_tool_requests=record.deferred_tool_requests if keep == len(history) else None,
@@ -326,8 +331,10 @@ class ConversationStore(ABC):
         store them and the record together, so a conflict leaves neither behind.
 
         Raises:
-            ConversationConflict: If the stored record's revision isn't `expected_revision`, or a
-                record exists when `expected_revision` is `None`.
+            ConversationConflict: If the stored record's revision isn't `expected_revision`, a record
+                exists when `expected_revision` is `None`, or `record.head_id` names an entry that
+                neither the store nor `new_entries` has, because a concurrent delete or rewrite of
+                the conversation a fork points into released it.
         """
         raise NotImplementedError
 
@@ -380,6 +387,9 @@ class InMemoryConversationStore(ConversationStore):
     ) -> None:
         stored = self._records.get(record.conversation_id)
         if (stored.revision if stored is not None else None) != expected_revision:
+            raise ConversationConflict(record.conversation_id)
+        new_ids = {entry.id for entry in new_entries}
+        if record.head_id is not None and record.head_id not in self._entries and record.head_id not in new_ids:
             raise ConversationConflict(record.conversation_id)
         for entry in new_entries:
             self._entries[entry.id] = deepcopy(entry)

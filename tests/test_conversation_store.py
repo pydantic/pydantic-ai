@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
 
 from pydantic_ai import Agent, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, InMemoryConversationStore
+from pydantic_ai.conversation_store import (
+    ConversationConflict,
+    ConversationEntry,
+    ConversationRecord,
+    InMemoryConversationStore,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -325,6 +330,66 @@ async def test_a_conversation_replaced_while_it_is_read_loads_as_replaced() -> N
 
     store.race = replace_it
     assert await store.load(conversation.conversation_id) == rewritten
+
+
+async def test_forking_a_conversation_deleted_while_it_is_read_raises_that_it_is_gone() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.race = lambda: store.delete(conversation.conversation_id)
+    with pytest.raises(UserError, match='is not in the store'):
+        await store.fork(conversation.conversation_id)
+
+
+async def test_a_fork_of_a_history_released_before_it_is_written_conflicts() -> None:
+    class _DeleteBeforeWrite(InMemoryConversationStore):
+        source: str | None = None
+
+        async def write_record(
+            self,
+            record: ConversationRecord,
+            *,
+            new_entries: Sequence[ConversationEntry] = (),
+            expected_revision: str | None,
+        ) -> None:
+            if self.source is not None:
+                source, self.source = self.source, None
+                await self.delete(source)
+            await super().write_record(record, new_entries=new_entries, expected_revision=expected_revision)
+
+    store = _DeleteBeforeWrite()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+
+    store.source = conversation.conversation_id
+    with pytest.raises(ConversationConflict):
+        await store.fork(conversation.conversation_id, new_conversation_id='fork')
+    assert await store.load('fork') is None
+
+
+async def test_saving_the_same_conversation_twice_at_once_conflicts() -> None:
+    store = _RacingStore()
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
+    await store.save(conversation)
+    conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
+
+    async def save_it_too() -> None:
+        await store.save(conversation)
+
+    store.race = save_it_too
+    with pytest.raises(ConversationConflict):
+        await store.save(conversation)
+
+
+async def test_a_fork_keeps_an_empty_conversation_id_it_is_given() -> None:
+    store = InMemoryConversationStore()
+    conversation = Conversation()
+    await store.save(conversation)
+
+    fork = await store.fork(conversation.conversation_id, new_conversation_id='')
+
+    assert fork.conversation_id == ''
 
 
 async def test_a_history_missing_an_entry_of_an_unchanged_record_fails_to_load() -> None:
