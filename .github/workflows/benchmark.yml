@@ -102,7 +102,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions:
       id-token: write
       contents: read

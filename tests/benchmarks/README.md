@@ -9,7 +9,7 @@ Run these commands from the repository root. For a correctness check without tim
 
 The [CodSpeed workflow](../../.github/workflows/benchmark.yml) uses CPU simulation on GitHub-hosted runners with Python 3.14. It runs on pull requests and pushes to `main`. Simulation produces hardware-independent measurements, so results remain comparable across GitHub-hosted CPUs.
 
-After changing the measurement mode, record a fresh `main` baseline before comparing performance. Simulation results are not comparable to the previous wall-time results. The job has a ten-minute timeout. Superseded PR runs are canceled; `main` baseline runs are kept.
+After changing the measurement mode, record a fresh `main` baseline before comparing performance. Simulation results are not comparable to the previous wall-time results. The job has a thirty-minute timeout. Superseded PR runs are canceled; `main` baseline runs are kept.
 
 The agent-run benchmarks use `TestModel` to avoid network latency. Their fixtures warm up a reused agent before measurement. BlockBuster is disabled for all benchmarks in this module because its blocking-call instrumentation changes the workload.
 
