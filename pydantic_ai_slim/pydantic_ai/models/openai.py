@@ -2378,9 +2378,7 @@ def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
 
 
 def _with_history_digest(response: ModelResponse, history_digest: str | None) -> ModelResponse:
-    if history_digest is not None:
-        response.history_digest = history_digest
-    return response
+    return response if history_digest is None else replace(response, history_digest=history_digest)
 
 
 @dataclass(init=False)
