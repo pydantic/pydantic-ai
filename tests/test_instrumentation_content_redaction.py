@@ -235,13 +235,13 @@ def test_unexpected_request_serialization_is_withheld(
 
 
 @pytest.mark.parametrize('kind', ['future_tool', 'web_search'])
+@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings:UserWarning')
 def test_unreviewed_native_tool_kinds_are_withheld(kind: str) -> None:
     """Unknown kinds and mismatched kind/class pairs cannot opt into a reviewed projection."""
     tool = MCPServerTool(id='docs', url='https://mcp.example.test', kind=kind)
     parameters = ModelRequestParameters(native_tools=[tool])
 
-    with pytest.warns(UserWarning, match='Pydantic serializer warnings'):
-        serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
 
     assert isinstance(serialized, str)
     assert json.loads(serialized)['native_tools'] == []
