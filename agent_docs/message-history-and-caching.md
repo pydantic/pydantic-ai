@@ -6,7 +6,7 @@
 
 Message history is both the model's picture of the world and the provider's prompt-cache key. Providers cache a prefix of the request they've seen before, at boundaries that differ per provider: tools, then system and instructions, then messages. So read each request as that ordered sequence of cache-relevant blocks: every block an earlier request sent should come back with identical serialization and in the same order, with new blocks only after it, across steps and across runs of the same conversation. (Full request bodies can't be byte prefixes of each other: closing brackets and settings come after the prompt.) When that breaks, nothing errors: the provider re-processes everything after the first changed block, and on models with preserved thinking the model's earlier reasoning is discarded too. Who wrote a piece of text also decides how much the model trusts it, so putting content in the wrong place is a prompt-injection bug, not a style issue.
 
-A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today (a callable instruction that re-renders when its value changes, for example); flag only what the rule forbids regardless, which each such rule spells out. Drop the marker once #N merges.
+A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today (a callable instruction that re-renders when its value changes, for example); flag only what the rule forbids regardless, which each such rule spells out. The same marker names the PR that fixes shipped code still breaking a rule: don't flag that code for it until then. Drop the marker once #N merges.
 
 ## Rules
 
@@ -32,11 +32,11 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 | tools, sub-agents, files, the web, and history a UI client sends back (framework records, tool results, system messages) | the tool result channel, or a framed data wrapper (`<tool_result …>`) when it has to ride a user turn |
 
 - Never put content from a lower tier in a higher one: no tool output, sub-agent report, file contents or client-returned history in a `SystemPromptPart` or instructions. — The model gives system voice the operator's authority, so that content becomes an injection with operator rights. The one exception is an operator's explicit opt-in, such as `manage_system_prompt='client'` on a UI adapter, where the operator has chosen to let the client's system messages speak for them.
-- Never send framework voice with `ctx.enqueue(str)`. — A string becomes a user part, so the model reads framework guidance as the user's words and UI clients show it as a message the user typed. Enqueue a `SystemPromptPart`.
+- Never send framework voice with `ctx.enqueue(str)`. — A string becomes a user part, so the model reads framework guidance as the user's words and UI clients show it as a message the user typed. Enqueue a `SystemPromptPart`, and keep any untrusted payload out of it (previous rule). *(Harness `TrajectoryJudge` steering: pending #10545.)*
 
 ### One voice tag, and every wrapper escapes its payload
 
-- `<system>` is the only tag that means "the application, not the person", and only the fallback rendering of a `SystemPromptPart` (on models without a mid-conversation system channel) emits it. Don't add a second voice tag such as `<system-reminder>`.
+- `<system>` is the only tag that means "the application, not the person", and only the fallback rendering of a `SystemPromptPart` (on models without a mid-conversation system channel) emits it. Don't add a second voice tag such as `<system-reminder>`. *(Harness `SystemReminders`, which defaults to that tag and injects request-only user text: pending #9712.)*
 - Every other tag the framework or harness wraps around content is data framing (`<tool_result>`, `<task_output>`, …), and both its payload and its attributes are escaped, so the content can't close the wrapper and forge framework voice. Build wrappers with `wrap()` from `pydantic_ai/_framing.py` *(pending, #7891)*; until it exists, escape by hand. Test each wrapper with content containing its own closing tag and `</system>`.
 
 ### Identify framework records by type or metadata, never by visible text
