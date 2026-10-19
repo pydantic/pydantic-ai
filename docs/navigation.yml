@@ -728,6 +728,11 @@ navigation:
         slug: "guides/embeddings"
         aliases:
           - "embeddings"
+      - page: "Transcription"
+        path: "transcription.md"
+        slug: "guides/transcription"
+        aliases:
+          - "transcription"
       - page: "Testing"
         path: "testing.md"
         slug: "guides/testing"
@@ -1343,6 +1348,11 @@ navigation:
             slug: "api/pydantic-ai/toolsets"
             aliases:
               - "api/toolsets"
+          - page: "transcription"
+            path: "api/transcription.md"
+            slug: "api/pydantic-ai/transcription"
+            aliases:
+              - "api/transcription"
           - section: "ui"
             slug: ""
             contents:

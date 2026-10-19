@@ -73,6 +73,8 @@ from pydantic_ai.realtime.codec import (
     ToolCall,
     ToolResult,
 )
+from pydantic_ai.transcription import TranscriptionModel, infer_transcription_model
+from pydantic_ai.transcription.test import TestTranscriptionModel
 
 from .conftest import TestEnv, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
@@ -496,6 +498,7 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
+    mocker.patch('pydantic_ai.transcription.infer_transcription_model', side_effect=mock_infer_transcription_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
@@ -1910,6 +1913,19 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
+
+
+def mock_infer_transcription_model(model: TranscriptionModel | str) -> TranscriptionModel:
+    """Mock transcription model inference while validating the provider and model name."""
+    if isinstance(model, TranscriptionModel):
+        return model
+
+    actual_model = infer_transcription_model(model)
+    return TestTranscriptionModel(
+        actual_model.model_name,
+        provider_name=actual_model.system,
+        text="Hi, I'd like to book a table for two tonight at seven.",
+    )
 
 
 def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> ImageGenerationModel:

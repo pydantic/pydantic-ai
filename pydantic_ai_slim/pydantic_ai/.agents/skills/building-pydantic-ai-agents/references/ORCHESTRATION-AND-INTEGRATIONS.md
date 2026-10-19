@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, transcription, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -143,6 +143,22 @@ Pass reference images through `images=[...]` to edit or transform them. A provid
 When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
 The image such a run generates is in its message history, not in `result.output`: a local fallback returns it from the `generate_image` tool call (`ToolReturnPart.files`), and the native tool puts it in that response's `ModelResponse.images`. `output_type=BinaryImage` requires the agent's model itself to support image output, and the output is then that model's own image, even beside `native=False`, not the fallback's.
+
+## Transcribe Audio
+
+Use `Transcriber(...)` for batch speech-to-text: one request per clip, audio in and text out. It's the way to handle voice input for an agent whose model doesn't take audio; for live voice conversations, use realtime instead.
+
+```python
+from pathlib import Path
+
+from pydantic_ai import BinaryContent, Transcriber
+
+transcriber = Transcriber('openai:gpt-transcribe', settings={'language': 'en'})
+result = transcriber.transcribe_sync(BinaryContent.from_path(Path('voice-message.ogg')))
+text = result.text
+```
+
+Use `await transcriber.transcribe(...)` from async code. The audio is an `AudioUrl` or `BinaryContent` with an audio (or video container) media type. Pass `language` whenever it's known: models detect it otherwise and can guess wrong on short clips. `TranscriptionSettings` carries `language`, `temperature`, `extra_headers`, and `extra_body`; OpenAI-only options (`openai_prompt`, and `openai_response_format='verbose_json'` for `whisper-1` segments) are on `OpenAITranscriptionSettings`. `result.usage` holds tokens or `audio_seconds` depending on how the model is billed, and `result.cost()` prices either. Use `TestTranscriptionModel` with `transcriber.override(model=...)` in tests.
 
 ## Use LangChain Tools
 
