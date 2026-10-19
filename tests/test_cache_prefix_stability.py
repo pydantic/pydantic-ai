@@ -426,3 +426,46 @@ async def test_openai_multiple_user_prompts_ag_ui_roundtrip_wire_stable(
     original_body, roundtripped_body = bodies
     assert roundtripped_body == original_body
     assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'prompts',
+    [
+        pytest.param([UserPromptPart('A1'), UserPromptPart('B1')], id='text'),
+        pytest.param(
+            [
+                UserPromptPart(['A1', BinaryContent(b'\x89PNG', media_type='image/png')]),
+                UserPromptPart([ImageUrl('https://example.com/b.png', vendor_metadata={'detail': 'high'}), 'B1']),
+                UserPromptPart('C1'),
+            ],
+            id='media',
+        ),
+    ],
+)
+async def test_openai_multiple_user_prompts_roundtrip_wire_stable(
+    allow_model_requests: None, prompts: list[UserPromptPart]
+):
+    """A request with several `UserPromptPart`s re-sends with an identical request body after a Vercel AI round-trip.
+
+    All of a request's prompts go into one user `UIMessage`, so `load_messages` has to tell where each one begins
+    to rebuild them, rather than merging them into one prompt that OpenAI renders as one user message instead of
+    one per prompt.
+    """
+    history: list[ModelMessage] = [ModelRequest(parts=prompts), ModelResponse(parts=[TextPart('OK')])]
+
+    roundtripped = _vercel_roundtrip(history)
+    assert [type(part) for part in roundtripped[0].parts] == [UserPromptPart] * len(prompts)
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+    assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
