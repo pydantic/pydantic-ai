@@ -2373,7 +2373,11 @@ responses_output_text_annotations_ta = TypeAdapter(list[responses.response_outpu
 
 
 def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
-    serialized = ModelMessagesTypeAdapter.dump_json([_without_application_metadata(message) for message in history])
+    # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
+    # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
+    serialized = ModelMessagesTypeAdapter.dump_json(
+        [_without_application_metadata(message) for message in history], exclude_none=True
+    )
     if key is None:
         return hashlib.sha256(serialized).hexdigest()
     return hmac.new(key, serialized, hashlib.sha256).hexdigest()

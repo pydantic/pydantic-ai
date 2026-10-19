@@ -4918,7 +4918,9 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     assert isinstance(response, ModelResponse)
     assert (
         response.history_digest
-        == hmac.new(b'secret', ModelMessagesTypeAdapter.dump_json([request]), hashlib.sha256).hexdigest()
+        == hmac.new(
+            b'secret', ModelMessagesTypeAdapter.dump_json([request], exclude_none=True), hashlib.sha256
+        ).hexdigest()
     )
 
     await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
@@ -4991,7 +4993,10 @@ async def test_openai_previous_response_id_records_the_history_on_a_streamed_res
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    assert (
+        response.history_digest
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude_none=True)).hexdigest()
+    )
 
 
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
@@ -17064,7 +17069,10 @@ async def test_background_response_keeps_its_history_across_the_resume(allow_mod
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    assert (
+        response.history_digest
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude_none=True)).hexdigest()
+    )
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
