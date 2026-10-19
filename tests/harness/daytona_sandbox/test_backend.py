@@ -168,9 +168,11 @@ class TestConformance:
 
     async def test_shared_run_and_nonzero_result(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
-        fake_daytona.sandboxes[-1].responder = lambda command, timeout: ('', 2)
+        fake_daytona.sandboxes[-1].responder = lambda command, timeout: ('', 2) if 'false' in command else ('hi\n', 0)
         result = await backend.run(['false'])
         assert result.exit_code != 0
+        # The next command gets its own reply, not the previous one's.
+        assert (await backend.run(['echo', 'hi'])) == type(result)(exit_code=0, stdout='hi\n', stderr='')
 
 
 class TestCommands:

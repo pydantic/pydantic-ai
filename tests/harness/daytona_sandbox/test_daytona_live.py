@@ -181,12 +181,12 @@ async def test_a_cancelled_run_stops_the_command(client: daytona.AsyncDaytona) -
         with anyio.move_on_after(5):
             await backend.run(f'echo $$ > {pid_file}; sleep 15; touch {marker}', shell=True, timeout=60)
 
-        with anyio.fail_after(60):
-            while not await backend.exists(pid_file):
-                await anyio.sleep(0.2)
-            pid = (await backend.read_bytes(pid_file)).decode().strip()
-            while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
-                await anyio.sleep(0.2)
+        # The session is deleted by the time `run()` returns, so a command that had not started yet never will.
+        if await backend.exists(pid_file):
+            with anyio.fail_after(60):
+                pid = (await backend.read_bytes(pid_file)).decode().strip()
+                while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
+                    await anyio.sleep(0.2)
         assert await backend.exists(marker) is False
 
 

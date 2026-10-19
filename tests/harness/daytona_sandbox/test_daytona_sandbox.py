@@ -23,7 +23,7 @@ from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBa
 from pydantic_ai_harness.daytona_sandbox._backend import _close_sdk_client  # pyright: ignore[reportPrivateUsage]
 
 from .._tool_calls import call_tools
-from .fake_daytona import FakeDaytona
+from .fake_daytona import FakeDaytona, FakeEventDispatcher
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
@@ -242,6 +242,17 @@ async def test_client_close_falls_back_when_sdk_internals_are_missing() -> None:
     client = ClientWithoutEvents()
     await _close_sdk_client(client)  # pyright: ignore[reportArgumentType]
     assert client.closed
+
+
+async def test_client_close_proceeds_when_the_sdk_already_cancelled_its_event_connection(
+    fake_daytona: FakeDaytona,
+) -> None:
+    fake_daytona.connect_gate = asyncio.Event()
+    client = fake_daytona.client()
+    assert isinstance(client._event_dispatcher, FakeEventDispatcher)  # pyright: ignore[reportPrivateUsage]
+    client._event_dispatcher.task.cancel()  # pyright: ignore[reportPrivateUsage]
+    await _close_sdk_client(client)  # pyright: ignore[reportArgumentType]
+    assert fake_daytona.closed_clients == 1
 
 
 @pytest.mark.parametrize('handshake_fails', [False, True])

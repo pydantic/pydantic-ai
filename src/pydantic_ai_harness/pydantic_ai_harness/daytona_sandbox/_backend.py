@@ -371,6 +371,10 @@ async def _close_sdk_client(client: AsyncDaytona) -> None:
                 await asyncio.shield(connecting)
             except Exception:
                 pass  # A failed connection still needs the normal SDK close.
+            except asyncio.CancelledError:
+                # A connection the SDK already cancelled still needs the normal SDK close.
+                if not connecting.cancelled():
+                    raise
         if connect_deadline.cancelled_caught:
             _logger.warning('Daytona event connection did not settle before client close.')
     sio = getattr(dispatcher, '_sio', None)

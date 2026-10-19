@@ -98,12 +98,16 @@ class FakeProcess:
         request: object,
         timeout: int | None = None,
     ) -> SimpleNamespace:
+        self.owner.check_alive()
         if self.owner.exec_error is not None:
             raise self.owner.exec_error
         self.owner.process_command = getattr(request, 'command')
+        if self.owner.process_stdout is self.owner.process_reply:
+            # The previous command's reply, not output a test set: each command gets its own.
+            self.owner.process_stdout = []
         if not self.owner.process_stdout and not self.owner.process_stderr and not self.owner.process_hangs:
             output, self.owner.process_exit_code = self.owner.responder(self.owner.process_command, timeout)
-            self.owner.process_stdout = [output]
+            self.owner.process_stdout = self.owner.process_reply = [output]
         return SimpleNamespace(cmd_id='cmd-1')
 
     async def get_session_command_logs_async(
@@ -466,6 +470,7 @@ class FakeSandbox:
         self.process_command = ''
         self.process_stdout: list[str] = []
         self.process_stderr: list[str] = []
+        self.process_reply: list[str] | None = None
         self.process_hangs = False
         self.process_follow_open = False
         self.process_exit_code: int | None = 0
@@ -533,7 +538,7 @@ class FakeClient:
             raise self.owner.create_error
         # Like the SDK, the sandbox exists once the create request is accepted, before `create`
         # returns: it then waits for the sandbox to start.
-        sandbox = FakeSandbox(f'sb-{len(self.owner.sandboxes) + 1}', host_root=self.owner.host_root)
+        sandbox = FakeSandbox(f'sb-{len(self.owner.create_params) + 1}', host_root=self.owner.host_root)
         sandbox.client = self
         sandbox.name = params.name
         self.owner.sandboxes.append(sandbox)
