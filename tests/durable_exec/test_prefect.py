@@ -64,6 +64,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
+    BatchModelRequests,
     Capability,
     DynamicCapability,
     Hooks,
@@ -104,7 +105,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -463,6 +464,15 @@ def test_prefect_agent_construction_warns_deprecated() -> None:
     """The `PrefectAgent` deprecation fires at runtime; the module-level filters only suppress it."""
     with pytest.warns(PydanticAIDeprecationWarning, match='`PrefectAgent` is deprecated'):
         PrefectAgent(Agent(TestModel(), name='prefect_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_rejects_model_wrappers() -> None:
+    """The deprecated wrapper agent sends requests without the capabilities' model wrappers, so it refuses them."""
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='prefect_batched_agent', capabilities=[BatchModelRequests()])
+    )
+    with pytest.raises(UserError, match='`PrefectAgent` does not support capabilities that wrap the model'):
+        await agent.run('hello')
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
@@ -5022,19 +5032,19 @@ def _record_task_run(task_runs: list[tuple[str, str | None]]) -> Callable[[str],
 
 
 async def test_prefect_durability_batch_model_in_flow() -> None:
-    """`BatchModel` works under `PrefectDurability` through the continuation loop alone.
+    """`BatchModelRequests` works under `PrefectDurability` through the continuation loop alone.
 
     The submitting request and every later batch check each run in their own model-request
-    task, with `BatchModel.continuation_delay` waits between them in flow code. The suspended
+    task, with the batching model's `continuation_delay` waits between them in flow code. The suspended
     response is replaced by each check and then by the decoded result, so the run ends with one
     complete response counted as one request.
     """
     task_runs: list[tuple[str, str | None]] = []
     wrapped = SlowBatchTestModel(pending_checks=2, on_batch_call=_record_task_run(task_runs))
     agent = Agent(
-        BatchModel(wrapped, **FAST_BATCH_SETTINGS),
+        wrapped,
         name='durability_batch',
-        capabilities=[PrefectDurability()],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
     )
 
     results: list[AgentRunResult[str]] = []
@@ -5070,8 +5080,13 @@ async def test_prefect_durability_batch_model_resume_from_history() -> None:
     """
     task_runs: list[tuple[str, str | None]] = []
     wrapped = SlowBatchTestModel(pending_checks=1, on_batch_call=_record_task_run(task_runs))
-    batch_model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
-    agent = Agent(batch_model, name='durability_batch_resume', capabilities=[PrefectDurability()])
+    # A request batched before the run, for example by another process.
+    batch_model = BatchPool(**FAST_BATCH_SETTINGS).wrap(wrapped)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_resume',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
+    )
 
     request = ModelRequest(parts=[UserPromptPart(content='go')])
     pending = await batch_model.request([request], None, ModelRequestParameters())

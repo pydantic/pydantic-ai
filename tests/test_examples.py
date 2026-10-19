@@ -52,13 +52,14 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
 from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.decision import DecisionModel, UnfillableRoute, UnsureRoute
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -499,6 +500,7 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
     mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
+    mocker.patch.object(BatchModelRequests, '__post_init__', fast_batching)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
@@ -1962,15 +1964,6 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
-    elif isinstance(model, BatchModel):
-        # Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals.
-        return BatchModel(
-            mock_infer_model(model.wrapped),
-            max_requests=model.max_requests,
-            max_wait=timedelta(milliseconds=1),
-            poll_interval=timedelta(milliseconds=1),
-            max_poll_interval=timedelta(milliseconds=1),
-        )
     elif isinstance(model, DecisionModel):
         return FunctionModel(
             decision_model_logic, stream_function=stream_model_logic, model_name=model.model_name, profile=model.profile
@@ -1983,6 +1976,14 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             model_name=model_name,
             profile=model.profile if isinstance(model, Model) else None,
         )
+
+
+def fast_batching(self: BatchModelRequests) -> None:
+    """Keep batching, through the mocked model's in-memory batch API, without waiting on the example's intervals."""
+    fast = timedelta(milliseconds=1)
+    self._pool = BatchPool(  # pyright: ignore[reportPrivateUsage]
+        max_requests=self.max_requests, max_wait=fast, poll_interval=fast, max_poll_interval=fast
+    )
 
 
 def mock_group_by_temporal(aiter: Any, soft_max_interval: float | None) -> Any:

@@ -1,4 +1,4 @@
-"""A test model with a slow in-memory batch API, for the `BatchModel` tests.
+"""A test model with a slow in-memory batch API, for the `BatchModelRequests` tests.
 
 It lives outside the test modules so Temporal's workflow sandbox, which re-imports a test module, re-imports it like
 any other helper, while activities keep using the instance the test module built.
@@ -31,7 +31,7 @@ FAST_POLLING: FastPolling = {'poll_interval': timedelta(milliseconds=1), 'max_po
 """Tiny but nonzero poll intervals, so a test never waits out a real timer."""
 
 FAST_BATCH_SETTINGS: FastBatchSettings = {**FAST_POLLING, 'max_wait': timedelta(milliseconds=1)}
-"""`FAST_POLLING`, plus a tiny but nonzero `max_wait`, for `BatchModel`."""
+"""`FAST_POLLING`, plus a tiny but nonzero `max_wait`, for `BatchModelRequests`."""
 
 READINESS_WAIT_TIMEOUT = 10
 

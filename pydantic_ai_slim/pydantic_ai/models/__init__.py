@@ -580,7 +580,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The most requests the provider accepts in one batch, or `None` when the model has no batch API.
 
         A model that returns a number implements the other `batch_*` methods, which
-        [`BatchModel`][pydantic_ai.models.batch.BatchModel] and
+        [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] and
         [`model_request_batch`][pydantic_ai.direct.model_request_batch] are built on.
         """
         return None
@@ -896,6 +896,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         overrides this to return a poll interval so the graph doesn't busy-poll.
         """
         return None
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        """This model with `wrap` applied to the model that sends its requests.
+
+        That is this model itself, unless it hands its requests to another process, as a durable execution engine's
+        model does: then `wrap` applies to the model it wraps, which answers questions like `continuation_delay` on
+        this side, and the engine wraps the model it rebuilds on the other side the same way.
+        """
+        return wrap(self)
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         """Customize the request parameters for the model.

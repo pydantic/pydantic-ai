@@ -19,11 +19,12 @@ from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 _RESPONSE_ADAPTER = TypeAdapter(ModelResponse)
 _ERROR_ADAPTER = TypeAdapter(dict[str, object])
-_GROUP = 'in-memory'
 
 
 @dataclass
 class _State:
+    group: str = field(default_factory=lambda: f'in-memory:{uuid.uuid4().hex}')
+    """Requests and batches live on the instance that encoded them, so each instance is a group of its own."""
     requests: dict[str, BatchRequest] = field(default_factory=dict[str, BatchRequest])
     batches: dict[str, tuple[Batch, list[BatchResult]]] = field(
         default_factory=dict[str, tuple[Batch, list[BatchResult]]]
@@ -47,7 +48,7 @@ class InMemoryBatchModel(Model):
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         token = uuid.uuid4().hex
         self._batch_state.requests[token] = request
-        return EncodedBatchRequest(custom_id=request.custom_id, group=_GROUP, body=token)
+        return EncodedBatchRequest(custom_id=request.custom_id, group=self._batch_state.group, body=token)
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         state = self._batch_state
@@ -68,7 +69,7 @@ class InMemoryBatchModel(Model):
             id=f'batch_{uuid.uuid4().hex}',
             model_name=self.model_name,
             provider_name=self.system,
-            group=_GROUP,
+            group=state.group,
             status='ended',
             created_at=now_utc(),
             request_count=len(requests),

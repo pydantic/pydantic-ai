@@ -1005,7 +1005,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
         the model -- or from a `resolve_model_id` capability rebuilding it -- would be dropped.
         Models rebuilt inside the unit are owned and context-managed here; the agent's default and
-        `models=` registry instances keep their existing external lifecycle owner.
+        `models=` registry instances keep their existing external lifecycle owner. The yielded model is wrapped by
+        the capabilities' [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model].
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this).
@@ -1017,7 +1018,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ctx.model = active_model
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield active_model, ctx
+                # The workflow side applied the capabilities' model wrappers to its own copy of the model, which
+                # doesn't send requests, so they're applied again to the model that does.
+                root_capability = ctx.root_capability
+                serving_model = root_capability.get_wrapper_model(active_model) if root_capability is not None else None
+                yield serving_model or active_model, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:

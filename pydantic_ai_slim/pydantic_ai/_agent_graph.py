@@ -2050,6 +2050,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         original_request_context.model_request_parameters = processed_context.model_request_parameters
         original_request_context.model_id = processed_context.model_id
         request_context = original_request_context
+        # After the before-chain, so capability model wrappers apply to the model that serves the request, even one a
+        # hook swapped in.
+        root_capability = ctx.deps.root_capability
+        request_context.model = request_context.model._with_serving_wrapper(  # pyright: ignore[reportPrivateUsage]
+            lambda model: root_capability.get_wrapper_model(model) or model
+        )
 
         model = request_context.model
         messages = request_context.messages

@@ -19,7 +19,8 @@ from inline_snapshot import snapshot
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
+from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.batch import Batch, BatchRequest
 from pydantic_ai.tools import ToolDefinition
 from tests.conftest import try_import
 
@@ -106,7 +107,7 @@ async def test_batch_api_is_only_on_openai_responses(
     assert model.batch_max_requests == max_requests
     if max_requests is None:
         with pytest.raises(UserError, match='has no batch API'):
-            BatchModel(model)
+            BatchPool().wrap(model)
     if max_requests is None and isinstance(model, OpenAIResponsesModel):
         with pytest.raises(UserError, match='does not support the OpenAI Batch API'):
             await model.batch_encode(_request())

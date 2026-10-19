@@ -1,4 +1,4 @@
-"""Gemini API Batch Mode against the live API: submission, status, results, cancellation, and `BatchModel` runs."""
+"""Gemini API Batch Mode against the live API: submission, status, results, cancellation, and `BatchModelRequests` runs."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ from cassetter import Cassette
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest
+from pydantic_ai.models.batch import Batch, BatchRequest
 from pydantic_ai.settings import ModelSettings
 from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, try_import
@@ -111,13 +112,15 @@ async def test_gemini_batch_model_agent_run(allow_model_requests: None, gemini_a
     Concurrent runs sharing a batch is covered with the in-memory batch API in `test_batch.py`: how concurrent checks
     of one batch overlap depends on network latency, which a recording can't replay.
     """
-    model = BatchModel(
-        GoogleModel(MODEL_NAME, provider=GoogleProvider(api_key=gemini_api_key)),
-        max_requests=1,
-        poll_interval=batch_poll_interval(vcr),
-        max_poll_interval=batch_poll_interval(vcr),
+    batching = BatchModelRequests(
+        max_requests=1, poll_interval=batch_poll_interval(vcr), max_poll_interval=batch_poll_interval(vcr)
     )
-    result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
+    agent = Agent(
+        GoogleModel(MODEL_NAME, provider=GoogleProvider(api_key=gemini_api_key)),
+        output_type=CityInfo,
+        capabilities=[batching],
+    )
+    result = await agent.run('Which city is the Eiffel Tower in?')
 
     assert result.output == CityInfo(city='Paris', country='France')
     assert result.usage.requests == 1

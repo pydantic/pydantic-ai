@@ -1502,6 +1502,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     [
         'get_toolset',
         'get_wrapper_toolset',
+        'get_wrapper_model',
         'wrap_run',
         'wrap_node_run',
         'wrap_model_request',
@@ -1513,7 +1514,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
-    if hook in ('get_toolset', 'get_wrapper_toolset'):
+    if hook in ('get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'):
 
         def sync_invalid(self: AbstractCapability[Any], *args: Any, **kwargs: Any) -> None:
             return None

@@ -16,7 +16,8 @@ from inline_snapshot import snapshot
 from pydantic_ai import ModelRequest, ToolDefinition, UserPromptPart
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult
+from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
@@ -98,7 +99,7 @@ async def test_gemini_batch_is_not_on_google_cloud() -> None:
 
     assert model.batch_max_requests is None
     with pytest.raises(UserError, match='has no batch API'):
-        BatchModel(model)
+        BatchPool().wrap(model)
     with pytest.raises(UserError, match='only supported by the Gemini API, not Google Cloud'):
         await model.batch_encode(_request())
 

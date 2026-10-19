@@ -48,7 +48,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, DynamicCapability, Hooks
+from pydantic_ai.capabilities import MCP, BatchModelRequests, Capability, DynamicCapability, Hooks
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.direct import model_request_stream
@@ -70,7 +70,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     StreamedResponse,
 )
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -214,6 +214,15 @@ def test_dbos_agent_construction_warns_deprecated() -> None:
     """The `DBOSAgent` deprecation fires at runtime; the module-level filters only suppress it."""
     with pytest.warns(PydanticAIDeprecationWarning, match='`DBOSAgent` is deprecated'):
         DBOSAgent(Agent(TestModel(), name='dbos_agent_deprecation_probe'))  # pyright: ignore[reportDeprecated]
+
+
+async def test_dbos_agent_rejects_model_wrappers(dbos: DBOS) -> None:
+    """The deprecated wrapper agent sends requests without the capabilities' model wrappers, so it refuses them."""
+    agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='dbos_batched_agent', capabilities=[BatchModelRequests()])
+    )
+    with pytest.raises(UserError, match='`DBOSAgent` does not support capabilities that wrap the model'):
+        await agent.run('hello')
 
 
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
@@ -4784,18 +4793,18 @@ async def test_dbos_durability_continuation_resume_from_history(dbos: DBOS) -> N
 
 
 async def test_dbos_durability_batch_model_in_workflow(dbos: DBOS) -> None:
-    """`BatchModel` works under `DBOSDurability` through the continuation loop alone.
+    """`BatchModelRequests` works under `DBOSDurability` through the continuation loop alone.
 
     The submitting request and every later batch check each run as their own model-request
-    step, with `BatchModel.continuation_delay` waits between them in workflow code. The
+    step, with the batching model's `continuation_delay` waits between them in workflow code. The
     suspended response is replaced by each check and then by the decoded result, so the run
     ends with one complete response counted as one request.
     """
     wrapped = SlowBatchTestModel(pending_checks=2)
     agent = Agent(
-        BatchModel(wrapped, **FAST_BATCH_SETTINGS),
+        wrapped,
         name='durability_batch',
-        capabilities=[DBOSDurability()],
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
     )
 
     results: list[AgentRunResult[str]] = []
@@ -4835,8 +4844,13 @@ async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> No
     checks the batch it records instead of submitting the request again.
     """
     wrapped = SlowBatchTestModel(pending_checks=1)
-    batch_model = BatchModel(wrapped, **FAST_BATCH_SETTINGS)
-    agent = Agent(batch_model, name='durability_batch_resume', capabilities=[DBOSDurability()])
+    # A request batched before the run, for example by another process.
+    batch_model = BatchPool(**FAST_BATCH_SETTINGS).wrap(wrapped)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_resume',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
 
     request = ModelRequest(parts=[UserPromptPart(content='go')])
     pending = await batch_model.request([request], None, ModelRequestParameters())

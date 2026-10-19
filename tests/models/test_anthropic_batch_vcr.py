@@ -5,11 +5,12 @@ from cassetter import Cassette
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model
-from pydantic_ai.models.batch import BatchModel, BatchRequest
+from pydantic_ai.models.batch import BatchRequest
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -114,13 +115,15 @@ async def test_anthropic_batch_model_agent_run(
     Concurrent runs sharing a batch is covered with the in-memory batch API in `test_batch.py`: how concurrent checks
     of one batch overlap depends on network latency, which a recording can't replay.
     """
-    model = BatchModel(
-        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
-        max_requests=1,
-        poll_interval=batch_poll_interval(vcr),
-        max_poll_interval=batch_poll_interval(vcr),
+    batching = BatchModelRequests(
+        max_requests=1, poll_interval=batch_poll_interval(vcr), max_poll_interval=batch_poll_interval(vcr)
     )
-    result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key)),
+        output_type=CityInfo,
+        capabilities=[batching],
+    )
+    result = await agent.run('Which city is the Eiffel Tower in?')
 
     assert result.output == CityInfo(city='Paris', country='France')
     assert result.usage.requests == 1

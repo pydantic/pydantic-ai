@@ -57,6 +57,7 @@ from pydantic_ai import (
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
+    BatchModelRequests,
     Capability,
     DynamicCapability,
     Hooks,
@@ -95,7 +96,7 @@ from pydantic_ai.models import (
     ModelResolutionContext,
     infer_model,
 )
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -112,7 +113,7 @@ from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, W
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
-from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 try:
@@ -5017,15 +5018,14 @@ async def test_durability_continuation_usage_limit_checked_inside_activity(clien
     assert _continuation_model.cancelled[0].provider_response_id == 'cont2'
 
 
-# --- `BatchModel` rides the continuation loop: one activity per batch check, durable timers between ---
+# --- `BatchModelRequests` rides the continuation loop: one activity per batch check, durable timers between ---
 
 _batch_wrapped_model = SlowBatchTestModel()
-_batch_model = BatchModel(_batch_wrapped_model, **FAST_BATCH_SETTINGS)
 
 _batch_agent = Agent(
-    _batch_model,
+    _batch_wrapped_model,
     name='durability_batch_agent',
-    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
 
@@ -5048,10 +5048,10 @@ def _timer_count(history: WorkflowHistory) -> int:
 
 
 async def test_durability_batch_model_in_workflow(client: Client):
-    """`BatchModel` works under `TemporalDurability` through the continuation loop alone.
+    """`BatchModelRequests` works under `TemporalDurability` through the continuation loop alone.
 
     The submitting request and every later batch check each run in their own model-request
-    activity, and the poll delay `BatchModel.continuation_delay` asks for is a durable workflow
+    activity, and the poll delay the batching model's `continuation_delay` asks for is a durable workflow
     timer between them, so a run can wait out a batch across worker restarts. The suspended
     response is replaced by each check and then by the decoded result, so the run ends with one
     complete response counted as one request.
@@ -5095,7 +5095,12 @@ async def test_durability_batch_model_resume_from_history(client: Client):
     """
     _batch_wrapped_model.reset(pending_checks=0)
     request = ModelRequest(parts=[UserPromptPart(content='go')])
-    pending = await _batch_model.request([request], None, ModelRequestParameters())
+    # Batched before the run, for example by another process.
+    pending = (
+        await BatchPool(**FAST_BATCH_SETTINGS)
+        .wrap(_batch_wrapped_model)
+        .request([request], None, ModelRequestParameters())
+    )
     assert pending.state == 'suspended'
     assert len(_batch_wrapped_model.created) == 1
 
@@ -5179,6 +5184,56 @@ async def test_durability_batch_model_with_pending_output_ends_and_resumes(clien
     assert _batch_wrapped_model.status_checks == 1
     assert _scheduled_activity_count(collect_history) == 1
     assert _timer_count(collect_history) == 0
+
+
+_shared_batch_wrapped_model = SlowBatchTestModel()
+
+_shared_batch_agent = Agent(
+    _shared_batch_wrapped_model,
+    name='durability_shared_batch_agent',
+    capabilities=[
+        # Only a full batch is submitted before the long `max_wait`, so the test waits on no timer.
+        BatchModelRequests(**FAST_POLLING, max_requests=3, max_wait=timedelta(minutes=1)),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class DurabilitySharedBatchWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _shared_batch_agent.run(prompt)
+
+
+async def test_durability_batch_model_requests_share_a_batch_across_workflows(client: Client):
+    """Requests from concurrent workflow runs are batched together in the worker.
+
+    The workflow side only wraps the model to answer `continuation_delay`; the model-request activities wrap the
+    model they rebuild with the agent's own `BatchModelRequests` instance, so their requests share its pool.
+    """
+    _shared_batch_wrapped_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilitySharedBatchWorkflow],
+        plugins=[AgentPlugin(_shared_batch_agent)],
+    ):
+        results = await asyncio.gather(
+            *(
+                client.execute_workflow(
+                    DurabilitySharedBatchWorkflow.run,
+                    args=[f'go {i}'],
+                    id=f'DurabilitySharedBatchWorkflow_{i}',
+                    task_queue=TASK_QUEUE,
+                )
+                for i in range(3)
+            )
+        )
+
+    assert [result.output for result in results] == ['success (no tool calls)'] * 3
+    assert [batch.request_count for batch in _shared_batch_wrapped_model.created] == [3]
+    assert _shared_batch_wrapped_model.status_checks == 1
 
 
 _continuation_ceiling_model = ScriptedContinuationModel()

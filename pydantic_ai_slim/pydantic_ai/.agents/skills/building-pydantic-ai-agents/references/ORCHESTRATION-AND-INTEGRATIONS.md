@@ -88,12 +88,12 @@ Temporal entry points:
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
-For latency-tolerant work at batch prices, wrap the model with `BatchModel` from `pydantic_ai.models.batch`
+For latency-tolerant work at batch prices, add the `BatchModelRequests` capability from `pydantic_ai.capabilities`
 (Anthropic, OpenAI Responses and Gemini API models have batch APIs) and run the agent as usual; concurrent
-runs in one process share batches. Don't write a submission or polling loop: a waiting request suspends the
-turn through the agent graph's continuation loop, so it works in a plain `agent.run(...)` and under every
-durable engine, and a run resumed from its message history picks up the same batch. `BatchModel` is
-non-streaming, and each tool turn or output retry is another batch round trip. For a job that submits and
+runs in one process share batches, and so do agents and runs given the same instance. Don't write a submission
+or polling loop: a waiting request suspends the turn through the agent graph's continuation loop, so it works in
+a plain `agent.run(...)` and under every durable engine (put the capability on the agent there), and a run resumed
+from its message history picks up the same batch. Batching is non-streaming, and each tool turn or output retry is another batch round trip. For a job that submits and
 exits, add `PendingModelResponse` to `output_type`: the run ends with it once the request is submitted, and
 running the agent again with `result.all_messages()` checks the batch once and continues or ends pending
 again. The same works for OpenAI background mode.

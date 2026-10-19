@@ -13,11 +13,12 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import fill_run_metadata
 from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from .._utils import reject_serving_wrapper
 from ._types import TaskConfig, default_task_config
 
 
@@ -96,6 +97,9 @@ class PrefectModel(WrapperModel):
             await super(PrefectModel, self).cancel_suspended_response(response)
 
         self._wrapped_cancel_suspended_response = cancel_suspended_response_task
+
+    def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
+        return reject_serving_wrapper(self, wrap, 'PrefectAgent', 'PrefectDurability')
 
     async def request(
         self,

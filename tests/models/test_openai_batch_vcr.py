@@ -6,9 +6,10 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models.batch import BatchModel, BatchRequest
+from pydantic_ai.models.batch import BatchRequest
 from pydantic_ai.settings import ModelSettings
 from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, try_import
@@ -147,13 +148,15 @@ async def test_openai_batch_model_agent_run(allow_model_requests: None, openai_a
     Concurrent runs sharing a batch is covered with the in-memory batch API in `test_batch.py`: how concurrent checks
     of one batch overlap depends on network latency, which a recording can't replay.
     """
-    model = BatchModel(
-        OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key)),
-        max_requests=1,
-        poll_interval=batch_poll_interval(vcr),
-        max_poll_interval=batch_poll_interval(vcr),
+    batching = BatchModelRequests(
+        max_requests=1, poll_interval=batch_poll_interval(vcr), max_poll_interval=batch_poll_interval(vcr)
     )
-    result = await Agent(model, output_type=CityInfo).run('Which city is the Eiffel Tower in?')
+    agent = Agent(
+        OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(api_key=openai_api_key)),
+        output_type=CityInfo,
+        capabilities=[batching],
+    )
+    result = await agent.run('Which city is the Eiffel Tower in?')
 
     assert result.output == CityInfo(city='Paris', country='France')
     assert result.usage.requests == 1

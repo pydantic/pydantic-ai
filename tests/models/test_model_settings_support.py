@@ -841,7 +841,7 @@ _NOT_API_BACKED = frozenset(
         'FallbackModel',
         'FunctionModel',
         'TestModel',
-        'BatchModel',
+        'BatchedModel',
     }
 )
 """Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""

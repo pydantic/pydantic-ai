@@ -1,6 +1,6 @@
 ---
 title: Batch Processing
-description: "Send agent runs and model requests through provider batch APIs, at half the price, with Pydantic AI's BatchModel and model_request_batch."
+description: "Send agent runs and model requests through provider batch APIs, at half the price, with Pydantic AI's BatchModelRequests capability and model_request_batch."
 ---
 
 # Batch Processing
@@ -9,23 +9,23 @@ Anthropic, OpenAI and Google offer batch APIs: you submit many requests as one j
 
 Pydantic AI supports batch APIs at three levels:
 
-- [`BatchModel`](#agents) sends an agent's model requests through the batch API, without changing how you run the agent.
+- The [`BatchModelRequests`](#agents) [capability](capabilities/overview.md) sends an agent's model requests through the batch API, without changing how you run the agent.
 - [`model_request_batch`](#direct-batch-requests) sends a list of model requests as a batch and waits for the responses.
 - The [`batch_*` methods on `Model`](#submit-now-collect-later) submit a batch and collect its results separately, for example from another process.
 
 ## Agents
 
-Wrap a model in [`BatchModel`][pydantic_ai.models.batch.BatchModel] and run the agent as usual. Requests made at about the same time in the same process, by any number of agent runs, are collected into one batch:
+Add a [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] capability to an agent and run it as usual. Requests made at about the same time in the same process, by any number of agent runs, are collected into one batch:
 
 ```python {title="batch_agent.py" gateway_toggle="skip"}
 import asyncio
 from datetime import timedelta
 
 from pydantic_ai import Agent
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.capabilities import BatchModelRequests
 
-model = BatchModel('{{ anthropic:medium }}', max_requests=500, max_wait=timedelta(seconds=10))
-agent = Agent(model, instructions='Answer in one sentence.')
+batching = BatchModelRequests(max_requests=500, max_wait=timedelta(seconds=10))
+agent = Agent('{{ anthropic:medium }}', instructions='Answer in one sentence.', capabilities=[batching])
 
 
 async def main():
@@ -39,13 +39,43 @@ async def main():
 
 Tools, structured output, output validation and retries all work as usual; each model request in a run goes into whichever batch is being collected when it's made. A run that needs several model requests, for example to call tools, takes several batch round trips.
 
-A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`BatchModel.flush()`][pydantic_ai.models.batch.BatchModel.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
+The capability batches whichever model serves each request: the agent's model, one passed to the run as `model=`, or one a [capability](capabilities/select-model.md) or hook selects. That model needs a [batch API](#supported-models). Requests to different models, or to the same model with different credentials, go into separate batches.
+
+A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
 
 A [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] in the model settings covers the whole wait, from when the request is queued until its result arrives: when it passes, the run raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] and the request is withdrawn, which cancels its batch if no other request is waiting on it.
 
-Streaming isn't supported: a batch result arrives all at once. `BatchModel` needs an `asyncio` event loop, so it doesn't run under Trio.
+Streaming isn't supported: a batch result arrives all at once. Batching needs an `asyncio` event loop, so it doesn't run under Trio.
 
-Requests waiting on the same submission or check share one task. When you use the model as an async context manager, for example through `async with agent:`, leaving it cancels those tasks, and requests still waiting on them fail with a [`UserError`][pydantic_ai.exceptions.UserError].
+Requests waiting on the same submission or check share one task. Using the capability as an async context manager, `async with batching:`, cancels those tasks when it exits, and requests still waiting on them fail with a [`UserError`][pydantic_ai.exceptions.UserError].
+
+### Sharing batches between agents
+
+Each `BatchModelRequests` instance collects its own batches. Add the same instance to several agents, or pass it to runs with `capabilities=`, and their requests share batches:
+
+```python {title="batch_shared.py" gateway_toggle="skip"}
+import asyncio
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
+
+batching = BatchModelRequests()
+geographer = Agent('{{ anthropic:medium }}', instructions='Answer in one sentence.', capabilities=[batching])
+historian = Agent('{{ anthropic:medium }}', instructions='Answer in one sentence.')
+
+
+async def main():
+    france, italy = await asyncio.gather(
+        geographer.run('What is the capital of France?'),
+        historian.run('What is the capital of Italy?', capabilities=[batching]),  # (1)!
+    )
+    print(france.output)
+    #> The capital of France is Paris.
+    print(italy.output)
+    #> The capital of Italy is Rome.
+```
+
+1. Runs of an agent without the capability can be batched one by one.
 
 ### Ending a run while it waits
 
@@ -55,7 +85,7 @@ A batch can take up to a day, which is longer than many processes should wait. A
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, PendingModelResponse
-from pydantic_ai.models.batch import BatchModel
+from pydantic_ai.capabilities import BatchModelRequests
 
 
 class City(BaseModel):
@@ -63,7 +93,9 @@ class City(BaseModel):
     country: str
 
 
-agent = Agent(BatchModel('{{ anthropic:medium }}'), output_type=[City, PendingModelResponse])
+agent = Agent(
+    '{{ anthropic:medium }}', output_type=[City, PendingModelResponse], capabilities=[BatchModelRequests()]
+)
 
 
 async def submit(question: str) -> bytes:
@@ -85,11 +117,15 @@ A run that needs several model requests, for example to call tools, ends with a 
 
 Without `PendingModelResponse` in the output type, a run waits for its batch, and you only get its message history once it ends. If your process may stop while a batch is processed, end runs with a `PendingModelResponse` or use [durable execution](#durable-execution). Cancelling a run that's waiting abandons its request: Pydantic AI cancels the provider batch once every request in it has been abandoned in the same process, and requests the provider already completed may still be billed.
 
+### Tracing
+
+With [instrumentation](logfire.md) enabled, a batch is traced once, in a trace of its own, rather than under whichever run's request happened to start it. Its submission is a `batch <model>` span that links to the `chat` span of every request in the batch, and each check is a `batch check <model>` span within that trace, holding the provider's HTTP requests. Each `chat` span records the batch's ID as `pydantic_ai.batch.id` and links to the `batch` span, including in a later run that resumes waiting from the message history.
+
 ### Durable execution
 
-Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, `BatchModel` needs no extra setup. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal and DBOS, the waits between checks are durable too. Requests are collected into batches per worker process.
+Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, add `BatchModelRequests` to the agent alongside its durability capability. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal and DBOS, the waits between checks are durable too. Requests are collected into batches per worker process: the requests of concurrent workflow runs on one worker share batches. Temporal and DBOS don't support capabilities passed to a run inside a workflow, so there the capability has to be on the agent.
 
-A request waits for its batch to be submitted inside its durable step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`), or a slow submission can time out and be retried, submitting the request again. For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.models.batch.BatchModel.flush] can't be called from workflow code.
+A request waits for its batch to be submitted inside its durable step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`), or a slow submission can time out and be retried, submitting the request again. For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush] can't be called from workflow code.
 
 ## Direct batch requests
 
@@ -123,7 +159,7 @@ async def main():
             #> italy: The capital of Italy is Rome.
 ```
 
-Requests are split into as many batches as the provider requires, or as `max_requests` limits them to, and `poll_interval` and `max_poll_interval` set how often batches are checked on, as for `BatchModel`. Cancelling the call cancels the batches that haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError], since one request in a batch can't be timed out separately: to limit how long the call waits, cancel it, for example with `asyncio.timeout`.
+Requests are split into as many batches as the provider requires, or as `max_requests` limits them to, and `poll_interval` and `max_poll_interval` set how often batches are checked on, as for `BatchModelRequests`. Cancelling the call cancels the batches that haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError], since one request in a batch can't be timed out separately: to limit how long the call waits, cancel it, for example with `asyncio.timeout`.
 
 ## Submit now, collect later
 

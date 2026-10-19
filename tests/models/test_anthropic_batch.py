@@ -13,7 +13,8 @@ import pytest
 from pydantic_ai import ModelRequest, UserPromptPart
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.batch import Batch, BatchModel, BatchRequest, BatchResult
+from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
@@ -59,7 +60,7 @@ def test_anthropic_batch_api_is_only_on_the_claude_api_client(monkeypatch: pytes
     assert direct.batch_max_requests == 100_000
     assert bedrock.batch_max_requests is None
     with pytest.raises(UserError, match='has no batch API'):
-        BatchModel(bedrock)
+        BatchPool().wrap(bedrock)
 
 
 async def test_anthropic_batch_request_carries_the_messages_params_without_secrets() -> None:
@@ -170,7 +171,7 @@ async def test_anthropic_batch_requires_static_credentials() -> None:
     client = AsyncAnthropic(api_key='')
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
     assert model.batch_max_requests == 100_000
-    BatchModel(model)
+    BatchPool().wrap(model)
     with pytest.raises(UserError, match='require static Anthropic API credentials'):
         await model.batch_encode(BatchRequest(custom_id='item', messages=[]))
 
