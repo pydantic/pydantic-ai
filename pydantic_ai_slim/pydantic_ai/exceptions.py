@@ -17,7 +17,14 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryFeedbackPart, ToolReturnPart
+    from .messages import (
+        ModelMessage,
+        ModelRequestAttempt,
+        ModelResponse,
+        RetryFeedbackPart,
+        RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+        ToolReturnPart,
+    )
     from .usage import RunUsage
 
 __all__ = (
@@ -669,12 +676,26 @@ class ToolRetryError(Exception):
     """Exception used to signal a retry message should be returned to the LLM.
 
     `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
-    when it answers a tool call, a `RetryFeedbackPart` when it doesn't.
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't. A deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] passed in is translated into the one it
+    always meant.
     """
 
-    def __init__(self, tool_retry: RetryFeedbackPart | ToolReturnPart):
-        from .messages import ToolReturnPart
+    tool_retry: RetryFeedbackPart | ToolReturnPart
 
+    def __init__(
+        self,
+        tool_retry: RetryFeedbackPart | ToolReturnPart | RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ):
+        from .messages import (
+            RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+            ToolReturnPart,
+            _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(tool_retry, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            tool_retry = _translate_legacy_retry_part(tool_retry)
         self.tool_retry = tool_retry
         tool_name = tool_retry.tool_name if isinstance(tool_retry, ToolReturnPart) else None
         content = tool_retry.content

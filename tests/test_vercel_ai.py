@@ -12461,28 +12461,29 @@ Your previous response failed the application's validation (this is automated fe
     )
 
 
-def test_retry_feedback_after_user_content_hoists_above_it():
-    """Vercel AI's split-by-role dump can't keep a `RetryFeedbackPart` where it was authored.
+def test_retry_feedback_after_user_content_keeps_its_place():
+    """A `RetryFeedbackPart` authored after a `UserPromptPart` reloads after it.
 
-    A `ModelRequest` mixing system-voice parts with user content goes out as two `UIMessage`s and the
-    `role='system'` one leads, so feedback authored after a `UserPromptPart` reloads before it. AG-UI
-    flushes and appends in place instead, so this is a lossiness of this adapter, not of the design —
-    it's disclosed on `dump_messages`.
+    The request goes out as one `UIMessage` per run of same-role parts, in authored order, with the
+    request's metadata on the last, so it reloads as the same parts in the same order.
     """
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(content='how many?'),
                 RetryFeedbackPart(content='the answer has to be a number', cause='model_retry'),
-            ]
+            ],
+            metadata={'tenant': 'acme'},
         ),
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
-    assert [msg.role for msg in ui_messages] == snapshot(['system', 'user'])
-    assert [type(part).__name__ for part in VercelAIAdapter.load_messages(ui_messages)[0].parts] == snapshot(
-        ['RetryFeedbackPart', 'UserPromptPart']
+    assert [(msg.role, msg.metadata) for msg in ui_messages] == snapshot(
+        [('user', None), ('system', {'tenant': 'acme'})]
     )
+    [reloaded] = VercelAIAdapter.load_messages(ui_messages)
+    assert [type(part).__name__ for part in reloaded.parts] == snapshot(['UserPromptPart', 'RetryFeedbackPart'])
+    assert reloaded.metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
 
 
 async def test_retried_tool_return_error_text_carries_no_instruction_framing():

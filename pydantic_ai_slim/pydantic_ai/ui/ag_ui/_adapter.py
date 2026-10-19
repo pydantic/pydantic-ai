@@ -849,9 +849,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 # Harness feedback dumps in the voice the model is shown it in, not as text a person
                 # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
                 # carries the part itself so the reload can rebuild it. Flushing first keeps it in
-                # the position it was authored in here, instead of joining the standing prompt at the
-                # head of the request; that's this adapter's dump shape, not a guarantee every
-                # adapter makes — `VercelAIAdapter` hoists a system-voice one above the user message.
+                # the position it was authored in, instead of joining the standing prompt at the head
+                # of the request; `VercelAIAdapter` keeps the authored order the same way.
                 flush_user_content()
                 translated = (
                     _translate_legacy_retry_part(part)

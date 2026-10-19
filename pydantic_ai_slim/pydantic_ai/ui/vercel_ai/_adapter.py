@@ -760,10 +760,24 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         )
 
     @staticmethod
-    def _dump_request_message(msg: ModelRequest) -> tuple[list[UIMessagePart], list[UIMessagePart]]:
-        """Convert a ModelRequest into a UIMessage."""
-        system_ui_parts: list[UIMessagePart] = []
-        user_ui_parts: list[UIMessagePart] = []
+    def _dump_request_message(
+        msg: ModelRequest,
+    ) -> list[tuple[Literal['system', 'user'], list[UIMessagePart]]]:
+        """Convert a ModelRequest into its UI message segments, one per run of same-role parts, in authored order.
+
+        Keeping the order, rather than putting every system part first, is what lets a request whose user
+        prompt precedes system-voice retry feedback load back the same way, so it re-sends the same bytes.
+        """
+        segments: list[tuple[Literal['system', 'user'], list[UIMessagePart]]] = []
+
+        def add(role: Literal['system', 'user'], *ui_parts: UIMessagePart) -> None:
+            if not ui_parts:
+                return
+            if segments and segments[-1][0] == role:
+                segments[-1][1].extend(ui_parts)
+            else:
+                segments.append((role, list(ui_parts)))
+
         seen_user_prompt = False
 
         for part in msg.parts:
@@ -771,22 +785,23 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 # A request-scoped prompt is for the model's current request only; loaded back, it would
                 # come back as a lasting system prompt.
                 if part.scope != 'request':
-                    system_ui_parts.append(TextUIPart(text=part.content, state='done'))
+                    add('system', TextUIPart(text=part.content, state='done'))
             elif isinstance(part, UserPromptPart):
-                user_ui_parts.extend(_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
+                add('user', *_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
                 seen_user_prompt = True
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
             elif isinstance(part, ToolAvailabilityDeltaPart):
-                user_ui_parts.append(
+                add(
+                    'user',
                     DataUIPart(
                         type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
                         data={
                             'added': part.tools_added,
                             'tool_call_id': part.tool_call_id,
                         },
-                    )
+                    ),
                 )
             # TODO(v3): remove `RetryPromptPart`
             elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
@@ -809,16 +824,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         state='done',
                         provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
                     )
-                    if _retry_feedback_speaks_for_the_harness(translated):
-                        system_ui_parts.append(feedback_ui_part)
-                    else:
-                        user_ui_parts.append(feedback_ui_part)
+                    add('system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 
-        return system_ui_parts, user_ui_parts
+        return segments
 
     @classmethod
     def _dump_response_message(
@@ -1122,10 +1134,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         `providerMetadata`; it reloads as a `RetryFeedbackPart` only from there, so a message the
         client wrote stays a plain prompt part.
 
-        Ordering is lossy within a single `ModelRequest`: system-voice parts (`SystemPromptPart`,
-        system-voice `RetryFeedbackPart`) and user content go out as two `UIMessage`s, and the
-        `role='system'` one always comes first, so feedback authored *after* a `UserPromptPart`
-        reloads before it. AG-UI keeps the authored order; this adapter's split-by-role dump cannot.
+        A `ModelRequest` mixing system-voice parts (`SystemPromptPart`, system-voice
+        `RetryFeedbackPart`) with user content goes out as one `UIMessage` per run of same-role parts,
+        in the order they were authored, so it reloads as the same parts in the same order and
+        re-sends the same request bytes. The request's metadata rides on the last of them.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
@@ -1176,26 +1188,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                system_ui_parts, user_ui_parts = cls._dump_request_message(msg)
+                segments = cls._dump_request_message(msg)
                 # Metadata only goes on the trailing UIMessage of a split request so reload
                 # applies it once to the merged ModelRequest.
                 request_metadata = dump_message_metadata(msg)
-                if system_ui_parts:
-                    system_message = UIMessage(
-                        id=id_generator(msg, 'system', message_index), role='system', parts=system_ui_parts
-                    )
-                    if request_metadata and not user_ui_parts:
-                        system_message.metadata = request_metadata
-                    result.append(system_message)
-                    message_index += 1
-
-                if user_ui_parts:
-                    user_message = UIMessage(
-                        id=id_generator(msg, 'user', message_index), role='user', parts=user_ui_parts
-                    )
-                    if request_metadata:
-                        user_message.metadata = request_metadata
-                    result.append(user_message)
+                for position, (role, ui_parts) in enumerate(segments):
+                    ui_message = UIMessage(id=id_generator(msg, role, message_index), role=role, parts=ui_parts)
+                    if request_metadata and position == len(segments) - 1:
+                        ui_message.metadata = request_metadata
+                    result.append(ui_message)
                     message_index += 1
 
             elif isinstance(  # pragma: no branch

@@ -29,6 +29,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import RetryFeedbackPart, ToolReturnPart
 
 from ._inline_snapshot import snapshot
+from .conftest import legacy_retry_prompt_part
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -328,6 +329,27 @@ int
 bool
   Input should be a valid boolean, unable to interpret input [type=bool_parsing]\
 """)
+
+
+def test_tool_retry_error_accepts_a_legacy_retry_prompt_part():
+    """The deprecated part still constructs the error until v3, as the part it always meant, and keeps its tool name."""
+    validation_error = ValidationError.from_exception_data(
+        'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
+    )
+    error = ToolRetryError(
+        legacy_retry_prompt_part(validation_error.errors(include_url=False), tool_name='my_tool', tool_call_id='c1')
+    )
+
+    assert isinstance(error.tool_retry, ToolReturnPart)
+    assert (error.tool_retry.tool_name, error.tool_retry.tool_call_id, error.tool_retry.outcome) == (
+        'my_tool',
+        'c1',
+        'retried',
+    )
+    assert str(error) == (
+        "1 validation error for 'my_tool'\nname\n  Input should be a valid string [type=string_type, input_value=123]"
+    )
+    assert isinstance(ToolRetryError(legacy_retry_prompt_part('try again')).tool_retry, RetryFeedbackPart)
 
 
 def test_tool_retry_error_str_with_value_error_type():

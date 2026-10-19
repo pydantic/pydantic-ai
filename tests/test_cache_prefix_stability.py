@@ -473,3 +473,36 @@ async def test_openai_multiple_user_prompts_roundtrip_wire_stable(
     original_body, roundtripped_body = bodies
     assert roundtripped_body == original_body
     assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_retry_feedback_after_user_prompt_vercel_roundtrip_wire_stable(allow_model_requests: None):
+    """System-voice feedback authored after a user prompt keeps its place through a Vercel AI round-trip.
+
+    Reloaded ahead of the prompt instead, it would open the first request, where it goes out as
+    `<system>`-tagged user text rather than a system message, and the request would re-send different bytes.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('how many?'),
+                RetryFeedbackPart('the answer has to be a number', cause='model_retry'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('OK')]),
+    ]
+
+    roundtripped = _vercel_roundtrip(history)
+    assert [type(part) for part in roundtripped[0].parts] == [UserPromptPart, RetryFeedbackPart]
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
