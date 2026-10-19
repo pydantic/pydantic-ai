@@ -1,3 +1,7 @@
+---
+description: "Run a Pydantic AI agent as a step in a GitHub Actions workflow with pydantic/pydantic-ai-action, or on issues and pull requests through GitHub Agentic Workflows."
+---
+
 # GitHub Actions
 
 GitHub is where an agent runs with nobody at the other end: it is started by a push, an issue, a
@@ -5,16 +9,16 @@ schedule or a button, and what it produces is a comment, a commit or a pull requ
 reply on a screen. Pydantic AI meets that in two shapes, and which one you want depends on who can
 start the run.
 
-| | [`pydantic/pydantic-ai-action`](#running-an-agent-in-a-step) | [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| | [`pydantic/pydantic-ai-action`](#running-an-agent-in-a-step) | [GitHub Agentic Workflows](harness/gh-aw.md) |
 |---|---|---|
 | **What you write** | A step in a workflow you already have | A Markdown file that compiles to a whole workflow |
 | **Where the agent runs** | On the runner, as the workflow user | In a container behind an egress firewall |
 | **How it writes back** | Whatever your later steps do with the result | Safe outputs: comments, issues and pull requests gh-aw creates for it |
 | **Credentials** | Reachable by the agent, from the step's `env:` | Held outside the agent's sandbox, brokered through a proxy |
-| **Use it when** | You choose the trigger and the prompt | The trigger is an issue, a comment, or a pull request from a fork |
+| **Use it when** | You trust the prompt, the checkout and the agent | Any of them can come from an issue, a comment, or a pull request from a fork |
 
 The second is the one to reach for whenever someone other than you can decide what the agent is
-asked to do, and it has [a page of its own](https://pydantic.dev/docs/ai/harness/gh-aw/). The rest
+asked to do or what it reads, and it has [a page of its own](harness/gh-aw.md). The rest
 of this page is the first.
 
 ## Running an agent in a step
@@ -64,9 +68,13 @@ SHA instead in anything you rely on.
 
 The agent's output is printed to the log, written to the job summary, and exposed as the step's
 `result` output. A multi-line answer survives all three, and the runner reads none of it as
-instructions: the log output is bracketed so that a model writing `::add-mask::` or
-`::stop-commands::` is printed rather than obeyed, and the `result` output is delimited with a
-random token so an answer cannot forge a second output.
+instructions: workflow commands are stopped for the whole run, so a model that gets
+`::add-mask::` or `::stop-commands::` printed is printed rather than obeyed, and the `result` output is
+delimited with a random token so an answer cannot forge a second output.
+
+That covers the action publishing the answer, not what you do with it next: `result` is text the
+model wrote. Pass it to a later step through `env:`, as the example does, or a file, never as
+`${{ steps.agent.outputs.result }}` inside a `run:` script, where it would run as shell.
 
 Set exactly one of `prompt` and `prompt-file`. A prompt kept in the repository keeps long
 instructions out of the workflow file, and is read relative to `working-directory`:
@@ -82,8 +90,8 @@ instructions out of the workflow file, and is read relative to `working-director
 
 ## Choosing the agent
 
-Without an `agent` input, the action runs the [Harness](https://pydantic.dev/docs/ai/harness/)'s
-[`Coder`](https://pydantic.dev/docs/ai/harness/coder/), which reads and edits files and runs
+Without an `agent` input, the action runs the [Harness](harness/index.md)'s
+[`Coder`](harness/coder.md), which reads and edits files and runs
 commands — the same composition the gh-aw engine runs by default.
 
 Point `agent` at a `module:variable` pair to run your own [`Agent`][pydantic_ai.Agent] instead,
@@ -127,7 +135,7 @@ workflow running its own agent doesn't wait for it or resolve its dependencies. 
 | `prompt-file` | | A prompt file, read relative to `working-directory`. |
 | `agent` | `pydantic_ai_harness.coder:coder_agent` | A `module:variable` target, or a `.yml`, `.yaml` or `.json` agent spec file. |
 | `model` | | A [model](models/overview.md) identifier such as `openai:gpt-5.6-sol`. Overrides the model the agent carries. |
-| `python-version` | `3.12` | The Python the agent runs on, 3.10 or later. |
+| `python-version` | `3.12` | The Python the agent runs on: 3.10 or later, or 3.11 or later for the Harness, which the default agent comes from. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
 | `pydantic-ai-version` | `>=2.44.0` | The `pydantic-ai-slim` version specifier to install. |
 | `harness-version` | | An exact `pydantic-ai-harness` version, installed whatever the agent is. |
@@ -141,15 +149,30 @@ provider is a `pip-install` away.
 !!! warning "The agent runs on the runner, not in a sandbox"
     The agent runs as the workflow user with whatever the job can reach, and the default `Coder`
     can run commands. Anything in the job's environment — including `GITHUB_TOKEN`, if a step puts
-    it there — is reachable by the model. Keep the workflow's `permissions:` at the minimum the
-    job needs, don't pass `GITHUB_TOKEN` to this step, and check out with
-    `persist-credentials: false` so the checkout doesn't leave a credential behind.
+    it there — is reachable by the model.
 
-    Use this action when you decide what the agent is asked to do. When the prompt can come from
-    an issue, a comment, or a pull request from a fork, use
-    [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) instead, which runs the
-    agent behind an egress firewall, keeps credentials outside its sandbox, and writes back through
-    safe outputs.
+    Use this action only when everything the agent is given is trusted: the prompt, the checkout,
+    the agent or spec it runs, and the packages `pip-install` installs, which run their own build
+    code with the provider credential already in the environment. A branch counts as untrusted if
+    anyone you wouldn't hand the credential to can push to it. When any of these can come from
+    someone else, use [GitHub Agentic Workflows](harness/gh-aw.md) instead, which runs the agent
+    behind an egress firewall, keeps credentials outside its sandbox, and writes back through safe
+    outputs.
+
+In a workflow that runs the action, keep `permissions:` at the minimum the job needs, don't pass
+`GITHUB_TOKEN` to the step, and check out with `persist-credentials: false` so the checkout
+doesn't leave a credential behind. Anything that needs write access or a deploy credential belongs
+in a separate job that runs after the agent's and reads `result` from its output. To have a person
+approve each run, put the agent's job in an
+[environment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+with required reviewers.
+
+The action withholds the runner's command files and tokens — `GITHUB_ENV`, `GITHUB_PATH`,
+`GITHUB_OUTPUT`, `GITHUB_STATE`, `GITHUB_STEP_SUMMARY`, the OIDC token request variables and the
+cache and runtime tokens — from the environment the agent and its tools inherit, so a command isn't
+handed the way to plant a variable or a binary for later steps, or to mint an OIDC token. That is
+not a sandbox: a command can still go looking for the runner's files on disk, which is why
+privileged steps belong in another job.
 
 Provider credentials belong in the step's `env:`. The action takes no API key input, so a key never
 passes through an action input that a failure could echo. Exchanging a GitHub OIDC token for
