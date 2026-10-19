@@ -161,6 +161,8 @@ class ConversationStore(ABC):
         Messages that extend the stored history are appended to it. If the history was rewritten
         instead, the messages from the first difference on branch off the last message both share.
         The entries they replace stay stored while another conversation's history still uses them.
+        Messages are matched with `==`, so a change only to a field message equality ignores, like
+        a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
