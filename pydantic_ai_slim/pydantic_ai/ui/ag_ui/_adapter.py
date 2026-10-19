@@ -298,7 +298,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
     serialized as sidecar activity messages on `dump_messages` and reconstructed on
     `load_messages`. A frontend only completes the round-trip if it sends these activity
-    messages back on the next request, which `@ag-ui/client` doesn't do by default; see
+    messages back on the next request, which `@ag-ui/client` doesn't do; see
     [Records carried as activity messages](../ui/ag-ui.md#activity-records).
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
