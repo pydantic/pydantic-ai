@@ -67,7 +67,7 @@ Podman works too: pass `executable='podman'`. The `docker` client gets `DOCKER_H
 
 ## Reattach and clean up
 
-The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name, set as soon as the container is created. `DockerSandbox(...).backend(ref)` attaches to it without I/O; the first operation runs `docker start`, so a stopped container comes back with its files, and a removed one raises `WorkspaceUnavailableError`.
+The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name, set when the first operation starts creating it and cleared again if `docker run` made no container. `DockerSandbox(...).backend(ref)` attaches to it without I/O; the first operation runs `docker start`, so a stopped container comes back with its files, and a removed one raises `WorkspaceUnavailableError`.
 
 The container outlives the run, like every workspace. Remove it, with its anonymous volumes, when you're done:
 

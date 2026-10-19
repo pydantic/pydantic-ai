@@ -223,7 +223,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     @property
     def ref(self) -> WorkspaceRef | None:
-        """`WorkspaceRef(provider='docker', id=<container name>)`, set once the container is created."""
+        """`WorkspaceRef(provider='docker', id=<container name>)`, set when the first operation starts creating the container."""
         return self._ref
 
     async def working_dir(self) -> str:
@@ -287,8 +287,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _start(self) -> None:
         state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
         if state == 'missing' and self._image is not None:
-            # This backend's `docker run` was cancelled before the container existed: run it again under the same
-            # name, which Docker refuses if the first one created it after all.
+            # A container this backend set out to create is missing, as after a cancelled `docker run`: run it again
+            # under the same name, which Docker refuses if the first one created it after all.
             await self._create()
             return
         if state == 'missing':
