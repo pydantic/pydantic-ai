@@ -982,6 +982,52 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
 
 
+async def test_pruned_tool_items_stop_costing_input_tokens(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_prune_tool_items`, a tool round's items leave the server conversation once it is answered.
+
+    The tool returns a long report, so the next response's input tokens show whether the server still reads it.
+    History keeps the round.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(output_modality='text', openai_prune_tool_items=True),
+    )
+    agent = Agent(
+        instructions='Use the weather_report tool for any weather question, then answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def weather_report(city: str) -> str:
+        """Fetch the full weather station report for a city."""
+        return f'Station report for {city}: foggy, 12 degrees, light wind from the west. ' * 150
+
+    async def reply_to(text: str) -> None:
+        await session.send(text)
+        with anyio.fail_after(30):
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    async with agent.realtime(model).session() as session:
+        stream = session.__aiter__()
+        await reply_to('What is the weather in London?')
+        await reply_to('Thanks! Now just say goodbye.')
+
+    deleted = [
+        frame for frame in sent_frames_containing(cassette, 'item_id') if frame['type'] == 'conversation.item.delete'
+    ]
+    assert len(deleted) == 2
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.usage.input_tokens for response in responses] == snapshot([65, 2795, 102])
+    assert any(isinstance(part, ToolReturnPart) for message in session.all_messages() for part in message.parts), (
+        'history keeps the round'
+    )
+
+
 async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A provider-requested tool can hang up without wedging its own task or the session iterator."""
     provider, _ = openai_ws_cassette

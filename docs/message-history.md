@@ -299,7 +299,10 @@ A request-scoped prompt stays in the message history like any other part, so the
 * Where the API can keep it in the conversation and stop showing it to the model itself, every request-scoped prompt is sent unchanged with every request, and costs nothing once its request has been answered. [Anthropic](models/anthropic.md#turn-scoped-system-messages) supports this on the models that take mid-conversation system messages. Sending it unchanged is what keeps the cached prefix valid, and on models that tie their reasoning to the exact conversation it was produced in, it keeps that reasoning valid as well: removing an instruction from a later request counts as editing the conversation.
 * Everywhere else, it's sent with its own request and left out of every later one. It goes at the end of that request and renders like any other [mid-conversation system prompt](#mid-conversation-system-prompts).
 
-With server-side conversation state, such as OpenAI Responses with `openai_previous_response_id` or `openai_conversation_id`, each request sends only the messages after the last response, and the provider replays everything it was sent before. A request-scoped prompt it was sent once stays visible to the model on every later request, because the provider keeps it, and leaving it out of a later request changes nothing.
+With server-side conversation state, each request sends only the messages after the last response, and the provider replays everything it was sent before. How that combines with a request-scoped prompt depends on the setting:
+
+* With OpenAI Responses' `openai_previous_response_id`, a response is only [continued from](models/openai.md#referencing-earlier-responses) while the messages before it are unchanged. Leaving a request-scoped prompt out of the next request changes them, so that request sends the full history without `previous_response_id`, and the model sees the prompt only in its own request. Using one gives up chaining for the request after it.
+* With `openai_conversation_id`, the conversation keeps every message it was sent. A request-scoped prompt it was sent once stays visible to the model on every later request, and leaving it out of a later request changes nothing.
 
 With either rendering, the cache breakpoints Pydantic AI places for you, through settings like `anthropic_cache_messages`, land before it, so the next request can still read what was cached. A request and any continuation of it (such as an Anthropic `pause_turn`) count as the same request, and so does a retry or [fallback](models/overview.md#fallback-model) attempt at it. A request-scoped prompt in a request that never gets a response, because the run failed or was cancelled, is removed from the history when the run gives up on that request, so it doesn't carry into the next one.
 
@@ -307,6 +310,56 @@ Use a request-scoped prompt for something about the current moment. Something th
 
 !!! note "Histories sent back from a frontend"
     The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave request-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its request-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+
+### Identifying system prompts
+
+Code that adds a system prompt sometimes needs to find it again: to count the reminders it has sent, to replace a note it wrote earlier, or to tell its own records apart from prompts that came from somewhere else. Give the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] a [`metadata`][pydantic_ai.messages.SystemPromptPart.metadata] dictionary and identify it by that, never by its visible text:
+
+```python {title="system_prompt_metadata.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelMessage, ModelRequest, RunContext, SystemPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+ORIGIN = 'my_app.stay_terse'
+
+
+def reminders(messages: list[ModelMessage]) -> list[SystemPromptPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+        and part.metadata is not None
+        and part.metadata.get('origin') == ORIGIN
+    ]
+
+
+@dataclass
+class StayTerse(AbstractCapability[Any]):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        count = len(reminders(ctx.messages)) + 1
+        ctx.enqueue(
+            SystemPromptPart(
+                f'Reminder {count}: keep answers to one line.',
+                scope='request',
+                metadata={'origin': ORIGIN},
+            )
+        )
+        return request_context
+
+
+agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
+```
+
+The metadata is never sent to the model, so it doesn't change the request or the prompt cache. It stays with the part wherever the part goes: into [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages], through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], and into a continued conversation. [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] is no substitute: Pydantic AI merges consecutive requests in the history a run starts with and in each request it prepares, and a merged request keeps only Pydantic AI's own metadata. Visible text is no substitute either: the wording changes, and a user can type the same words.
+
+Like other application-only fields, the metadata doesn't survive a round trip through the [UI adapters](ui/overview.md), whose wire formats have no place for it. A system prompt that comes back from a frontend has no metadata.
 
 ### Making histories provider-valid
 
