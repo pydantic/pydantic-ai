@@ -600,19 +600,11 @@ class RealtimeConnection(ABC):
 
         For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
         a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
-        response), and the session then counts one reply per tool-calling response. Defaults to `False`,
-        which counts one per result, as a connection that asks for a response after each one needs.
+        response), and the session then counts one reply per tool-calling response against `request_limit`,
+        and none once one of its calls settles without a result. Defaults to `False`, which counts one per
+        result, as a connection that asks for a response after each one needs.
         """
         return False
-
-    def _take_merged_response_requests(self) -> int:
-        """How many requests for a response sent since the last call were answered by another one's response.
-
-        For the session's reply accounting only: a connection that holds a request made during an
-        active response, and answers any further ones with the same response, reports them here so
-        the session stops waiting for a response of their own.
-        """
-        return 0
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -627,26 +619,6 @@ class RealtimeConnection(ABC):
         `True`; the OpenAI connection overrides it.
         """
         return True
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        """Whether committed audio joins the conversation only when the connection sends the commit later.
-
-        For the session's history placement only. A connection may hold a `CommitAudio` back, for instance
-        until a response is asked for, when its provider answers a commit by itself, and input sent in the
-        meantime then reaches the provider first. The session records the spoken turn where the provider
-        has it, once the connection reports sending the commit to the listener passed to
-        `_set_audio_commit_listener`. Internal until the session's lifecycle events, which track provider
-        items per input, replace it. Defaults to `False`.
-        """
-        return False
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        """Register what to call as a held commit goes out, on a connection that `_defers_audio_commit`.
-
-        The listener is called just before the commit is sent, and before anything the provider sends in
-        answer. Internal, like `_defers_audio_commit`. A no-op by default.
-        """
 
 
 __all__ = (
