@@ -1464,16 +1464,6 @@ class _CountingResponses(dict[str, Any]):
             type(self).visits += 1
             yield response
 
-    def items(self) -> Any:
-        for item in super().items():
-            type(self).visits += 1
-            yield item
-
-    def __iter__(self) -> Iterator[str]:
-        for response_id in super().__iter__():
-            type(self).visits += 1
-            yield response_id
-
 
 def test_a_frame_costs_the_same_however_long_the_conversation_got() -> None:
     """What the session reads off the core after every frame doesn't walk the turns and responses that finished."""
@@ -1496,3 +1486,6 @@ def test_a_frame_costs_the_same_however_long_the_conversation_got() -> None:
     assert len(session_core.all_messages()) == 60
     # Past the first, each frame also passes the answer the turn before finished, once, and nothing older.
     assert costs == [5] + [6] * 29
+    _CountingPlaced.visits = _CountingResponses.visits = 0
+    _ = list(session_core._placed), list(session_core._responses.values())  # pyright: ignore[reportPrivateUsage]
+    assert (_CountingPlaced.visits, _CountingResponses.visits) == (60, 30), 'the counters see a walk'
