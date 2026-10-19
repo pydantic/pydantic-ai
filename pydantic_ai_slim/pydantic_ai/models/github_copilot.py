@@ -81,7 +81,7 @@ class GitHubCopilotModel(OpenAIChatModel):
         # the choice itself is taken positionally as `chunk.choices[0]`. That delta index is present
         # on both families, tool calls included. A missing delta index would not raise here; it
         # would silently merge parallel tool calls' argument fragments.
-        payload = response.model_dump()
+        payload = response.model_dump(warnings=False)
         # Unconditional: `object`'s type admits exactly one value, so there is nothing to overwrite.
         payload['object'] = 'chat.completion'
         for index, choice in enumerate(payload.get('choices') or []):
