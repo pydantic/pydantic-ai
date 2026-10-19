@@ -295,7 +295,8 @@ async def test_call_header_escapes_line_breaks_in_question_headers() -> None:
 
 
 async def test_plugin_declares_capability_and_renderer() -> None:
-    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    console = Console(file=io.StringIO(), force_terminal=True)
+    host: PluginHost[None] = PluginHost(name='ask_user', console=console, settings={})
     loaded = load_plugin(AskUserPlugin, host)
     (capability,) = loaded.capabilities
     assert isinstance(capability, AskUser)
@@ -305,6 +306,12 @@ async def test_plugin_declares_capability_and_renderer() -> None:
     )
     assert loaded.plugin.render(PartStartEvent(index=0, part=TextPart('hi'))) is None
     assert any(plugin.id == 'ask_user' for plugin in DEFAULT_PLUGINS)
+
+
+async def test_plugin_asks_nothing_without_a_terminal() -> None:
+    """A session with no terminal, such as one the browser runs, gets no question tool from this plugin."""
+    host: PluginHost[None] = PluginHost(name='ask_user', console=Console(file=io.StringIO()), settings={})
+    assert load_plugin(AskUserPlugin, host).capabilities == ()
 
 
 async def test_declining_reaches_the_model_through_the_plugin() -> None:
