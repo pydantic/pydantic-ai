@@ -698,6 +698,8 @@ class Allowed:
     reason: str
     max_moves: int = 1
     tail: bool = False
+    providers: tuple[Provider, ...] = PROVIDERS
+    """The providers this mover applies to; on the others the capability must keep the prefix."""
 
 
 def check_conversation(
@@ -711,6 +713,8 @@ def check_conversation(
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
     breaks = result.prefix_breaks()
     failures: dict[Check, str] = {}
+    if allowed is not None and result.provider not in allowed.providers:
+        allowed = None
     if allowed is not None:
         if not breaks:
             failures['prefix'] = f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix'

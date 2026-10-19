@@ -262,13 +262,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
     'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
     'RepoContext': (Known('prefix', f'{_PULLS}8188', match='<context-file path=\\"AGENTS.md\\">'),),
     'Skills': (Known('ids', f'{_PULLS}8188', match='The following capabilities are deferred'),),
-    'WarnNearLimits': (
-        Known(
-            'prefix',
-            f'{_PULLS}10561 (whichever of #10552 and #10561 merges second drops this entry)',
-            match='[WarnNearLimits]',
-        ),
-    ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
@@ -287,6 +280,12 @@ ALLOWED: dict[str, Allowed] = {
     'Planning': Allowed(
         f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
         tail=True,
+    ),
+    'WarnNearLimits': Allowed(
+        f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
+        'natively with `clear_at`; elsewhere it is a request-only tail',
+        tail=True,
+        providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
         f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
