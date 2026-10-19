@@ -1079,8 +1079,9 @@ when it runs, so it sends the current `SKILL.md`, and fails with a message when
 the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
-catalog. Since CLAI hides library warnings, `coder` prints the skills whose
-frontmatter fields harness ignores as a startup notice. A folder that cannot be
+catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
+other clients sharing the folders, so `coder` does not report them, and CLAI
+hides harness's run-start warning about them. A folder that cannot be
 read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
