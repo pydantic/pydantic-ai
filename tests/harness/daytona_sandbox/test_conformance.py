@@ -14,7 +14,7 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 from .fake_daytona import FakeDaytona
@@ -31,16 +31,8 @@ async def _delete(backend: WorkspaceBackend) -> None:
 
 
 async def _delete_if_live(sandbox_id: str) -> None:  # pragma: no cover - live tier runs without coverage
-    import daytona
-
-    async with daytona.AsyncDaytona() as client:
-        try:
-            sandbox = await client.get(sandbox_id)
-        except daytona.DaytonaNotFoundError:
-            return
-        # The destroy rule normally deleted it already; a second delete is not needed.
-        if sandbox.state not in (daytona.SandboxState.DESTROYING, daytona.SandboxState.DESTROYED):
-            await sandbox.delete()
+    # Quiet when the destroy rule already deleted it, and closes the client it opens.
+    await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=sandbox_id))
 
 
 class TestFakeDaytonaSandboxBackend(WorkspaceBackendSuite):

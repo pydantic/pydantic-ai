@@ -35,6 +35,7 @@ from pytest_examples import CodeExample
 from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+from pydantic_ai_harness.daytona_sandbox._backend import _close_sdk_client  # pyright: ignore[reportPrivateUsage]
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
@@ -50,8 +51,12 @@ def _unique(prefix: str) -> str:
 @pytest.fixture(scope='module')
 async def client() -> AsyncIterator[daytona.AsyncDaytona]:
     """One caller-owned API client for every backend in this module, closed at the end."""
-    async with daytona.AsyncDaytona() as client:
+    client = daytona.AsyncDaytona()
+    try:
         yield client
+    finally:
+        # The SDK's own close can leave its event socket's aiohttp session open; the backend's close does not.
+        await _close_sdk_client(client)
     # aiohttp closes SSL transports on the next loop ticks after ClientSession.close().
     # Let them finish before pytest tears down this module's event loop.
     await asyncio.sleep(0.25)
