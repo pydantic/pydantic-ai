@@ -1,6 +1,6 @@
 """Search a training video's transcripts and frame captions, with persistent memory.
 
-Requires Python 3.11+, `pydantic-ai-harness[pixeltable]`, and `pydantic-ai-slim[openai]`.
+Requires Python 3.11 to 3.14, `pydantic-ai-harness[pixeltable]`, and `pydantic-ai-slim[openai]`.
 Set `OPENAI_API_KEY` and run once with a short expense-policy video containing speech:
 
     python pixeltable_video.py training.mp4
@@ -15,7 +15,7 @@ import sys
 try:
     import pixeltable as pxt
 except ImportError as exc:
-    raise ImportError('Install "pydantic-ai-harness[pixeltable]" on Python 3.11+.') from exc
+    raise ImportError('Install "pydantic-ai-harness[pixeltable]" on Python 3.11 to 3.14.') from exc
 
 from pixeltable.functions import openai
 from pixeltable.functions.audio import audio_splitter
