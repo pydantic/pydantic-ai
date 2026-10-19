@@ -14,10 +14,10 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
