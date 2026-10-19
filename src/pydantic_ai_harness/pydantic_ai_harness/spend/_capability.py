@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from pydantic import TypeAdapter
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
 from pydantic_ai.models._continuation import (
     billed_beyond,
@@ -368,7 +368,20 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         One failure must not stop the other responses of the lifecycle from accruing.
         """
         try:
-            return await self._accrue_response(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+            error = await self._accrue_response(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+            if (
+                error is None
+                and response.usage.unmeasured_requests
+                and any(budget.tokens is not None for budget in self.budgets)
+            ):
+                warnings.warn(
+                    'Some responses omitted usage information, so `SpendLimits` token totals are lower bounds '
+                    'and token ceilings cannot be fully enforced. A custom price does not restore missing tokens; '
+                    'check the provider usage reporting or promote `UsageLimitUnavailableWarning` to an error.',
+                    UsageLimitUnavailableWarning,
+                    stacklevel=3,
+                )
+            return error
         except Exception as exc:
             return exc
 

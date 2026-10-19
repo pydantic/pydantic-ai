@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, UsageLimitUnavailableWarning, capture_run_messages
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -944,6 +944,34 @@ class TestOrdering:
 
 class TestPricing:
     """What a response cost, and whether that number is real."""
+
+    @pytest.mark.parametrize('custom_price', [False, True])
+    async def test_omitted_usage_warns_for_token_budget_even_with_complete_price(self, custom_price: bool):
+        guard = SpendLimits(
+            budgets=[Budget(tokens=1000, window='total')],
+            price=(lambda response: Decimal('0.02')) if custom_price else None,
+        )
+        agent = _agent(guard, usage=RequestUsage(unmeasured_requests=1))
+
+        with pytest.warns(UsageLimitUnavailableWarning, match='token ceilings cannot be fully enforced'):
+            result = await agent.run('hi')
+
+        assert result.usage.unmeasured_requests == 1
+        spent = (await guard.status())[0].spent
+        assert spent.tokens == 0
+        assert spent.requests == 1
+        assert spent.usd == (Decimal('0.02') if custom_price else Decimal('0'))
+
+    async def test_omitted_usage_warning_can_stop_run_after_accrual(self):
+        guard = SpendLimits(budgets=[Budget(tokens=1000, window='total')])
+        agent = _agent(guard, usage=RequestUsage(unmeasured_requests=1))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UsageLimitUnavailableWarning)
+            with pytest.raises(UsageLimitUnavailableWarning, match='token ceilings cannot be fully enforced'):
+                await agent.run('hi')
+
+        assert (await guard.status())[0].spent.requests == 1
 
     async def test_known_cost_subtotal_is_accrued_and_exhausts_the_next_run(self):
         usage = RequestUsage(web_searches=1, unmeasured_requests=1, details={'web_search_requests': 1})

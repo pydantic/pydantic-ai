@@ -250,6 +250,11 @@ Under durable execution, `price` and each budget's `scope` callable must be dete
 
 `SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
 
+When a response omits usage and a token budget is configured, `SpendLimits` emits
+`UsageLimitUnavailableWarning` if the run can continue. Known token totals are lower
+bounds, even when a custom `price` supplies the complete cost. Check the provider usage
+reporting or promote the warning to an error to stop when the token ceiling cannot be verified.
+
 ## Composition
 
 State lives across runs deliberately, so `for_run` is not overridden: a daily budget that reset every run would not be a daily budget. Per-run isolation comes from `Budget(window='run')`, whose key carries the run id.
