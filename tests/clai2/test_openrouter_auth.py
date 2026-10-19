@@ -18,7 +18,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.models import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
@@ -142,6 +142,7 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(openrouter, 'menu_key', lambda: next(keys))
 
     async def login(self: OpenRouterAuth) -> SecretStr:
+        self.console.print('https://openrouter.ai/auth?code_challenge=x')
         return SecretStr('browser-key')
 
     async def discover(connection: openrouter.Connection) -> list[str]:
@@ -156,13 +157,15 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         return names[0]
 
     monkeypatch.setattr(openrouter, 'choose', choose)
-    assert await openrouter.connect(context, []) == 'Saved model. Applied.'
+    output = StringIO()
+    assert await openrouter.connect(context, [], console=Console(file=output)) == 'Saved model. Applied.'
     assert openrouter.model('openrouter:my/model').model_name == 'my/model'
+    assert 'https://openrouter.ai/auth' in output.getvalue(), 'the sign-in URL goes to the shell console'
 
 
 async def test_cancel_authentication_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(openrouter, 'menu_key', lambda: 'escape')
-    assert await openrouter.prompt_connection() is None
+    assert await openrouter.prompt_connection(console=QUIET) is None
 
 
 async def test_listener_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,10 +212,10 @@ async def test_browser_failure_preserves_connection(
     monkeypatch.setattr(openrouter, 'discover', discover)
     monkeypatch.setattr(openrouter, 'choose', choose)
     if cancel_model:
-        assert await openrouter.connect(context, []) == 'Connection cancelled.'
+        assert await openrouter.connect(context, [], console=QUIET) == 'Connection cancelled.'
     else:
         with pytest.raises(UserError, match='Login failed'):
-            await openrouter.connect(context, [])
+            await openrouter.connect(context, [], console=QUIET)
     raw = openrouter.load_codex_credentials(account='openrouter')
     assert raw is not None
     assert openrouter.Connection.model_validate_json(raw) == original
