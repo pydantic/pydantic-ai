@@ -42,8 +42,10 @@ from ..messages import (
     FinishReason,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     RealtimeInputSpeechEndEvent,
@@ -54,8 +56,11 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    SpeechPartDelta,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -188,13 +193,13 @@ class TranscriptOverdue:
 
 @dataclass(frozen=True, kw_only=True)
 class ResponseRefused:
-    """The session refused the response that is starting (the request it is would exceed a usage limit).
+    """The session refused a response as the frame that started it is handled (the request it is would exceed a limit).
 
-    It stops reading the connection, so the response is cut off: it isn't recorded, or counted as a request.
+    It stops reading the connection, so the response is cut off: it isn't recorded, or counted as a request. It may
+    have ended in that frame too.
     """
 
-    response_id: str | None = None
-    """The response, if the frame the session refused it in started it: it may have ended in that frame too."""
+    response_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -210,6 +215,16 @@ class ResponseOverdue:
 @dataclass(frozen=True, kw_only=True)
 class ReceiveEnded:
     """The session stopped reading the connection: nothing more will be said, so nothing is owed any more."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolCallsPruned:
+    """The connection deleted these tool calls, and their results, from the provider's conversation.
+
+    History keeps them; a reconnect's replay leaves them out (see `replayable_messages`).
+    """
+
+    tool_call_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -230,9 +245,75 @@ Command: TypeAlias = (
     | ResponseOverdue
     | ResponseRefused
     | ReceiveEnded
+    | ToolCallsPruned
     | Closed
 )
 CoreInput: TypeAlias = RealtimeCodecEvent | LifecycleEvent | Command
+
+
+# --- effects: what the session streams and instruments ---------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResponseOpened:
+    """A response started: the session opens its `chat` span."""
+
+    response_id: str
+
+
+@dataclass(frozen=True)
+class ResponseClosed:
+    """A response ended, however it ended: the session closes its `chat` span."""
+
+    response_id: str
+    status: ResponseStatus
+    message: ModelResponse | None
+    """What history records for it: `None` if nothing (the session refused it, or it was cut off before it said
+    anything)."""
+    input_messages: list[ModelMessage]
+    """The conversation ahead of it, as it stood when it ended: what it replied to."""
+
+
+@dataclass(frozen=True)
+class UsageCounted:
+    """A usage report was counted toward a response: `usage` is what that request has used so far.
+
+    The per-request input-token limit is checked against it.
+    """
+
+    usage: RequestUsage
+
+
+@dataclass(frozen=True)
+class ToolRoundsOver:
+    """A response completed without calling a tool: the tool rounds before it are over.
+
+    `calls` are their calls whose results went out, which the provider answered: what the provider still holds of
+    them in its conversation only costs input tokens from here on.
+    """
+
+    calls: tuple[ToolCallPart, ...]
+
+
+@dataclass(frozen=True)
+class ExchangeOver:
+    """A response ended, and with it everything the model owed: what `wait_for_reply()` waits for is over."""
+
+    interrupted: bool
+    """Whether the response that ended it was cut off (the user barged in, or the caller interrupted it)."""
+
+
+Effect: TypeAlias = (
+    PartStartEvent
+    | PartDeltaEvent
+    | PartEndEvent
+    | ResponseOpened
+    | ResponseClosed
+    | UsageCounted
+    | ToolRoundsOver
+    | ExchangeOver
+)
+"""What an `apply()` did that the session acts on, in order (see `SessionCore.take_effects`)."""
 
 
 # --- entities --------------------------------------------------------------------------------------
@@ -253,10 +334,16 @@ class _Response:
     parts: list[ModelResponsePart] = field(default_factory=list[ModelResponsePart])
     open_part: SpeechPart | TextPart | None = None
     open_part_item: str | None = None
+    open_part_index: int = 0
+    """The stream index of `open_part` (see `SessionCore._take_index`)."""
     open_transcript: str = ''
     open_audio: bytearray = field(default_factory=bytearray)
-    closed_parts: dict[str, SpeechPart | TextPart] = field(default_factory=dict[str, SpeechPart | TextPart])
-    """The part each item of the output closed, for a transcript of the item that arrives after it closed."""
+    closed_parts: dict[str, tuple[int, SpeechPart | TextPart]] = field(
+        default_factory=dict[str, tuple[int, SpeechPart | TextPart]]
+    )
+    """The stream index and part each item of the output closed, for a transcript of the item that arrives after it
+    closed."""
+
     item_details: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """What the provider said about each item of the output, for the part the item makes."""
     usage: RequestUsage = field(default_factory=RequestUsage)
@@ -289,6 +376,8 @@ class _UserTurn:
     """Built once the turn is final: transcribed (or known never to be) and joined to the conversation."""
     placed_at: float = 0
     """Its position among the entities that joined the conversation (see `SessionCore._place`)."""
+    index: int | None = None
+    """Its stream index, once its part started streaming (at its first transcript, or once it is built)."""
 
 
 @dataclass(eq=False)
@@ -329,6 +418,8 @@ class SessionCore:
         conversation_id: str | None,
         run_id: str | None,
         responses_are_requests: bool = True,
+        answers_tool_calls_per_response: bool = False,
+        tracks_tool_rounds: bool = False,
         input_transcription_enabled: bool = True,
         retain_input_audio: bool = False,
         retain_output_audio: bool = False,
@@ -345,6 +436,10 @@ class SessionCore:
         self._conversation_id = conversation_id
         self._run_id = run_id
         self._responses_are_requests = responses_are_requests
+        self._answers_per_response = answers_tool_calls_per_response
+        """Whether one reply answers all the tool results of a response, rather than one per result."""
+        self._tracks_tool_rounds = tracks_tool_rounds
+        """Whether to say when tool rounds are over (`ToolRoundsOver`), for a connection that prunes them."""
         self._transcription = input_transcription_enabled
         self._retain_input = retain_input_audio
         self._retain_output = retain_output_audio
@@ -380,12 +475,15 @@ class SessionCore:
         """The recorded response and part index of each recent output item that spoke, for a barge-in to cut off."""
         self._pending_cuts: dict[str, int] = {}
         """Cuts of output items of responses still under way, applied once each is recorded."""
-        self.cut_responses: dict[str, ModelResponse] = {}
-        """Recorded responses a barge-in cut off since the session last took them, by provider response id: the
-        session's own record (what tools and chat spans read) follows them."""
         self._returns: dict[str, ModelRequest] = {}
         self._result_input: dict[str, InputId] = {}
         """The input that carried each tool call's result to the provider."""
+        self._result_call: dict[InputId, str] = {}
+        """The tool call each result input answers."""
+        self._undispatched: set[str] = set()
+        """Calls the core accepted that the session hasn't taken to run yet (see `take_call`)."""
+        self._unanswered_responses: set[str] = set()
+        """Responses whose tool results get no reply: one of their calls settled without its result going out."""
         self._settled_calls: set[str] = set()
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
         self._input_audio = bytearray()
@@ -393,8 +491,6 @@ class SessionCore:
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
         self._carried_usage: list[SessionUsage] = []
         """Usage reported between responses, naming none: the next response's."""
-        self._next_refused = False
-        """The session refused the next response before it started (see `ResponseRefused`)."""
         self._audio_budget = RetainedAudioBudget(
             retain_audio_max_seconds, input_sample_rate=input_sample_rate, output_sample_rate=output_sample_rate
         )
@@ -416,6 +512,22 @@ class SessionCore:
         self._epoch = 0
         self._abandoned: set[tuple[str, str]] = set()
         """What was owed when an exchange was abandoned: no waiter waits for it again."""
+        self._effects: list[Effect] = []
+        self._exchange_ending: bool | None = None
+        """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
+        self._unrounded: dict[str, list[str]] = {}
+        """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
+        self._pruned_calls: set[str] = set()
+        """Calls the connection deleted from the provider's conversation (see `ToolCallsPruned`)."""
+        self._next_index = 0
+        """The stream index of the next part to start: one counter for the session, as both speakers' parts stream at
+        once, so an index names a part in the event stream rather than a slot in a message."""
+        self._dropped_native: set[int] = set()
+        """Native parts the core dropped as they started, by the connection's index: their end is dropped too."""
+        self._native_indexes: dict[int, int] = {}
+        """The stream index of each native tool part under way, by the index the connection numbered it with."""
+        self._part_items: OrderedDict[int, str | None] = OrderedDict()
+        """The output item each recent assistant part streamed, by stream index, for a barge-in to name what it cuts."""
 
     # --- the one transition ------------------------------------------------------------------------
 
@@ -474,6 +586,9 @@ class SessionCore:
                 self._withdraw((item.input_index,))
         elif isinstance(item, ToolCallCancelled):
             self._settled_calls.update(item.tool_call_ids)
+            # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
+            for call_id in item.tool_call_ids:
+                self._call_unanswered(call_id)
         elif isinstance(
             item,
             (
@@ -482,7 +597,6 @@ class SessionCore:
                 RealtimeResponseInterruptedEvent,
                 RealtimeSessionErrorEvent,
                 ConversationCreated,
-                PartEndEvent,  # a native tool part is whole at its start
             ),
         ):
             pass
@@ -490,9 +604,8 @@ class SessionCore:
             # The lifecycle's `ResponseEnded` ends the response; its terminal can still name it, if nothing had.
             if item.provider_response_id and (response := self._open_response(None)) is not None:
                 response.reported_id = response.reported_id or item.provider_response_id
-        elif isinstance(item, PartStartEvent):
-            if (response := self._open_response(None)) is not None:
-                response.native_parts.append(item.part)
+        elif isinstance(item, (PartStartEvent, PartEndEvent)):
+            self._native_part(item)
         elif isinstance(item, LifecycleEvent):
             raise TypeError(f'The session core has no handling for the lifecycle event {item!r}.')
         else:
@@ -505,11 +618,8 @@ class SessionCore:
             self._withdraw(command.input_ids)
         elif isinstance(command, (AudioSent, AudioCleared)):
             self._input_audio_command(command)
-        elif isinstance(command, ToolReturned):
-            self._returns[command.tool_call_id] = command.request
-            self._settled_calls.add(command.tool_call_id)
-        elif isinstance(command, ToolCallRefused):
-            self._refuse_call(command.tool_call_id)
+        elif isinstance(command, (ToolReturned, ToolCallRefused, ToolCallsPruned)):
+            self._tool_command(command)
         elif isinstance(command, Interrupted):
             if (response := self._speaking_response()) is not None:
                 response.interrupted_at_ms = command.played_ms
@@ -534,6 +644,14 @@ class SessionCore:
         else:
             assert_never(command)
 
+    def _tool_command(self, command: ToolReturned | ToolCallRefused | ToolCallsPruned) -> None:
+        if isinstance(command, ToolReturned):
+            self._tool_returned(command)
+        elif isinstance(command, ToolCallRefused):
+            self._refuse_call(command.tool_call_id)
+        else:
+            self._pruned_calls.update(command.tool_call_ids)
+
     def _input_audio_command(self, command: AudioSent | AudioCleared) -> None:
         if isinstance(command, AudioSent):
             if self._retain_input:
@@ -550,10 +668,12 @@ class SessionCore:
             self._inputs[command.input_id] = self._unplaced[command.input_id] = _Input(
                 command.input_id, command.request
             )
-        if command.solicits:
+        call_id = command.tool_call_id
+        if command.solicits and not (call_id is not None and self._result_unanswered(call_id)):
             self._obligations[command.input_id] = 'pending'
-        if command.tool_call_id is not None:
-            self._result_input[command.tool_call_id] = command.input_id
+        if call_id is not None:
+            self._result_input[call_id] = command.input_id
+            self._result_call[command.input_id] = call_id
 
     def _end_transcriptions(self, turn_ids: Iterable[str]) -> None:
         """Record turns that joined the conversation with the transcript they have, waiting for no more of it."""
@@ -572,7 +692,6 @@ class SessionCore:
             for input_id in [input_id for input_id in self._unplaced if input_id <= last]:
                 self._place_input(input_id)
         response = _Response(event.response_id, event.answers, self._model_name(), provider_id=event.provider_id)
-        response.refused, self._next_refused = self._next_refused, False
         carried, self._carried_usage = self._carried_usage, []
         for usage in carried:
             self._add_usage(response, usage)
@@ -584,6 +703,7 @@ class SessionCore:
             if self._obligations.get(input_id) == 'pending':
                 self._obligations[input_id] = 'answered'
                 self._answered_by[input_id] = event.response_id
+        self._effects.append(ResponseOpened(event.response_id))
 
     def _response_content(self, event: AudioDelta | OutputTranscript) -> None:
         response = self._open_response(event.response_id)
@@ -593,19 +713,26 @@ class SessionCore:
             return
         output_text = isinstance(event, OutputTranscript) and event.output_text
         part = self._open_part(response, output_text=output_text, item_id=event.item_id)
+        index = response.open_part_index
         if isinstance(event, AudioDelta):
+            self._effects.append(
+                PartDeltaEvent(index=index, delta=SpeechPartDelta(speaker='assistant', audio_chunk=event.data))
+            )
             if self._retain_output:
                 response.open_audio.extend(event.data)
                 self._open_audio[response.id] = response
                 self._open_audio_bytes += len(event.data)
                 self._bound_retained_audio()
             return
-        response.open_transcript, _ = accumulate_transcript(response.open_transcript, event.text)
-        response.open_part = (
-            replace(part, content=response.open_transcript)
-            if isinstance(part, TextPart)
-            else replace(part, transcript=response.open_transcript)
-        )
+        response.open_transcript, appended = accumulate_transcript(response.open_transcript, event.text)
+        if isinstance(part, TextPart):
+            response.open_part = replace(part, content=response.open_transcript)
+            delta: SpeechPartDelta | TextPartDelta = TextPartDelta(content_delta=appended)
+        else:
+            response.open_part = replace(part, transcript=response.open_transcript)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=response.open_transcript)
+        if appended:
+            self._effects.append(PartDeltaEvent(index=index, delta=delta))
 
     def _open_part(self, response: _Response, *, output_text: bool, item_id: str | None) -> SpeechPart | TextPart:
         part = response.open_part
@@ -623,7 +750,12 @@ class SessionCore:
             part = TextPart(content='') if output_text else SpeechPart(speaker='assistant', transcript='')
             part = response.open_part = self._with_item_details(response, part, item_id)
             response.open_part_item = item_id
+            response.open_part_index = index = self._take_index()
             response.open_transcript = ''
+            self._part_items[index] = item_id
+            while len(self._part_items) > MAX_CUTTABLE_OUTPUT_ITEMS:
+                self._part_items.popitem(last=False)
+            self._effects.append(PartStartEvent(index=index, part=part))
         return part
 
     def _update_closed_part(self, response: _Response, event: OutputTranscript) -> bool:
@@ -633,11 +765,34 @@ class SessionCore:
         """
         if event.item_id is None or event.item_id == response.open_part_item:
             return False
-        part = response.closed_parts.get(event.item_id)
-        if part is None or event.output_text != isinstance(part, TextPart):
+        closed = response.closed_parts.get(event.item_id)
+        if closed is None or event.output_text != isinstance(closed[1], TextPart):
             return False
-        index = next(index for index, existing in enumerate(response.parts) if existing is part)
-        response.parts[index] = response.closed_parts[event.item_id] = fold_part_transcript(part, event.text)[0]
+        stream_index, part = closed
+        position = next(position for position, existing in enumerate(response.parts) if existing is part)
+        updated: SpeechPart | TextPart
+        restarted: SpeechPart | TextPart
+        delta: SpeechPartDelta | TextPartDelta
+        if isinstance(part, TextPart):
+            updated, appended = fold_part_transcript(part, event.text)
+            restarted, delta = part, TextPartDelta(content_delta=appended)
+        else:
+            updated, appended = fold_part_transcript(part, event.text)
+            # Retained audio appears at a part's end, not at its start.
+            restarted = replace(part, audio=None)
+            delta = SpeechPartDelta(speaker='assistant', transcript_delta=appended, transcript=updated.transcript or '')
+        response.parts[position] = updated
+        response.closed_parts[event.item_id] = (stream_index, updated)
+        if appended:
+            # Streamed again under the index it ended with, which a `PartStartEvent` replaces, so the item still
+            # streams as one part.
+            self._effects.extend(
+                [
+                    PartStartEvent(index=stream_index, part=restarted),
+                    PartDeltaEvent(index=stream_index, delta=delta),
+                    PartEndEvent(index=stream_index, part=updated),
+                ]
+            )
         return True
 
     def _with_item_details(
@@ -660,7 +815,8 @@ class SessionCore:
                 part = replace(part, audio=self._audio_budget.track(audio, len(response.open_audio), output=True))
         response.parts.append(part)
         if response.open_part_item is not None:
-            response.closed_parts[response.open_part_item] = part
+            response.closed_parts[response.open_part_item] = (response.open_part_index, part)
+        self._effects.append(PartEndEvent(index=response.open_part_index, part=part))
         response.open_part = None
         response.open_part_item = None
         response.open_transcript = ''
@@ -679,13 +835,19 @@ class SessionCore:
             # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
         self._close_part(response)
-        response.parts.append(ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id))
+        call = ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id)
+        response.parts.append(call)
+        index = self._take_index()
+        self._effects.extend([PartStartEvent(index=index, part=call), PartEndEvent(index=index, part=call)])
         response.tool_calls.append(event.tool_call_id)
         self._call_response[event.tool_call_id] = response
+        self._undispatched.add(event.tool_call_id)
 
     def _refuse_call(self, call_id: str) -> None:
+        self._undispatched.discard(call_id)
         if (response := self._call_response.get(call_id)) is None or call_id in self._returns:
             return
+        self._call_unanswered(call_id)
         if (message := response.message) is not None:
             # Recorded already (Gemini ends a tool-call response in the message that makes the calls, before the
             # session gets to them), so it stays, and gets the return a call that never finished gets.
@@ -712,6 +874,58 @@ class SessionCore:
             part for part in response.parts if not (isinstance(part, ToolCallPart) and part.tool_call_id == call_id)
         ]
 
+    def _tool_returned(self, command: ToolReturned) -> None:
+        self._returns[command.tool_call_id] = command.request
+        self._settled_calls.add(command.tool_call_id)
+        if command.tool_call_id not in self._result_input:
+            # Settled without its result going out (cancelled, or the tool raised).
+            self._call_unanswered(command.tool_call_id)
+
+    def _call_unanswered(self, call_id: str) -> None:
+        """A call settled without its result reaching the provider.
+
+        A connection that answers a response's results with one reply, once it has all of them, gives none for that
+        response's calls then: not for the results already out, nor for those still to go (see `_input_sent`).
+        """
+        if (
+            not self._answers_per_response
+            or (response := self._call_response.get(call_id)) is None
+            or response.id in self._unanswered_responses
+        ):
+            return
+        self._unanswered_responses.add(response.id)
+        self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
+
+    def _result_unanswered(self, call_id: str) -> bool:
+        return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+
+    def _native_part(self, event: PartStartEvent | PartEndEvent) -> None:
+        """A native tool part (grounding, code execution) the connection streamed, numbered by its own counter.
+
+        It leads its response's message, as on a standard run, and streams under a stream index of its own: the
+        connection's numbering knows nothing of the session's, and a repeated index replaces the part at it.
+        """
+        if isinstance(event, PartStartEvent):
+            if (response := self._open_response(None)) is None:
+                # No single response under way to lead: the part isn't recorded, so it doesn't stream, nor does its end.
+                self._dropped_native.add(event.index)
+                return
+            self._dropped_native.discard(event.index)
+            response.native_parts.append(event.part)
+            index = self._native_indexes[event.index] = self._take_index()
+        elif event.index in self._dropped_native:
+            self._dropped_native.remove(event.index)
+            return
+        elif (index := self._native_indexes.pop(event.index, None)) is None:
+            # An end with no start: it closes nothing, so it gets an index of its own.
+            index = self._take_index()
+        self._effects.append(replace(event, index=index))
+
+    def _take_index(self) -> int:
+        index = self._next_index
+        self._next_index += 1
+        return index
+
     def _usage(self, event: SessionUsage) -> None:
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans
         if not event.response_scoped:
@@ -725,6 +939,7 @@ class SessionCore:
             response = self._open_response(None)
             if response is None:
                 self._carried_usage.append(event)
+                self._effects.append(UsageCounted(sum((usage.usage for usage in self._carried_usage), RequestUsage())))
                 return
         elif (response := self._responses.get(event.provider_response_id)) is None:
             # Naming a response the lifecycle gave a made-up id (its content named none): the one under way.
@@ -734,8 +949,10 @@ class SessionCore:
             response.reported_id = response.reported_id or event.provider_response_id
         elif response.status is not None:
             # Usage for a response already recorded counts toward the session, never toward its message.
+            self._effects.append(UsageCounted(response.usage + event.usage))
             return
         self._add_usage(response, event)
+        self._effects.append(UsageCounted(response.usage))
 
     @staticmethod
     def _add_usage(response: _Response, event: SessionUsage) -> None:
@@ -758,10 +975,61 @@ class SessionCore:
             # of the last turn, trailing its commit, not the start of the next one.
             if self._speech_segmented and not self._user_speaking:
                 self._input_audio.clear()
+        message = self._record_response(response, event)
+        self._effects.append(ResponseClosed(response.id, event.status, message, self._history_before(response)))
+        if event.status != 'lost' and not response.refused:
+            self._exchange_ending = event.status == 'cancelled'
+        if self._tracks_tool_rounds:
+            if message is not None and response.tool_calls:
+                self._unrounded[response.id] = list(response.tool_calls)
+            elif event.status == 'completed' and message is not None:
+                self._tool_rounds_over()
+
+    def _tool_rounds_over(self) -> None:
+        """The tool rounds before a response that called no tool are over: name their answered calls, once.
+
+        A call whose result didn't go out (or wasn't answered) never will be: it isn't named, and isn't kept.
+        """
+        calls: list[ToolCallPart] = []
+        for response_id, call_ids in list(self._unrounded.items()):
+            message = self._responses[response_id].message
+            waiting: list[str] = []
+            for call_id in call_ids:
+                result = self._result_input.get(call_id)
+                outcome = self._obligations.get(result) if result is not None else None
+                if outcome == 'answered' and message is not None:
+                    calls.extend(
+                        part
+                        for part in message.parts
+                        if isinstance(part, ToolCallPart) and part.tool_call_id == call_id
+                    )
+                elif outcome == 'pending' or (result is None and call_id not in self._settled_calls):
+                    waiting.append(call_id)
+            if waiting:
+                self._unrounded[response_id] = waiting
+            else:
+                del self._unrounded[response_id]
+        if calls:
+            self._effects.append(ToolRoundsOver(tuple(calls)))
+
+    def end_frame(self) -> None:
+        """The frame applied is over: an exchange a response ended in it, with nothing more owed, is over.
+
+        Taken at the end of the frame rather than as the response ends: the response that carries the exchange on
+        (see `ResponseStarted.continues`) starts in the same frame.
+        """
+        if (interrupted := self._exchange_ending) is None:
+            return
+        self._exchange_ending = None
+        if not self.wait_tokens():
+            self._effects.append(ExchangeOver(interrupted=interrupted))
+
+    def _record_response(self, response: _Response, event: ResponseEnded) -> ModelResponse | None:
+        """Record a response that ended, returning what history records for it, if anything."""
         interrupted = event.status in ('cancelled', 'lost')
         if response.refused:
             # (Its usage counted toward the session as it came.)
-            return
+            return None
         if (
             event.status == 'lost'
             and not response.parts
@@ -769,9 +1037,9 @@ class SessionCore:
             and response.usage == RequestUsage()
         ):
             # Cut off before it said anything or was billed: there is nothing to record.
-            return
+            return None
         parts = [*response.native_parts, *response.parts]
-        for item_id, part in response.closed_parts.items():
+        for item_id, (_, part) in response.closed_parts.items():
             if isinstance(part, SpeechPart):
                 self._recorded_items[item_id] = (response, next(i for i, p in enumerate(parts) if p is part))
                 self._recorded_items.move_to_end(item_id)
@@ -819,6 +1087,7 @@ class SessionCore:
         self._record_audio(response, message)
         for item_id, heard_ms in pending_cuts:
             self._cut_recorded_item(item_id, heard_ms)
+        return response.message
 
     def _cut_recorded_item(self, item_id: str, heard_ms: int) -> None:
         """Record that the listener heard only `heard_ms` of a recorded response's output item.
@@ -847,8 +1116,6 @@ class SessionCore:
         parts[index] = replace(part, interrupted_at_ms=heard_ms)
         # The same audio object, so the retained-audio budget still tracks it, and eviction still finds it.
         response.message = replace(message, parts=parts, state='interrupted')
-        if (provider_response_id := response.message.provider_response_id) is not None:
-            self.cut_responses[provider_response_id] = response.message
 
     def _open_response(self, response_id: str | None) -> _Response | None:
         """The open response content names; content naming none (Azure Voice Live's text) goes to the only one open."""
@@ -911,7 +1178,12 @@ class SessionCore:
             self._waiting_turn_audio_bytes -= len(turn.audio)
 
     def _drop_turn(self, turn_id: str) -> None:
-        self._release_turn_audio(self._turns.pop(turn_id))
+        turn = self._turns.pop(turn_id)
+        self._release_turn_audio(turn)
+        if turn.index is not None:
+            # It started streaming, so its part ends, though it never joined the conversation.
+            part = SpeechPart(speaker='user', transcript=turn.transcript.strip() or None)
+            self._effects.append(PartEndEvent(index=turn.index, part=part))
 
     def _turn_said(self, turn: _UserTurn) -> None:
         """All of a joined turn's audio is in: it is final once transcribed, or at once if nothing transcribes it."""
@@ -936,7 +1208,12 @@ class SessionCore:
         turn = self._turns.get(event.item_id) if event.item_id is not None else self._latest_turn()
         if turn is None or turn.message is not None:
             return
-        turn.transcript, _ = user_transcript_update(turn.transcript, event.text, cumulative=event.cumulative)
+        if turn.index is None:
+            turn.index = self._take_index()
+            self._effects.append(PartStartEvent(index=turn.index, part=SpeechPart(speaker='user', transcript='')))
+        turn.transcript, delta = user_transcript_update(turn.transcript, event.text, cumulative=event.cumulative)
+        if delta is not None:
+            self._effects.append(PartDeltaEvent(index=turn.index, delta=delta))
         if event.is_final:
             self._transcribed(turn, failed=False)
 
@@ -955,6 +1232,13 @@ class SessionCore:
         # The message holds the audio now (as WAV): the PCM goes, empty rather than `None` so nothing cuts it again.
         turn.audio = b''
         self._record_audio(turn, turn.message)
+        part = turn.message.parts[0]
+        assert isinstance(part, SpeechPart)
+        if turn.index is None:
+            # Nothing streamed for it (no transcript came): it starts and ends at once.
+            turn.index = self._take_index()
+            self._effects.append(PartStartEvent(index=turn.index, part=part))
+        self._effects.append(PartEndEvent(index=turn.index, part=part))
 
     def _turn_request(self, turn: _UserTurn, *, retained: bool = False) -> ModelRequest:
         """The request `turn` records; counted against `retain_audio_max_seconds` when `retained` in history."""
@@ -976,6 +1260,9 @@ class SessionCore:
 
     def _withdraw(self, input_ids: Sequence[InputId]) -> None:
         for input_id in input_ids:
+            if (call_id := self._result_call.get(input_id)) is not None:
+                # The provider is missing that result, so it won't answer the call's siblings either.
+                self._call_unanswered(call_id)
             # Dropped altogether, so what it carried (an evicted image, say) isn't kept alive for nothing.
             if (input_ := self._inputs.pop(input_id, None)) is not None and self._unplaced.pop(input_id, None) is None:
                 self._placed.remove(input_)
@@ -1067,12 +1354,9 @@ class SessionCore:
             # Recorded after something that joined the conversation later (a turn whose transcript came late).
             insort(queue, entry, key=lambda recorded: recorded.placed_at)
 
-    def _refuse_response(self, response_id: str | None) -> None:
-        response = self._responses.get(response_id) if response_id is not None else self._speaking_response()
-        if response is None:
-            # Refused at the first sign of it, its usage reported ahead of it.
-            self._next_refused = True
-        elif response.message is None:
+    def _refuse_response(self, response_id: str) -> None:
+        response = self._responses[response_id]
+        if response.message is None:
             response.refused = True
         elif not response.tool_calls:
             # Over within the frame it started in: recorded already, so taken back. (Its usage counted toward the
@@ -1152,16 +1436,34 @@ class SessionCore:
         """
         messages: list[ModelMessage] = list(self._seeded)
         for entry in self._placed:
-            if isinstance(entry, _Response):
-                if entry.message is not None:
-                    messages.append(entry.message)
-                    messages.extend(self._returns_of(entry))
-            elif isinstance(entry, _UserTurn):
-                messages.append(entry.message or self._turn_request(entry))
-            else:
-                messages.append(entry.request)
+            messages.extend(self._entry_messages(entry))
         messages.extend(input_.request for input_ in self._unplaced.values())
-        return messages
+        if not self._pruned_calls:
+            return messages
+        # Tool calls the connection deleted from the provider's conversation stay deleted on the new one.
+        return [kept for message in messages if (kept := self._without_pruned_calls(message)) is not None]
+
+    def _without_pruned_calls(self, message: ModelMessage) -> ModelMessage | None:
+        """`message` without the pruned tool calls it holds, or `None` if that leaves nothing.
+
+        A pruned call's result goes whole, with the content that followed it (an image the tool returned, say),
+        which the connection deleted with it.
+        """
+        pruned = self._pruned_calls
+
+        def is_pruned(part: ModelRequestPart | ModelResponsePart) -> bool:
+            # TODO(v3): remove `RetryPromptPart`; a history a caller passed can still hold one
+            return (
+                isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart))  # pyright: ignore[reportDeprecated]
+                and part.tool_call_id in pruned
+            )
+
+        if not any(is_pruned(part) for part in message.parts):
+            return message
+        if isinstance(message, ModelRequest):
+            return None
+        parts = [part for part in message.parts if not is_pruned(part)]
+        return replace(message, parts=parts) if parts else None
 
     def _held_from(self) -> int:
         """Where history is held back: the first entity not final yet (a response under way, a turn untranscribed)."""
@@ -1221,6 +1523,131 @@ class SessionCore:
         for call_id in response.tool_calls:
             if (request := self._returns.get(call_id)) is not None:
                 yield request
+
+    def take_effects(self) -> list[Effect]:
+        """What the `apply()` calls since the last take did that the session acts on, in order.
+
+        Part events stream as they are, with session-unique indices; the rest open and close `chat` spans and end
+        exchanges.
+        """
+        effects, self._effects = self._effects, []
+        return effects
+
+    def part_item(self, index: int) -> str | None:
+        """The output item a recent assistant part streamed (by stream index), if the provider named it."""
+        return self._part_items.get(index)
+
+    def _history_before(self, response: _Response) -> list[ModelMessage]:
+        """The conversation ahead of a response, as it stands: what it replied to.
+
+        A spoken turn still waiting for its transcript is in it with what it has.
+        """
+        messages: list[ModelMessage] = list(self._seeded)
+        for entry in self._placed[: self._placed.index(response)]:
+            messages.extend(self._entry_messages(entry))
+        return messages
+
+    def _entry_messages(self, entry: _Entry) -> Iterator[ModelMessage]:
+        if isinstance(entry, _Response):
+            if entry.message is not None:
+                yield entry.message
+                yield from self._returns_of(entry)
+        elif isinstance(entry, _UserTurn):
+            yield entry.message or self._turn_request(entry)
+        else:
+            yield entry.request
+
+    def conversation_so_far(self) -> list[ModelMessage]:
+        """The conversation as far as it went, for a tool's `RunContext.messages`.
+
+        Like `replayable_messages()`, with what a response under way has said and called so far: a tool runs while
+        the response that called it can still be under way.
+        """
+        messages: list[ModelMessage] = list(self._seeded)
+        for entry in self._placed:
+            if isinstance(entry, _Response) and entry.status is None:
+                parts = [*entry.native_parts, *entry.parts]
+                if entry.open_part is not None:
+                    parts.append(entry.open_part)
+                message = ModelResponse(
+                    parts=parts,
+                    model_name=entry.model_name,
+                    provider_name=self._provider_name,
+                    provider_url=self._provider_url,
+                    provider_response_id=entry.id if entry.provider_id else entry.reported_id,
+                )
+                fill_run_metadata(message, run_id=self._run_id, conversation_id=self._conversation_id)
+                messages.append(message)
+                messages.extend(self._returns_of(entry))
+            else:
+                messages.extend(self._entry_messages(entry))
+        messages.extend(input_.request for input_ in self._unplaced.values())
+        return messages
+
+    def speaking_part(self) -> int | None:
+        """The stream index of the part the latest response under way is streaming, if it is streaming one."""
+        response = self._speaking_response()
+        return response.open_part_index if response is not None and response.open_part is not None else None
+
+    def response_under_way(self) -> bool:
+        """Whether a response is under way that the session didn't refuse."""
+        return any(response.status is None and not response.refused for response in self._responses.values())
+
+    def call_waiting(self, call_id: str) -> bool:
+        """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
+        return call_id in self._undispatched
+
+    def recorded_response(self, response_id: str) -> tuple[ModelResponse | None, list[ModelMessage]]:
+        """What history records for a response that ended (if anything), and the conversation ahead of it."""
+        response = self._responses[response_id]
+        return response.message, self._history_before(response)
+
+    def take_call(self, call_id: str) -> bool:
+        """Whether the session is to run this tool call: the core accepted it, and nothing took it to run yet.
+
+        A call the core didn't accept (a resumed conversation's replay of it, a repeat, one made outside a
+        response) isn't run, as it isn't recorded.
+        """
+        if call_id not in self._undispatched:
+            return False
+        self._undispatched.remove(call_id)
+        return True
+
+    def requests_ahead(self) -> int:
+        """The requests still to come that are under way or asked for, which `usage.requests` doesn't count yet.
+
+        Each response under way that the session didn't refuse is one; so is each reply still owed for inputs that
+        asked for one. The tool results of one response get a single reply on a connection that answers them
+        together, and none once one of that response's calls settled without its result going out.
+        """
+        under_way = sum(1 for response in self._responses.values() if response.status is None and not response.refused)
+        replies = {self._reply_for(input_id) for input_id, outcome in self._obligations.items() if outcome == 'pending'}
+        return under_way + len(replies)
+
+    def result_asks_reply(self, call_id: str) -> bool:
+        """Whether sending this call's result asks for a reply `requests_ahead()` doesn't count yet."""
+        if not self._answers_per_response or (response := self._call_response.get(call_id)) is None:
+            return True
+        if response.id in self._unanswered_responses:
+            return False
+        return not any(
+            outcome == 'pending' and self._reply_for(input_id) == response.id
+            for input_id, outcome in self._obligations.items()
+        )
+
+    def _reply_for(self, input_id: InputId) -> InputId | str:
+        """What answers an input that asked for a reply: its own reply, or the one for its calling response's results."""
+        if (
+            not self._answers_per_response
+            or (call_id := self._result_call.get(input_id)) is None
+            or (response := self._call_response.get(call_id)) is None
+        ):
+            return input_id
+        return response.id
+
+    def response_unasked(self, response_id: str) -> bool:
+        """Whether a response answers nothing the session asked for (server-side voice activity detection started it)."""
+        return not self._responses[response_id].answers
 
     def reply_outstanding(self) -> bool:
         """Whether anything the model owes is still to come: what `wait_for_reply()` waits for, taken now."""

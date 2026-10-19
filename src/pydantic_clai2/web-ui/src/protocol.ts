@@ -209,11 +209,51 @@ export interface OrchestratorState {
   /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
   enabled: boolean
   running: boolean
+  /** The model its next turn runs on: the saved default a new session starts with, not a session's own choice. */
+  model: string | null
   items: Item[]
   questions: Questions[]
 }
 
 export type OrchestratorEvent = ChatMessage | OrchestratorState
+
+/** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
+export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
+
+/** A session open in this CLAI, named by its conversation ID. */
+export interface LiveEntry {
+  id: string
+  state: LiveState
+  title: string | null
+  workspace: string
+}
+
+/** A message about one live session, sent only to the connections watching it. */
+export type SessionMessage = (
+  | ChatMessage
+  | { type: 'status'; status: StatusInfo }
+  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | { type: 'title'; title: string | null }
+  | { type: 'task'; task: TaskEntry }
+  | { type: 'task_event'; id: string; messages: ItemMessage[] }
+) & {
+  /**
+   * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
+   * only because `reduce` also applies the orchestrator's chat messages, which have none.
+   */
+  session?: string
+}
+
+/** Sent over the WebSocket: the live sessions this page shows, replacing the ones it watched. */
+export interface WatchMessage {
+  type: 'watch'
+  sessions: string[]
+}
+
+/** What `POST /api/sessions/{id}/open` and `POST /api/sessions/new` answer: the live session's conversation ID. */
+export interface Opened {
+  id: string
+}
 
 export type ServerMessage =
   | {
@@ -234,21 +274,17 @@ export type ServerMessage =
       version: string
       update: UpdateInfo | null
     }
-  | ChatMessage
-  | { type: 'status'; status: StatusInfo }
+  | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
-  | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
   | { type: 'settings' }
-  | { type: 'task'; task: TaskEntry }
-  | { type: 'task_event'; id: string; messages: ItemMessage[] }
   | { type: 'update'; update: UpdateInfo | null }
+  | { type: 'live'; sessions: LiveEntry[] }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -257,6 +293,7 @@ export interface SessionEntry {
   title: string
   workspace: string
   updated_at: string
+  /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
   messages: number
   model: string | null

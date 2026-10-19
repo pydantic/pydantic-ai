@@ -33,6 +33,23 @@ class MCPSamplingModel(Model):
     allows an MCP server to make requests to a model by calling back to the MCP client that connected to it.
     """
 
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'service_tier',
+            'timeout',
+            'top_k',
+            'top_p',
+        }
+    )
+
     session: ServerSession
     """The MCP server session to use for sampling."""
 

@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    RetryFeedbackCause,
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
@@ -109,7 +110,7 @@ class Case:
     """One way a response can turn out unusable, and what the model is told about it."""
 
     id: str
-    cause: Literal['validation_error', 'no_output', 'model_retry']
+    cause: RetryFeedbackCause
     first_response: ModelResponse
     second_response: ModelResponse
     output_type: Any = str

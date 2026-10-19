@@ -65,8 +65,7 @@ def test_fractional_audio_seconds_survive_into_pricing():
 def test_audio_seconds_takes_part_in_usage_arithmetic():
     """Every way usage is combined carries the duration, or a run's cost reflects only part of it.
 
-    `RunUsage.__sub__` lists its fields explicitly, so a new field is easy to leave out there — and
-    usage attribution uses it to report a nested run's own usage.
+    Usage attribution uses `RunUsage.__sub__` to report a nested run's own usage.
     """
     first, second = RequestUsage(audio_seconds=1.5), RequestUsage(audio_seconds=2.25)
     assert (first + second).audio_seconds == 3.75

@@ -1449,6 +1449,20 @@ ToolRetryCause: TypeAlias = Literal['validation_error', 'model_retry', 'unknown_
   revealed by tool search or its capability hasn't been loaded.
 """
 
+RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_retry']
+"""What made a response unusable, recorded on [`RetryFeedbackPart.cause`][pydantic_ai.messages.RetryFeedbackPart.cause].
+
+- `'validation_error'`: the output failed validation against the expected schema. The feedback
+  quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
+  the user voice inside a `<validation_errors>` fence rather than in the harness's own.
+- `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
+- `'model_retry'`: an output validator, output function, or model hook raised
+  [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+
+The last two carry text the agent's author wrote knowing it would be shown, so they reach the
+model in the system voice.
+"""
+
 _TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
 
 
@@ -2101,18 +2115,11 @@ class RetryFeedbackPart:
 
     _: KW_ONLY
 
-    cause: Literal['validation_error', 'no_output', 'model_retry']
+    cause: RetryFeedbackCause
     """What made the response unusable, which decides the voice the feedback reaches the model in.
 
-    - `'validation_error'`: the output failed validation against the expected schema. The feedback
-      quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
-      the user voice inside a `<validation_errors>` fence rather than in the harness's own.
-    - `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
-    - `'model_retry'`: an output validator, output function, or model hook raised
-      [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
-
-    The last two carry text the agent's author wrote knowing it would be shown, so they reach the
-    model in the system voice.
+    See [`RetryFeedbackCause`][pydantic_ai.messages.RetryFeedbackCause] for the values and the voice each
+    one takes.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -3328,6 +3335,28 @@ class ModelResponse:
     Each response records the ref when it is produced; the last response is refreshed when the run
     ends. A run with no attached workspace carries the conversation's ref forward, unless it was
     started with `workspace='new'`. Not sent to the model.
+    """
+
+    history_digest: str | None = None
+    """A digest of the history this response was created from: the messages before it, as they were sent.
+
+    Set by models that continue server-side state, such as
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    so a later request continues from this response only while the messages before it are unchanged.
+    The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
+    the model, so they're left out, and changing them doesn't count as a change.
+    Not sent to the model.
+
+    Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
+    can use to test guesses at content that was redacted from it later, such as a PIN or an account
+    number. If you redact history after it was sent, give the model a key. Don't just clear this
+    field: a response without one is trusted and continued from, and the provider still holds the
+    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
+    nothing continues from them.
+
+    Computing it serializes the whole history before the response on every request that continues
+    server-side state, so it costs local work proportional to the conversation's length.
     """
 
     failed_attempts: list[ModelRequestAttempt] | None = None
@@ -5224,10 +5253,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The model exchange is over: generation and tool work are complete.
+    """The model exchange is over: what `RealtimeSession.wait_for_reply()` waits for has come.
 
-    It is synthesized by the session once no tool calls are still running and no further response is
-    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
+    input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
+    still under way. Input transcription can finish after this event. On WebRTC sidebands, provider playback
     can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 

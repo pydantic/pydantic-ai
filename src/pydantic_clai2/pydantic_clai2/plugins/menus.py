@@ -57,7 +57,7 @@ class FieldSource(Protocol):
         ...
 
     def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
+        """The active value as the user would type it; the typed editor opens holding it unless it is the row's `default`."""
         ...
 
     def problem(self, row: FieldRow, text: str) -> str | None:

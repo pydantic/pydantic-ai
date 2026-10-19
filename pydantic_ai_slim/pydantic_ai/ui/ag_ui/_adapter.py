@@ -773,6 +773,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 if part.scope != 'request':
                     system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
+                # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
+                # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
+                # as one user message instead of one per prompt.
+                flush_user_content()
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
                 else:
@@ -1077,6 +1081,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `RetryPromptPart` is dumped as the part it always meant, so a tool-bound one becomes a
           `ToolMessage` and reloads as a `ToolReturnPart` with `outcome='retried'`, and a tool-less
           one takes the `RetryFeedbackPart` path above.
+        - Each `UserPromptPart` is dumped as its own `UserMessage`, so a request's prompts reload as the
+          same separate parts rather than merged into one.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only

@@ -52,6 +52,7 @@ from .exceptions import (
     ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageExtractionFailedWarning,
     UsageLimitExceeded,
     UserError,
@@ -267,6 +268,7 @@ __all__ = (
     'SkipToolValidation',
     'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
+    'UnsupportedSettingWarning',
     'UsageLimitExceeded',
     'UserError',
     # messages
