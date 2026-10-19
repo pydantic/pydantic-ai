@@ -12,7 +12,7 @@ pre-agent-steps:
       #
       # CLAI 2.0's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0"
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0" "cryptography>=48.0.1"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
@@ -62,7 +62,6 @@ engine:
       protected-session-capture: true
     harness-script: |
       const { spawn } = require("child_process");
-      const { randomBytes } = require("crypto");
       const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
       const { homedir, tmpdir } = require("os");
       const { join } = require("path");
@@ -73,7 +72,45 @@ engine:
       // by the interpreter that owns the install, see LAUNCHER below -- so only the
       // arguments after it are forwarded.
       const commandArgs = process.argv.slice(3);
-      const log = message => process.stderr.write(`[pydantic-ai] ${message}\n`);
+      const log = message => process.stdout.write(`[pydantic-ai] ${message}\n`);
+
+      // AWF protects the captured file on the host, but a tool subprocess can
+      // reopen this process's stderr pipe through /proc while it shares our UID.
+      // The recorder signs each event with a key held in its non-dumpable process.
+      // A tool may append bytes to the pipe, but the parser cannot accept them as
+      // recorder events.
+      const RECORDING_MODULE = `import ctypes
+      import json
+      import os
+      import sys
+      from typing import TextIO
+
+      from cryptography.hazmat.primitives import serialization
+      from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+      if sys.platform == 'linux':
+          libc = ctypes.CDLL(None, use_errno=True)
+          if libc.prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE
+              raise OSError(ctypes.get_errno(), 'Unable to protect session signing key')
+      capture_fd = int(os.environ.pop('GH_AW_SESSION_CAPTURE_FD'))
+      os.set_inheritable(capture_fd, False)
+      output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
+      key = Ed25519PrivateKey.generate()
+      public_key = key.public_key().public_bytes(
+          encoding=serialization.Encoding.DER,
+          format=serialization.PublicFormat.SubjectPublicKeyInfo,
+      ).hex()
+      print(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e', file=output, flush=True)
+      sequence = 0
+
+
+      def write_event(event: dict[str, object], stream: TextIO | None = None) -> None:
+          global sequence
+          payload = json.dumps(event, separators=(',', ':'))
+          signature = key.sign(f'{sequence}\\n{payload}'.encode()).hex()
+          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=stream or output, flush=True)
+          sequence += 1
+      `;
 
       // `clai2 -a` takes one target, either an import path or a JSON/YAML agent
       // spec, and the spec format resolves capability names through a closed
@@ -102,6 +139,7 @@ engine:
       from pathlib import Path
 
       import pydantic_core
+      import gh_aw_recording as _recording
       from pydantic_ai import Agent, RunContext
       from pydantic_ai.capabilities import LocalWorkspace
       from pydantic_ai.messages import (
@@ -126,10 +164,6 @@ engine:
       from pydantic_ai_harness import Coder
       from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 
-      _capture_fd = os.environ.pop('GH_AW_SESSION_CAPTURE_FD', None)
-      _stdout = sys.__stdout__ if _capture_fd is None else os.fdopen(int(_capture_fd), 'w', encoding='utf-8', closefd=False)
-      # Remove the transient key before agent code can start child processes.
-      _frame_key = os.environ.pop('GH_AW_SESSION_FRAME_KEY')
       _run_id: str | None = None
       _sequence = 0
       _usage: RunUsage | None = None
@@ -159,11 +193,7 @@ engine:
               _sequence += 1
           if _session_id is not None:
               event['session_id'] = _session_id
-          print(
-              f'\\x1eGH-AW-SESSION/{_frame_key} ' + json.dumps(_json_value(event), separators=(',', ':')),
-              file=_stdout,
-              flush=True,
-          )
+          _recording.write_event(_json_value(event))
 
 
       def _flush_pending_native_return() -> None:
@@ -334,8 +364,7 @@ engine:
           _env: dict[str, str] = {
               name: value
               for name, value in os.environ.items()
-              if name != 'GH_AW_SESSION_FRAME_KEY'
-              and not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
+              if not any(fnmatchcase(name, pattern) for pattern in LLM_API_KEY_ENV_PATTERNS)
           }
           agent = Agent(name='coder', capabilities=[LocalWorkspace('.', env=_env), Coder()])
       elif _configured_agent.lower().endswith(('.json', '.yaml', '.yml')):
@@ -380,14 +409,12 @@ engine:
       from datetime import datetime, timezone
       from pathlib import Path
 
+      capture_fd = int(os.environ['GH_AW_SESSION_CAPTURE_FD'])
+      os.set_inheritable(capture_fd, False)
+      recorder_output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
+      import gh_aw_recording
+
       target, prompt_file, *cli_args = sys.argv[1:]
-      capture_fd = os.environ.get('GH_AW_SESSION_CAPTURE_FD')
-      recorder_output = (
-          sys.stdout
-          if capture_fd is None
-          else os.fdopen(int(capture_fd), 'w', encoding='utf-8', closefd=False)
-      )
-      frame_key = sys.stdin.readline().rstrip('\\n')
       module, separator, attribute = target.rpartition(':')
       original_stdout = sys.stdout
       stdout_sink = open(os.devnull, 'w')
@@ -422,7 +449,6 @@ engine:
 
           if not separator:
               raise ValueError(f'Expected MODULE:ATTRIBUTE, got {target!r}')
-          os.environ['GH_AW_SESSION_FRAME_KEY'] = frame_key
           agent_module = importlib.import_module(module)
           loaded = getattr(agent_module, attribute)
           from pydantic_ai import Agent
@@ -459,11 +485,7 @@ engine:
                       'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                   }
                   try:
-                      print(
-                          '\\x1eGH-AW-SESSION/' + frame_key + ' ' + json.dumps(event),
-                          file=recorder_output,
-                          flush=True,
-                      )
+                      gh_aw_recording.write_event(event, recorder_output)
                   except Exception as exc:
                       print(f'[pydantic-ai] Unable to emit the session result: {exc}', file=sys.stderr)
           finally:
@@ -523,14 +545,13 @@ engine:
         const agentTarget = DEFAULT_AGENT;
         const moduleDir = mkdtempSync(join(tmpdir(), "gh-aw-pydantic-ai-"));
         const agentModulePath = join(moduleDir, "gh_aw_agent.py");
+        const recordingModulePath = join(moduleDir, "gh_aw_recording.py");
         writeFileSync(agentModulePath, AGENT_MODULE, { mode: 0o600 });
         chmodSync(agentModulePath, 0o600);
+        writeFileSync(recordingModulePath, RECORDING_MODULE, { mode: 0o600 });
+        chmodSync(recordingModulePath, 0o600);
 
         const env = { ...process.env };
-        const frameKey = randomBytes(16).toString("hex");
-        // Linux retains exec environment bytes in /proc even after unsetenv.
-        // Deliver the key through stdin so tool subprocesses cannot recover it there.
-        delete env.GH_AW_SESSION_FRAME_KEY;
         env.GH_AW_SESSION_CAPTURE_FD = "3";
         // `pip install --user` puts `clai2` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
@@ -706,14 +727,12 @@ engine:
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
         // the CLI parses for itself.
-        process.stdout.write(`\x1eGH-AW-SESSION-KEY:${frameKey}\x1e\n`);
         const child = spawn(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
           cwd: workspace,
           env,
-          stdio: ["pipe", "inherit", "inherit", "pipe"],
+          stdio: ["ignore", 1, 1, "pipe"],
         });
-        child.stdin.end(`${frameKey}\n`);
-        child.stdio[3].pipe(process.stdout, { end: false });
+        child.stdio[3].pipe(process.stderr, { end: false });
         const status = await new Promise((resolve, reject) => {
           child.once("error", reject);
           child.once("close", (code, signal) => {
@@ -793,7 +812,7 @@ engine:
         fs.chmodSync(configPath, 0o600);
         console.log(`Wrote ${Object.keys(mcpServers).length} MCP server(s) to ${configPath}`);
     log-parser: |
-      const { collectAddMaskedValues, redactArtifactMaskedValues } = require('./add_mask_redaction.cjs');
+      const { createPublicKey, verify } = require('crypto');
 
       function parseLog(logContent) {
         const lines = logContent.split('\n');
@@ -801,22 +820,35 @@ engine:
           'session.init', 'user.message', 'assistant.message', 'assistant.reasoning',
           'tool.execution_start', 'tool.execution_complete', 'session.result',
         ]);
-        const header = lines.find(line => /^\x1eGH-AW-SESSION-KEY:[0-9a-f]{32}\x1e$/.test(line));
-        const frameKey = header?.match(/^\x1eGH-AW-SESSION-KEY:([0-9a-f]{32})\x1e$/)?.[1];
+        const header = lines.find(line => /^\x1eGH-AW-SESSION-PUBKEY:[0-9a-f]{88}\x1e$/.test(line));
         const records = [];
-        if (frameKey) {
+        if (header) {
+          let publicKey;
+          try {
+            publicKey = createPublicKey({
+              key: Buffer.from(header.slice(22, -1), 'hex'),
+              format: 'der',
+              type: 'spki',
+            });
+            if (publicKey.asymmetricKeyType !== 'ed25519') publicKey = undefined;
+          } catch { /* an invalid public key cannot authenticate events */ }
+          let expectedSequence = 0;
           for (const line of lines) {
-            const frame = line.match(/^\x1eGH-AW-SESSION\/([0-9a-f]{32}) (\{.*\})$/);
-            if (!frame || frame[1] !== frameKey) continue;
+            const frame = line.match(/^\x1eGH-AW-SESSION\/(0|[1-9][0-9]*)\/([0-9a-f]{128}) (\{.*\})$/);
+            if (!publicKey || !frame || Number(frame[1]) !== expectedSequence) continue;
             try {
-              const event = JSON.parse(frame[2]);
+              if (!verify(null, Buffer.from(`${frame[1]}\n${frame[3]}`), publicKey, Buffer.from(frame[2], 'hex'))) continue;
+              const event = JSON.parse(frame[3]);
               if (event && canonicalTypes.has(event.type) && event.data && typeof event.data === 'object' && !Array.isArray(event.data)) {
                 records.push(event);
+                expectedSequence += 1;
               }
             } catch { /* a malformed record does not discard adjacent events */ }
           }
         }
-        const logEntries = JSON.parse(redactArtifactMaskedValues(JSON.stringify(records), collectAddMaskedValues(logContent)));
+        // Unauthenticated pipe bytes and signed model content are data, not
+        // workflow commands that can select masks for canonical event fields.
+        const logEntries = records;
         const result = logEntries.findLast(event => event.type === 'session.result');
         const usage = result?.data?.usage || {};
         const parts = [];
@@ -836,8 +868,8 @@ engine:
 # Pydantic AI
 
 Shared engine definition for CLAI 2 headless execution. Import this file and set
-`engine: id: pydantic-ai`; the gh-aw protected session capture contract from
-github/gh-aw#69586, verified at `5e2b5d7`, is required.
+`engine: id: pydantic-ai`; a gh-aw release with the protected session capture contract
+described in `README.md` is required.
 
 ```yaml
 imports:
@@ -853,9 +885,10 @@ tools are added alongside existing tools. The workflow's model and proxy routing
 apply to all target forms.
 
 The recorder sends assistant messages, reasoning, tool calls and results (including
-native tools), and usage through a dedicated descriptor. gh-aw captures the stream outside
-the sandbox and publishes it after AWF exits; the parser selects its framed records and
-writes `agent-session.jsonl`, and the conclusion collects `usage/aw_session.jsonl`.
+native tools), and usage through a non-inheritable descriptor forwarded to engine stderr.
+Ordinary child stdout and stderr go to engine stdout. After AWF exits, gh-aw selects the
+protected engine-stderr bytes from AWF's attempt metadata; the parser selects their framed
+records and writes `agent-session.jsonl`, and the conclusion collects `usage/aw_session.jsonl`.
 Import failures and interrupted runs keep their actual failure outcome, without inferred
 turns or tool completions. See `README.md` for setup, credentials, and observability.
 -->
