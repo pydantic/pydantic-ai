@@ -13,6 +13,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -1190,6 +1191,31 @@ class TestBackgroundTools:
         )
 
         @agent.tool_plain(metadata={'background': 'optional'})
+        async def slow_research(query: str) -> str:
+            return f'researched {query}'
+
+        result = await agent.run('go')
+
+        assert _ack_seen(result.all_messages())
+        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: researched topic')
+
+    @pytest.mark.parametrize('set_metadata_first', [True, False])
+    @pytest.mark.parametrize(
+        ('background', 'args'),
+        [(True, '{"query": "topic"}'), ('optional', '{"query": "topic", "run_in_background": true}')],
+    )
+    async def test_set_tool_metadata_marks_tools_as_background(
+        self, background: bool | str, args: str, set_metadata_first: bool
+    ) -> None:
+        capabilities: list[AbstractCapability[Any]] = [
+            SetToolMetadata(tools=['slow_research'], background=background),
+            BackgroundTools(),
+        ]
+        if not set_metadata_first:
+            capabilities.reverse()
+        agent = Agent(_model_calling('slow_research', args), capabilities=capabilities)
+
+        @agent.tool_plain
         async def slow_research(query: str) -> str:
             return f'researched {query}'
 
