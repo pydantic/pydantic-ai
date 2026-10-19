@@ -104,6 +104,8 @@ _LIFECYCLE_TIMEOUT = 60.0
 _TEARDOWN_TIMEOUT = 30.0
 # Bound the wait for the SDK's event connection to settle before its client is closed.
 _EVENT_CONNECT_GRACE = 6.0
+# Bound the wait for a finished command's stored logs to catch up with its exit status.
+_LOGS_SETTLE_GRACE = 5.0
 # Pause between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # Streamed logs are only a timeout preview; finished output comes from stored logs.
@@ -323,19 +325,36 @@ class _DaytonaProcess:
         # The streamed copy is only for partial output on a timeout: SDK 0.198.0's stream
         # demultiplexer misreads a stream prefix split across websocket frames, corrupting output
         # over a few KB. The finished command's stored logs are exact.
-        try:
-            logs = await self._process.get_session_command_logs(
-                self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
-            )
-        except Exception as error:
-            await _raise_failure(self._sandbox, error, 'Could not read the command output')
-        if f'{self.marker}-cwd' in (logs.stderr or ''):
+        stdout, stderr = await self._stored_logs(exit_code)
+        if f'{self.marker}-cwd' in stderr:
             return CommandResult(exit_code=exit_code, stdout='', stderr=f'{self.marker}-cwd')
         return CommandResult(
             exit_code=exit_code,
-            stdout=_until_marker([logs.stdout or ''], self.marker),
-            stderr=_until_marker([logs.stderr or ''], self.marker),
+            stdout=_until_marker([stdout], self.marker),
+            stderr=_until_marker([stderr], self.marker),
         )
+
+    async def _stored_logs(self, exit_code: int) -> tuple[str, str]:
+        """The finished command's stored stdout and stderr, once they are complete.
+
+        The stored logs can trail the exit status; the wrapper's end markers show they are complete.
+        """
+        settle_deadline = anyio.current_time() + _LOGS_SETTLE_GRACE
+        while True:
+            try:
+                logs = await self._process.get_session_command_logs(
+                    self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
+                )
+            except Exception as error:
+                await _raise_failure(self._sandbox, error, 'Could not read the command output')
+            stdout, stderr = logs.stdout or '', logs.stderr or ''
+            if f'{self.marker}-cwd' in stderr or (self.marker in stdout and self.marker in stderr):
+                return stdout, stderr
+            if anyio.current_time() >= settle_deadline:
+                if exit_code == 0:
+                    raise WorkspaceError('Daytona returned incomplete output for a finished command.')
+                return stdout, stderr  # The wrapper itself was killed, so no marker is coming.
+            await anyio.sleep(0.2)
 
     async def kill(self) -> None:
         """Delete the Daytona process session, which kills its command."""

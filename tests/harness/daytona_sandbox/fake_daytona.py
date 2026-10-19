@@ -108,7 +108,8 @@ class FakeProcess:
         if not self.owner.process_stdout and not self.owner.process_stderr and not self.owner.process_hangs:
             output, self.owner.process_exit_code = self.owner.responder(self.owner.process_command, timeout)
             self.owner.process_stdout = self.owner.process_reply = [output]
-        return SimpleNamespace(cmd_id='cmd-1')
+        self.owner.session_commands[f'{session_id}-cmd'] = self.owner.process_command
+        return SimpleNamespace(cmd_id=f'{session_id}-cmd')
 
     async def get_session_command_logs_async(
         self,
@@ -145,9 +146,13 @@ class FakeProcess:
             raise self.owner.process_stored_logs_error
         stdout = self.owner.process_stored_stdout
         stderr = self.owner.process_stored_stderr
+        # The wrapper prints its end marker last on both streams; Daytona can store it late.
+        marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.session_commands[command_id])
+        end = marker.group() if marker is not None and not self.owner.process_stored_lag else ''
+        self.owner.process_stored_lag = max(self.owner.process_stored_lag - 1, 0)
         return SimpleNamespace(
-            stdout=''.join(self.owner.process_stdout) if stdout is None else stdout,
-            stderr=''.join(self.owner.process_stderr) if stderr is None else stderr,
+            stdout=(''.join(self.owner.process_stdout) if stdout is None else stdout) + end,
+            stderr=(''.join(self.owner.process_stderr) if stderr is None else stderr) + end,
         )
 
     async def get_session_command(
@@ -469,6 +474,8 @@ class FakeSandbox:
         self.responder: Callable[[str, int | None], tuple[str, int]] = lambda command, timeout: ('', 0)
         self.process_sessions: set[str] = set()
         self.process_command = ''
+        # Each session command's line, by command ID, for its stored logs.
+        self.session_commands: dict[str, str] = {}
         self.process_stdout: list[str] = []
         self.process_stderr: list[str] = []
         self.process_reply: list[str] | None = None
@@ -482,6 +489,8 @@ class FakeSandbox:
         self.process_status_gate: asyncio.Event | None = None
         self.process_logs_error: Exception | None = None
         # What the non-follow `get_session_command_logs` returns, when not the streamed chunks joined.
+        # How many stored-log reads come back before the wrapper's end markers are stored.
+        self.process_stored_lag = 0
         self.process_stored_stdout: str | None = None
         self.process_stored_stderr: str | None = None
         self.process_stored_logs_error: Exception | None = None

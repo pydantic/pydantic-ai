@@ -328,6 +328,35 @@ class TestCommands:
         with pytest.raises(RuntimeError, match='stored logs failed'):
             await backend.run(['true'])
 
+    async def test_output_waits_for_stored_logs_to_catch_up(self, fake_daytona: FakeDaytona) -> None:
+        # Daytona can report the exit status before it has stored the command's last output.
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['complete out']
+        sandbox.process_stderr = ['complete err']
+        sandbox.process_stored_lag = 2
+        result = await backend.run(['true'])
+        assert (result.exit_code, result.stdout, result.stderr) == (0, 'complete out', 'complete err')
+
+    @pytest.mark.parametrize('exit_code', [0, 137])
+    async def test_stored_logs_that_never_complete(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, exit_code: int
+    ) -> None:
+        # A successful wrapper always prints its markers, so their absence means lost output; a
+        # killed wrapper never prints them, so what was stored is all there is.
+        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._LOGS_SETTLE_GRACE', 0.05)
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['partial']
+        sandbox.process_exit_code = exit_code
+        sandbox.process_stored_lag = 1000
+        if exit_code == 0:
+            with pytest.raises(WorkspaceError, match=r'^Daytona returned incomplete output for a finished command\.$'):
+                await backend.run(['true'])
+        else:
+            result = await backend.run(['true'])
+            assert (result.exit_code, result.stdout) == (exit_code, 'partial')
+
     async def test_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         fake_daytona.sandboxes[0].process_logs_error = RuntimeError('logs failed')
