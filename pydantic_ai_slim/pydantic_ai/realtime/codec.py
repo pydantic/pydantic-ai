@@ -514,7 +514,7 @@ class RealtimeConnection(ABC):
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """End the provider session, yielding the usage the provider reports only as it ends.
 
-        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+        Private: internal plumbing between the session and the built-in connections.
 
         The session iterates this once while closing, after
         it has stopped reading the connection and before it reports the session's usage, whenever the
@@ -536,7 +536,7 @@ class RealtimeConnection(ABC):
     def _stop_reading(self) -> Sequence[LifecycleEvent]:
         """The lifecycle events of what the provider has, but the session won't read about, as it closes.
 
-        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+        Private: internal plumbing between the session and the built-in connections.
 
         The session calls this once while closing, after it has stopped reading the connection and before it settles
         its history. A provider that acknowledges what it was sent only later (the OpenAI protocol's audio commit) has
