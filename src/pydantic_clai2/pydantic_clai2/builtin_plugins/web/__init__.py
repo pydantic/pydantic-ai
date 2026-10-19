@@ -193,9 +193,11 @@ class WebPlugin(Plugin[WebSettings]):
         self.service.turn_ended()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        # Before the page and the orchestrator follow the switch, so they find the workspace naming it.
-        await conversation_switched(self.service, event)
-        self.service.conversation_changed(event)
+        try:
+            # Before the page and the orchestrator follow the switch, so they find the workspace naming it.
+            await conversation_switched(self.service, event)
+        finally:
+            self.service.conversation_changed(event)
 
     async def on_command_end(self, event: CommandEnd) -> None:
         self.service.command_ended(event)

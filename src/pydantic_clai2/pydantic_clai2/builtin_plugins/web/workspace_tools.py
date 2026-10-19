@@ -50,6 +50,7 @@ class _Link:
 
     view: SessionView
     task: asyncio.Task[None]
+    live_id: str
 
 
 def _cut(text: str, chars: int) -> str:
@@ -143,13 +144,13 @@ class WorkspaceTools:
         """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
         async with self._locks[workspace_id]:
             link = self.links.get(workspace_id)
-            if link is not None and not link.view.closed and await self._in_checkout(workspace_id, link.view):
+            if link is not None and not link.view.closed and await self._in_checkout(workspace_id, link.live_id):
                 return link.view
             await self.disconnect(workspace_id)
             channel = await workspace_session(self.service, workspace_id, start=start)
             view = SessionView(LocalClient(self.service, channel.session.id))
             task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
-            self.links[workspace_id] = _Link(view=view, task=task)
+            self.links[workspace_id] = _Link(view=view, task=task, live_id=channel.session.id)
             with anyio.move_on_after(CONNECT_TIMEOUT):
                 await view.ready()
             if view.session is None:
@@ -157,10 +158,16 @@ class WorkspaceTools:
                 raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
             return view
 
-    async def _in_checkout(self, workspace_id: str, view: SessionView) -> bool:
-        """Whether the followed session still works in the checkout: `/workspace` or a `/resume` there may move it."""
-        session = view.session
-        return session is not None and works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
+    async def _in_checkout(self, workspace_id: str, live_id: str) -> bool:
+        """Whether the live session still works in the checkout, which `/workspace` or a `/resume` there may change.
+
+        The session itself, not the view: it moves before its snapshot reaches the view.
+        """
+        try:
+            session = self.service.live.get(live_id)
+        except LookupError:
+            return False
+        return works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
