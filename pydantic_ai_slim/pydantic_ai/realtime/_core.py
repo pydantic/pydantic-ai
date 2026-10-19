@@ -455,7 +455,12 @@ class SessionCore:
 
         self._placed: list[_Entry] = []
         """Entities in the order they joined the provider's conversation."""
+        self._final_count = 0
+        """How many entities lead `_placed` that are final, as far as `_held_from` looked: an entity that is final
+        stays final, so it resumes from there rather than walk the whole conversation on every frame."""
         self._responses: dict[str, _Response] = {}
+        self._open_responses: dict[str, _Response] = {}
+        """The responses under way, in the order they started: those of `_responses` whose `status` is `None`."""
         self._turns: dict[str, _UserTurn] = {}
         self._replayed_items: set[str] = set()
         """Item ids of a resumed conversation's replay, whose content the core already has."""
@@ -695,7 +700,7 @@ class SessionCore:
         carried, self._carried_usage = self._carried_usage, []
         for usage in carried:
             self._add_usage(response, usage)
-        self._responses[event.response_id] = response
+        self._responses[event.response_id] = self._open_responses[event.response_id] = response
         if event.continues is not None:
             self._continued_by[event.continues] = event.response_id
         self._place(response)
@@ -860,6 +865,7 @@ class SessionCore:
                         tool_name=call.tool_name,
                         content=INTERRUPTED_TOOL_RETURN_CONTENT,
                         tool_call_id=call_id,
+                        tool_kind=call.tool_kind,
                         outcome='interrupted',
                     )
                 ]
@@ -965,6 +971,7 @@ class SessionCore:
         response = self._responses[event.response_id]
         self._close_part(response)
         response.status = event.status
+        self._open_responses.pop(response.id, None)
         answered_calls_only = (
             bool(response.parts)
             and not response.native_parts
@@ -1099,8 +1106,8 @@ class SessionCore:
         """
         if (recorded := self._recorded_items.get(item_id)) is None:
             if any(
-                response.status is None and (item_id == response.open_part_item or item_id in response.closed_parts)
-                for response in self._responses.values()
+                item_id == response.open_part_item or item_id in response.closed_parts
+                for response in self._open_responses.values()
             ):
                 # Still being generated: cut once it is recorded, however it ends.
                 self._pending_cuts[item_id] = min(heard_ms, self._pending_cuts.get(item_id, heard_ms))
@@ -1122,12 +1129,12 @@ class SessionCore:
         if response_id is not None:
             response = self._responses.get(response_id)
             return response if response is not None and response.status is None else None
-        open_responses = [response for response in self._responses.values() if response.status is None]
-        return open_responses[0] if len(open_responses) == 1 else None
+        if len(self._open_responses) != 1:
+            return None
+        return next(iter(self._open_responses.values()))
 
     def _speaking_response(self) -> _Response | None:
-        open_responses = [response for response in self._responses.values() if response.status is None]
-        return open_responses[-1] if open_responses else None
+        return next(reversed(self._open_responses.values()), None)
 
     # --- spoken turns -------------------------------------------------------------------------------
 
@@ -1265,7 +1272,7 @@ class SessionCore:
                 self._call_unanswered(call_id)
             # Dropped altogether, so what it carried (an evicted image, say) isn't kept alive for nothing.
             if (input_ := self._inputs.pop(input_id, None)) is not None and self._unplaced.pop(input_id, None) is None:
-                self._placed.remove(input_)
+                self._unplace(input_)
         self._settle(input_ids, 'void')
 
     def _settle(self, input_ids: Sequence[InputId], outcome: _Obligation) -> None:
@@ -1336,12 +1343,20 @@ class SessionCore:
         if before is not None and before.status is None:
             assert not isinstance(entry, _Input)
             entry.placed_at = before.placed_at - 0.5
+            # (`before` is under way, so not final: it sits at or past `_final_count`, as does what goes in ahead of it.)
             self._placed.insert(self._placed.index(before), entry)
             return
         if not isinstance(entry, _Input):
             self._placements += 1
             entry.placed_at = self._placements
         self._placed.append(entry)
+
+    def _unplace(self, entry: _Entry) -> None:
+        """`entry` leaves the conversation (withdrawn, taken back, or moved)."""
+        index = self._placed.index(entry)
+        del self._placed[index]
+        if index < self._final_count:
+            self._final_count -= 1
 
     def _record_audio(self, entry: _Response | _UserTurn, message: ModelMessage) -> None:
         """`entry` is recorded as `message`: if that has audio, it is evicted in conversation order."""
@@ -1363,7 +1378,7 @@ class SessionCore:
             # session as it came; one that made tool calls stays, as its calls are refused one by one.)
             response.refused = True
             response.message = None
-            self._placed.remove(response)
+            self._unplace(response)
             for item_id in [item_id for item_id, (recorded, _) in self._recorded_items.items() if recorded is response]:
                 del self._recorded_items[item_id]
             if response in self._recorded_audio:
@@ -1373,7 +1388,7 @@ class SessionCore:
                 self.requests -= 1
 
     def _lose_open_responses(self) -> None:
-        for response in [response for response in self._responses.values() if response.status is None]:
+        for response in list(self._open_responses.values()):
             self._end_response(ResponseEnded(response_id=response.id, status='lost'))
 
     def _close(self) -> None:
@@ -1463,12 +1478,15 @@ class SessionCore:
 
     def _held_from(self) -> int:
         """Where history is held back: the first entity not final yet (a response under way, a turn untranscribed)."""
-        for index, entry in enumerate(self._placed):
+        placed = self._placed
+        while self._final_count < len(placed):
+            entry = placed[self._final_count]
             if (isinstance(entry, _Response) and entry.status is None) or (
                 isinstance(entry, _UserTurn) and entry.message is None
             ):
-                return index
-        return len(self._placed)
+                break
+            self._final_count += 1
+        return self._final_count
 
     def transcript_holding_history(self) -> str | None:
         """The spoken turn waiting for its transcript that holds back a message recorded after it, if one does."""
@@ -1512,7 +1530,7 @@ class SessionCore:
             entry for entry in self._placed[index + 1 :] if isinstance(entry, _UserTurn) and entry.message is not None
         ]
         for turn in held:
-            self._placed.remove(turn)
+            self._unplace(turn)
             self._place(turn, before=response)
 
     def _returns_of(self, response: _Response) -> Iterator[ModelRequest]:
@@ -1587,7 +1605,7 @@ class SessionCore:
 
     def response_under_way(self) -> bool:
         """Whether a response is under way that the session didn't refuse."""
-        return any(response.status is None and not response.refused for response in self._responses.values())
+        return any(not response.refused for response in self._open_responses.values())
 
     def call_waiting(self, call_id: str) -> bool:
         """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
@@ -1616,7 +1634,7 @@ class SessionCore:
         asked for one. The tool results of one response get a single reply on a connection that answers them
         together, and none once one of that response's calls settled without its result going out.
         """
-        under_way = sum(1 for response in self._responses.values() if response.status is None and not response.refused)
+        under_way = sum(1 for response in self._open_responses.values() if not response.refused)
         replies = {self._reply_for(input_id) for input_id, outcome in self._obligations.items() if outcome == 'pending'}
         return under_way + len(replies)
 
@@ -1653,9 +1671,7 @@ class SessionCore:
         """What the model owes right now, as tokens a waiter follows until they all resolve (see `still_owed`)."""
         epoch = self._epoch
         tokens = {Owed('input', str(input_id), epoch) for input_id, o in self._obligations.items() if o == 'pending'}
-        tokens |= {
-            Owed('response', response_id, epoch) for response_id, r in self._responses.items() if r.status is None
-        }
+        tokens |= {Owed('response', response_id, epoch) for response_id in self._open_responses}
         tokens |= {
             Owed('call', call_id, epoch)
             for call_id, response in self._call_response.items()

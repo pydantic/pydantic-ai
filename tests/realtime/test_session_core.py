@@ -1537,3 +1537,56 @@ def test_a_native_part_with_no_response_to_join_streams_neither_its_start_nor_it
     call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
     session_core = feed(core(), PartStartEvent(index=7, part=call), PartEndEvent(index=7, part=call))
     assert [type(effect).__name__ for effect in session_core.take_effects()] == []
+
+
+class _CountingPlaced(list[Any]):
+    """Counts the conversation entries the core looks at, however it reaches them."""
+
+    visits = 0
+
+    def __iter__(self) -> Iterator[Any]:
+        for entry in super().__iter__():
+            type(self).visits += 1
+            yield entry
+
+    def __getitem__(self, index: Any) -> Any:
+        item = super().__getitem__(index)
+        type(self).visits += len(item) if isinstance(index, slice) else 1
+        return item
+
+
+class _CountingResponses(dict[str, Any]):
+    """Counts the responses the core looks at by walking them, rather than by id."""
+
+    visits = 0
+
+    def values(self) -> Any:
+        for response in super().values():
+            type(self).visits += 1
+            yield response
+
+
+def test_a_frame_costs_the_same_however_long_the_conversation_got() -> None:
+    """What the session reads off the core after every frame doesn't walk the turns and responses that finished."""
+    session_core = core()
+    session_core._placed = _CountingPlaced()  # pyright: ignore[reportPrivateUsage]
+    session_core._responses = _CountingResponses()  # pyright: ignore[reportPrivateUsage]
+    costs: list[int] = []
+    for turn in range(30):
+        *answering, end = _answered_turn(turn)
+        feed(session_core, *answering)
+        _CountingPlaced.visits = _CountingResponses.visits = 0
+        # A frame with content naming no response, and what the session reads off the core after each frame.
+        feed(session_core, said(None, ' More.'))
+        assert session_core.transcript_holding_history() is None
+        assert session_core.response_holding_turns() is None
+        assert session_core.speaking_part() is not None
+        costs.append(_CountingPlaced.visits + _CountingResponses.visits)
+        feed(session_core, end)
+
+    assert len(session_core.all_messages()) == 60
+    # Past the first, each frame also passes the answer the turn before finished, once, and nothing older.
+    assert costs == [5] + [6] * 29
+    _CountingPlaced.visits = _CountingResponses.visits = 0
+    _ = list(session_core._placed), list(session_core._responses.values())  # pyright: ignore[reportPrivateUsage]
+    assert (_CountingPlaced.visits, _CountingResponses.visits) == (60, 30), 'the counters see a walk'
