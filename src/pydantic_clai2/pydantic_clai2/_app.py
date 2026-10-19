@@ -185,24 +185,26 @@ async def open_stock_agent(
     )
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
+    root = Path(workspace).resolve()
     with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
         console = Console(file=sink, force_terminal=False)
         store = SettingsStore(Path(config) / 'config.db')
         loader = PluginLoader[None](
             store=store,
             console=console,
-            commands=Commands(),
+            commands=Commands(workspace=lambda: root),
             session_start=lambda: SessionStart(
                 agent=template, settings=Settings(model=model if isinstance(model, str) else None)
             ),
             builtin=declarations,
+            workspace=lambda: root,
         )
         models = _ModelResolver(console=console, store=store, plugins=loader.model_providers)
         try:
             for declaration in declarations:
                 await loader.load(declaration.id)
             bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
-            if (local := local_workspace(bound, workspace)) is not None:
+            if (local := local_workspace(bound, root)) is not None:
                 bound.append(local)
             agent = template.with_plugins(
                 [
@@ -369,6 +371,7 @@ async def chat(
                             launched=shell.sessions.launched,
                             transcript=shell.transcript,
                             load_plugins=load_plugins,
+                            workspace=Path(shell.session.workspace),
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
@@ -553,8 +556,12 @@ def create_shell(
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
     load_plugins: bool = True,
+    workspace: Path | None = None,
 ) -> '_Shell[DepsT, OutputT]':
-    """Build shared session services, without attaching terminal input in headless mode."""
+    """Build shared session services, without attaching terminal input in headless mode.
+
+    `workspace` is the directory the session works in, by default the current one.
+    """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
         if settings is not None
@@ -571,6 +578,7 @@ def create_shell(
         message_history=message_history,
         conversations=conversations,
         summary=summary,
+        workspace=workspace,
     )
     session.model = settings.model
     session.model_chosen = 'model' in settings.model_fields_set
@@ -617,7 +625,7 @@ def create_shell(
         return model_settings_menu(store, model, settings_as=context.settings_model(model))
 
     sessions = Sessions(session=session, store=conversations, context=context, launched=launched)
-    commands = Commands()
+    commands = Commands(workspace=lambda: Path(session.workspace))
     commands.register(
         Command(
             name='effort',
@@ -818,6 +826,7 @@ def create_shell(
         sessions=sessions,
         setting=context.setting,
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
+        workspace=lambda: Path(session.workspace),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
@@ -1344,7 +1353,9 @@ class _Shell(Generic[DepsT, OutputT]):
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
             async with self.forks.busy(), self._released():
-                context = await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+                context = await run_shell_command(
+                    command, console=self.console, interrupts=self.interrupts, cwd=Path(self.session.workspace)
+                )
                 await self.session.commit_messages(
                     [*self.session.messages, ModelRequest(parts=[UserPromptPart(context)])]
                 )

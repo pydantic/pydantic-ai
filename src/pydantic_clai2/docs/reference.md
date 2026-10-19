@@ -1164,7 +1164,7 @@ Done (0.1s)
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory. Stdout and stderr are captured
+available. It runs in the session's directory. Stdout and stderr are captured
 separately and displayed as they arrive. CLAI reports `Done` or the exit code
 with the elapsed time.
 

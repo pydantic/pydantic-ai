@@ -124,9 +124,9 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
 class WorkspacelessCapability(DynamicCapability[DepsT]):
     """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.
 
-    A plain capability function might return a sandbox, so CLAI attaches its launch directory only once the
+    A plain capability function might return a sandbox, so CLAI attaches the session's directory (`Session.workspace`) only once the
     run's capability functions have resolved, after every `for_run`; harness `Skills` reads its libraries
-    there and finds no workspace. For this one, CLAI attaches the launch directory before `for_run`, and a
+    there and finds no workspace. For this one, CLAI attaches it before `for_run`, and a
     run whose function does return a workspace fails.
     """
 

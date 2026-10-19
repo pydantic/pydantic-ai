@@ -130,7 +130,7 @@ class CoderSettings(BaseModel):
     def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
         """`skill_folders` with `~/` expanded, each once, in precedence order.
 
-        Each relative folder is followed by the same folder in each of `parents`: the launch directory's
+        Each relative folder is followed by the same folder in each of `parents`: the session directory's
         parents up to the git root, nearest first, so launching in a subdirectory still finds the
         repository's skills.
         """
@@ -272,7 +272,7 @@ class _ProjectSkills(WrapperCapability[DepsT]):
     """
 
     project: LocalWorkspaceBackend = field(kw_only=True)
-    """The directory CLAI started in, where the commands' skills are read."""
+    """The session's directory (`PluginHost.workspace`), where the commands' skills are read."""
 
     async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
         if not ctx.workspace.attached:
@@ -302,9 +302,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         The model's catalog is read again at the start of every run, so it lists a skill added since;
         its command arrives when the plugin loads again.
         """
-        cwd = Path(await anyio.Path.cwd())
-        # The launch directory itself stays relative, resolved by the workspace as before.
-        _, *parents = await anyio.to_thread.run_sync(repository_directories, cwd)
+        directory = self.host.workspace
+        # The session's directory itself stays relative, resolved by the workspace as before.
+        _, *parents = await anyio.to_thread.run_sync(repository_directories, directory)
         libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()), parents=parents)
         # Without a local workspace (Windows), the folders cannot be read here or by the run.
         if not libraries or not supports_local_workspace():
@@ -319,7 +319,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             unknown_names='skip',
         )
         listed = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
-        workspace = LocalWorkspaceBackend(cwd)
+        workspace = LocalWorkspaceBackend(directory)
         try:
             catalog = await listed.load(workspace)
         except (UserError, ValueError, OSError) as exc:
