@@ -224,10 +224,11 @@ def _format_messages(
                 elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and _is_legacy_summary(part)):
                     elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart):
-                    content_str = tool_return_text(part)
-                    if tool_return_max_chars is not None:
-                        content_str = _truncate_with_marker(content_str, tool_return_max_chars)
-                    elements.append(_message_element('tool_return', content_str, name=part.tool_name))
+                    elements.append(
+                        _message_element(
+                            'tool_return', tool_return_text(part), name=part.tool_name, max_chars=tool_return_max_chars
+                        )
+                    )
         else:
             for part in msg.parts:
                 if isinstance(part, TextPart):
@@ -242,8 +243,12 @@ def _format_messages(
 _TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return', 'summary']
 """The `role` of a `<message>` element in the summarizer transcript."""
 
-_TRANSCRIPT_TAG = re.compile(r'<(/?)(messages?|previous-summary)\b', re.IGNORECASE)
-"""An opening or closing tag of the summarizer transcript's own markup, in any case."""
+_TRANSCRIPT_TAG_OPENER = re.compile(r'<(?=\s*/?\s*(?:messages?|previous-summary)(?:[\s/>]|$))', re.IGNORECASE)
+"""The `<` of an opening or closing tag of the summarizer transcript's own markup.
+
+Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as in core's
+`_framing`; a longer tag name that merely starts with one of these doesn't.
+"""
 
 
 def _neutralize_transcript_tags(content: str) -> str:
@@ -252,13 +257,21 @@ def _neutralize_transcript_tags(content: str) -> str:
     Content then can't open or close a message, the transcript, or the previous summary.
     """
     # TODO(#10547): switch to `_framing.wrap()` once it lands.
-    return _TRANSCRIPT_TAG.sub(lambda match: f'&lt;{match.group(1)}{match.group(2)}', content)
+    return _TRANSCRIPT_TAG_OPENER.sub('&lt;', content)
 
 
-def _message_element(role: _TranscriptRole, content: str, *, name: str | None = None) -> str:
-    """One transcript entry: *content* in a `<message>` element tagged with its *role* and, for tools, *name*."""
+def _message_element(
+    role: _TranscriptRole, content: str, *, name: str | None = None, max_chars: int | None = None
+) -> str:
+    """One transcript entry: *content* in a `<message>` element tagged with its *role* and, for tools, *name*.
+
+    *content* is escaped before it is cut to *max_chars*, so the cap bounds what the summarizer receives.
+    """
     name_attr = f' name="{html.escape(name)}"' if name is not None else ''
-    return f'<message role="{role}"{name_attr}>\n{_neutralize_transcript_tags(content)}\n</message>'
+    body = _neutralize_transcript_tags(content)
+    if max_chars is not None:
+        body = _truncate_with_marker(body, max_chars)
+    return f'<message role="{role}"{name_attr}>\n{body}\n</message>'
 
 
 def _user_prompt_text(part: UserPromptPart) -> str:
