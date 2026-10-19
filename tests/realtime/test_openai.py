@@ -5635,9 +5635,7 @@ async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_t
                 },
             }
         )
-        async for event in session:  # pragma: no branch
-            if isinstance(event, RealtimeSessionErrorEvent):
-                break
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
         await session.commit_audio()
 
     assert session.all_messages() == []
