@@ -28,7 +28,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -39,6 +38,7 @@ from pydantic_clai2.runtime import repl_state
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.monty_cells import NOTE_CHARS, MontyCell
 from pydantic_clai2.runtime.repl_state import ReplStates
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculative_mode import guidance
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -398,7 +398,7 @@ class Asker:
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
 
-def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> '_Shell[None, str]':
+def monty_shell(workspace: Path, asker: Asker, *, code_mode: bool = True) -> 'SessionRuntime[None, str]':
     return create_shell(
         Agent(FunctionModel(asker.respond, stream_function=asker.stream)),
         deps=None,

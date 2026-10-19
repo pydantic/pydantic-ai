@@ -3,6 +3,8 @@
 import asyncio
 import io
 import json
+import os
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -22,7 +24,6 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
@@ -32,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session, current_session_id
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from tests.clai2.test_forks import Model
@@ -150,7 +152,7 @@ async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
 ) -> None:
     looked_up = False
 
-    async def configured_email() -> str:
+    async def configured_email(*, cwd: Path) -> str:
         nonlocal looked_up
         looked_up = True
         return 'developer@example.com'
@@ -477,15 +479,26 @@ async def test_git_email_uses_git_configuration(
 ) -> None:
     config = tmp_path / 'gitconfig'
     config.write_text(f'[user]\nemail = {email}\n' if email is not None else '')
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
     monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
-    assert await logfire_session.git_email() == (email or None)
+    assert await logfire_session.git_email(cwd=tmp_path) == (email or None)
+
+
+async def test_git_email_is_the_repositorys_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repository's own `user.email` comes from the directory asked about, not the process's."""
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    repo = tmp_path / 'repo'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', '-C', str(repo), 'config', 'user.email', 'repo@example.com'], check=True)
+    monkeypatch.chdir(tmp_path)
+    assert await logfire_session.git_email(cwd=repo) == 'repo@example.com'
+    assert await logfire_session.git_email(cwd=tmp_path) is None
 
 
 @pytest.mark.parametrize('unavailable', ['missing', 'timeout'])
 async def test_git_email_is_optional(monkeypatch: pytest.MonkeyPatch, unavailable: str) -> None:
-    async def run_process(command: list[str], *, check: bool) -> None:
+    async def run_process(command: list[str], *, cwd: Path, check: bool) -> None:
         if unavailable == 'missing':
             raise FileNotFoundError('git')
         await anyio.sleep_forever()
@@ -497,4 +510,4 @@ async def test_git_email_is_optional(monkeypatch: pytest.MonkeyPatch, unavailabl
             return anyio.move_on_after(0)
 
         monkeypatch.setattr(logfire_session, 'move_on_after', immediate_timeout)
-    assert await logfire_session.git_email() is None
+    assert await logfire_session.git_email(cwd=Path()) is None
