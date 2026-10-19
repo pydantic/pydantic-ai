@@ -4431,7 +4431,7 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         with anyio.fail_after(5):
             await waiting
             await listening_again.wait()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     assert [response.id for response in provider_session.tool_responses] == ['c1', 'c2']
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]

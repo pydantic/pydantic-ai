@@ -92,6 +92,9 @@ class LifecycleChecker:
     _fatal: bool = False
     _started: set[str] = field(default_factory=set[str])
     _open_responses: set[str] = field(default_factory=set[str])
+    _made_up_ids: set[str] = field(default_factory=set[str])
+    """Responses the lifecycle named itself (`ResponseStarted.provider_id=False`), for a protocol that names them
+    only in their terminal."""
     _responses_ended: set[str] = field(default_factory=set[str])
     _settled_inputs: set[int] = field(default_factory=set[int])
     _added_inputs: set[int] = field(default_factory=set[int])
@@ -119,6 +122,14 @@ class LifecycleChecker:
 
     def _feed_lifecycle_content(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
         response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
+        if (
+            isinstance(event, ResponseDone)
+            and response_id not in self._open_responses
+            and not self._open_responses.isdisjoint(self._made_up_ids)
+        ):
+            # The terminal names the response under way, which the lifecycle had to make an id up for (ElevenLabs
+            # names a reply only in its last frame): the session records the name it reports.
+            return
         if response_id is not None and response_id not in self._open_responses:
             issue('lifecycle.content_outside_response', f'{type(event).__name__} for {response_id!r} outside it')
 
@@ -160,6 +171,8 @@ class LifecycleChecker:
                 issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
             self._started.add(event.response_id)
             self._open_responses.add(event.response_id)
+            if not event.provider_id:
+                self._made_up_ids.add(event.response_id)
             sent = self.inputs_sent() if self.inputs_sent is not None else 0
             if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
                 issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')

@@ -107,12 +107,16 @@ def _ctx(model: Any = None, *, messages: list[ModelMessage] | None = None) -> An
         conversation_id: str | None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
         emitted: list[Any] = dataclasses.field(default_factory=list[Any])
+        enqueued: list[Any] = dataclasses.field(default_factory=list[Any])
 
         async def emit(self, event: Any) -> Any:
             # Like the real `RunContext.emit` with no listeners: the event is recorded and
             # returned unmutated, so an immediate-dispatch emitter can read its own decision.
             self.emitted.append(event)
             return event
+
+        def enqueue(self, *content: Any) -> None:
+            self.enqueued.extend(content)
 
     return (
         _FakeCtx(model=model, messages=list(messages or ()))
@@ -654,11 +658,13 @@ class TestRequestModelIsTheOneResolved:
     async def test_limit_warner(self, monkeypatch: pytest.MonkeyPatch):
         self._windows(monkeypatch, run=10_000_000, request=1_000)
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.1, warning_threshold=0.5)
-        request_context = _request_context(_history(6), self.REQUEST)
+        # A request to warn on ends with the `ModelRequest` it's about to send.
+        request_context = _request_context([*_history(6), ModelRequest(parts=[UserPromptPart('next')])], self.REQUEST)
 
-        await capability.before_model_request(_ctx(self.RUN), request_context)
+        ctx = _ctx(self.RUN)
+        await capability.before_model_request(ctx, request_context)
 
-        assert '[WarnNearLimits]' in str(request_context.messages[-1])
+        assert 'Context window:' in ctx.enqueued[-1].content
 
     async def test_report_context_usage(self, monkeypatch: pytest.MonkeyPatch):
         self._windows(monkeypatch, run=10_000_000, request=1_000)
@@ -740,13 +746,12 @@ class TestStrategyFallbackWindow:
     async def test_limit_warner_uses_the_configured_fallback(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, None)
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.9, fallback_context_window=10_000_000)
-        request_context = _request_context(_history(6))
+        request_context = _request_context([*_history(6), ModelRequest(parts=[UserPromptPart('next')])])
 
-        request_context = await capability.before_model_request(
-            _ctx(messages=request_context.messages), request_context
-        )
+        ctx = _ctx(messages=request_context.messages)
+        request_context = await capability.before_model_request(ctx, request_context)
 
-        assert len(request_context.messages) == 12, 'the 200K default would have warned'
+        assert ctx.enqueued == [], 'the 200K default would have warned'
 
     @pytest.mark.parametrize(('name', 'factory'), _FALLBACK_FACTORIES, ids=[n for n, _ in _FALLBACK_FACTORIES])
     def test_every_strategy_rejects_a_non_positive_fallback(self, name: str, factory: _FallbackFactory):
@@ -949,22 +954,22 @@ class TestLimitWarnerFraction:
     async def test_warns_against_the_resolved_window(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 1_000)
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.1, warning_threshold=0.5)
-        request_context = _request_context(_history(6))
+        request_context = _request_context([*_history(6), ModelRequest(parts=[UserPromptPart('next')])])
 
-        await capability.before_model_request(_ctx(messages=request_context.messages), request_context)
+        ctx = _ctx(messages=request_context.messages)
+        await capability.before_model_request(ctx, request_context)
 
-        warning = request_context.messages[-1]
-        assert isinstance(warning, ModelRequest)
-        assert '[WarnNearLimits]' in str(warning.parts[0].content)  # type: ignore[union-attr]
+        assert 'Context window:' in ctx.enqueued[-1].content
 
     async def test_stays_quiet_below_the_threshold(self, monkeypatch: pytest.MonkeyPatch):
         _fixed_window(monkeypatch, 10_000_000)
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.9)
-        request_context = _request_context(_history(2))
+        request_context = _request_context([*_history(2), ModelRequest(parts=[UserPromptPart('next')])])
 
-        await capability.before_model_request(_ctx(messages=request_context.messages), request_context)
+        ctx = _ctx(messages=request_context.messages)
+        await capability.before_model_request(ctx, request_context)
 
-        assert len(request_context.messages) == 4
+        assert ctx.enqueued == []
 
     def test_a_fraction_alone_satisfies_the_limit_requirement(self):
         capability: WarnNearLimits[None] = WarnNearLimits(max_context_fraction=0.9)
