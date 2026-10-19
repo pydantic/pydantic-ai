@@ -152,7 +152,7 @@ async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.Mon
             footers.append(str(self.toolbar()))
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
     output = io.StringIO()
     await chat(
         Agent(TestModel(custom_output_text='hi')),

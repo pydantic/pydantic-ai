@@ -1,0 +1,246 @@
+"""One live session as browsers see it: its transcript as it streams, its status, its delegated tasks, its input."""
+
+import math
+import time
+from collections.abc import Sequence
+from dataclasses import replace
+from typing import TYPE_CHECKING, Literal
+
+from pydantic_ai import AgentStreamEvent
+from pydantic_ai.messages import ModelMessage, UserContent, UserPromptPart
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.protocol import (
+    CompletionInfo,
+    EventTranslator,
+    Item,
+    ItemAdded,
+    ItemLog,
+    Notice,
+    SessionInfo,
+    SessionMessage,
+    Snapshot,
+    StatusChanged,
+    StatusInfo,
+    TaskEntry,
+    TextDelta,
+    TitleChanged,
+    TurnEnded,
+    TurnStarted,
+    dump,
+    history_items,
+    usage_info,
+    usage_report,
+    user_text,
+)
+from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
+from pydantic_clai2.commands import is_command_input
+from pydantic_clai2.plugins import CommandEnd, LiveSession, TurnOutcome
+from pydantic_clai2.ui.rendering.usage_report import session_usage
+
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.web.service import WebService
+
+CODE_MODE = 'run.code_mode'
+SPECULATION = 'run.speculative_code_mode'
+Switch = Literal['run.code_mode', 'run.speculative_code_mode']
+"""The settings the browser's toggles change; nothing else is set from it but through the prompt."""
+USAGE_COMMANDS = frozenset({'/usage', '/cost'})
+"""Commands whose notice carries the figures they report, for the page's usage card."""
+STATUS_INTERVAL = 0.2
+"""Seconds between status updates sent while a turn streams, so token counts tick; turn and command ends always send one."""
+
+
+class SessionChannel:
+    """One live session, as every browser watching it shares it.
+
+    Everything a browser does goes through the session's prompt, as typing there would, so the
+    terminal and the browser always drive the same session. What happens comes back through the
+    plugin's moments and the session's runs, which `WebService` routes here.
+    """
+
+    def __init__(self, *, session: LiveSession, service: 'WebService') -> None:
+        self.session = session
+        self.service = service
+        self.shown = session.conversation.conversation_id
+        """The conversation browsers were last sent, so a retitle sends only the title and a switch a snapshot."""
+        self.running = False
+        """Whether a run of the held conversation streams now, as browsers see it."""
+        self.workers = Workers(publish=self.publish, history=self._task_history)
+        """The session's delegated tasks, which the plugin's `on_task_event` keeps up to date."""
+        self._translator = EventTranslator()
+        """One for the session's life, so item IDs stay unique across turns in a browser that keeps them all."""
+        self._turn = ItemLog()
+        self._status_sent = 0.0
+        self._usage: RunUsage | None = None
+        """The running turn's usage, as its run context reports it; `None` between turns."""
+
+    @property
+    def id(self) -> str:
+        """The conversation the session holds, which browsers name it by."""
+        return self.session.conversation.conversation_id
+
+    def publish(self, message: SessionMessage) -> None:
+        self.service.hub.publish_session(message, session=self.id)
+
+    def _task_history(self, task_id: str) -> list[ModelMessage]:
+        tasks = self.session.tasks
+        return [] if tasks is None else tasks.history(task_id)
+
+    # What the browser sees.
+
+    def snapshot(self) -> Snapshot:
+        conversation = self.session.conversation
+        items = history_items(conversation.messages)
+        if self.running:
+            items += self._turn.items.values()
+        service = self.service
+        sessions = self.session.sessions
+        return Snapshot(
+            session=SessionInfo(
+                id=conversation.conversation_id, title=conversation.title, workspace=str(self.session.workspace)
+            ),
+            items=items,
+            running=self.running,
+            status=self.status(),
+            questions=service.answerer.asked(conversation.conversation_id),
+            dialogs=service.dialogs.dialogs,
+            theme=service.theme(),
+            tasks=self.tasks(),
+            task_items=self.workers.items(),
+            follows_workspace=sessions is not None and sessions.follows_workspace,
+            version=service.version,
+            update=service.update,
+        )
+
+    def status(self) -> StatusInfo:
+        status = self.session.status
+        return StatusInfo(
+            model=status.model,
+            activity=status.activity if self.running else 'ready',
+            context_tokens=status.context_tokens,
+            context_window=status.context_window,
+            cost=None if status.cost is None else str(status.cost),
+            streamed_tokens=math.ceil(status.streamed_chars / 4),
+            output_tokens=status.output_tokens,
+            run=None if self._usage is None else usage_info(self._usage),
+            code_mode=self._switch(CODE_MODE),
+            speculation=self._switch(SPECULATION),
+        )
+
+    def _switch(self, key: str) -> bool | None:
+        try:
+            return self.session.setting(key) is True
+        except KeyError:
+            return None
+
+    def tasks(self) -> list[TaskEntry]:
+        """The conversation's delegated tasks, each parent before its children; none without a task owner."""
+        tasks = self.session.tasks
+        return [] if tasks is None else [task_entry(task) for task in tasks.listing()]
+
+    def publish_status(self) -> None:
+        self._status_sent = time.monotonic()
+        self.publish(StatusChanged(status=self.status()))
+
+    # What happens in the session, from the plugin's moments and capability.
+
+    def observe(self, event: AgentStreamEvent, *, usage: RunUsage, by_user: bool = False) -> None:
+        """Send `event` to watchers; `by_user` marks a `/monty` cell's run, which is not a turn and has no usage to show."""
+        if not by_user:
+            self._usage = usage
+        for message in self._translator.translate(event):
+            if by_user:
+                # Only the cell itself: the scripted model's closing text is not the user's.
+                if isinstance(message, TextDelta) or (isinstance(message, ItemAdded) and message.item.kind != 'tool'):
+                    continue
+                if isinstance(message, ItemAdded):
+                    message = ItemAdded(item=replace(message.item, by_user=True))
+            self._turn.apply(message)
+            self.publish(message)
+        if time.monotonic() - self._status_sent >= STATUS_INTERVAL:
+            self.publish_status()
+
+    def run_started(self, prompt: str | Sequence[UserContent] | None) -> None:
+        """A run of the held conversation started; a run woken by a finished task has no prompt to show."""
+        self.running = True
+        self._usage = None
+        self._turn.clear()
+        item = None
+        if prompt is not None:
+            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
+        self.publish(TurnStarted(item=item))
+        self.publish_status()
+
+    def run_ended(
+        self, outcome: TurnOutcome, *, error: BaseException | None = None, usage: RunUsage | None = None
+    ) -> None:
+        self.running = False
+        self._usage = None
+        self._turn.clear()
+        self.publish(
+            TurnEnded(
+                outcome=outcome,
+                error=None if error is None else str(error) or type(error).__name__,
+                usage=None if usage is None else usage_info(usage),
+            )
+        )
+        self.publish_status()
+
+    def conversation_changed(self, *, title: str | None) -> bool:
+        """The session's conversation or its title changed; `True` when it holds another conversation now."""
+        if self.id == self.shown:
+            self.publish(TitleChanged(title=title))
+            return False
+        hub = self.service.hub
+        hub.rename(self.shown, self.id)
+        self.shown = self.id
+        self.workers.reset()
+        # To the browsers following it; one that watched the new conversation before gets it from `follow`.
+        hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
+        return True
+
+    def command_ended(self, event: CommandEnd) -> None:
+        if event.error is not None:
+            self.publish(Notice(text=str(event.error), level='error', command=event.text))
+        elif event.output:
+            reports = event.text.split(maxsplit=1)[0] in USAGE_COMMANDS
+            usage = usage_report(session_usage(self.session.conversation.messages)) if reports else None
+            self.publish(Notice(text=event.output, command=event.text, usage=usage))
+
+    # What the browser does.
+
+    def send(self, text: str) -> str | None:
+        """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
+
+        That menu opens in the page instead of the terminal: the name of its command is returned, and
+        nothing is entered. Otherwise the result is `None`.
+        """
+        text = text.strip()
+        if not text:
+            raise ValueError('Type a prompt or a /command.')
+        if text.startswith('!'):
+            raise ValueError('Shell lines (!) run only in the terminal.')
+        if is_command_input(text) and len(text.split()) == 1 and self.service.host.command_menu(text[1:]) is not None:
+            return text[1:]
+        self.session.send_input(text)
+        return None
+
+    def switch(self, key: Switch, on: bool) -> None:
+        """Flip a run switch as `/set` typed at the prompt does; a running turn keeps the tools it started with."""
+        self.session.send_input(f'/set {key} {"true" if on else "false"}')
+
+    async def complete(self, text: str) -> list[CompletionInfo]:
+        return [
+            CompletionInfo(
+                text=completion.text,
+                start=-completion.start_position,
+                display=completion.display or completion.text,
+                meta=completion.display_meta,
+            )
+            for completion in await self.session.complete(text)
+        ]
+
+    def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
+        """Answer one of the session's open questions, or decline it with `None`."""
+        self.service.answerer.reply(request_id, answers, session=self.id)
