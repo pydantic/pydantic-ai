@@ -381,7 +381,7 @@ engine:
       from pathlib import Path
 
       target, prompt_file, *cli_args = sys.argv[1:]
-      capture_fd = os.environ.pop('GH_AW_SESSION_CAPTURE_FD', None)
+      capture_fd = os.environ.get('GH_AW_SESSION_CAPTURE_FD')
       recorder_output = (
           sys.stdout
           if capture_fd is None

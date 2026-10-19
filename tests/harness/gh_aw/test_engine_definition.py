@@ -1488,6 +1488,43 @@ def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+@requires_clai2
+def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'capture_test_agent:agent'},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    (Path(invocation.cwd) / 'capture_test_agent.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='simple', instructions='Answer briefly.')\n",
+        encoding='utf-8',
+    )
+    arguments = invocation.argv.copy()
+    arguments[arguments.index('-m') + 1] = 'test'
+    capture_path = tmp_path / 'recorder.log'
+
+    with capture_path.open('w+', encoding='utf-8') as capture:
+        completed = subprocess.run(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=invocation.cwd,
+            env={**invocation.env, 'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno())},
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            pass_fds=(capture.fileno(),),
+            check=False,
+        )
+        capture.seek(0)
+        recorder_log = capture.read()
+
+    assert completed.returncode == 0, f'{completed.stdout}\n{completed.stderr}'
+    assert '\x1eGH-AW-SESSION/' not in completed.stdout
+    parsed = parse_log(tmp_path, f'{invocation.stdout}{recorder_log}')
+    assert parsed.log_entries[-1].type == 'session.result'
+    assert parsed.log_entries[-1].data['status'] == 'success'
+
+
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
 @pytest.mark.parametrize(
     ('cli_fails', 'expected_exit_code', 'expected_status'),
     [(False, 0, 'success'), (True, 2, 'failure')],
