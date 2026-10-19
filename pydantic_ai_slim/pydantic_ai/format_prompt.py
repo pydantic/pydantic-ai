@@ -41,23 +41,23 @@ def format_as_xml(
     Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `Decimal`, `date`, `datetime`, `time`, `timedelta`,
     `UUID`, `Enum`, `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
 
+    Mapping keys are used as element names when they are valid XML names without a colon (an XML `NCName`, e.g.
+    `name` or `first_name`). Any other key, like `'my key'`, `'1abc'` or an `int`, is instead written to the `key`
+    attribute of an element named after `item_tag`, e.g. `<item key="my key">1</item>`, so it is escaped like
+    any other attribute value and can't inject tags or break the element structure.
+
     Args:
         obj: Python Object to serialize to XML.
         root_tag: Outer tag to wrap the XML in, use `None` to omit the outer tag.
         item_tag: Tag to use for each item in an iterable (e.g. list), this is overridden by the class name
             for dataclasses and Pydantic models. It's also used for mapping entries whose key isn't a valid XML
-            element name, see below.
+            element name, see above.
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
         include_field_info: Whether to include attributes like Pydantic `Field` attributes and dataclasses `field()`
             `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are
             `title` and `description`. If a field is repeated in the data (e.g. in a list) by setting `once`
             the attributes are included only in the first occurrence of an XML element relative to the same field.
-
-    Mapping keys are used as element names when they are valid XML names without a colon (an XML `NCName`, e.g.
-    `name` or `first_name`). Any other key, like `'my key'`, `'1abc'` or an `int`, is instead written to the `key`
-    attribute of an element named after `item_tag`, e.g. `<item key="my key">1</item>`, so it is escaped like
-    any other attribute value and can't produce invalid XML or inject tags.
 
     Returns:
         XML representation of the object.
