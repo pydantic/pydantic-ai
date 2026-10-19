@@ -36,7 +36,6 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
@@ -49,6 +48,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
 from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_app_edges import inputs

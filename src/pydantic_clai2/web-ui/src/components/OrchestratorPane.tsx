@@ -10,7 +10,7 @@ import { Transcript } from './Transcript'
 
 interface Props {
   view: OrchestratorView
-  /** The session's model, which the orchestrator uses too. */
+  /** The saved default model, which the orchestrator runs on, never the shown session's own choice. */
   model: string
   connected: boolean
   /** Shows the sidebar again when it is hidden. */
