@@ -1,3 +1,7 @@
+---
+description: "Learn the core concepts of Pydantic Evals, including datasets, cases, experiments, evaluators and evaluation reports, and how they work together."
+---
+
 # Core Concepts
 
 This page explains the key concepts in Pydantic Evals and how they work together.
@@ -421,6 +425,7 @@ The [`EvaluationReport`][pydantic_evals.reporting.EvaluationReport] contains:
 - `analyses`: List of experiment-wide analyses from [report evaluators](evaluators/report-evaluators.md) (confusion matrices, PR curves, scalars, tables)
 - `trace_id`: OpenTelemetry trace ID (optional)
 - `span_id`: OpenTelemetry span ID (optional)
+- `dataset_name`: Name of the dataset that produced the report (optional)
 
 ### ReportCase
 

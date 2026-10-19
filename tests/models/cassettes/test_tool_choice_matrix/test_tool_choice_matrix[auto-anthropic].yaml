@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,75 +11,91 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '426'
+      - "394"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What's the weather in Paris?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What's the weather in Paris?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '522'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1fb4201769dfcd45c7238ba8f657eac4-c5cb1cf494793a94-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01WN4AuToBnJyXNQXwQBBebj
-        input:
-          city: Paris
-        name: get_weather
-        type: tool_use
-      id: msg_0157RbBMVd2po91eocfMnSDy
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 572
-        output_tokens: 53
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kWXgUWG9gMigFVxxS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":572,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_018p88himGvyVqsDZNbHyvGv","name":"get_weather","input":{},"caller":{"type":"direct"}}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Pari"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s\"}"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":572,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":53}    }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:29:55.606365+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -85,82 +104,115 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '733'
+      - "703"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What's the weather in Paris?
-          type: text
-        role: user
-      - content:
-        - id: toolu_01WN4AuToBnJyXNQXwQBBebj
-          input:
-            city: Paris
-          name: get_weather
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Sunny, 22C in Paris
-          is_error: false
-          tool_use_id: toolu_01WN4AuToBnJyXNQXwQBBebj
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the current weather for a city.
-        input_schema:
-          additionalProperties: false
-          properties:
-            city:
-              type: string
-          required:
-          - city
-          type: object
-        name: get_weather
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What's the weather in Paris?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_018p88himGvyVqsDZNbHyvGv
+            type: tool_use
+            name: get_weather
+            input:
+              city: Paris
+        - role: user
+          content:
+          - tool_use_id: toolu_018p88himGvyVqsDZNbHyvGv
+            type: tool_result
+            content:
+            - text: Sunny, 22C in Paris
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the current weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '559'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d8db897c5f1b39f219b74150df39383d-64e356a0f92e01dc-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: The weather in Paris is currently sunny with a temperature of 22°C (approximately 72°F). It's a beautiful day!
-        type: text
-      id: msg_016ZQ7FNypND5WzmJJ8stJRh
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 646
-        output_tokens: 31
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3kcMvAVxLTK9Aqg5vR","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":646,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" weather in Paris is sunny"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with a temperature of 22°C"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (about"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 72°F). It"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s a beautiful"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" day there"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":646,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":32}             }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-09-29T16:29:57.031985+00:00

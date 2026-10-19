@@ -13,12 +13,13 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
+    assert_never,
 )
 
-from pydantic import ValidationError
-from typing_extensions import assert_never
+from pydantic import TypeAdapter, ValidationError
 
 from ... import ExternalToolset, ToolDefinition
+from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
 from ...messages import (
     AudioUrl,
@@ -57,7 +58,13 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
+from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    compaction_part_from_payload,
+    compaction_payload,
+    tool_availability_delta_from_payload,
+)
+from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -91,6 +98,7 @@ try:
         COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
+        ENQUEUED_MESSAGES_ACTIVITY_TYPE,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
@@ -185,6 +193,26 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+_messages_ta: TypeAdapter[list[Message]] = TypeAdapter(list[Message])
+
+
+def _enqueued_messages(content: dict[str, Any]) -> list[Message]:
+    """The AG-UI messages in a `pydantic_ai_enqueued_messages` activity, or none when the client sent something malformed.
+
+    Enqueued-message activities nested inside are dropped: the content is the client's to send, and
+    honoring them would let it recurse `load_messages` as deeply as it liked.
+    """
+    try:
+        messages = _messages_ta.validate_python(content.get('messages'))
+    except ValidationError:
+        return []
+    return [
+        message
+        for message in messages
+        if not (isinstance(message, ActivityMessage) and message.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE)
+    ]
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -212,7 +240,11 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(type='binary', url=item.url, mime_type=item.media_type or '')
+        try:
+            mime_type = item.media_type
+        except ValueError:
+            mime_type = ''  # reloads as no media type
+        return BinaryInputContent(type='binary', url=item.url, mime_type=mime_type)
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal
@@ -237,18 +269,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
     """AG-UI protocol version controlling behavior thresholds.
 
-    Accepts any version string (e.g. `'0.1.13'`). Defaults to the version detected from
+    Accepts any version string (e.g. `'0.1.11'`). Defaults to the version detected from
     the installed `ag-ui-protocol` package.
 
     Known thresholds:
 
-    - `< 0.1.13`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
+    - `< 0.1.11`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
       from `dump_messages` output.
-    - `>= 0.1.13`: emits `REASONING_*` events with encrypted metadata during streaming, and
+    - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction, enqueued
+      messages and [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed
@@ -303,7 +337,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            manage_system_prompt=self.manage_system_prompt,
+            preserve_file_data=self.preserve_file_data,
+        )
 
     @classmethod
     async def from_request(
@@ -317,6 +357,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -329,6 +370,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -402,6 +444,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         # onward; older versions drop the client's claim, so the field is only read when present.
         use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
+            checkpoint = builder.checkpoint()
             match msg:
                 case UserMessage(content=content):
                     if isinstance(content, str):
@@ -578,6 +621,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                    elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
+                        # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                        # They carry their own message ids, so the activity's id isn't kept on them.
+                        # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
+                        builder._append_whole(  # pyright: ignore[reportPrivateUsage]
+                            cls.load_messages(
+                                _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
+                            )
+                        )
+                        continue
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -632,6 +685,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
+            # Keep the AG-UI message id for `dump_messages`. `ModelRequest`/`ModelResponse` have no id
+            # field, so it goes in the metadata of the message the parts above landed in. That may be a new
+            # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
+            # builder rather than assume the tail. An AG-UI message lands in a request or a response, never
+            # both (an `ActivityMessage` can be either), so whichever lookup answers is the one.
+            target = builder.last_modified(checkpoint, of_type=ModelRequest) or builder.last_modified(
+                checkpoint, of_type=ModelResponse
+            )
+            if target is not None:
+                set_ui_message_id(target, msg.id)
+
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
         return narrow_message_parts(builder.messages)
@@ -677,7 +741,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                system_content.append(part.content)
+                # A request-scoped prompt is for the model's current request only; loaded back, it would
+                # come back as a lasting system prompt.
+                if part.scope != 'request':
+                    system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
@@ -725,6 +792,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         ),
                     )
                 )
+                if (app := get_mcp_app_tool_result(part.metadata)) is not None:
+                    result.append(
+                        ActivityMessage(
+                            id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
+                        )
+                    )
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 flush_user_content()
                 result.append(
@@ -778,9 +851,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_messages: list[ToolMessage] = []
 
         version = parse_ag_ui_version(ag_ui_version)
-        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
-        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
-        # `tool_kind_encrypted_value`.
+        # `ReasoningMessage` and the `tool_kind` carrier `ToolCall`/`ToolMessage.encrypted_value`
+        # both landed in 0.1.11, so these two thresholds coincide — see `tool_kind_encrypted_value`.
         use_reasoning = version >= REASONING_VERSION
         use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 
@@ -909,6 +981,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
+        - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
+          no trusted message-level carrier for framework or provider state; general client-controlled
+          metadata must not be restored as server-side state. The one thing `load_messages` keeps in
+          the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
+          last message dumped from each `ModelMessage`.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -916,6 +993,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
           string is no longer recoverable as args on reload. Unlike the live event stream, which emits
           them verbatim so streamed fragments stay concatenable, history has to hold a sendable value.
+          Args that do parse are dumped as compact JSON, the form the model adapters send, so whitespace
+          in the model's raw string doesn't survive.
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
@@ -941,9 +1020,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
-          inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
-          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
+          union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
+        - An MCP Apps record in `ToolReturnPart.metadata` is dumped as an `mcp-apps` activity message
+          after the tool result, which `load_messages` ignores, so the record is not restored.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
         Args:
@@ -967,15 +1048,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                request_messages = cls._dump_request_parts(
+                dumped = cls._dump_request_parts(
                     msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
-                result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                result.extend(
-                    cls._dump_response_parts(msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data)
+                dumped = cls._dump_response_parts(
+                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
             else:
                 assert_never(msg)
+            # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
+            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids.
+            if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
+                dumped[-1].id = ui_message_id
+            result.extend(dumped)
 
         return result

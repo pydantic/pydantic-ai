@@ -1,3 +1,7 @@
+---
+description: "Make low-level requests to any LLM with the Pydantic AI direct API when you only need input and output schema translation, not the full Agent machinery."
+---
+
 # Direct Model Requests
 
 The `direct` module provides low-level methods for making imperative requests to LLMs where the only abstraction is input and output schema translation, enabling you to use all models with the same API.
@@ -21,11 +25,11 @@ from pydantic_ai.direct import model_request_sync
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     [ModelRequest.user_text_prompt('What is the capital of France?')]
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 print(model_response.usage)
 #> RequestUsage(input_tokens=56, output_tokens=7)
@@ -63,7 +67,7 @@ class Divide(BaseModel):
 async def main():
     # Make a request to the model with tool access
     model_response = await model_request(
-        'openai:gpt-5-nano',
+        '{{ openai:small }}',
         [ModelRequest.user_text_prompt('What is 123 / 456?')],
         model_request_parameters=ModelRequestParameters(
             function_tools=[
@@ -87,7 +91,7 @@ async def main():
             )
         ],
         usage=RequestUsage(input_tokens=55, output_tokens=7),
-        model_name='gpt-5-nano',
+        model_name='{{ openai:small.name }}',
         timestamp=datetime.datetime(...),
     )
     """
@@ -120,11 +124,11 @@ logfire.instrument_pydantic_ai()
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     [ModelRequest.user_text_prompt('What is the capital of France?')],
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 
@@ -142,12 +146,12 @@ logfire.configure()
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
-    'anthropic:claude-haiku-4-5',
+    '{{ anthropic:small }}',
     [ModelRequest.user_text_prompt('What is the capital of France?')],
     instrument=True
 )
 
-print(model_response.parts[0].content)
+print(model_response.text)
 #> The capital of France is Paris.
 ```
 

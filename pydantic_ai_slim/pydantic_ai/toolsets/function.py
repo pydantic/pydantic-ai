@@ -36,10 +36,9 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
     timeout: float | None = None
-    """Timeout in seconds for tool execution.
+    """Timeout in seconds the tool was built with.
 
-    If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout).
+    The timeout that's enforced comes from `tool_def.timeout`, which a `prepare` function may have changed since.
     """
     original_name: str | None = None
     """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
@@ -219,14 +218,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         ```python
         from pydantic_ai import Agent, FunctionToolset, RunContext
 
-        toolset = FunctionToolset()
+        toolset = FunctionToolset[int]()
 
         @toolset.tool
         def foobar(ctx: RunContext[int], x: int) -> int:
             return ctx.deps + x
 
         @toolset.tool(retries=2)
-        async def spam(ctx: RunContext[str], y: float) -> float:
+        async def spam(ctx: RunContext[int], y: float) -> float:
             return ctx.deps + y
 
         agent = Agent('test', toolsets=[toolset], deps_type=int)
@@ -630,11 +629,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries
+            # `retries` is keyed by the name the model calls the tool by, computed here by applying
+            # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
+            # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
+            # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
+            # nested inside or around them, whether or not it calls `super().get_tools()`. If it
+            # then names an unrelated tool, `prepare` reads that tool's count.
+            exposed = original_name
+            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
+                _tool_name_path=(),
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:
@@ -699,8 +708,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        # Per-tool timeout takes precedence over toolset timeout
-        timeout = tool.timeout if tool.timeout is not None else self.timeout
+        # Per-tool timeout takes precedence over toolset timeout. Read it off the tool definition, which a
+        # `prepare` function may have changed since `_tool_for` built the tool.
+        timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.timeout
         if timeout is not None:
             try:
                 with anyio.fail_after(timeout), _utils.abandon_threads_on_cancel():

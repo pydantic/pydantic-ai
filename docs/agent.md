@@ -1,3 +1,7 @@
+---
+description: "Create and run Pydantic AI agents: run, run_sync, streaming and step-by-step iteration, plus instructions, model settings, usage limits and cancellation."
+---
+
 ## Introduction
 
 Agents are Pydantic AI's primary interface for interacting with LLMs.
@@ -27,10 +31,10 @@ Here's a toy example of an agent that simulates a roulette wheel:
 from pydantic_ai import Agent, RunContext
 
 roulette_agent = Agent(  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=int,
     output_type=bool,
-    system_prompt=(
+    instructions=(
         'Use the `roulette_wheel` function to see if the '
         'customer has won based on the number they provide.'
     ),
@@ -62,6 +66,9 @@ print(result.output)
 !!! tip "Agents are designed for reuse, like FastAPI Apps"
     You can instantiate one agent and use it globally throughout your application, as you would a small [FastAPI][fastapi.FastAPI] app or an [APIRouter][fastapi.APIRouter], or dynamically create as many agents as you want. Both are valid and supported ways to use agents.
 
+!!! tip "Add prompt caching to your agents"
+    Pass `capabilities=[Caching()]` (the [`Caching`][pydantic_ai.capabilities.Caching] capability) to your agents. Several providers, including Anthropic, cache nothing unless the request asks them to, so without it every request pays full price for the instructions, tools and conversation. See [Caching](capabilities/caching.md) for what it costs and when to cache only the stable prefix instead.
+
 ## Running Agents
 
 There are five ways to run an agent:
@@ -77,7 +84,7 @@ Here's a simple example demonstrating the first four:
 ```python {title="run_agent.py"}
 from pydantic_ai import Agent, AgentRunResultEvent, AgentStreamEvent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.output)
@@ -157,8 +164,8 @@ from pydantic_ai import (
 )
 
 weather_agent = Agent(
-    'openai:gpt-5.2',
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    '{{ openai:medium }}',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -290,6 +297,157 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+### Custom Events
+
+Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
+
+#### Which event type do I use? {#which-event-type}
+
+Pydantic AI has two families of user-defined events. They ride the same stream and are defined the same way, but which one you define is decided by **who owns the code doing the emitting**, and that split is enforced at runtime: emitting the wrong family raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+| | [`CustomEvent`][pydantic_ai.messages.CustomEvent] | [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] |
+|---|---|---|
+| **Use it when** | your application wants to tell its own stream consumer or frontend something | your [capability](capabilities/overview.md) wants to tell other capabilities and the host application something |
+| **Emit from** | an application tool, an [output validator](output.md#output-validator-functions), a [hook](hooks.md), an `event_stream_handler`, or [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] | a [capability](capabilities/custom.md) hook or a tool the capability contributes |
+| **Naming** | flat and process-wide, like `progress` | namespaced, like `workspace.file_read` |
+| **Reaches the frontend** | yes, via the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters | no, it is an internal signal; re-publish it as a `CustomEvent` if the frontend needs it |
+| **Can carry a decision** | no | yes, with `dispatch='immediate'` |
+
+If you are writing a **capability**, define [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s, as described in [Capability events](capabilities/overview.md#capability-events): its events are part of its contract with the rest of the run, and the namespace is what keeps two capabilities from colliding on a name. If you are writing an **application**, define `CustomEvent`s. To surface a capability's event to your frontend, listen for it with [`@agent.on_event`](hooks.md#listening-without-a-hooks-capability) and emit your own `CustomEvent` carrying the public payload.
+
+#### Defining and emitting an event
+
+Define an event as a dataclass subclass of `CustomEvent` — its fields are the payload, and consumers can use an `isinstance` check against the class. Await [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] with an event instance from any of your application's async code that receives a [`RunContext`][pydantic_ai.tools.RunContext]; code driving `agent.iter()` uses [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] instead. Sync tools cannot emit events; write async tools when they need to emit events. When emitted from within a tool call, the event's [`tool_call_id`][pydantic_ai.messages.CustomEvent.tool_call_id] and [`tool_name`][pydantic_ai.messages.CustomEvent.tool_name] are stamped automatically so consumers can attribute it to the originating call. The event reaches the `event_stream_handler`, `run_stream_events()`, `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) UI adapters.
+
+```python {title="custom_events.py"}
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
+
+
+@dataclass(kw_only=True)
+class SyncProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+async def model_function(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[DeltaToolCalls | str]:
+    if any(
+        isinstance(part, ToolReturnPart)
+        for message in messages
+        for part in message.parts
+    ):
+        yield 'All 3 files synchronized.'
+    else:
+        yield {
+            0: DeltaToolCall(
+                name='sync_files', json_args='{"count": 3}', tool_call_id='sync'
+            )
+        }
+
+
+agent = Agent(FunctionModel(stream_function=model_function))
+progress: list[str] = []
+
+
+@agent.on_event(SyncProgressEvent)
+async def record_progress(ctx: RunContext, event: SyncProgressEvent) -> None:
+    progress.append(
+        f'{event.done}/{event.total} from {event.tool_name} ({event.tool_call_id})'
+    )
+
+
+@agent.tool
+async def sync_files(ctx: RunContext, count: int) -> str:
+    for i in range(1, count + 1):
+        # Do some long-running work, emitting a progress event after each step.
+        await ctx.emit(SyncProgressEvent(done=i, total=count))
+    return f'Synchronized {count} files.'
+
+
+async def main():
+    await agent.run('Synchronize my files')
+    print(progress)
+    """
+    [
+        '1/3 from sync_files (sync)',
+        '2/3 from sync_files (sync)',
+        '3/3 from sync_files (sync)',
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+Any consumer of the run's events sees them: an [`@agent.on_event`](hooks.md#listening-without-a-hooks-capability) listener as above, an [event hook](hooks.md#event-stream-hooks), an `event_stream_handler=`, [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], `agent.iter()` streaming, and the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters. Payload fields can hold any object, but to flow through [durable execution](durable_execution/overview.md) and the UI adapters they need to be serializable by pydantic.
+
+The payload cannot use the field names the envelope needs for itself: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected when the class is defined, so pick another name (`payload`, `call_id`) for a field that would collide.
+
+Emitting only works while the run is in progress and only from the family the emitting code owns, so each of these raises a [`UserError`][pydantic_ai.exceptions.UserError]: emitting a `CustomEvent` from a capability, emitting a [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] from application code, and calling [`AgentRun.emit()`][pydantic_ai.run.AgentRun.emit] after the run has finished. Events emitted with `AgentRun.emit()` reach consumers that stream the run's nodes with `node.stream(run.ctx)`, as shown in [Streaming All Events and Output](#streaming-all-events-and-output); a bare `async for node in run` does not consume any event stream, so nothing surfaces.
+
+An event is delivered to stream consumers as soon as it is emitted, so a progress event surfaces while the emitting tool is still running rather than at its return. Events emitted from tools running concurrently interleave in emission order (best-effort ordering).
+
+Events that share fields can share a base. Give the base its own `@dataclass` decorator — an undecorated one contributes no fields, which is rejected rather than left to surface as a payload quietly missing them — and mark it `abstract=True` so it stays out of the event registry and can't be emitted itself:
+
+```python {title="shared_event_base.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class AppEvent(CustomEvent, abstract=True):
+    request_id: str
+
+
+@dataclass(kw_only=True)
+class ReindexProgressEvent(AppEvent):
+    done: int
+    total: int
+```
+
+[`CapabilityEvent`](capabilities/overview.md#capability-events) bases work the same way, and a base is the natural place to put the family's `namespace=`.
+
+Custom event names are derived from the class name by removing `Event` and converting the rest to snake case, so `SyncProgressEvent` uses `sync_progress`. Override the name with a class argument, for example `class SyncProgressEvent(CustomEvent, name='sync_status')`. Names are registered when the class is defined and must be unique within the process; re-executing the same class definition (as when re-running a notebook cell) replaces the registration.
+
+The name is the event's wire identifier, not just a label: it's what a serialized event carries, so renaming the class renames the tag along with it. A rename is a compatibility break wherever events outlive the process that emitted them — [durable execution](durable_execution/overview.md) histories and caches, persisted event logs, a frontend matching on the name. Pass an explicit `name=` to pin the tag when you want the class free to be renamed.
+
+Spell the name out as well when the tag has to match something you don't control. It's the identifier the UI adapters put on the wire, as the AG-UI event's `name` and the Vercel AI chunk's `data-{name}` type, and derivation only ever produces snake case: a frontend that already expects `data-indexProgress` or a dotted `ui.progress` needs `name='indexProgress'` or `name='ui.progress'` rather than a class renamed to suit it.
+
+Events round-trip through [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] serialization as their original class. If an event is deserialized before its class is registered, it becomes an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent], with its payload preserved in `data`, and a `UserWarning` is emitted. Import the module that defines your event before creating the adapter that deserializes it; each pydantic `TypeAdapter` captures the event classes registered when it is created. A registered event's payload schema follows the same compatibility expectations as [message](message-history.md) types: a payload that no longer validates against the local class fails loudly rather than degrading, so keep the serializing and deserializing sides on compatible versions of the module that defines the event.
+
+Event names share one application-wide registry, and defining a second class with an already-registered name raises immediately. Custom events belong to the application, so a library that emits events into agent runs should define [capability events](capabilities/overview.md#capability-events) on a capability, which are namespaced. Only a library that reaches the run outside a capability -- a bare tool it hands the user to register -- can emit application-level events at all, and it should then register them under a dotted prefix (`name='mylib.progress'`) so they can't collide with the application's own event names.
+
+UI adapters get the frontend payload by calling [`CustomEvent.to_payload()`][pydantic_ai.messages.CustomEvent.to_payload], which defaults to the event's own fields; override it when the UI should receive a different payload.
+
+Custom events are forwarded to the frontend by default, as the application that emits them is also the one serving that frontend. An event that exists only for server-side consumers — metrics, an audit log, an `event_stream_handler` of your own — opts out with `ui=False`, and then reaches every in-process consumer while the [AG-UI](ui/ag-ui.md) and [Vercel AI](ui/vercel-ai.md) adapters skip it:
+
+```python {title="internal_custom_event.py" noqa="F841"}
+from dataclasses import dataclass
+
+from pydantic_ai import CustomEvent
+
+
+@dataclass(kw_only=True)
+class IndexProgressEvent(CustomEvent, ui=False):
+    done: int
+    total: int
+```
+
+Subclasses inherit the setting, and because the check happens before the protocol-specific handler, adapters for other protocols honor it too. To send a *different* payload rather than nothing, override `to_payload()` instead — returning `None` from it sends an event with a null payload, which is how you send a name-only signal.
+
+The flag lives on the class rather than on the wire, so an event deserialized where its defining module hasn't been imported arrives as an [`UnknownCustomEvent`][pydantic_ai.messages.UnknownCustomEvent] whose `ui` says nothing about what the application declared. Those aren't forwarded either, so an event crossing a process boundary can't leak a payload its class had opted out of. If events reach your frontend from another process — a [durable execution](durable_execution/overview.md) workflow, a queue, a websocket fan-out, as in [encoding events without a request](ui/overview.md#encoding-events-without-a-request) — import the modules that define them there, or none of your custom events will reach the frontend.
+
 ### Iterating Over an Agent's Graph
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.
@@ -303,7 +461,7 @@ Here's an example of using `async for` with `iter` to record each node the agent
 ```python {title="agent_iter_async_for.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -340,9 +498,9 @@ async def main():
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
                 usage=RequestUsage(
-                    cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                    cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                 ),
-                model_name='gpt-5.2',
+                model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -351,6 +509,7 @@ async def main():
         End(data=FinalResult(output='The capital of France is Paris.')),
     ]
     """
+    assert agent_run.result is not None
     print(agent_run.result.output)
     #> The capital of France is Paris.
 ```
@@ -368,7 +527,7 @@ You can also drive the iteration manually by passing the node you want to run ne
 from pydantic_ai import Agent
 from pydantic_graph import End
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -409,9 +568,9 @@ async def main():
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
                     usage=RequestUsage(
-                        cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                        cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                     ),
-                    model_name='gpt-5.2',
+                    model_name='{{ openai:medium.name }}',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -433,7 +592,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage`. This property returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
-[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total.
+[`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost] additionally holds a best-effort estimate of the run's total cost in USD, calculated from each request's usage with [genai-prices](https://github.com/pydantic/genai-prices). Requests to models or providers that genai-prices doesn't have pricing data for don't contribute to the total. See [keeping model prices up to date](#keeping-model-prices-up-to-date) for how to price models released after your install.
 
 Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -441,7 +600,7 @@ Once the run finishes, `agent_run.result` becomes an [`AgentRunResult`][pydantic
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming_iter.py"}
+```python {title="streaming_iter.py" noqa="C901"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
@@ -472,10 +631,10 @@ class WeatherService:
 
 
 weather_agent = Agent[WeatherService, str](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=WeatherService,
     output_type=str,  # We'll produce a final answer as plain text
-    system_prompt='Providing a weather forecast at the locations the user provides.',
+    instructions='Providing a weather forecast at the locations the user provides.',
 )
 
 
@@ -642,9 +801,10 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
     | Inside a tool, `event_stream_handler`, or capability hook | [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
     | Consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] | [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] on the yielded handle | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
     | Driving the graph yourself via [`agent.iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Before the run starts, to bound how long it may take | `timeout=` on any run method -- see [Bounding a whole run](timeouts.md#bounding-a-whole-run) | [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], a subclass of `RunCancelled` |
     | The environment cancelled you (`asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], shutdown) | *(you don't call anything)* | [`CancelledError`][asyncio.CancelledError] |
 
-    The first four are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
+    The first five are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has two kinds, covered next.
 
 When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
@@ -686,7 +846,7 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
+Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
 When consuming [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events], the yielded [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents] handle offers a first-party alternative that needs no task juggling: [`AgentRunEvents.cancel()`][pydantic_ai.agent.AgentRunEvents.cancel] is safe to call from another task (e.g. a UI's "stop" handler) and surfaces as `RunCancelled` on continued iteration:
 
@@ -779,7 +939,10 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
     - **Your application** decides to stop the run, through one of the dedicated cancellation methods. Pydantic AI issued that cancellation itself, so it can consume it before asyncio interprets it and raise `RunCancelled` instead: the run ends with an ordinary, catchable application error.
     - **The asyncio environment** cancels the task the run happens to be on: `asyncio.Task.cancel()`, `asyncio.timeout()` expiring, a [`TaskGroup`][asyncio.TaskGroup] tearing down after a sibling failed, a server shutting down, workflow cancellation under [durable execution](durable_execution/overview.md). All of these deliver the very same `CancelledError` signal, so Pydantic AI cannot tell a stop button from a timeout -- and the exception's type is load-bearing for everything built on it: `asyncio.timeout()` only produces `TimeoutError`, a `TaskGroup` only treats the task as cleanly cancelled, and Temporal only ends the workflow as *Cancelled* if `CancelledError` itself keeps propagating. Raising `RunCancelled` in its place would silently break each of those. So the run state is *attached to* the propagating `CancelledError` for [`from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation], rather than replacing it.
 
-Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success — on Python 3.11+ this holds even if user code absorbs the delivered cancellation; on Python 3.10 it is best-effort. When first-party and external cancellation race, external cancellation wins. On Python 3.10, that race cannot be distinguished, so first-party cancellation wins instead.
+Cancellation is terminal: capability hooks may observe it and clean up, but cannot recover the run to success even if user code absorbs the delivered cancellation. When first-party and external cancellation race, external cancellation normally wins.
+
+!!! warning "Calling `Task.uncancel()` can interfere with cancellation attribution"
+    If user code catches a first-party cancellation and calls `Task.uncancel()`, an external cancellation arriving before the next run step can be consumed as first-party cancellation and surface as `RunCancelled`. This existing limitation is tracked in [#7240](https://github.com/pydantic/pydantic-ai/issues/7240).
 
 For fine-grained control over the agent graph, call [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] on the handle returned by [`agent.iter()`][pydantic_ai.agent.Agent.iter]:
 
@@ -812,7 +975,7 @@ When a stream is cancelled mid-generation, the response is recorded with `state=
 ```python {title="stream_cancel_history.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -844,9 +1007,29 @@ Cancellation is **run-scoped**: `cancel()` cancels the run its `RunContext` belo
 
 - **A sub-agent cancelling itself does not cancel the parent** — when it's `await`ed inside a tool body. If the sub-agent (or one of its tools) calls `ctx.cancel()`, that cancels the *sub-agent's* run. The delegate tool sees a [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], which — if it isn't caught — surfaces to the parent as a *failed tool return* the parent's model can react to, not as a cancellation of the parent run. This isolation is specific to tool bodies: a sub-agent `await`ed from an `event_stream_handler`, an [output validator](output.md#output-validator-functions), or a [capability](capabilities/overview.md) hook runs directly on the parent's task, so its `cancel()` *does* surface as the parent's own `RunCancelled`.
 - **To cancel the parent too, opt in from the delegate tool** by catching `RunCancelled` and calling `ctx.cancel()` on the parent's context (or re-raising a different error).
+- **A sub-agent inherits the parent's deadline.** A sub-agent run from a tool of a run with a [`timeout=`](timeouts.md#bounding-a-whole-run) gets the same deadline, which its own `timeout=` can shorten but not extend. When the shared deadline passes, both runs stop and the parent raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut]. A sub-agent's own, shorter `timeout=` is a self-cancellation like the one above: the delegate tool fails and the parent continues.
 - **To cancel a whole tree of runs at once, share one `CancellationToken`** across the parent and its sub-agents — cancelling it stops all of them. A parent cancelled this way (or by an external `asyncio.CancelledError`) also tears down any sub-agent run it is `await`ing inline, since they run on the same task.
 
 ### Additional Configuration
+
+#### Keeping model prices up to date
+
+Pydantic AI bundles model prices at release time. To estimate costs for models released after you installed it, download updated prices when your app starts:
+
+```python
+from pydantic_ai import prices
+
+updater = prices.update_in_background()
+
+try:
+    ...  # run your app
+finally:
+    updater.stop()
+```
+
+The price list updates immediately and then hourly in a background thread. Failed downloads leave the most recent prices in use.
+
+For a custom URL or update interval, use [`genai_prices.UpdatePrices`](https://github.com/pydantic/genai-prices/blob/main/packages/python/README.md#updateprices), which shares the same background task.
 
 #### Usage Limits
 
@@ -860,7 +1043,7 @@ Consider the following example, where we limit the number of output tokens:
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 result_sync = agent.run_sync(
     'What is the capital of Italy? Answer with just the city.',
@@ -869,7 +1052,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage)
-#> RunUsage(cost=Decimal('0.000201'), input_tokens=62, output_tokens=1, requests=1)
+#> RunUsage(cost=Decimal('0.000134'), input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -883,7 +1066,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
+Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling. The request count, [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], counts the model responses the agent acts on, one per turn of the agent loop, rather than every request sent to the provider: attempts a [fallback model](models/overview.md#fallback-model) moved on from, the continuation requests that complete a turn a provider paused (Anthropic `pause_turn`, OpenAI background mode), and [provider SDK and transport retries](retries.md#retry-multiplication) aren't counted. The tokens and cost of a response a fallback model rejected, and of continuation requests, still count towards the token and cost limits.
 
 ```py
 from typing_extensions import TypedDict
@@ -900,10 +1083,10 @@ class NeverOutputType(TypedDict):
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     retries={'tools': 3},
     output_type=NeverOutputType,
-    system_prompt='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
+    instructions='Any time you get a response, call the `infinite_retry_tool` to produce another response.',
 )
 
 
@@ -926,6 +1109,8 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
+When a run resumes a turn the provider paused, from a message history ending in the `'suspended'` response an earlier run left behind (for example by breaking out of [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]), its usage covers only the requests it makes itself: the earlier run already counted what the suspended response was billed. The response that completes the turn still reports the whole turn's usage in the message history. Adding up the runs' usage gives what the provider billed for the conversation; to have [`UsageLimits`][pydantic_ai.usage.UsageLimits] cap that total rather than the resuming run alone, carry the earlier usage in with `usage=` or [`conversation=`](message-history.md#carrying-a-conversation-whole).
+
 ##### Capping tool calls
 
 If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
@@ -935,7 +1120,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 @agent.tool_plain
 def do_work() -> str:
@@ -964,7 +1149,7 @@ The token limits above are cumulative across the whole run. To instead cap the s
 ```py
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 try:
     agent.run_sync(
@@ -989,7 +1174,7 @@ from decimal import Decimal
 
 from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('{{ anthropic:medium }}')
 
 try:
     agent.run_sync(
@@ -999,14 +1184,14 @@ try:
 except UsageLimitExceeded as e:
     print(e)
     """
-    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000201')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
+    Exceeded the `cost_limit` of 0.0001 (`usage.cost`=Decimal('0.000134')). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits
     """
 ```
 
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for. With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 #### Model (Run) Settings
 
@@ -1025,11 +1210,11 @@ you can do the following:
 
 ```py
 from pydantic_ai import Agent, ModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.google import GoogleModel
 
 # 1. Model-level defaults
-model = OpenAIChatModel(
-    'gpt-5.2',
+model = GoogleModel(
+    '{{ google:medium.name }}',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -1104,7 +1289,7 @@ class Deps:
 
 
 agent = Agent[Deps](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=Deps,
     metadata=lambda ctx: {'tenant': ctx.deps.tenant},  # agent-level metadata
 )
@@ -1131,12 +1316,12 @@ import asyncio
 from pydantic_ai import Agent, ConcurrencyLimit
 
 # Simple limit: allow up to 10 concurrent runs
-agent = Agent('openai:gpt-5', max_concurrency=10)
+agent = Agent('{{ openai:medium }}', max_concurrency=10)
 
 
 # With backpressure: limit concurrent runs and queue depth
 agent_with_backpressure = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     max_concurrency=ConcurrencyLimit(max_running=10, max_queued=100),
 )
 
@@ -1165,24 +1350,26 @@ If you wish to further customize model behavior, you can use a subclass of [`Mod
 For example:
 
 ```py
+from google.genai.types import HarmBlockThreshold, HarmCategory
+
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('google:gemini-3-flash-preview')
+agent = Agent('{{ google:medium }}')
 
 try:
     result = agent.run_sync(
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
         model_settings=GoogleModelSettings(
             temperature=0.0,  # general model settings can also be specified
-            gemini_safety_settings=[
+            google_safety_settings=[
                 {
-                    'category': 'HARM_CATEGORY_HARASSMENT',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
                 {
-                    'category': 'HARM_CATEGORY_HATE_SPEECH',
-                    'threshold': 'BLOCK_LOW_AND_ABOVE',
+                    'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    'threshold': HarmBlockThreshold.BLOCK_LOW_AND_ABOVE,
                 },
             ],
         ),
@@ -1206,23 +1393,23 @@ Here's an example of a conversation comprised of multiple runs:
 ```python {title="conversation_example.py" hl_lines="13"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 # First run
 result1 = agent.run_sync('Who was Albert Einstein?')
 print(result1.output)
 #> Albert Einstein was a German-born theoretical physicist.
 
-# Second run, passing previous messages
+# Second run, continuing the first one's conversation
 result2 = agent.run_sync(
     'What was his most famous equation?',
-    message_history=result1.new_messages(),  # (1)!
+    conversation=result1.conversation,  # (1)!
 )
 print(result2.output)
 #> Albert Einstein's most famous equation is (E = mc^2).
 ```
 
-1. Continue the conversation; without `message_history` the model would not know who "his" was referring to.
+1. Continue the conversation; without it the model would not know who "his" was referring to. A [`Conversation`][pydantic_ai.conversation.Conversation] carries the messages along with the running usage and the conversation ID, and is what to [store](persistence.md#storing-a-conversation-yourself) between requests. Passing `message_history=result1.all_messages()` instead carries only the messages; see [Messages and chat history](message-history.md).
 
 _(This example is complete, it can be run "as is")_
 
@@ -1241,7 +1428,7 @@ In particular, agents are generic in both the type of their dependencies and the
 
 Consider the following script with type mistakes:
 
-```python {title="type_mistakes.py" hl_lines="18 28"}
+```python {title="type_mistakes.py" hl_lines="18 28" typecheck="skip - deliberately wrong to show what a type checker reports"}
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, RunContext
@@ -1259,7 +1446,7 @@ agent = Agent(
 )
 
 
-@agent.system_prompt
+@agent.instructions
 def add_user_name(ctx: RunContext[str]) -> str:  # (2)!
     return f"The user's name is {ctx.deps}."
 
@@ -1280,7 +1467,7 @@ Running `mypy` on this will give the following output:
 
 ```bash
 ➤ uv run mypy type_mistakes.py
-type_mistakes.py:18: error: Argument 1 to "system_prompt" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str]"  [arg-type]
+type_mistakes.py:18: error: Argument 1 to "instructions" of "Agent" has incompatible type "Callable[[RunContext[str]], str]"; expected "Callable[[RunContext[User]], str | None]"  [arg-type]
 type_mistakes.py:28: error: Argument 1 to "foobar" has incompatible type "bool"; expected "bytes"  [arg-type]
 Found 2 errors in 1 file (checked 1 source file)
 ```
@@ -1314,7 +1501,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=str,  # (1)!
     system_prompt="Use the customer's name while replying to them.",  # (2)!
 )
@@ -1371,7 +1558,7 @@ from datetime import date
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=str,  # (1)!
     instructions="Use the customer's name while replying to them.",  # (2)!
 )
@@ -1450,12 +1637,13 @@ def local_time() -> str:
 
 
 @agent.instructions
-def user_name(ctx: RunContext[None]) -> str:
+def user_name(ctx: RunContext) -> str:
     return 'The user is Frank.'
 
 
 agent.run_sync('What is the capital of Italy?')
 
+assert model.last_model_request_parameters is not None
 parts = model.last_model_request_parameters.instruction_parts or []
 print([(part.name, str(part.id) if part.id is not None else None, part.content) for part in parts])
 """
@@ -1515,7 +1703,7 @@ class ChatResult(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=DatabaseConn,
     output_type=ChatResult,
 )
@@ -1611,7 +1799,7 @@ For a run that was cancelled rather than failed, [`RunCancelled`][pydantic_ai.ex
 ```python {title="agent_model_errors.py"}
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, capture_run_messages
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool_plain
@@ -1657,9 +1845,9 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.0001645'), input_tokens=62, output_tokens=4
+                    cost=Decimal('0.000164'), input_tokens=62, output_tokens=4
                 ),
-                model_name='gpt-5.2',
+                model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -1686,9 +1874,9 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.000238'), input_tokens=72, output_tokens=8
+                    cost=Decimal('0.000224'), input_tokens=72, output_tokens=8
                 ),
-                model_name='gpt-5.2',
+                model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -1776,7 +1964,7 @@ assert any(
 Agents can also be defined declaratively in YAML or JSON using [agent specs](agent-spec.md). This separates agent configuration from application code:
 
 ```yaml {test="skip"}
-model: anthropic:claude-opus-4-6
+model: {{ anthropic:large }}
 instructions: You are a helpful assistant.
 capabilities:
   - WebSearch

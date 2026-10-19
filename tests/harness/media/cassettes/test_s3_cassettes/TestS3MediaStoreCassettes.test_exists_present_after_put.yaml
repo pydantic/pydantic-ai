@@ -1,0 +1,90 @@
+interactions:
+  - request:
+      body: pydantic-ai-harness step-persistence VCR cassette payload v1
+      headers:
+        Accept:
+          - '*/*'
+        Accept-Encoding:
+          - gzip, deflate
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '60'
+        User-Agent:
+          - python-httpx/0.28.1
+        authorization:
+          - REDACTED
+        content-type:
+          - application/octet-stream
+        host:
+          - account.r2.cloudflarestorage.com
+        x-amz-content-sha256:
+          - 1743d339a10eaa072801e8bf3eca688d6a339cb26b9354194f15c131727274f1
+        x-amz-date:
+          - REDACTED
+      method: PUT
+      uri: https://account.r2.cloudflarestorage.com/harness-test-bucket/harness-vcr/1743d339a10eaa072801e8bf3eca688d6a339cb26b9354194f15c131727274f1.bin
+    response:
+      body:
+        string: ''
+      headers:
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '0'
+        Content-Type:
+          - text/plain;charset=UTF-8
+        Date:
+          - Mon, 25 May 2026 04:00:29 GMT
+        ETag:
+          - '"076102a313b5c40b44923280cc2c04c3"'
+        Server:
+          - cloudflare
+      status:
+        code: 200
+        message: OK
+  - request:
+      body: ''
+      headers:
+        Accept:
+          - '*/*'
+        Accept-Encoding:
+          - gzip, deflate
+        Connection:
+          - keep-alive
+        User-Agent:
+          - python-httpx/0.28.1
+        authorization:
+          - REDACTED
+        host:
+          - account.r2.cloudflarestorage.com
+        x-amz-content-sha256:
+          - e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        x-amz-date:
+          - REDACTED
+      method: HEAD
+      uri: https://account.r2.cloudflarestorage.com/harness-test-bucket/harness-vcr/1743d339a10eaa072801e8bf3eca688d6a339cb26b9354194f15c131727274f1.bin
+    response:
+      body:
+        string: ''
+      headers:
+        Accept-Ranges:
+          - bytes
+        Connection:
+          - keep-alive
+        Content-Length:
+          - '60'
+        Content-Type:
+          - application/octet-stream
+        Date:
+          - Mon, 25 May 2026 04:00:29 GMT
+        ETag:
+          - '"076102a313b5c40b44923280cc2c04c3"'
+        Last-Modified:
+          - Mon, 25 May 2026 04:00:29 GMT
+        Server:
+          - cloudflare
+      status:
+        code: 200
+        message: OK
+version: 1

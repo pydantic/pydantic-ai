@@ -13,7 +13,7 @@ and its overlap with standard run events; the turn-boundary rule lives here), `t
 `tools.md` (tools only), `capabilities.md` (per-hook support story), `history.md`, `deployment.md`
 (frontend transports), `lifecycle.md` (connection lifecycle only), `observability.md`,
 `troubleshooting.md` (the symptom-first index — per-page "Edge cases" must not duplicate it), and
-the four provider pages (canonical for installs, model names, settings, quirks).
+the five provider pages (canonical for installs, model names, settings, quirks).
 
 ## House rules for these pages
 
@@ -34,4 +34,4 @@ the four provider pages (canonical for installs, model names, settings, quirks).
   that tool name elsewhere.
 - Browser WebRTC ships in Pydantic AI: `docs/realtime/deployment.md#browser-webrtc-server-sideband` is the canonical
   owner of the topology, and don't present third-party media platforms as the WebRTC story. Azure
-  Voice Live is still an in-flight PR (#6642): mention it as coming to Pydantic AI where relevant.
+  Voice Live ships too: `docs/realtime/azure.md` owns its routing and settings.

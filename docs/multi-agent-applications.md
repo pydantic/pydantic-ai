@@ -1,9 +1,13 @@
+---
+description: "Build multi-agent systems with Pydantic AI: delegate to sub-agents through tools, hand off between agents in your code, or orchestrate them with graphs."
+---
+
 # Multi-agent Applications
 
 There are roughly five levels of complexity when building applications with Pydantic AI:
 
 1. Single agent workflows — what most of the `pydantic_ai` documentation covers
-2. [Agent delegation](#agent-delegation) — agents using another agent via tools
+2. [Agent delegation](#agent-delegation) — agents using another agent via tools, either wired up by hand or with the Harness's [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability
 3. [Programmatic agent hand-off](#programmatic-agent-hand-off) — one agent runs, then application code calls another agent
 4. [Graph based control flow](graph.md) — for the most complex cases, a graph-based state machine can be used to control the execution of multiple agents
 5. [Deep Agents](#deep-agents) — autonomous agents with planning, file operations, task delegation, and sandboxed code execution
@@ -14,6 +18,11 @@ Of course, you can combine multiple strategies in a single application.
 
 "Agent delegation" refers to the scenario where an agent delegates work to another agent, then takes back control when the delegate agent (the agent called from within a tool) finishes.
 If you want to hand off control to another agent completely, without coming back to the first agent, you can use an [output function](output.md#output-functions).
+
+!!! tip "`SubAgents` does this for you"
+    [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships a [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) capability that is the most convenient way to delegate: you hand it a list of named agents and it exposes a single `delegate_task(agent_name, task)` tool, forwards dependencies, threads usage limits, and lists the available delegates in the system prompt as a static instruction so the listing stays in the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)). Each delegation runs in its own run with its own message history, so a delegate never sees the parent conversation.
+
+    Write the delegation tool by hand, as below, when you need control `SubAgents` doesn't give you — a bespoke tool schema, per-delegate argument validation, or passing the parent's message history through.
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
@@ -28,7 +37,7 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.tools.RunContext.usage] 
 from pydantic_ai import Agent, RunContext, UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',  # (2)!
     instructions=(
         'Use the `joke_factory` to generate some jokes, then choose the best. '
@@ -36,7 +45,7 @@ joke_selection_agent = Agent(  # (1)!
     ),
 )
 joke_generation_agent = Agent(  # (3)!
-    'google:gemini-3-flash-preview', name='joke_generation_agent', output_type=list[str]
+    '{{ google:medium }}', name='joke_generation_agent', output_type=list[str]
 )
 
 
@@ -58,7 +67,7 @@ print(result.output)
 print(result.usage)
 """
 RunUsage(
-    cost=Decimal('0.00051200'),
+    cost=Decimal('0.00047625'),
     input_tokens=165,
     output_tokens=24,
     requests=3,
@@ -118,7 +127,7 @@ class ClientAndKey:  # (1)!
 
 
 joke_selection_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='joke_selection_agent',
     deps_type=ClientAndKey,  # (2)!
     instructions=(
@@ -127,7 +136,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     name='joke_generation_agent',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
@@ -168,7 +177,7 @@ async def main():
         print(result.usage)  # (6)!
         """
         RunUsage(
-            cost=Decimal('0.00056350'),
+            cost=Decimal('0.00054750'),
             input_tokens=220,
             output_tokens=32,
             requests=4,
@@ -234,9 +243,9 @@ class Failed(BaseModel):
 
 
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='flight_search_agent',
-    output_type=FlightDetails | Failed,  # type: ignore
+    output_type=FlightDetails | Failed,
     instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -283,9 +292,9 @@ class SeatPreference(BaseModel):
 
 # This agent is responsible for extracting the user's seat selection
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='seat_preference_agent',
-    output_type=SeatPreference | Failed,  # type: ignore
+    output_type=SeatPreference | Failed,
     instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '

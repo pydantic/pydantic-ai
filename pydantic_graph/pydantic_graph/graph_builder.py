@@ -11,7 +11,6 @@ re-exported from `pydantic_graph` directly.
 from __future__ import annotations as _annotations
 
 import inspect
-import sys
 from collections import Counter, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
@@ -22,7 +21,9 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Never,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     get_origin,
@@ -33,7 +34,7 @@ from typing import (
 from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, AbstractSpan, Unset, get_traceparent, infer_obj_name, logfire_span
@@ -68,12 +69,6 @@ from pydantic_graph.paths import (
 )
 from pydantic_graph.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
-
 
 # -- TypeVars ----------------------------------------------------------------
 
@@ -768,6 +763,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             # intermediate join J1 that shares the same parent fork run, we must finalize J1 first
                             # because it might produce items that feed into J2.
                             for (join_id, fork_run_id), join_state in list(self.active_reducers.items()):
+                                # An earlier join in this pass may have dispatched tasks that feed this join.
+                                if not self._is_fork_run_completed(self.active_tasks.values(), join_id, fork_run_id):
+                                    continue
+
                                 # Check if this join has any intermediate joins that are also active reducers
                                 should_skip = False
                                 intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
@@ -827,9 +826,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     self.active_tasks[new_task.task_id] = new_task
                                 new_task_ids = {t.task_id for t in maybe_overridden_result}
                                 for t in new_tasks:
-                                    # Same note as above about how this is theoretically reachable but we should
-                                    # just get coverage by unifying the code paths
-                                    if t.task_id not in new_task_ids:  # pragma: no cover
+                                    if t.task_id not in new_task_ids:
                                         await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
             except GeneratorExit:
@@ -882,6 +879,13 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # `BrokenResourceError`); both are benign here — the result/error
                 # is no longer needed because the run is being torn down.
                 pass
+            except Exception as exc:
+                # Streaming errors must reach the caller through ErrorMarker too.
+                # Cancellation still propagates because it is not an Exception.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except (BrokenResourceError, ClosedResourceError):
+                    pass
 
     async def _run_task(
         self,
@@ -1116,9 +1120,7 @@ def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
 
 @contextmanager
 def _unwrap_exception_groups():
-    # I need to use a helper function for this because I can't figure out a way to get pyright
-    # to type-check the ExceptionGroup catching in both 3.13 and 3.10 without emitting type errors in one;
-    # if I try to ignore them in one, I get unnecessary-type-ignore errors in the other
+    # Pyright must see the ungrouped exception, while runtime catches an exception group.
     if TYPE_CHECKING:
         yield
     else:

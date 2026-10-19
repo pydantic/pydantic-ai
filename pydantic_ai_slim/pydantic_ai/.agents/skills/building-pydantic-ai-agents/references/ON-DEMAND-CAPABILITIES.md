@@ -120,14 +120,15 @@ When `load_capability` succeeds:
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
 - the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- only the first `load_capability` call for an id in a response loads it; later calls for that id in the same response get a retry prompt, the same way a load of an already-active capability does
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
-Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
+Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again. A processor that *adds* a complete load pair activates that capability for the request it is processing, not the next one: its `prepare_tools` runs before any of its tools are dispatched, so a capability using `prepare_tools` as a permission filter still governs them.
 
-A `CompactionPart` resets both forms of prospective derived state at its exact position, so future requests load and reveal capability tools again. For a call in the response currently being dispatched, pre-boundary evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible load evidence is refused with a "not available yet" retry naming the capability to load.
+A `CompactionPart` resets both forms of prospective derived state at its exact position, so future requests load and reveal capability tools again. For a call in the response currently being dispatched, pre-boundary evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible load evidence is refused with a "not available yet" retry naming the capability to load. When that pre-boundary evidence does admit the call, the owning capability counts as active for that dispatch, so its `prepare_tools` and tool hooks run over the call — a capability filtering its own tools governs them on whatever evidence authorized them. `ctx.loaded_capability_ids` still reads the conservative window, so it can be empty there.
 
 ## Dynamic Descriptions and Instructions
 
