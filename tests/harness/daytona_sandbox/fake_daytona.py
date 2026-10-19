@@ -30,7 +30,7 @@ from typing import IO, Protocol
 
 import anyio
 import anyio.lowlevel
-from daytona import DaytonaConnectionError, DaytonaError, DaytonaNotFoundError, DaytonaValidationError, SandboxState
+from daytona import DaytonaBadRequestError, DaytonaConnectionError, DaytonaError, DaytonaNotFoundError, SandboxState
 
 
 class CreateParams(Protocol):
@@ -188,7 +188,7 @@ class FakeFileSystem:
     async def download_file(self, path: str, timeout: int | None = None) -> bytes:
         self._raise_if_needed()
         if path in self.owner.directories:
-            raise DaytonaValidationError(f'path is a directory: {path}', status_code=400)
+            raise DaytonaBadRequestError(f'path is a directory: {path}', status_code=400)
         if self.owner.download_error is not None:
             raise self.owner.download_error
         data = self.owner.files.get(path)
@@ -259,7 +259,7 @@ def _host_errors(path: str, operation: str) -> Generator[None]:
     except IsADirectoryError as error:
         raise DaytonaError(f'Failed to {operation}: 400: open {path}: is a directory', status_code=400) from error
     except (NotADirectoryError, FileExistsError) as error:
-        raise DaytonaValidationError(
+        raise DaytonaBadRequestError(
             f'Failed to {operation}: bad request: {path}: not a directory', status_code=400
         ) from error
 

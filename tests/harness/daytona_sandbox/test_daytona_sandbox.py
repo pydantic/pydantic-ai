@@ -77,6 +77,12 @@ def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message
         DaytonaSandbox(**settings)
 
 
+@pytest.mark.parametrize('env', [{'PORT': 3000}, {1: 'one'}, {'TOKEN': None}])
+def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
+    with pytest.raises(TypeError, match='env keys and values must be strings'):
+        DaytonaSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
+
+
 async def test_explicit_ref_attaches_without_creation(fake_daytona: FakeDaytona) -> None:
     existing = fake_daytona.sandbox('existing')
     backend = DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id=existing.id))

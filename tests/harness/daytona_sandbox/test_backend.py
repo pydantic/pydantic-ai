@@ -19,14 +19,16 @@ import daytona
 import pytest
 from daytona import (
     DaytonaAuthenticationError,
-    DaytonaAuthorizationError,
+    DaytonaBadRequestError,
     DaytonaConflictError,
     DaytonaConnectionError,
     DaytonaError,
+    DaytonaForbiddenError,
+    DaytonaGoneError,
     DaytonaNotFoundError,
     DaytonaRateLimitError,
     DaytonaTimeoutError,
-    DaytonaValidationError,
+    DaytonaUnprocessableEntityError,
 )
 
 from pydantic_ai.workspaces import (
@@ -339,20 +341,21 @@ class TestCommands:
             await backend.run(['true'])
         assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
 
-    async def test_output_over_the_limit_raises_with_a_preview(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The sizes are checked before any download, so a file grown without being written cannot
-        # fill the application's memory; the preview is cut in the sandbox.
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._MAX_OUTPUT_BYTES', 10)
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._OUTPUT_PREVIEW_BYTES', 3)
+    # `sizes` stands in for the files growing after their sizes were read, as a background child can make them.
+    @pytest.mark.parametrize('sizes', ['', '1\n1\n'], ids=['checked-by-size', 'grown-after-the-size-check'])
+    async def test_output_over_the_limit_raises_with_a_preview(self, fake_daytona: FakeDaytona, sizes: str) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['abcdefgh']
-        sandbox.process_stderr = ['ijkl']
+        sandbox.process_stdout = ['x' * (10 * 1024 * 1024 + 1)]
+        sandbox.process_stderr = ['oops']
+        sandbox.output_sizes_reply = sizes
         with pytest.raises(WorkspaceOutputLimitError) as exc_info:
-            await backend.run(['true'])
-        assert (exc_info.value.limit, exc_info.value.stdout, exc_info.value.stderr) == (10, 'abc', 'ijk')
+            await backend.run(['yes'])
+        assert (exc_info.value.limit, len(exc_info.value.stdout), exc_info.value.stderr) == (
+            10 * 1024 * 1024,
+            64 * 1024,
+            'oops',
+        )
         assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
 
     async def test_a_garbled_output_size_reply_is_a_workspace_error(self, fake_daytona: FakeDaytona) -> None:
@@ -427,10 +430,8 @@ class TestCommands:
         assert type(exc_info.value) is WorkspaceError
 
     async def test_undeletable_session_is_logged_and_the_original_error_wins(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, fake_daytona: FakeDaytona, caplog: pytest.LogCaptureFixture
     ) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._TEARDOWN_TIMEOUT', 0.05)
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._RETRY_DELAY', 0.01)
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_status_error = RuntimeError('status failed')
@@ -441,10 +442,8 @@ class TestCommands:
         assert 'may still be running' in caplog.text
 
     async def test_failed_delete_obeys_stop_grace(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self, fake_daytona: FakeDaytona, caplog: pytest.LogCaptureFixture
     ) -> None:
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._TEARDOWN_TIMEOUT', 5)
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._RETRY_DELAY', 0.01)
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_hangs = True
@@ -502,36 +501,43 @@ class TestCommands:
         with anyio.fail_after(5):
             await entered.wait()
             task.cancel()
-            assert not backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+            closing = asyncio.create_task(backend.aclose())
+            await anyio.wait_all_tasks_blocked()
+            # The client stays open until the cancelled run's session is deleted.
+            assert fake_daytona.closed_clients == 0
             release.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
+            await closing
         assert sandbox.process_sessions == set()
-        assert backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+        assert fake_daytona.closed_clients == 1
 
-    async def test_a_missing_cwd_is_file_not_found(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
+    async def test_a_missing_working_dir_is_a_workspace_error(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         missing = f'{tmp_path.resolve()}/missing'
         # An attached sandbox must already have the configured `working_dir`.
         owner = await started()
         attached = DaytonaSandboxBackend(ref=owner.ref, working_dir=missing)
-        with pytest.raises(FileNotFoundError, match=f'^{re.escape(missing)}$'):
+        with pytest.raises(WorkspaceError, match=f'^working_dir {re.escape(repr(missing))} does not exist in Daytona'):
             await attached.run(['true'])
 
-    async def test_overlapping_runs_drain_only_when_both_finish(self, fake_daytona: FakeDaytona) -> None:
+    async def test_aclose_waits_for_overlapping_runs(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_follow_open = True
         sandbox.process_status_gate = gate = asyncio.Event()
         runs = [asyncio.create_task(backend.run(['true'])) for _ in range(2)]
         with anyio.fail_after(5):
-            while backend._operations < 2:  # pyright: ignore[reportPrivateUsage]
+            while len(sandbox.process_sessions) < 2:
                 await asyncio.sleep(0)
-            assert not backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+            closing = asyncio.create_task(backend.aclose())
+            await anyio.wait_all_tasks_blocked()
+            assert fake_daytona.closed_clients == 0
             gate.set()
             results = await asyncio.gather(*runs)
+            await closing
         assert [result.exit_code for result in results] == [0, 0]
-        assert backend._operations_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+        assert fake_daytona.closed_clients == 1
 
     async def test_cancellation_as_the_command_is_accepted_kills_it(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -570,7 +576,7 @@ class TestCommands:
         ('start_error', 'expected'),
         [
             (DaytonaConnectionError('control plane down'), DaytonaConnectionError),
-            (DaytonaError('sandbox is in an error state', status_code=400), WorkspaceUnavailableError),
+            (DaytonaBadRequestError('sandbox is in an error state', status_code=400), WorkspaceUnavailableError),
             (DaytonaAuthenticationError('bad key', status_code=401), WorkspaceUnavailableError),
         ],
     )
@@ -659,12 +665,14 @@ class TestCommands:
 # as a transient failure durable engines retry; a refused creation ends the run.
 _CREATE_ERRORS: list[tuple[Exception, type[Exception] | None]] = [
     (DaytonaAuthenticationError('bad key', status_code=401), WorkspaceUnavailableError),
-    (DaytonaAuthorizationError('forbidden', status_code=403), WorkspaceUnavailableError),
-    (DaytonaValidationError('bad request', status_code=400), WorkspaceUnavailableError),
+    (DaytonaForbiddenError('forbidden', status_code=403), WorkspaceUnavailableError),
+    (DaytonaBadRequestError('bad request', status_code=400), WorkspaceUnavailableError),
     (DaytonaConflictError('name taken', status_code=409), WorkspaceUnavailableError),
     (DaytonaNotFoundError('no such snapshot', status_code=404), WorkspaceUnavailableError),
-    (DaytonaError('unprocessable', status_code=422), WorkspaceUnavailableError),
+    (DaytonaGoneError('gone', status_code=410), WorkspaceUnavailableError),
+    (DaytonaUnprocessableEntityError('unprocessable', status_code=422), WorkspaceUnavailableError),
     (DaytonaRateLimitError('slow down', status_code=429), None),
+    (DaytonaTimeoutError('request timeout', status_code=408), None),
     (DaytonaError('bad gateway', status_code=502), None),
     (DaytonaError('unknown'), None),
     (DaytonaConnectionError('offline'), None),
@@ -700,7 +708,7 @@ class TestErrorsAndFilesystem:
         ('error', 'expected'),
         [
             (DaytonaAuthenticationError('bad key', status_code=401), WorkspaceUnavailableError),
-            (DaytonaAuthorizationError('forbidden', status_code=403), WorkspaceUnavailableError),
+            (DaytonaForbiddenError('forbidden', status_code=403), WorkspaceUnavailableError),
             (DaytonaRateLimitError('rate limited', status_code=429), DaytonaRateLimitError),
         ],
     )
@@ -811,7 +819,7 @@ class TestErrorsAndFilesystem:
 
     async def test_working_dir_error_is_translated(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
-        fake_daytona.sandboxes[0].workdir_error = DaytonaValidationError('probe failed')
+        fake_daytona.sandboxes[0].workdir_error = DaytonaBadRequestError('probe failed')
         with pytest.raises(WorkspaceError, match='probe failed'):
             await backend.working_dir()
 
@@ -929,7 +937,7 @@ class TestErrorsAndFilesystem:
     ) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.fs_error = DaytonaValidationError('invalid mode', status_code=400)
+        sandbox.fs_error = DaytonaBadRequestError('invalid mode', status_code=400)
         with pytest.raises(WorkspaceError, match=r"^Could not access '/pkg' in the sandbox: invalid mode$"):
             await backend.make_dir('/pkg')
         sandbox.fs_error = None
@@ -937,7 +945,7 @@ class TestErrorsAndFilesystem:
         sandbox.directories.add('/pkg')
 
         async def refused(path: str, mode: str, request_timeout: float | None = None) -> None:
-            raise DaytonaValidationError(f'mkdir {path}: not a directory', status_code=400)
+            raise DaytonaBadRequestError(f'mkdir {path}: not a directory', status_code=400)
 
         monkeypatch.setattr(sandbox.fs, 'create_folder', refused)
         with pytest.raises(NotADirectoryError, match=r"^Not a directory in the Daytona sandbox: '/pkg'$"):
@@ -1016,13 +1024,13 @@ class TestErrorsAndFilesystem:
         self, fake_daytona: FakeDaytona, message: str, expected: type[OSError]
     ) -> None:
         backend = await started()
-        fake_daytona.sandboxes[0].fs_error = DaytonaValidationError(message, status_code=400)
+        fake_daytona.sandboxes[0].fs_error = DaytonaBadRequestError(message, status_code=400)
         with pytest.raises(expected):
             await backend.stat('/bad')
 
     async def test_symlink_loop_is_not_an_existing_file(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
-        fake_daytona.sandboxes[0].fs_error = DaytonaValidationError(
+        fake_daytona.sandboxes[0].fs_error = DaytonaBadRequestError(
             'Too many levels of symbolic links', status_code=400
         )
         assert await backend.exists('/loop') is False
@@ -1030,7 +1038,7 @@ class TestErrorsAndFilesystem:
             await backend.stat('/loop')
         assert raised.value.errno == errno.ELOOP
         # Any other path error is not an answer.
-        fake_daytona.sandboxes[0].fs_error = DaytonaValidationError('Permission denied', status_code=400)
+        fake_daytona.sandboxes[0].fs_error = DaytonaBadRequestError('Permission denied', status_code=400)
         with pytest.raises(PermissionError):
             await backend.exists('/locked')
 
@@ -1043,7 +1051,7 @@ class TestErrorsAndFilesystem:
     async def test_path_authorization_error_is_permission_denied(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.fs_error = DaytonaAuthorizationError('permission denied', status_code=403)
+        sandbox.fs_error = DaytonaForbiddenError('permission denied', status_code=403)
         with pytest.raises(PermissionError, match='Permission denied'):
             await backend.stat('/private')
 
@@ -1237,7 +1245,7 @@ class TestLazyOperations:
 
         async def create_then_refuse(self: FakeClient, params: CreateParams, *, timeout: float = 60) -> FakeSandbox:
             await create(self, params, timeout=timeout)
-            raise DaytonaValidationError('unknown snapshot', status_code=400)
+            raise DaytonaBadRequestError('unknown snapshot', status_code=400)
 
         monkeypatch.setattr(FakeClient, 'create', create_then_refuse)
         backend = DaytonaSandboxBackend()

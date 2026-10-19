@@ -1,20 +1,7 @@
 """A Daytona sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK assumptions verified against Daytona Python SDK 0.223.1:
-
-* `AsyncDaytona.get` accepts a sandbox ID or name; `create`, `AsyncSandbox.start`, and `delete`
-  cover the lifecycle: https://www.daytona.io/docs/en/python-sdk/async/async-daytona/
-* Process sessions run a command asynchronously, report its exit code, and kill it when deleted:
-  https://www.daytona.io/docs/en/python-sdk/async/async-process/
-* Neither the session log stream nor the stored session logs return a command's stdout and stderr
-  exactly: a block of one stream can arrive as the other. Each command therefore writes both to
-  files, downloaded once it exits, and the log stream only signals that it ended.
-* `auto_stop_interval` is a creation-time setting; by default an idle container sandbox stops
-  after 15 minutes and a VM sandbox pauses after 60, and starting either resumes it:
-  https://www.daytona.io/docs/en/persistence/
-* SDK errors are typed by HTTP status (`DaytonaNotFoundError`, `DaytonaAuthenticationError`,
-  `DaytonaValidationError`, ...); transport failures are `DaytonaConnectionError` or
-  `DaytonaTimeoutError`, and anything else a plain `DaytonaError`.
+Daytona's session logs can deliver a block of stdout as stderr or the reverse, so each command writes
+both streams to files that are downloaded once it exits; the log stream only signals that it ended.
 """
 
 from __future__ import annotations
@@ -22,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
-import math
 import posixpath
 import shlex
 import uuid
@@ -48,6 +34,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_timeout,
     command_argv,
     command_deadline,
     run_to_completion,
@@ -88,7 +75,7 @@ _EVENT_CONNECT_GRACE = 6.0
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream.
 _PARTIAL_OUTPUT_LIMIT = 4096
-# E2B's cap and preview: a command's whole output is downloaded into memory.
+# A command's whole output is downloaded into memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 
@@ -137,7 +124,7 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
             await sandbox.delete(timeout=_LIFECYCLE_TIMEOUT)
     except daytona.DaytonaNotFoundError:
         return
-    except (daytona.DaytonaAuthenticationError, daytona.DaytonaAuthorizationError) as error:
+    except (daytona.DaytonaAuthenticationError, daytona.DaytonaForbiddenError) as error:
         raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
     finally:
         if owned is not None:
@@ -146,29 +133,36 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
 
 
 async def _delete_session(process: AsyncProcess, session_id: str) -> None:
-    """Delete a command session, which kills its command, retrying until `_TEARDOWN_TIMEOUT`.
+    """Delete a command session, which kills its command, retrying until the caller's `stop_shielded` bound.
 
     A failure is logged, not raised, so it cannot replace the caller's outcome.
     """
     deleted = False
     try:
-        # Not shielded: callers run this under `stop_shielded`, which bounds it.
-        with anyio.move_on_after(_TEARDOWN_TIMEOUT):
-            while True:
-                try:
-                    await process.delete_session(session_id, request_timeout=_REQUEST_TIMEOUT)
-                    deleted = True
-                    return
-                except daytona.DaytonaNotFoundError:
-                    deleted = True
-                    return
-                except Exception:
-                    await anyio.sleep(_RETRY_DELAY)
+        while True:
+            try:
+                await process.delete_session(session_id, request_timeout=_REQUEST_TIMEOUT)
+                deleted = True
+                return
+            except daytona.DaytonaNotFoundError:
+                deleted = True
+                return
+            except Exception:
+                await anyio.sleep(_RETRY_DELAY)
     finally:
         if not deleted:
             _logger.warning(
                 'Could not delete Daytona command session %s; its command may still be running.', session_id
             )
+
+
+def _output_limit_error(stdout: str, stderr: str) -> WorkspaceOutputLimitError:
+    return WorkspaceOutputLimitError(
+        'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+        limit=_MAX_OUTPUT_BYTES,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
 
 def _output_paths(marker: str) -> tuple[str, str]:
@@ -290,16 +284,15 @@ class _DaytonaProcess:
                 except ValueError:
                     raise WorkspaceError(f'Could not read the command output sizes: {sizes.result!r}') from None
                 if out_size + err_size > _MAX_OUTPUT_BYTES:
-                    stdout, stderr = await self._excerpts('head', _OUTPUT_PREVIEW_BYTES)
-                    raise WorkspaceOutputLimitError(
-                        'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part '
-                        'of it instead',
-                        limit=_MAX_OUTPUT_BYTES,
-                        stdout=stdout,
-                        stderr=stderr,
-                    )
+                    raise _output_limit_error(*await self._excerpts('head', _OUTPUT_PREVIEW_BYTES))
                 stdout = await self._sandbox.fs.download_file(out_path, _REQUEST_TIMEOUT) if out_size else b''
                 stderr = await self._sandbox.fs.download_file(err_path, _REQUEST_TIMEOUT) if err_size else b''
+                # A background child can keep writing after the sizes were read.
+                if len(stdout) + len(stderr) > _MAX_OUTPUT_BYTES:
+                    raise _output_limit_error(
+                        stdout[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                        stderr[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                    )
         except WorkspaceOutputLimitError:
             raise
         except Exception as error:
@@ -442,6 +435,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             raise ValueError('Daytona workspace ref id cannot be empty')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
+        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+            raise TypeError('env keys and values must be strings')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='daytona', id=sandbox.id)
         self._sandbox = sandbox
         self._client = client
@@ -709,7 +704,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             async with _translated_filesystem_error(sandbox, path):
                 try:
                     await sandbox.fs.create_folder(path, '755', request_timeout=_REQUEST_TIMEOUT)
-                except daytona.DaytonaValidationError as error:
+                except daytona.DaytonaBadRequestError as error:
                     # The toolbox says "not a directory" for a file at the target and for one in its
                     # parents; a file at the target is `FileExistsError`.
                     if 'not a directory' in str(error).lower():
@@ -838,8 +833,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         timeout: float | None = None,
     ) -> CommandResult:
         async with self._operation():
-            if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-                raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+            check_timeout(timeout)
             argv = command_argv(command, shell)
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self.get_sandbox()
@@ -863,7 +857,10 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     process = await self._start(sandbox, argv, env)
                 result = await process.wait()
                 if process.missing_cwd:
-                    raise FileNotFoundError(self._working_dir)
+                    raise WorkspaceError(
+                        f'working_dir {self._working_dir!r} does not exist in Daytona sandbox {sandbox.id}. '
+                        'Create it there, or pass a working_dir that exists.'
+                    )
             # Delete the finished session before the operation ends and the client may close.
             await run_to_completion(lambda: stop_shielded(stop))
             return result
@@ -988,17 +985,18 @@ def _translated(error: Exception, context: str, *, path: str | None = None) -> E
         ):
             if phrase.lower() in message:
                 return error_type(f'{phrase} in the Daytona sandbox: {path!r}')
-    if path is not None and isinstance(error, daytona.DaytonaAuthorizationError):
+    if path is not None and isinstance(error, daytona.DaytonaForbiddenError):
         # Toolbox authorization is about the requested file, not the API credentials.
         return PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
-    if isinstance(error, (daytona.DaytonaAuthenticationError, daytona.DaytonaAuthorizationError)):
+    if isinstance(error, (daytona.DaytonaAuthenticationError, daytona.DaytonaForbiddenError)):
         return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
     if path is not None and isinstance(error, daytona.DaytonaNotFoundError):
         return FileNotFoundError(f'No such file or directory in the Daytona sandbox: {path!r}')
-    if isinstance(error, (daytona.DaytonaNotFoundError, daytona.DaytonaValidationError, daytona.DaytonaConflictError)):
+    if isinstance(error, (daytona.DaytonaNotFoundError, daytona.DaytonaBadRequestError, daytona.DaytonaConflictError)):
         return WorkspaceError(f'{context}: {error}')
     if (
-        type(error) is daytona.DaytonaError
+        isinstance(error, daytona.DaytonaError)
+        and not isinstance(error, (daytona.DaytonaRateLimitError, daytona.DaytonaTimeoutError))
         and error.status_code is not None
         and 400 <= error.status_code < 500  # a refusal; 5xx and status-less errors are transient
     ):
