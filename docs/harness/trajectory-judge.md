@@ -110,7 +110,31 @@ agent = Agent(
 
 - The judge's model usage is threaded onto the run's `usage` and respects the run's `usage_limits`: each launch claims one request on the shared usage before the evaluation starts, so the parent's next request and concurrent judges account for in-flight evaluations and the shared request limit cannot be exceeded. A launch the request budget cannot fit skips the tick, like one that finds an evaluation still in flight. The judge run is filed under the judged run's `conversation_id`.
 - An evaluation failure is raised on the run at the next cadence tick or at run end; judge failures are never silently dropped. If you need a judge to degrade instead, give it a fallback model through `agent` (for example a `FallbackModel`): resilience policy belongs to the judge agent, not to fields on the capability.
-- A judged run inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) is rejected with `UserError` before the first model request: the evaluation is launched from a capability hook in orchestration context, so its model calls would not be checkpointed and could repeat on replay. A durable-capable agent run outside its workflow or flow is unaffected. Run judged work outside durable execution.
+
+## Durable execution
+
+Inside a [durable execution](../durable_execution/overview.md) workflow or flow (Temporal, DBOS, Prefect) the judge call is a durable operation. It is checkpointed under the name `<agent>__capability__<id>.evaluate`, so a replay reuses the recorded verdict instead of asking the model again, and the judge's usage is recorded once.
+
+There the evaluation is awaited on the cadence tick instead of running concurrently with the run, so every `every`-th model request waits for the judge. A replay returns the recorded verdict at once, so a background evaluation would deliver its steering at a different point than the original run did, and the replayed history would diverge. Awaiting on the tick delivers the steering on the same next request both times. A failed evaluation is raised on the run at that tick.
+
+A durable operation is addressed by the capability's `id`, and `TrajectoryJudge` has no default one, because several judges on one agent is the normal shape and a shared default would merge them. So a judge on a durable-capable agent needs an explicit `id`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+from pydantic_ai_harness import TrajectoryJudge
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    name='researcher',
+    capabilities=[
+        TrajectoryJudge(model='anthropic:claude-haiku-4-5', id='drift', every=20),
+        DBOSDurability(),
+    ],
+)
+```
+
+Without one, Pydantic AI refuses to bind the agent, naming the fix, rather than silently running the judge uncheckpointed. Outside durable execution nothing changes: the evaluation runs concurrently and `id` stays optional.
 
 ## Observability
 
