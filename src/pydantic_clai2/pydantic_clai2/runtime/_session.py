@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
@@ -69,6 +69,11 @@ def session_context(session_id: str) -> Generator[None]:
         yield
     finally:
         _CURRENT_SESSION_ID.reset(token)
+
+
+def step_store(conversations: SqliteConversationStore) -> SqliteStepStore:
+    """Where runs over `conversations`, delegated tasks' included, capture their steps."""
+    return SqliteStepStore(database=conversations.database, max_snapshots_per_run=8)
 
 
 FamilyDefaults = Callable[[str], ModelSettings | None]
@@ -344,10 +349,10 @@ class Session(Generic[DepsT, OutputT]):
         """The Git checkout `workspace` is in, read once, when a session is first saved here."""
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
+        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
         self._published = (self.conversation_id, self.title)
-        self.step_store: StepStore | None = (
-            SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
-        )
+        self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
             ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
             if conversations
@@ -519,11 +524,13 @@ class Session(Generic[DepsT, OutputT]):
 
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
         startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
-        archived session archived, for a restore that continues in a fork of it.
+        archived session archived, for a restore that continues in a fork of it. One another live session
+        of this CLAI holds raises `ValueError`.
         """
-        notice = await self._restore(
-            conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
-        )
+        with self.claim(conversation_id):
+            notice = await self._restore(
+                conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
+            )
         await self._publish()
         return notice
 

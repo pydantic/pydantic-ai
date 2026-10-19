@@ -277,7 +277,7 @@ return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
 ) : null;
 ```
 
-`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta`. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
+`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta.ui`, which holds the CSP and permissions the renderer applies to the iframe. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
 
 ## Tool Approval
 
