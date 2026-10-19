@@ -119,7 +119,7 @@ async def test_safe_output_must_be_emitted_before_clai2_completes(
 async def test_attention_request_limit_is_enforced_and_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Attention's smaller request budget produces typed health failure metadata."""
+    """Attention keeps read-only tools and reports its smaller request budget."""
     monkeypatch.setenv('GITHUB_WORKFLOW', cli.ATTENTION_WORKFLOW)
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(tmp_path / 'safeoutputs.jsonl'))
     requests = 0
@@ -128,7 +128,7 @@ async def test_attention_request_limit_is_enforced_and_reported(
         nonlocal requests
         del messages
         requests += 1
-        assert 'Task' not in {tool.name for tool in info.function_tools}
+        assert {tool.name for tool in info.function_tools} == {'read_file', 'list_files', 'grep'}
         return ModelResponse(parts=[ToolCallPart('list_files', {'path': '.'})])
 
     agent = workflow.build_agent()

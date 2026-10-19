@@ -131,6 +131,7 @@ def workflow_model(ctx: ModelResolutionContext[object], model_id: str) -> Model:
 
 def build_agent() -> Agent[None, str]:
     """Compose Coder with the repository workflow policies."""
+    attention = os.environ.get('GITHUB_WORKFLOW') == cli.ATTENTION_WORKFLOW
     env: dict[str, str] = {
         name: value
         for name, value in os.environ.items()
@@ -141,13 +142,13 @@ def build_agent() -> Agent[None, str]:
         name='github-workflow',
         instructions=[cli.request_budget_notice, cli.time_budget_notice],
         retries={'output': cli.NO_SAFE_OUTPUT_RETRIES},
-        tools=[] if os.environ.get('GITHUB_WORKFLOW') == cli.ATTENTION_WORKFLOW else [Tool(cli.task, name='Task')],
+        tools=[] if attention else [Tool(cli.task, name='Task')],
         capabilities=[
             ResolveModelId(workflow_model),
             WorkflowPolicy(),
             cli.RecoverMCPToolErrors(),
             ProcessHistory(partial(cli.compact_history, preserve_prompt=True)),
-            LocalWorkspace('.', env=env),
+            LocalWorkspace('.', env=env, read_only=attention),
             # Checkout guidance accompanies file traversal, as in the read-only
             # delegates; it must not become the reviewer's system instructions.
             RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
