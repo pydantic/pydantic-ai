@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 # `missing-image` fails to pull, `flaky-image` fails only its first pull, `unstartable-image` creates a container
-# that fails to start, and `--fake-hang` makes the first `run` hang so a create can be cancelled.
+# that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
+# cancelled, and `--fake-hang-late` makes it hang after creating the container. A `nopwd` container has no `pwd`.
 _FAKE_DOCKER = """#!/bin/sh
 bin=$(dirname "$0")
 state="$bin/containers"
@@ -30,6 +31,7 @@ run)
         --label) label=$2; shift ;;
         --entrypoint | --network | --memory) shift ;;
         --fake-hang) [ -e "$bin/hung" ] || { touch "$bin/hung"; sleep 30; } ;;
+        --fake-hang-late) hang_late=1 ;;
         esac
         shift
     done
@@ -56,6 +58,7 @@ run)
         exit 125
     fi
     touch "$state/$name.running"
+    [ -z "$hang_late" ] || sleep 30
     echo "$name"
     ;;
 inspect)
@@ -97,7 +100,14 @@ exec)
     # The stop script is the only exec with exactly `sh -c SCRIPT sh TAG`.
     if [ -f "$state/$name.hang-stop" ] && [ $# -eq 5 ]; then sleep 30; fi
     [ -n "$workdir" ] || workdir=$(cat "$state/$name")
-    cd "$workdir" 2> /dev/null || { echo "OCI runtime exec failed: chdir to cwd (\\"$workdir\\")" >&2; exit 126; }
+    # Like Docker, which reports a missing `--workdir` on stdout.
+    cd "$workdir" 2> /dev/null || { echo "OCI runtime exec failed: chdir to cwd (\\"$workdir\\")"; exit 127; }
+    if [ "$name" = nopwd ]; then
+        mkdir -p "$bin/nopwd"
+        printf '#!/bin/sh\\nexit 1\\n' > "$bin/nopwd/pwd"
+        chmod +x "$bin/nopwd/pwd"
+        PATH="$bin/nopwd:$PATH"
+    fi
     # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
     mkdir -p "$state/$name.pids"
     echo $$ > "$state/$name.pids/$$"
@@ -170,5 +180,6 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     path = bin_dir / 'docker'
     path.write_text(_FAKE_DOCKER)
     path.chmod(0o755)
+    (bin_dir / 'podman').symlink_to(path)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     return FakeDocker(bin_dir)

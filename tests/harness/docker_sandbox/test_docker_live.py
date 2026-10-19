@@ -65,6 +65,10 @@ class TestLiveDocker(WorkspaceBackendSuite):
         # running: a fake can't reproduce this, because its processes die with the client.
         assert isinstance(backend, DockerSandboxBackend)
         with pytest.raises(WorkspaceTimeoutError):
-            await backend.run('(sleep 2; touch survived) &', shell=True, timeout=0.5)
-        await anyio.sleep(2.5)
-        assert (await backend.run(['ls'])).stdout == ''
+            await backend.run("sh -c 'echo $$ > child.pid; exec sleep 300' &", shell=True, timeout=2)
+        pid = (await backend.run(['cat', 'child.pid'])).stdout.strip()
+
+        # The stop has signalled the child; the deadline only guards against a hang.
+        with anyio.fail_after(10):
+            while (await backend.run(f'kill -0 {pid}', shell=True)).exit_code == 0:
+                await anyio.sleep(0.1)

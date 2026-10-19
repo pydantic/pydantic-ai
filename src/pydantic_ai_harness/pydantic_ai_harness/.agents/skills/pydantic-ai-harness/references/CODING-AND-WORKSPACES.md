@@ -345,8 +345,8 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 
 - The first operation runs `docker run --detach --init --entrypoint sh <image>`; the image needs a POSIX
   `sh`. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
-  capability only attaches and removes by ref; a run that would create raises `UserError`.
-  `working_dir=None` uses the image's `WORKDIR`.
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  `working_dir=None` uses the image's `WORKDIR`; an attached container must already have `working_dir`.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching runs `docker start`, so a
   stopped container comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.

@@ -6,6 +6,7 @@ import os
 import posixpath
 import re
 import secrets
+import shutil
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
@@ -152,8 +153,17 @@ async def _owned_state(
     return 'running' if running == 'true' else 'stopped'
 
 
+def resolve_executable(executable: str) -> str:
+    """The container CLI's path on `PATH` now.
+
+    A `docker` that appears on `PATH` later, such as in a mounted project's virtualenv, then isn't the one that runs.
+    """
+    return shutil.which(executable) or executable
+
+
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
     """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
+    executable = resolve_executable(executable)
     runner = _runner()
     if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
         return
@@ -179,7 +189,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         image: The image for a new container. Pass it or `ref`, not both.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
-            resolve; created if the image doesn't have it. `None` uses the image's own (`WORKDIR`, or `/`).
+            resolve; created in a new container if the image doesn't have it. `None` uses the image's own
+            (`WORKDIR`, or `/`).
         env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
@@ -216,7 +227,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._env = _checked_env(env or {})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
-        self._executable = executable
+        self._executable = resolve_executable(executable)
         self._runner = _runner()
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
@@ -240,7 +251,13 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
                     await self._start()
                 # `docker exec --workdir` fails before the command starts if the directory is missing.
                 result = await self._exec(['pwd', '-P'], env={}, timeout=None)
-                self._resolved_working_dir = result.stdout.removesuffix('\n')
+                printed = result.stdout.removesuffix('\n')
+                if result.exit_code != 0 or not posixpath.isabs(printed):
+                    raise WorkspaceError(
+                        f'could not determine the working directory of Docker workspace {self._name}: '
+                        f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}'
+                    )
+                self._resolved_working_dir = printed
             return self._resolved_working_dir
 
     @property
@@ -344,7 +361,12 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
         if not ready:
-            reason = before.strip() or f'`{self._executable} exec` exited with code {result.exit_code}'
+            # Docker prints some of its own errors, such as a missing `--workdir`, on stdout.
+            reason = (
+                before.strip()
+                or result.stdout.strip()
+                or f'`{posixpath.basename(self._executable)} exec` exited with code {result.exit_code}'
+            )
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {reason}')
         # The command can learn its tag from the PID directory and print a marker of its own, so the wrapper's is
         # the last one with the tag whose status is also `docker exec`'s exit code, which the wrapper exits with.

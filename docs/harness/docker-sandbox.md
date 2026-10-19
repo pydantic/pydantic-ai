@@ -30,9 +30,9 @@ agent = Agent('{{ anthropic:large }}', capabilities=[DockerSandbox(image='python
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
-`Coder`'s shell and file tools now run in a container, not on your machine. The container is created on the run's first use of the workspace; with `Coder`, `RepoContext` uses it when the run starts, so use `Coder(repo_context=False)` to create it only when a tool needs it. The container keeps running after the run ends; see [Clean up](#clean-up).
+`Coder`'s shell and file tools now run in a container, not on your machine. The container is created on the run's first use of the workspace. With `Coder`, `RepoContext` uses it when the run starts, so use `Coder(repo_context=False)` to create it only when a tool needs it. The container keeps running after the run ends; see [Clean up](#clean-up).
 
-The image needs a POSIX `sh` and the usual file utilities; Docker pulls it the first time. Commands run as the image's user, usually `root`, and start in `/workspace`, which is created if it's missing.
+The image needs a POSIX `sh` and the usual file utilities, and Docker pulls it the first time. Commands run as the image's user, usually `root`. They start in `/workspace`, which is created if it's missing.
 
 A new container is on Docker's default bridge network, which reaches the internet, but also your local network and services on this machine. Pass `allow_internet_access=False` to run it with `--network none`.
 
@@ -90,7 +90,7 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine the commands can change. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`: Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them. Set the directory with `working_dir`.
 
 ## Reattach later
 
@@ -109,7 +109,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching runs `docker start` on first use, so a stopped container comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container; `working_dir` and `env` apply to every command.
+The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching runs `docker start` on first use, so a stopped container comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command, and an attached container must already have `working_dir`.
 
 A ref is trusted input: whoever passes one runs commands in that container. `DockerSandbox` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerSandbox` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
 
@@ -163,11 +163,11 @@ async def remove_container(ref: WorkspaceRef) -> None:
     await DockerSandbox().destroy(ref)
 ```
 
-Removing a container that is already gone returns quietly. `DockerSandbox()` without an `image` can attach to and remove containers by ref, but a run that would create one raises `UserError`.
+Removing a container that is already gone returns quietly. `DockerSandbox()` without an `image` attaches to and removes containers by ref, and leaves a run without a ref to the agent's other workspace capabilities.
 
 Nothing removes a container for you, and there is no idle or lifetime limit. `docker ps --all --filter label=ai.pydantic.workspace=true` finds the containers `DockerSandbox` created, including any left behind without a stored ref.
 
-`backend.ref` is set when the first operation starts creating the container, so the `finally` in [Prepare a container before the run](#prepare-a-container-before-the-run) removes it even when the run is cancelled mid-create; if `docker run` fails without creating one, the ref goes back to `None`. A failed run returns no result, so there is no ref to store: remove the container in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
+`backend.ref` is set when the first operation starts creating the container, and goes back to `None` if `docker run` fails without creating one. If the create is cancelled, Docker may still finish creating the container after `destroy` has found nothing to remove; the label filter above finds it. A failed run returns no result, so there is no ref to store. Remove the container in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
 
 ## How commands run
 
@@ -179,7 +179,7 @@ On a timeout or cancellation, a second `docker exec` stops the command's process
 
 A command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits, because `docker exec` waits for the output to close: redirect it, as in `server > server.log 2>&1 &`.
 
-Podman works too: pass `executable='podman'`. The `docker` client gets `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `SSH_AUTH_SOCK` and the other variables that select and reach a daemon from your environment, besides the `PATH`, `HOME` and locale every local command gets, and nothing else from it.
+Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` once, when the capability or backend is created. The `docker` client gets `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `SSH_AUTH_SOCK` and the other variables that select and reach a daemon from your environment, besides the `PATH`, `HOME` and locale every local command gets, and nothing else from it.
 
 ## Security model
 
@@ -201,15 +201,15 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. Default: `()`. |
-| `executable` | The container CLI to run, such as `'podman'`. Default: `'docker'`. |
+| `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 
 ## Platforms
 
-The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](../workspace.md#platforms): on Windows, `DockerSandboxBackend` raises `NotImplementedError`, and so does `DockerSandbox` with an `image`.
+The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](../workspace.md#platforms). On Windows, constructing `DockerSandbox` or `DockerSandboxBackend` raises `NotImplementedError`.
 
 ## Telemetry
 
-`DockerSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the workspace on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (the container name, recorded even without `include_content`, because it identifies the environment rather than content), and each command or file operation a tool makes runs inside that tool call's span.
+`DockerSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 

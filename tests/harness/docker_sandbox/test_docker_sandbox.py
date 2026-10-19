@@ -10,6 +10,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
@@ -130,6 +131,19 @@ async def test_a_cancelled_create_is_retried_under_the_same_name(docker: FakeDoc
     await backend.working_dir()
 
     assert backend.ref == ref and docker.containers() == [ref.id]
+
+
+async def test_a_create_cancelled_after_docker_made_the_container_keeps_that_container(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang-late'])
+    with anyio.move_on_after(0.5) as scope:
+        await backend.working_dir()
+    assert scope.cancelled_caught and backend.ref is not None
+
+    await backend.working_dir()
+
+    assert docker.containers() == [backend.ref.id]
 
 
 async def test_a_silent_docker_failure_reports_its_exit_code(docker: FakeDocker, container_dir: Path) -> None:
@@ -300,11 +314,14 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
     assert docker.containers() == []
 
 
-async def test_a_capability_without_an_image_cannot_create_a_container(docker: FakeDocker) -> None:
-    agent = Agent(TestModel(), capabilities=[DockerSandbox()])
+async def test_a_capability_without_an_image_leaves_new_runs_to_other_workspaces(
+    docker: FakeDocker, tmp_path: Path
+) -> None:
+    agent = Agent(TestModel(), capabilities=[DockerSandbox(), LocalWorkspace(str(tmp_path))])
 
-    with pytest.raises(UserError, match='needs an `image` to create a container'):
-        await agent.run('go')
+    result = await agent.run('go')
+
+    assert isinstance(result.workspace.backend, LocalWorkspaceBackend) and docker.containers() == []
 
 
 def test_env_is_kept_out_of_the_repr() -> None:
@@ -321,6 +338,52 @@ async def test_the_docker_client_gets_only_the_variables_that_select_a_daemon(
 
     client_env = docker.client_env()
     assert 'DOCKER_HOST=unix:///run/other.sock' in client_env and 'hunter2' not in client_env
+
+
+async def test_the_cli_is_the_one_on_path_when_the_capability_was_created(
+    docker: FakeDocker, container_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = DockerSandbox(image='image', working_dir=str(container_dir))
+    later = tmp_path / 'later-bin'
+    later.mkdir()
+    (later / 'docker').write_text('#!/bin/sh\nexit 99\n')
+    (later / 'docker').chmod(0o755)
+    monkeypatch.setenv('PATH', f'{later}{os.pathsep}{os.environ["PATH"]}')
+
+    backend = (await Agent(TestModel(), capabilities=[sandbox]).run('go')).workspace.backend
+    await backend.working_dir()
+
+    assert backend.ref is not None and docker.containers() == [backend.ref.id]
+
+
+async def test_destroy_uses_the_configured_executable(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('box', container_dir)
+
+    await DockerSandbox(executable='podman').destroy(WorkspaceRef(provider='docker', id='box'))
+
+    assert docker.containers() == []
+
+
+async def test_a_working_dir_that_cannot_be_resolved_is_an_error(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('nopwd', container_dir)
+
+    with pytest.raises(WorkspaceError, match='could not determine the working directory'):
+        await DockerSandbox(working_dir=None).backend(WorkspaceRef(provider='docker', id='nopwd')).working_dir()
+
+
+async def test_attaching_with_a_working_dir_the_container_lacks_reports_dockers_error(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    docker.add_container('box', container_dir)
+    sandbox = DockerSandbox(working_dir='/nonexistent-pydantic-ai-dir')
+
+    with pytest.raises(WorkspaceUnavailableError, match='chdir to cwd'):
+        await sandbox.backend(WorkspaceRef(provider='docker', id='box')).working_dir()
+
+
+def test_an_attach_only_capability_still_validates_where_it_is_written() -> None:
+    with pytest.raises(ValueError, match='invalid environment variable name'):
+        DockerSandbox(env={'NOT-A-NAME': 'x'})
 
 
 async def test_without_a_working_dir_commands_start_in_the_images_own(docker: FakeDocker) -> None:
