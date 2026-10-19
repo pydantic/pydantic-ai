@@ -23,7 +23,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
-from tests.clai2.test_live_prompt import editor
+from tests.clai2.test_live_prompt import editor, highlighted, popup_shows
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -623,16 +623,37 @@ async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
             await live.read()
 
 
-@pytest.mark.parametrize('queued', [('a', 'b'), ('b',)])
-async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_and_the_draft(queued: tuple[str, ...]) -> None:
+@pytest.mark.parametrize(
+    ('queued', 'ups', 'expected'),
+    [(('b',), 1, 'b2\ndraft'), (('a', 'b'), 1, 'a\nb2\ndraft'), (('a', 'b', 'c'), 2, 'a\nb2\nc\ndraft')],
+)
+async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_the_draft(
+    queued: tuple[str, ...], ups: int, expected: str
+) -> None:
     async with editor() as (live, _, _):
         async with running(live):
             queue(live, *queued)
             live.buffer.replace('draft')
-            live.feed('up')
+            for _ in range(ups):
+                live.feed('up')
             live.buffer.insert('2')
             live.feed('ctrl-c')
-        assert (live.buffer.text, live.queued_messages) == ('\n'.join([*queued[:-1], 'b2', 'draft']), ())
+        assert (live.buffer.text, live.queued_messages) == (expected, ())
+
+
+async def test_queued_prompts_moved_to_the_input_drop_a_stale_suggestion() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'queued')
+            live.feed('/')
+            live.feed('h')
+            await popup_shows(live, '/help')
+            assert highlighted(live)
+            live.feed('escape')
+        assert live.buffer.text == 'queued\n/h'
+        live.feed('enter')
+        # Enter sends what the input shows, not the suggestion picked for `/h` before the queue moved in.
+        assert await live.read() == 'queued\n/h'
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:

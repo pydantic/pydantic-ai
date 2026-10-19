@@ -350,19 +350,22 @@ class LivePrompt:
     def _unqueue(self) -> None:
         """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
 
-        Control signals stay queued. A prompt being edited is already in the draft, which follows the others,
-        and the draft set aside to edit it comes last.
+        Control signals stay queued. A prompt being edited keeps its place with the edit from the draft, and
+        the draft set aside to edit it comes last; otherwise the draft does.
         """
-        shelved = self._shelved_draft if self._editing is not None else ''
+        editing = self._editing
+        texts = [self.buffer.text if entry is editing else entry.text for entry in self._pending()]
+        draft = self._shelved_draft if editing is not None else self.buffer.text
         self._editing = None
         queued = self._queued()
-        if not queued and not shelved:
+        if editing is None and not queued:
             return
         for entry in queued:
             self._discard(entry)
         self.buffer.search = None
         self.buffer.history_index = None
-        self.buffer.replace('\n'.join([*(entry.text for entry in queued), *filter(None, [self.buffer.text, shelved])]))
+        self.buffer.replace('\n'.join(filter(None, [*texts, draft])))
+        self.refresh_completions()
         self.notice = 'Queued messages moved to the input. Press Enter to send them.'
 
     def restore_draft(self, text: str) -> None:
