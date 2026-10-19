@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import pickle
 import threading
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
     PartStartEvent,
@@ -1289,13 +1290,16 @@ async def test_enqueue_parts_style_calls_keep_their_own_parts():
 
 
 async def test_enqueue_passthrough_stays_separate_from_parts_style():
-    """A passthrough `ModelRequest` stays its own message even when surrounded by parts-style enqueues.
+    """A passthrough `ModelRequest` stays its own message, and nothing enqueued after it moves ahead of it.
 
     It may carry its own `instructions` or other message-level fields, so it's never put into the tool's
-    request. The parts-style calls around it still go there, in enqueue order.
+    request. Content enqueued before it goes into the tool's request; content enqueued after it follows it as
+    its own message, so the model gets all three in enqueue order.
     """
+    received: list[list[ModelMessage]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
         if any(isinstance(msg, ModelResponse) for msg in messages):
             return ModelResponse(
                 parts=[TextPart(content='done')],
@@ -1317,17 +1321,24 @@ async def test_enqueue_passthrough_stays_separate_from_parts_style():
         ctx.enqueue('after')
         return 'ok'
 
+    def contents(messages: Sequence[ModelMessage]) -> list[list[str]]:
+        return [
+            [
+                f'return:{p.content}' if isinstance(p, ToolReturnPart) else str(p.content)
+                for p in message.parts
+                if isinstance(p, ToolReturnPart | UserPromptPart)
+            ]
+            for message in messages
+            if isinstance(message, ModelRequest)
+        ]
+
     result = await agent.run('Hello')
-    tool_request, passthrough = result.all_messages()[2:4]
-    assert isinstance(tool_request, ModelRequest)
+    assert contents(result.all_messages()[2:]) == [['return:ok', 'before'], ['passthrough'], ['after']]
+    passthrough = result.all_messages()[3]
     assert isinstance(passthrough, ModelRequest)
-    assert [
-        (type(p).__name__, p.content) for p in tool_request.parts if isinstance(p, ToolReturnPart | UserPromptPart)
-    ] == [('ToolReturnPart', 'ok'), ('UserPromptPart', 'before'), ('UserPromptPart', 'after')]
-    assert tool_request.instructions is None
-    assert [p.content for p in passthrough.parts if isinstance(p, UserPromptPart)] == ['passthrough']
     # Passthrough preserved its instructions.
     assert passthrough.instructions == 'careful'
+    assert contents(received[-1])[-1] == ['return:ok', 'before', 'passthrough', 'after']
 
 
 async def test_parallel_tool_enqueues_land_after_their_own_returns():
@@ -1489,6 +1500,49 @@ async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None
     )
 
 
+async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_request():
+    """Content an earlier call enqueues late isn't put next to a later call's return that reuses its id.
+
+    The model calls `tool_a` with `call_0` twice, in two steps. The first call starts a task that enqueues
+    while the second call runs, so the content still carries `call_0`, but it doesn't belong to that return.
+    """
+    model_calls = 0
+    second_call_started, late_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls <= 2:
+            return ModelResponse(parts=[ToolCallPart('tool_a', {'call': model_calls}, tool_call_id='call_0')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def tool_a(ctx: RunContext[object], call: int) -> str:
+            if call == 1:
+
+                async def report_later() -> None:
+                    await second_call_started.wait()
+                    ctx.enqueue('late from the first call')
+                    late_enqueued.set()
+
+                task_group.start_soon(report_later)
+            else:
+                second_call_started.set()
+                await late_enqueued.wait()
+            return f'result {call}'
+
+        result = await agent.run('Hello')
+
+    assert [[part.part_kind for part in message.parts] for message in result.all_messages()[4:6]] == [
+        ['tool-return'],
+        ['user-prompt'],
+    ]
+
+
 async def test_enqueue_from_tool_renders_like_its_own_request():
     """The model gets the same bytes as when the enqueued content was its own request after the tool's."""
     received: list[list[ModelMessage]] = []
@@ -1516,6 +1570,41 @@ async def test_enqueue_from_tool_renders_like_its_own_request():
     # Merging two requests drops their `run_id` / `conversation_id`, which are never sent to the model.
     sent = [*received[-1][:-1], replace(received[-1][-1], run_id=None, conversation_id=None)]
     assert ModelMessagesTypeAdapter.dump_json(sent) == ModelMessagesTypeAdapter.dump_json(expected)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param([UserPromptPart('Then this.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='prompt-first'),
+        pytest.param([ToolReturnPart('tool_a', 'a', 'call-a'), UserPromptPart('Then this.')], id='prompt-last'),
+        pytest.param([RetryPromptPart('Try again.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='plain-retry-first'),
+        pytest.param(
+            [
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+                ToolAvailabilityDeltaPart(tools_added=['tool_c']),
+                ToolReturnPart('tool_b', 'b', 'call-b'),
+            ],
+            id='delta-between-results',
+        ),
+    ],
+)
+def test_requests_without_parts_between_tool_results_are_sent_unchanged(parts: list[ModelRequestPart]):
+    """Only parts sitting between a request's tool results move; any other request goes out exactly as stored.
+
+    A unit test because it pins the wire shape of histories that enqueue doesn't produce, such as persisted ones.
+    """
+    calls = [
+        ToolCallPart(part.tool_name, {}, tool_call_id=part.tool_call_id)
+        for part in parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hello')]),
+        ModelResponse(parts=calls),
+        ModelRequest(parts=parts),
+    ]
+    cleaned = _clean_message_history(history)
+    assert ModelMessagesTypeAdapter.dump_json(cleaned) == ModelMessagesTypeAdapter.dump_json(history)
 
 
 async def test_enqueue_system_prompt_part():

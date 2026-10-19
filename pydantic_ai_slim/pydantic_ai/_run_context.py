@@ -926,7 +926,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
-        pending = PendingMessage.from_content(*content, priority=priority, tool_call_id=self.tool_call_id)
+        pending = PendingMessage.from_content(
+            *content, priority=priority, tool_call_id=self.tool_call_id, tool_call_run_step=self.run_step
+        )
         if pending is None:
             return None
         self.pending_messages.append(pending)

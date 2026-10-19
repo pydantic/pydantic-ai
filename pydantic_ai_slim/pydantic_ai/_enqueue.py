@@ -160,18 +160,27 @@ class PendingMessage:
     own messages.
     """
 
+    tool_call_run_step: int = 0
+    """The [run step][pydantic_ai.tools.RunContext.run_step] of the tool call in `tool_call_id`.
+
+    A model may reuse a `tool_call_id` in a later step, so content enqueued late by an earlier call (say, from a
+    task it started) must not be put next to the later call's return.
+    """
+
     @classmethod
     def from_content(
         cls,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
         tool_call_id: str | None = None,
+        tool_call_run_step: int = 0,
     ) -> PendingMessage | None:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
 
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
-        `tool_call_id` is the tool call being executed, if any; it's kept only when the content can be
-        delivered next to that call's result (see `PendingMessage.tool_call_id`).
+        `tool_call_id` is the tool call being executed, if any, and `tool_call_run_step` the step it runs in;
+        the call is kept only when the content can be delivered next to its result (see
+        `PendingMessage.tool_call_id`).
 
         Raises:
             UserError: If the assembled messages don't end in a
@@ -188,7 +197,9 @@ class PendingMessage:
             )
         if priority != 'asap' or any(isinstance(item, ModelRequest | ModelResponse) for item in content):
             tool_call_id = None
-        return cls(messages=messages, priority=priority, tool_call_id=tool_call_id)
+        return cls(
+            messages=messages, priority=priority, tool_call_id=tool_call_id, tool_call_run_step=tool_call_run_step
+        )
 
 
 class PendingMessageQueue(list[PendingMessage]):
@@ -270,7 +281,7 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
     right after it, when that request ends the history: several deliveries for the same call keep their
     enqueue order, whatever other calls' content arrives in between. Everything else is appended as its own
-    messages. Either way it lands in both `request_context.messages` (so the model sees it this step) and
+    messages, and so is anything drained after it, so content never lands ahead of what was enqueued first. Either way it lands in both `request_context.messages` (so the model sees it this step) and
     `ctx.messages` (so it persists in the agent's message history).
 
     One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
@@ -294,7 +305,13 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     appended: list[tuple[str, list[ModelMessage]]] = []
     for pending in drained:
         messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
-        if pending.tool_call_id in answered_calls:
+        if (
+            pending.tool_call_id in answered_calls
+            # The calls `target` answers ran in the step before this one, so an older call reused the id.
+            and pending.tool_call_run_step >= ctx.run_step - 1
+            # Content that came after something added as its own message stays after it.
+            and not appended
+        ):
             # `from_content` only keeps `tool_call_id` for content made of parts, which is one request.
             (request,) = messages
             assert isinstance(request, ModelRequest)
