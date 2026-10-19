@@ -15,7 +15,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
-| Isolation on this machine with Docker or Podman | `DockerSandbox('python:3.13-slim')`: a local container |
+| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -339,18 +339,21 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 
 ### DockerSandbox
 
-`DockerSandbox(image, *, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
 (backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation runs `docker run --detach --init --entrypoint sh <image>`; the image needs a POSIX
-  `sh`. Creating the container (and pulling) is not bounded by a command's `timeout`.
+  `sh`. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
+  capability only attaches and removes by ref; a run that would create raises `UserError`.
+  `working_dir=None` uses the image's `WORKDIR`.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching runs `docker start`, so a
-  stopped container comes back. The container outlives the run: `await DockerSandbox(...).destroy(ref)`.
+  stopped container comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
 - Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
-  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`: `['--memory', '2g']`,
-  `['--volume', f'{project}:/workspace']` to work on a host directory).
+  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:
+  `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
+- Docker creates a missing `working_dir` owned by root: with `--user`, use a mount or `working_dir=None`.
 - A background child holding stdout/stderr open keeps `run()` waiting (`docker exec` waits for the
   output): redirect it.
 

@@ -49,6 +49,6 @@ class TestFakeDocker(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await DockerSandbox[None]('fake-image').destroy(backend.ref)
+            await DockerSandbox[None]().destroy(backend.ref)
 
         return destroy

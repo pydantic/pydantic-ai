@@ -33,7 +33,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
         yield backends
         for backend in backends:
             if backend.ref is not None:
-                await DockerSandbox[None](LIVE_IMAGE).destroy(backend.ref)
+                await DockerSandbox[None]().destroy(backend.ref)
 
     @pytest.fixture
     def fresh_backend(self, created: list[WorkspaceBackend]) -> Callable[[], WorkspaceBackend]:
@@ -56,7 +56,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await DockerSandbox[None](LIVE_IMAGE).destroy(backend.ref)
+            await DockerSandbox[None]().destroy(backend.ref)
 
         return destroy
 

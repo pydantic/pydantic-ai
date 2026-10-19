@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._workspace_provider import check_working_dir
 from pydantic_ai_harness.docker_sandbox._backend import PROVIDER, DockerSandboxBackend, remove_container
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DockerSandbox(AbstractCapability[AgentDepsT]):
     """Supply a local [Docker](https://www.docker.com/) container as the run's workspace, created on first use.
 
@@ -20,7 +21,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai_harness import Coder, DockerSandbox
 
-    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox('python:3.13-slim'), Coder()])
+    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
     ```
 
     A run with no reference creates a fresh container. Pass a `WorkspaceRef` supplied by the
@@ -31,13 +32,15 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     workspace, such as `Coder`, `Shell`, or `FileSystem`.
     """
 
-    image: str
-    """The image for a new container. It needs a POSIX `sh` and the usual file utilities."""
+    image: str | None = None
+    """The image for a new container, such as `'python:3.13-slim'`; it needs a POSIX `sh` and the usual file utilities.
 
-    _: KW_ONLY
+    Without one, the capability only attaches to and removes containers by ref, and a run that would create one
+    raises `UserError`.
+    """
 
-    working_dir: str = '/workspace'
-    """Absolute directory in the container where commands start and relative paths resolve; created if missing."""
+    working_dir: str | None = '/workspace'
+    """Absolute directory in the container where commands start and relative paths resolve, created if missing; `None` uses the image's own."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
@@ -57,8 +60,10 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
                 '`DockerSandbox` does not support `defer_loading=True`: '
                 'the workspace is selected before deferred capabilities load.'
             )
-        # Surface an invalid image, `working_dir`, `env` or platform where the capability is written, not on the first run.
-        self._backend(ref=None)
+        check_working_dir(self.working_dir)
+        if self.image is not None:
+            # Surface an invalid image, `env` or platform where the capability is written, not on the first run.
+            self._backend(ref=None)
 
     def _backend(self, *, ref: WorkspaceRef | None) -> DockerSandboxBackend:
         return DockerSandboxBackend(
@@ -86,4 +91,6 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None and ref.provider != PROVIDER:
             return None
+        if ref is None and self.image is None:
+            raise UserError('`DockerSandbox` needs an `image` to create a container; pass one, or a ref to attach to.')
         return self._backend(ref=ref)

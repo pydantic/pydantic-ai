@@ -179,7 +179,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         image: The image for a new container. Pass it or `ref`, not both.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
-            resolve; created if the image doesn't have it.
+            resolve; created if the image doesn't have it. `None` uses the image's own (`WORKDIR`, or `/`).
         env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
@@ -194,7 +194,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         *,
         image: str | None = None,
         ref: WorkspaceRef | None = None,
-        working_dir: str = '/workspace',
+        working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
@@ -206,13 +206,13 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
         if image is not None and (not image or image.startswith('-')):
             raise ValueError(f'image must be an image reference, got {image!r}')
-        if not posixpath.isabs(working_dir):
+        if working_dir is not None and not posixpath.isabs(working_dir):
             raise ValueError(f'working_dir must be an absolute path in the container, got {working_dir!r}')
         if isinstance(docker_args, str):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
         self._image = image
         self._ref = ref
-        self._working_dir = posixpath.normpath(working_dir)
+        self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         self._env = _checked_env(env or {})
         self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
@@ -220,6 +220,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._runner = _runner()
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
+        self._creating = False
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -265,8 +266,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             self._name,
             '--label',
             f'{_LABEL}=true',
-            '--workdir',
-            self._working_dir,
+            *([] if self._working_dir is None else ['--workdir', self._working_dir]),
             '--entrypoint',
             'sh',
             '--',
@@ -274,7 +274,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             '-c',
             _KEEPALIVE,
         ]
+        # Stays set if the client is cancelled, when the daemon may or may not go on to create the container.
+        self._creating = True
         result = await self._runner.run(argv)
+        self._creating = False
         if result.exit_code != 0:
             error = f'could not create a container from {self._image}: {result.stderr.strip()}'
             # Keep the ref only for a container that exists but didn't start, so it isn't recorded for a later run
@@ -286,9 +289,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _start(self) -> None:
         state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
-        if state == 'missing' and self._image is not None:
-            # A container this backend set out to create is missing, as after a cancelled `docker run`: run it again
-            # under the same name, which Docker refuses if the first one created it after all.
+        if state == 'missing' and self._creating:
+            # This backend's `docker run` was cancelled before the container existed: run it again under the same
+            # name, which Docker refuses if the first one created it after all.
             await self._create()
             return
         if state == 'missing':
@@ -320,7 +323,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         env_args = [arg for name, value in env.items() for arg in ('--env', f'{name}={value}')]
         # Once resolved, commands start where `working_dir()` says they do, even if a symlink on the way changes.
         workdir = self._resolved_working_dir or self._working_dir
-        docker = [self._executable, 'exec', '--workdir', workdir, *env_args, self._name]
+        workdir_args = [] if workdir is None else ['--workdir', workdir]
+        docker = [self._executable, 'exec', *workdir_args, *env_args, self._name]
         try:
             result = await self._runner.run([*docker, 'sh', '-c', _WRAPPER, 'sh', tag, *argv], timeout=timeout)
         except anyio.get_cancelled_exc_class():

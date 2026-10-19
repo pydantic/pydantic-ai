@@ -18,6 +18,7 @@ bin=$(dirname "$0")
 state="$bin/containers"
 mkdir -p "$state"
 printf '%s\\n' "$*" >> "$bin/docker-calls"
+env > "$bin/docker-env"
 command=$1
 shift
 case $command in
@@ -42,6 +43,8 @@ run)
         echo 'docker: Error response from daemon: pull access denied for missing-image.' >&2
         exit 125
     fi
+    # Without `--workdir`, the image's own `WORKDIR`.
+    [ -n "$workdir" ] || workdir="$bin/image-workdir"
     if [ -f "$state/$name" ]; then
         echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2
         exit 125
@@ -129,6 +132,14 @@ class FakeDocker:
     def calls(self) -> list[str]:
         path = self.bin_dir / 'docker-calls'
         return path.read_text().splitlines() if path.exists() else []
+
+    @property
+    def image_workdir(self) -> Path:
+        return self.bin_dir / 'image-workdir'
+
+    def client_env(self) -> str:
+        """The environment the last `docker` call got."""
+        return (self.bin_dir / 'docker-env').read_text()
 
     def containers(self) -> list[str]:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)

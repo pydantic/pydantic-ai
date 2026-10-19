@@ -1,8 +1,8 @@
 name: Sandbox live tests
 
 # Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real
-# service. Every test starts a billed sandbox, so `sandbox-live-nightly.yml` calls this only
-# on its daily schedule or when a maintainer explicitly dispatches it.
+# service. Most tests start a billed cloud sandbox, so `sandbox-live-nightly.yml` calls this
+# only on its daily schedule or when a maintainer explicitly dispatches it.
 #
 # This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
 # secret below.
@@ -82,7 +82,7 @@ jobs:
 
       # The provider SDK is an extra of the `pydantic-ai-harness` workspace member, so
       # `--package` selects that member and `--group dev` adds the root test tooling. Each
-      # provider's guide has a Temporal worker example, which the docs-example test runs;
+      # cloud provider's guide has a Temporal worker example, which the docs-example test runs;
       # `code-mode` and `coder` are what the provider test modules import at collection.
       # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
       - run: |
