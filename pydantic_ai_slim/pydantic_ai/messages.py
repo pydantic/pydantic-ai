@@ -239,6 +239,14 @@ class SystemPromptPart:
     renders it.
     """
 
+    metadata: dict[str, Any] | None = None
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    Unlike [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata], it stays with the prompt when
+    consecutive requests are merged, so it's how to mark a system prompt your code needs to find again, such as
+    one a capability added. See [identifying system prompts](../message-history.md#identifying-system-prompts).
+    """
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
