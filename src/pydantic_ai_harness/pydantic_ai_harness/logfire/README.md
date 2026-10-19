@@ -386,10 +386,11 @@ at all, which is the behavior worth seeing first.
 
 The variable holds an `AgentConfig`. The contract -- that model, its stored JSON schema, how leniently
 a published value validates, and what each section does to a request -- is shared with the Logfire UI
-and every other framework's Agent Control SDK. This package carries its own copy in `_contract/`,
-kept module for module with logfire's `logfire.agent_control` and pinned to the same schema digest and
-cross-language vectors, so it needs no particular logfire release. Import `AgentConfig` and its models
-from `pydantic_ai_harness.logfire` when you want to publish a value from code.
+and every other framework's Agent Control SDK. This package carries its own copy in `_contract/`: the
+modules of logfire's `logfire.agent_control` it uses, each kept diffable against logfire's, and pinned
+to the same schema digest and cross-language vectors, so it needs no particular logfire release.
+Import `AgentConfig` and its models from `pydantic_ai_harness.logfire` when you want to publish a
+value from code.
 
 ```json
 {

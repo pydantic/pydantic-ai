@@ -1,7 +1,9 @@
 """The Agent Control contract: what a published `AgentConfig` holds, and what it does to a request.
 
-This is Pydantic AI's copy of the framework-neutral core in logfire's `logfire.agent_control`, kept
-module for module so a resync is a plain diff. Each copy of the contract -- this one, the TypeScript
+This is Pydantic AI's copy of the framework-neutral core in logfire's `logfire.agent_control`. Each
+module here is logfire's module of the same name, so a resync is a plain diff; the modules this
+package has no use for (`_control`, `_hint`, `_merge`) are not carried, and `report_unmatched`, which
+nothing here calls, is left out of `_reporting`. Each copy of the contract -- this one, the TypeScript
 SDK's, and the Logfire UI's -- is checked against the same `SCHEMA_SHA256` and the same cross-language
 vectors under `tests/harness/logfire_variables/contract/spec/`, which is what keeps them from
 drifting. Change a rule there first, and in every copy after.

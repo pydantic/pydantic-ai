@@ -233,28 +233,8 @@ class UnmatchedConfigError(ValueError):
         self.issues: tuple[ApplyIssue, ...] = tuple(issues)
         """Every issue this request could not apply, in the order they were planned.
 
-        Empty for the string channel --
-        `report_unmatched` --
-        which carries a message and no path.
+        Empty when the error is raised with a message alone.
         """
-
-
-def report_unmatched(policy: OnUnmatched, message: str) -> None:
-    """Apply an `OnUnmatched` policy to one thing an adapter could not apply, as a message.
-
-    Never called from validation, for two reasons. Validation runs inside Logfire's resolution, which
-    turns any exception into a fallback to the code-defined agent, so an `'error'` raised there would
-    be swallowed and un-manage the whole config instead of stopping the request. And the same
-    validation builds the code baseline, where a key this contract has no field for is the agent's
-    own provider-specific setting rather than anything anyone published.
-
-    The message is the same under every policy so a warning someone chose to tolerate reads like the
-    error they would have gotten by not tolerating it.
-    """
-    if policy == 'error':
-        raise UnmatchedConfigError(message)
-    if policy == 'warn':
-        warn_dropped(message)
 
 
 def report_issues(policy: OnUnmatched, issues: Sequence[ApplyIssue]) -> None:
@@ -263,6 +243,12 @@ def report_issues(policy: OnUnmatched, issues: Sequence[ApplyIssue]) -> None:
     One call for a whole request, which is the point: the apply helpers plan and report nothing, so
     `'error'` raises after every section has been planned, naming all of it, rather than on the first
     entry of the first section -- which used to mean the strictest policy reported the least.
+
+    Never called from validation, for two reasons. Validation runs inside Logfire's resolution, which
+    turns any exception into a fallback to the code-defined agent, so an `'error'` raised there would
+    be swallowed and un-manage the whole config instead of stopping the request. And the same
+    validation builds the code baseline, where a key this contract has no field for is the agent's
+    own provider-specific setting rather than anything anyone published.
 
     An adapter with its own error type translates it without restating a message:
 

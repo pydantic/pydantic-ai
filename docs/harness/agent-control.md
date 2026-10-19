@@ -329,5 +329,3 @@ current run picked up (`value`, `label`, `version`, `reason`), and is `None` out
 ::: pydantic_ai_harness.logfire.ToolDefinitionOverride
 
 ::: pydantic_ai_harness.logfire.ParameterOverride
-
-::: pydantic_ai_harness.logfire.UnmatchedConfigError

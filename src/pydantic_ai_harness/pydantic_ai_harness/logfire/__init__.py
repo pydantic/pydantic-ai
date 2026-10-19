@@ -14,7 +14,6 @@ from pydantic_ai_harness.logfire._contract import (
     OnUnmatched,
     ParameterOverride,
     ToolDefinitionOverride,
-    UnmatchedConfigError,
 )
 from pydantic_ai_harness.logfire._managed_prompt import ManagedPrompt
 from pydantic_ai_harness.logfire._managed_variable import resolution_reason
@@ -28,6 +27,5 @@ __all__ = [
     'OnUnmatched',
     'ParameterOverride',
     'ToolDefinitionOverride',
-    'UnmatchedConfigError',
     'resolution_reason',
 ]

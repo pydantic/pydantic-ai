@@ -60,7 +60,7 @@ class AgentConfigSettings(BaseModel):
 
     Private rather than a field because it is not part of the value: it is what the value asked for
     that this release could not do, which only the code applying the settings has any use for. It is
-    not reported from validation -- see `report_unmatched` for why -- and is deliberately ignored on
+    not reported from validation -- see `report_issues` for why -- and is deliberately ignored on
     a code baseline, where an unrecognized key is the agent's own provider-specific setting rather
     than anything published.
     """
@@ -413,7 +413,7 @@ class AgentConfig(BaseModel):
     Private rather than a field for the same reason `AgentConfigSettings._unrecognized` is: it is not
     part of the value, it is what the value asked for that this release could not do, and only the
     code applying the config has any use for it. Not reported from validation -- see
-    `report_unmatched` for why -- and deliberately ignored on a code baseline, which is built from
+    `report_issues` for why -- and deliberately ignored on a code baseline, which is built from
     keyword arguments rather than from a mapping and so never has any.
     """
 
