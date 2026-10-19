@@ -597,8 +597,8 @@ class RealtimeConnection(ABC):
         of tool rounds once a response completes without calling a tool, if `_prunes_tool_calls`; history keeps them.
         Private until the realtime refactor settles. Returns the ids of the calls it asked the provider to delete.
         """
-        # A connection that prunes overrides it.
-        return ()  # pragma: no cover
+        # A connection whose `_prunes_tool_calls` is `True` overrides it.
+        raise NotImplementedError
 
     @property
     def _can_reconnect(self) -> bool:

@@ -6116,6 +6116,12 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         json.dumps(
             {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
         ),
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': 'item_o5', 'type': 'function_call_output', 'call_id': 'c5'},
+            }
+        ),
         # An output of a call this connection didn't see.
         added('function_call_output', 'c4', 'item_o4'),
         # Malformed: ignored here.
@@ -6131,16 +6137,19 @@ async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> 
         ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
         ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
         ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c5'),
     ]
-    assert await conn._prune_tool_calls(calls) == ['c1']  # pyright: ignore[reportPrivateUsage]
+    assert await conn._prune_tool_calls(calls) == ['c1', 'c5']  # pyright: ignore[reportPrivateUsage]
     assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
         {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
         {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
         {'type': 'conversation.item.delete', 'item_id': content_item['id']},
+        {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
     ]
-    assert conn._prunes_tool_calls  # pyright: ignore[reportPrivateUsage]
-    assert 'c5' in conn._tool_items  # pyright: ignore[reportPrivateUsage]
-    off = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
+    # With the setting off, nothing is deleted.
+    off_ws = FakeWebSocket(frames)
+    off = OpenAIRealtimeConnection(off_ws)  # type: ignore[arg-type]
     await collect_codec_events(off)
-    assert not off._prunes_tool_calls  # pyright: ignore[reportPrivateUsage]
-    assert off._tool_items == {}  # pyright: ignore[reportPrivateUsage]
+    assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in off_ws.sent if 'item.delete' in frame]
