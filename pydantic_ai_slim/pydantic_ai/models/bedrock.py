@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
@@ -1003,11 +1003,17 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
+        event_stream = response['stream']
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            # A failure that stops the response, like throttling, can arrive as the first event of the
+            # stream, so read the first event here to reach the retries below.
+            first_event = await anext(_AsyncIteratorWrapper(event_stream), None)
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
-            _event_stream=response['stream'],
+            _event_stream=event_stream,
+            _first_event=first_event,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
@@ -1932,6 +1938,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+    _first_event: ConverseStreamOutputTypeDef | None = None
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
@@ -1953,7 +1960,14 @@ class BedrockStreamedResponse(StreamedResponse):
             # We accumulate the deltas here and yield the complete return part once the content block ends
             builtin_tool_returns: dict[int, NativeToolReturnPart] = {}
 
-            async for chunk in _AsyncIteratorWrapper(self._event_stream):
+            chunks: Iterable[ConverseStreamOutputTypeDef] = self._event_stream
+            if self._first_event is not None:
+                # `request_stream` already read the first event so opening failures reach the fallback
+                # window; replay it here so the consumer still sees every event exactly once.
+                first_event, self._first_event = self._first_event, None
+                chunks = chain([first_event], chunks)
+
+            async for chunk in _AsyncIteratorWrapper(chunks):
                 match chunk:
                     case {'messageStart': _}:
                         continue
