@@ -68,7 +68,7 @@ def code_of(message: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _record_warnings() -> Any:  # pyright: ignore[reportUnusedFunction]
+def _record_warnings() -> Any:
     """Collect warnings rather than raising them, since half of every vector is what was warned."""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
