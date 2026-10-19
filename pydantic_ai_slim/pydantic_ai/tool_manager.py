@@ -73,6 +73,11 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
     """
     for tool in tools.values():
         tool_def = tool.tool_def
+        if (unless_kind_id := tool_def.unless_tool_kind) is not None and unless_kind_id not in _TOOL_KINDS:
+            raise UserError(
+                f'Tool {tool_def.name!r} declares `unless_tool_kind={unless_kind_id!r}`, which is not a defined '
+                '`ToolKind`. Import the module that defines the kind before running the agent.'
+            )
         kind_id = tool_def.tool_kind
         if kind_id is None:
             continue
@@ -96,6 +101,45 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
                     f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
                     f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
                 )
+
+
+def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[str, ToolsetTool[AgentDepsT]]:
+    """Leave out each tool whose `unless_tool_kind` names the kind of another tool that stays.
+
+    Every collected tool counts, including deferred ones not yet revealed, so revealing a tool doesn't
+    change the answer mid-run. A tool is only left out in favor of a tool that stays, so in a chain
+    (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
+    favor of each other form a cycle; there the first undecided tool in toolset order stays, and the
+    rest follows from that.
+    """
+    names_by_kind: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (kind := tool.tool_def.tool_kind) is not None:
+            names_by_kind.setdefault(kind, []).append(name)
+
+    suppliers: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (unless_kind := tool.tool_def.unless_tool_kind) is not None:
+            if others := [other for other in names_by_kind.get(unless_kind, ()) if other != name]:
+                suppliers[name] = others
+    if not suppliers:
+        return tools
+
+    stays: dict[str, bool] = {name: True for name in tools if name not in suppliers}
+    undecided = [name for name in tools if name in suppliers]
+    while undecided:
+        progressed = False
+        for name in undecided:
+            if any(stays.get(other) is True for other in suppliers[name]):
+                stays[name] = False
+                progressed = True
+            elif all(stays.get(other) is False for other in suppliers[name]):
+                stays[name] = True
+                progressed = True
+        if not progressed:
+            stays[undecided[0]] = True
+        undecided = [name for name in undecided if name not in stays]
+    return {name: tool for name, tool in tools.items() if stays[name]}
 
 
 @lru_cache(maxsize=256)
@@ -316,6 +360,7 @@ class ToolManager(Generic[AgentDepsT]):
         still gets its `prepare_tools` say over its own tools.
         """
         resolved_capability_ids = frozenset(ctx._dispatch_active_capability_ids)  # pyright: ignore[reportPrivateUsage]
+        caller_ctx = ctx
         same_step = False
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
@@ -349,6 +394,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         tools = await toolset.get_tools(ctx)
         _check_tool_kinds(tools)
+        tools = _drop_superseded_tools(tools)
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
@@ -364,8 +410,10 @@ class ToolManager(Generic[AgentDepsT]):
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
-        # through the standard validation/execution path.
+        # through the standard validation/execution path. The caller's context gets it too: it is
+        # the one the step's instructions are rendered with, and `ctx` is a copy from the second step on.
         ctx.tool_manager = new_tm
+        caller_ctx.tool_manager = new_tm
         return new_tm
 
     @property
