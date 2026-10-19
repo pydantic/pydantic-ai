@@ -547,14 +547,14 @@ For HTTP transports, `MCPToolset` accepts an `auth` argument: a bearer token str
 In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
 
 !!! warning "A shared `MCPToolset` instance is a single identity"
-    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established by whichever run needs it first, and only torn down once the last one finishes. The server sees all of those runs as one session, initialized with the credentials of the run that opened it.
+    An `MCPToolset` instance maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established by whichever run needs it first, and only torn down once the last one finishes. The server sees all of those runs as one session, initialized by a request carrying the credentials of the run that opened it, and a server may tie the session (and any per-session state) to that identity.
 
     What happens to credentials derived per request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `auth` object depends on the FastMCP version:
 
-    - With FastMCP 4, the `auth` object is called in the context of the run making each request, so each request carries that run's credentials, even though it's sent on the shared session.
-    - With FastMCP 3, the `auth` object is called in the context of the run that opened the session, so overlapping runs silently send their requests with that run's credentials.
+    - With FastMCP 4, which is built on MCP SDK v2, the `auth` object is called in the context of the run making each request, so each request carries that run's credentials, even though it's sent on the shared session.
+    - With FastMCP 3, which is built on MCP SDK v1, the `auth` object is called in the context of the run that opened the session, so overlapping runs silently send their requests with that run's credentials.
 
-Whichever FastMCP version you use, give each concurrent run its own `MCPToolset` instance, so that each user gets a session of their own, opened with their own credentials. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+Because servers can't be relied on to re-check authorization on every request of a session, give each concurrent run its own `MCPToolset` instance whichever FastMCP version you use, so that each user gets a session of their own, opened with their own credentials. The recommended way to do this is to build the toolset [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
 
 ```python {title="mcp_per_user_auth.py"}
 from dataclasses import dataclass
