@@ -68,7 +68,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
+ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
 GEMINI = frozenset({'gemini'})
 
@@ -215,9 +215,10 @@ def _sent_before_reply_content(sim: Simulation, violation: InvariantViolation) -
 UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     id='SIM-39',
     title=(
-        'Gemini Live and GPT-Live neither acknowledge an input nor say when a response starts, so an input that asks '
-        'for no reply (context, an image), sent while a reply is owed but before any of its content arrived, is '
-        'placed after that reply: the server may have had it before it started'
+        'Gemini Live, GPT-Live, and ElevenLabs Agents neither acknowledge an input nor say when a response starts, so '
+        "an input that asks for no reply (context, an image), sent before any of a reply's content arrived, is placed "
+        'by what the client knew when it sent it: after the reply it owed, before one it had no word of yet, where '
+        'the server may have had it the other way around'
     ),
     tracked_by=(
         "the inferred lifecycle's documented inference (`_inferred_lifecycle.py`): an input sent while the model "
@@ -225,7 +226,7 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.order'}),
-    providers=GEMINI | {'gpt-live'},
+    providers=GEMINI | {'gpt-live', 'elevenlabs-agents'},
     matches=_sent_before_reply_content,
     accepted=True,
 )
