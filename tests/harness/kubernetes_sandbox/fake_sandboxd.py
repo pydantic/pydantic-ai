@@ -198,7 +198,9 @@ class FakeSandboxd:
     async def _write_stdin(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> bytes:
         if self.stdin_error is not None:
             await context.abort(self.stdin_error, 'failed to close stdin: close |1: file already closed')
-        process = self._processes[request.process_id]
+        process = self._processes.get(request.process_id)
+        if process is None:  # pragma: no cover - only when the command exits before stdin is closed
+            await context.abort(grpc.StatusCode.NOT_FOUND, f'process {request.process_id} not found')
         assert request.WhichOneof('payload') == 'eof'
         process.close_stdin()
         return b''
