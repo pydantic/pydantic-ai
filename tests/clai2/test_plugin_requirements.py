@@ -226,6 +226,41 @@ def test_replacing_the_factory_drops_the_old_plugins_tags(tmp_path: Path) -> Non
     assert tags(store, 'p') is None
 
 
+@pytest.mark.parametrize('plugin_id', ['p', 'observability'])
+def test_learned_requirements_keep_current_settings_and_removed_plugins(tmp_path: Path, plugin_id: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    other = SettingsStore(store.path)
+    original = PluginSettings(id=plugin_id, factory='p', settings={'mode': 'plain', 'future': True})
+    store.save_plugin(original)
+    current = original.model_copy(update={'settings': {'mode': 'custom', 'future': True}, 'enabled': False})
+    other.save_plugin(current, requires={'future': frozenset({'future-feature'})})
+
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'fancy-mode'})})
+
+    assert other.plugins() == [current]
+    assert tags(other, plugin_id) == {'mode': ['fancy-mode'], 'future': ['future-feature']}
+
+    other.delete_plugin(plugin_id)
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'fancy-mode'})})
+    assert other.plugins() == []
+    assert tags(other, plugin_id) is None
+
+
+@pytest.mark.parametrize('changed', [{'factory': 'replacement'}, {'path': '/replacement/plugin.py'}])
+def test_learned_requirements_do_not_tag_a_replacement(tmp_path: Path, changed: dict[str, str]) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    original = PluginSettings(id='p', factory='p', settings={'mode': 'custom'})
+    store.save_plugin(original)
+    other = SettingsStore(store.path)
+    replacement = original.model_copy(update=changed)
+    other.save_plugin(replacement)
+
+    store.update_plugin_requirements(original, requires={'mode': frozenset({'old-only'})})
+
+    assert other.plugins() == [replacement]
+    assert tags(other, 'p') is None
+
+
 def test_null_requirements_row_is_unreadable(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     save_raw(store, 'p', '{"id": "p", "factory": "p", "settings": {"mode": "fancy"}}', 'null')

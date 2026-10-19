@@ -320,14 +320,39 @@ class SettingsStore:
                 'INSERT INTO plugins VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET declaration = excluded.declaration',
                 (plugin.id, plugin.model_dump_json()),
             )
-            if row:
-                connection.execute(
-                    'INSERT INTO plugin_requirements VALUES (?, ?) '
-                    'ON CONFLICT(id) DO UPDATE SET requirements_json = excluded.requirements_json',
-                    (plugin.id, _JSON_OBJECT.dump_json(row).decode()),
-                )
-            else:
-                connection.execute('DELETE FROM plugin_requirements WHERE id = ?', (plugin.id,))
+            self._save_plugin_requirements(connection, plugin.id, row)
+
+    def update_plugin_requirements(self, plugin: PluginSettings, *, requires: Requirements) -> None:
+        """Attach learned tags to the current declaration without restoring a removed or replaced plugin."""
+        plugin_id = _stored_plugin_id(plugin.id)
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin_id,)).fetchone()
+            if row is None:
+                return
+            current = PluginSettings.model_validate_json(row[0])
+            if (current.factory, current.path) != (plugin.factory, plugin.path):
+                return
+            requirements = merged_requirements(
+                old_settings=current.settings,
+                old_row=self._requirements_row(connection, plugin_id),
+                new_settings=current.settings,
+                declared=requires,
+            )
+            self._save_plugin_requirements(connection, plugin_id, requirements)
+
+    @staticmethod
+    def _save_plugin_requirements(
+        connection: sqlite3.Connection, plugin_id: str, requirements: dict[str, JsonValue]
+    ) -> None:
+        if requirements:
+            connection.execute(
+                'INSERT INTO plugin_requirements VALUES (?, ?) '
+                'ON CONFLICT(id) DO UPDATE SET requirements_json = excluded.requirements_json',
+                (plugin_id, _JSON_OBJECT.dump_json(requirements).decode()),
+            )
+        else:
+            connection.execute('DELETE FROM plugin_requirements WHERE id = ?', (plugin_id,))
 
     @staticmethod
     def _requirements_row(connection: sqlite3.Connection, plugin_id: str) -> JsonValue | None:
