@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 
+from .._json_schema import InlineDefsJsonSchemaTransformer
 from . import ModelProfile
 
 
@@ -66,4 +67,5 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     )
     if model_lower.startswith('glm-5.3'):
         profile['zai_reasoning_effort_mapping'] = _GLM_5_3_REASONING_EFFORT_MAPPING
+        profile['json_schema_transformer'] = InlineDefsJsonSchemaTransformer
     return profile

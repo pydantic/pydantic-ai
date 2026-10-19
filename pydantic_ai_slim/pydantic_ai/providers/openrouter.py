@@ -20,6 +20,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -148,6 +149,7 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             'deepseek': deepseek_model_profile,
             'meta-llama': meta_model_profile,
             'moonshotai': moonshotai_model_profile,
+            'z-ai': zai_model_profile,
         }
 
         profile = None
