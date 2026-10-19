@@ -26,7 +26,7 @@ Render Sandboxes are in early access, and their SDK API sits under `render.exper
 
 ## Quick start
 
-```python
+```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.render_sandbox import RenderSandbox
@@ -59,7 +59,7 @@ See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more
 
 To come back to the sandbox, store the run's workspace ref and pass it back as `workspace=`:
 
-```python
+```python {names="defined"}
 from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.render_sandbox import RenderSandbox
@@ -80,7 +80,7 @@ The ref holds no credentials, so the process that reattaches needs `RENDER_API_K
 
 To seed files or install packages before the agent starts, create the backend yourself, work in it through `Workspace`, and pass it to the run:
 
-```python
+```python {names="defined"}
 import asyncio
 
 from pydantic_ai import Agent
@@ -117,7 +117,7 @@ The `finally` terminates the sandbox even when setup or the run fails. Read any 
 
 The sandbox keeps running, and billing, after the run ends, until `sandbox_timeout` runs out. Pydantic AI never terminates it. Terminate it with the ref you stored:
 
-```python
+```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.render_sandbox import RenderSandbox
 
@@ -130,7 +130,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
 
 To terminate every run's sandbox, including failed runs, which return no result to read the ref from, use `after_run` and `on_run_error` hooks:
 
-```python
+```python {names="defined"}
 from typing import Any
 
 from pydantic_ai import Agent, RunContext

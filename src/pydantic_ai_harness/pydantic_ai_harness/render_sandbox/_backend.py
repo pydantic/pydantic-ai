@@ -16,6 +16,7 @@ import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
+from importlib.resources import files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TypeVar
@@ -67,7 +68,7 @@ _OPERATION_TIMEOUT = 30.0
 _POLL_INTERVAL = 1.0
 # Transfers get the base timeout plus this much per byte, as E2B's uploads do, so large files can finish.
 _MIN_BYTES_PER_SECOND = 256 * 1024
-_HELPER = Path(__file__).with_name('_file_transfer.py').read_text()
+_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py').read_text()
 
 
 def _check_env(env: Mapping[str, str] | None) -> dict[str, str]:
