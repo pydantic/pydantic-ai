@@ -12,11 +12,10 @@ own suites, which check that a durable run sends the same requests as a plain on
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
@@ -44,7 +43,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
@@ -64,6 +63,7 @@ from .append_only import (
     build_capabilities,
     check_conversation,
     discover_capabilities,
+    drain_events,
     inject_clock,
     provider_imports_successful,
     run_conversation,
@@ -93,11 +93,6 @@ def _no_op_tool() -> str:
     return 'ok'  # pragma: no cover
 
 
-async def _ignore_events(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
-    async for _ in events:
-        pass
-
-
 def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages
 
@@ -117,7 +112,7 @@ FIXTURES: dict[str, Fixture] = {
     'PrefixTools': lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
     'PrepareOutputTools': lambda _: PrepareOutputTools(lambda ctx, tools: tools),
     'PrepareTools': lambda _: PrepareTools(lambda ctx, tools: tools),
-    'ProcessEventStream': lambda _: ProcessEventStream(_ignore_events),
+    'ProcessEventStream': lambda _: ProcessEventStream(drain_events),
     'ProcessHistory': lambda _: ProcessHistory(_keep_history),
     'ResolveModelId': lambda _: ResolveModelId(lambda ctx, model_id: None),
     'SelectModel': lambda _: SelectModel(_keep_model),
@@ -182,14 +177,13 @@ AGENT_FEATURES: dict[str, Scenario] = {
 }
 """Agent features, not capabilities, that render state into the prompt, run through the same checks."""
 
-DISCOVERED = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
-CAPABILITIES = DISCOVERED.capabilities
+CAPABILITIES = discover_capabilities(('pydantic_ai.capabilities', 'pydantic_ai.models'))
 
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | KNOWN.keys() | ALLOWED.keys() | {name for name, _ in UNSUPPORTED}
-    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys() - DISCOVERED.not_installed
+    stale = tables - CAPABILITIES.keys() - AGENT_FEATURES.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
@@ -205,7 +199,7 @@ async def test_conversation_only_appends(
     if name in AGENT_FEATURES:
         capabilities, scenario = [], AGENT_FEATURES[name]
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name], FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
         scenario = Scenario()
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)
@@ -300,7 +294,7 @@ async def test_checks_report_what_they_catch(
     capability: AbstractCapability[Any],
     known: tuple[Known, ...],
     allowed: Allowed | None,
-    outcome: str,
+    outcome: Literal['fail', 'xfail'],
     report: str,
     monkeypatch: pytest.MonkeyPatch,
     allow_model_requests: None,
@@ -321,4 +315,4 @@ async def test_checks_report_what_they_catch(
 def test_a_capability_without_defaults_needs_a_fixture(tmp_path: Path):
     """A new capability that can't be built with its defaults fails with what to add, rather than a `TypeError`."""
     with pytest.raises(pytest.fail.Exception, match='Add a `FIXTURES` entry'):
-        build_capabilities('NativeTool', NativeTool, None, tmp_path)
+        build_capabilities('NativeTool', lambda: NativeTool, None, tmp_path)

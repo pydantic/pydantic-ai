@@ -64,11 +64,6 @@ from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
-from ..conftest import try_import
-
-with try_import():
-    from pydantic_ai_harness.modal_sandbox import ModalSandbox
-
 from ..append_only import (
     CLOCK,
     PROVIDERS,
@@ -143,6 +138,15 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
 
 
+def _modal_sandbox() -> AbstractCapability[Any]:
+    # Imported here, not at module level, so collecting this file never imports the Modal SDK.
+    try:
+        from pydantic_ai_harness.modal_sandbox import ModalSandbox
+    except ImportError as exc:  # pragma: lax no cover
+        pytest.skip(f'`ModalSandbox` needs an optional dependency that is not installed: {exc}')
+    return ModalSandbox(warn_if_no_tools=False)
+
+
 def _read_file_key(call: ToolCallPart) -> str | None:
     args = call.args_as_dict()
     return str(args['path']) if call.tool_name == 'read_file' else None
@@ -173,7 +177,7 @@ FIXTURES: dict[str, Fixture] = {
     'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
     'Macroscope': _workspace(Macroscope),
     'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
-    'ModalSandbox': lambda _: ModalSandbox(warn_if_no_tools=False),
+    'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
     'RepoContext': _repo_context,
     'Researcher': _workspace(Researcher),
@@ -306,14 +310,13 @@ ENV: dict[str, dict[str, str]] = {
 }
 """Credentials a capability checks when it's built; nothing is sent, as the scripted model never calls its tools."""
 
-DISCOVERED = discover_capabilities(('pydantic_ai_harness',))
-CAPABILITIES = DISCOVERED.capabilities
+CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
 
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
-    stale = tables - CAPABILITIES.keys() - DISCOVERED.not_installed - VARIANTS.keys()
+    stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
@@ -326,9 +329,9 @@ async def test_conversation_only_appends(
         monkeypatch.setenv(key, value)
     if name in VARIANTS:
         fixture, scenario = VARIANTS[name]
-        capabilities = build_capabilities(name, AbstractCapability, fixture, tmp_path)
+        capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name], FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
         scenario = SCENARIOS.get(name, Scenario())
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)

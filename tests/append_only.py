@@ -26,10 +26,9 @@ import importlib
 import importlib.util
 import inspect
 import json
-import pkgutil
+import re
 import sys
-import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -43,7 +42,7 @@ from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -301,8 +300,7 @@ class _ScriptedTransport:
     sent: list[bytes] = field(default_factory=list[bytes])
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
-        if not request.url.path.endswith(_ENDPOINTS[self.provider]):
-            raise AssertionError(f'unexpected request to {request.url}')  # pragma: no cover
+        assert request.url.path.endswith(_ENDPOINTS[self.provider]), f'unexpected request to {request.url}'
         self.sent.append(request.read())
         turn = self.script.pop(0) if self.script else Turn()
         response = _RESPONSE_BUILDERS[self.provider](turn, len(self.sent))
@@ -398,7 +396,8 @@ class Scenario:
         ]
 
 
-async def _drain(ctx: Any, events: AsyncIterable[Any]) -> None:
+async def drain_events(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+    """An event stream handler that consumes the events, so a run streams."""
     async for _ in events:
         pass
 
@@ -461,7 +460,7 @@ async def run_conversation(
 
     first = await agent.run('What is the weather and the news?')
     # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-    second = await agent.run('And what else?', message_history=first.all_messages(), event_stream_handler=_drain)
+    second = await agent.run('And what else?', message_history=first.all_messages(), event_stream_handler=drain_events)
     conversation = list(transport.sent)
     parameters = list(model.recorded_parameters)
 
@@ -582,79 +581,100 @@ def _shorten(text: str, limit: int) -> str:
 # --- Discovery and the expectation tables --------------------------------------------------------
 
 
-@dataclass
-class Discovered:
-    capabilities: dict[str, type[AbstractCapability[Any]]]
-    """Every public capability class in the packages, by class name."""
-    not_installed: set[str]
-    """Names of the classes defined in modules that couldn't be imported here, read from their source."""
+@dataclass(frozen=True)
+class CapabilityRef:
+    """A capability class found in source, imported only when a test runs it."""
+
+    name: str
+    module: str
+    """The module that defines it."""
+
+    def load(self) -> type[AbstractCapability[Any]]:
+        """Import the class, skipping the test when its optional dependency group isn't installed."""
+        try:
+            module = importlib.import_module(self.module)
+        except ImportError as exc:  # pragma: lax no cover
+            pytest.skip(f'`{self.name}` needs an optional dependency that is not installed: {exc}')
+        cls = getattr(module, self.name)
+        assert _is_capability_class(cls), f'`{self.module}.{self.name}` is not a capability class'
+        return cls
 
 
-def discover_capabilities(packages: Sequence[str]) -> Discovered:
-    """Every public capability class defined in `packages`, by class name.
+def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
+    """Every public capability class defined in `packages`, by class name, found by reading their source.
 
-    Walks the packages rather than reading an export list, so a new capability is a new case without
-    anyone registering it. Public means importable under its name from the module path with the private
-    (`_`-prefixed) segments dropped: `pydantic_ai.capabilities._tool_search.ToolSearch` is public because
-    `pydantic_ai.capabilities.ToolSearch` is it. Modules whose optional dependency group isn't installed are
-    skipped, as the capability could not be used either, and the classes they define are listed as not
-    installed, so the expectation tables can keep entries for them.
+    Reads the source rather than an export list, so a new capability is a new case without anyone
+    registering it, and rather than importing it, so collection never imports an integration's SDK.
+    A class is a capability when its bases lead to `AbstractCapability`, following base names across
+    `pydantic_ai` and `packages`. It is public when it isn't `_`-prefixed and is importable under its name
+    from its module path with the private segments dropped: `pydantic_ai.capabilities._tool_search.ToolSearch`
+    is public because `pydantic_ai.capabilities` imports `ToolSearch`.
     """
-    found: dict[str, type[AbstractCapability[Any]]] = {}
-    not_installed: set[str] = set()
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for package_name in packages:
-            package = importlib.import_module(package_name)
-            module_names = [
-                package_name,
-                *(info.name for info in pkgutil.walk_packages(package.__path__, f'{package_name}.')),
-            ]
-            for module_name in module_names:
-                try:
-                    module = importlib.import_module(module_name)
-                # An optional dependency group that isn't installed.
-                except ImportError:  # pragma: lax no cover
-                    not_installed |= _class_names(module_name)
-                    continue
-                for obj in vars(module).values():
-                    if (
-                        _is_capability_class(obj)
-                        and obj.__module__ == module_name
-                        and not obj.__name__.startswith('_')
-                        and _is_public(obj)
-                    ):
-                        found[obj.__name__] = obj
-    return Discovered(found, not_installed)
+    bases: dict[str, set[str]] = {}
+    defined: dict[str, list[str]] = {}
+    for package in ('pydantic_ai', *packages):
+        for module, source in _module_sources(package):
+            for match in _CLASS_STATEMENT.finditer(source):
+                name = match['name']
+                bases.setdefault(name, set()).update(_base_names(match['bases']))
+                if package in packages:
+                    defined.setdefault(module, []).append(name)
+
+    capabilities = {'AbstractCapability'}
+    while new := {name for name, names in bases.items() if name not in capabilities and names & capabilities}:
+        capabilities |= new
+
+    found: dict[str, CapabilityRef] = {}
+    for module, names in defined.items():
+        public_module = '.'.join(segment for segment in module.split('.') if not segment.startswith('_'))
+        exported = _exported_names(public_module) if public_module != module else set(names)
+        for name in names:
+            if name in capabilities and not name.startswith('_') and name in exported:
+                found[name] = CapabilityRef(name, module)
+    return found
 
 
-def _class_names(module_name: str) -> set[str]:  # pragma: lax no cover
-    """The classes a module (or, for a package, any module in it) defines, read without importing it."""
-    spec = importlib.util.find_spec(module_name)
-    assert spec is not None and spec.origin is not None
-    locations = spec.submodule_search_locations
-    paths = (
-        [path for location in locations for path in Path(location).rglob('*.py')] if locations else [Path(spec.origin)]
-    )
-    return {
-        node.name
-        for path in paths
-        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
-        if isinstance(node, ast.ClassDef)
-    }
+_CLASS_STATEMENT = re.compile(r'^class\s+(?P<name>\w+)\s*\((?P<bases>[^)]*)\)\s*:', re.MULTILINE)
+"""A top-level class statement. A regex rather than `ast`, which takes most of a second over both packages."""
+
+
+def _module_sources(package: str) -> Iterator[tuple[str, str]]:
+    spec = importlib.util.find_spec(package)
+    assert spec is not None and spec.submodule_search_locations is not None
+    root = Path(next(iter(spec.submodule_search_locations)))
+    for path in sorted(root.rglob('*.py')):
+        parts = path.relative_to(root).with_suffix('').parts
+        module = '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts)))
+        yield module, path.read_text(encoding='utf-8')
+
+
+def _base_names(bases: str) -> set[str]:
+    """The unqualified names of a class statement's bases, without their type arguments or keywords."""
+    names: set[str] = set()
+    for base in re.sub(r'\[[^\]]*\]', '', bases).split(','):
+        base = base.strip()
+        if base and '=' not in base:
+            names.add(base.rsplit('.', 1)[-1])
+    return names
+
+
+def _exported_names(module: str) -> set[str]:
+    """Names a module imports or defines at the top level, read from its source."""
+    spec = importlib.util.find_spec(module)
+    if spec is None or spec.origin is None:  # pragma: no cover
+        return set()
+    tree = ast.parse(Path(spec.origin).read_text(encoding='utf-8'))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+    return names
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
     return inspect.isclass(obj) and issubclass(obj, AbstractCapability)
-
-
-def _is_public(cls: type) -> bool:
-    public_path = '.'.join(segment for segment in cls.__module__.split('.') if not segment.startswith('_'))
-    try:
-        module = importlib.import_module(public_path)
-    except ImportError:  # pragma: no cover
-        return False
-    return getattr(module, cls.__name__, None) is cls
 
 
 Fixture = Callable[[Path], 'AbstractCapability[Any] | Sequence[AbstractCapability[Any]]']
@@ -662,14 +682,15 @@ Fixture = Callable[[Path], 'AbstractCapability[Any] | Sequence[AbstractCapabilit
 
 
 def build_capabilities(
-    name: str, discovered: type[AbstractCapability[Any]], fixture: Fixture | None, tmp_path: Path
+    name: str, load: Callable[[], type[AbstractCapability[Any]]], fixture: Fixture | None, tmp_path: Path
 ) -> list[AbstractCapability[Any]]:
     """The capability under test with its defaults, or as its fixture builds it."""
     if fixture is not None:
         built = fixture(tmp_path)
         return [built] if isinstance(built, AbstractCapability) else list(built)
+    cls = load()
     try:
-        return [discovered()]
+        return [cls()]
     except (TypeError, ValueError, UserError) as exc:
         pytest.fail(
             f'`{name}()` cannot be built with its defaults ({exc}). Add a `FIXTURES` entry that configures it, '
