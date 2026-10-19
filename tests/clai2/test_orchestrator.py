@@ -35,6 +35,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins import web as web_module
 from pydantic_clai2.builtin_plugins.web import WebPlugin, live as live_module, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WaitOutcome
@@ -59,7 +60,7 @@ from pydantic_clai2.builtin_plugins.web.workspaces import checkouts, enabled, op
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LiveSession
+from pydantic_clai2.plugins import ConversationChanged, LiveSession
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 
@@ -745,20 +746,47 @@ async def test_the_workspace_session_is_the_users_too(
         await tools.disconnect(workspace)
         await service.live.close(session.id)
         view = await tools.view(workspace)
-        assert view.session is not None and view.session.id == renewed and made.built == [path, path]
+        # Closed right after its turn, before that turn's end was saved, it may open again in a fork of it.
+        reopened = view.session
+        assert reopened is not None and reopened.title is not None and reopened.title.startswith('again')
+        assert (await tools.workspaces().get(workspace)).conversation == reopened.id and made.built == [path, path]
+        renewed = reopened.id
 
         [session] = made.sessions_in(path)
         elsewhere = tmp_path / 'elsewhere'
         elsewhere.mkdir()
-        moved = applied(
-            view,
-            lambda message: isinstance(message, Snapshot) and message.session.workspace == str(elsewhere.resolve()),
-            monkeypatch,
-        )
+        # The view never hears of the move, as when the orchestrator asks before its snapshot arrives:
+        # the live session, not the view, tells that it left.
+        moved = anyio.Event()
+        apply = view.apply
+
+        def unaware(message: ServerMessage) -> None:
+            if isinstance(message, Snapshot) and message.session.workspace == str(elsewhere.resolve()):
+                moved.set()
+            else:
+                apply(message)
+
+        monkeypatch.setattr(view, 'apply', unaware)
         service.channel(session).send(f'/workspace {elsewhere}')
         with anyio.fail_after(10):
             await moved.wait()
+        assert view.session is not None and view.session.workspace == str(path)
         assert (await tools.workspaces().get(workspace)).conversation == renewed, "not the workspace's any more"
         again = await tools.view(workspace)
         assert again is not view and again.session is not None and again.session.workspace == str(path)
         assert made.built == [path, path, path], 'a session in the checkout again'
+
+        # The page hears of a switch even when recording it for the workspace fails.
+        async def failing(service: WebService, event: ConversationChanged) -> None:
+            raise OSError('the registry is read-only')
+
+        monkeypatch.setattr(web_module, 'conversation_switched', failing)
+        current = again.session.id
+        switched = applied(
+            again, lambda message: isinstance(message, Snapshot) and message.session.id != current, monkeypatch
+        )
+        [session] = made.sessions_in(path)
+        service.channel(session).send('/new')
+        with anyio.fail_after(10):
+            await switched.wait()
+        assert (await tools.workspaces().get(workspace)).conversation == current
