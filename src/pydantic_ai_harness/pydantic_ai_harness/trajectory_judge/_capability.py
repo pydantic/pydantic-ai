@@ -77,13 +77,6 @@ _EARLIER_ELIDED = '[...]\n'
 
 _PROMPT_HEADER = "Review the running agent's recent trajectory and deliver your verdict."
 
-_STEERING_ORIGIN = 'pydantic-ai-harness.trajectory_judge.steering.v1'
-"""The `origin` in the `metadata` of the `ModelRequest` that delivers a judge's steering.
-
-The request's `metadata` also carries the judge's attribution name under `'judge'` and its
-message under `'message'`. Identify steering by this metadata, never by its model-visible text.
-"""
-
 _STEERING_TAG = 'steering'
 
 _STEERING_FRAMING = (
@@ -329,7 +322,7 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
             self._release_claim(ctx)
         verdict = result.output
         if isinstance(verdict, Steer):
-            ctx.enqueue(_steering_request(self._judge_name(), verdict.message))
+            ctx.enqueue(_steering_prompt(self._judge_name(), verdict.message))
         if self.on_verdict is not None:
             self.on_verdict(verdict)
 
@@ -387,8 +380,8 @@ def _claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
     return replace(limits, request_limit=limits.request_limit + 1)
 
 
-def _steering_request(judge: str, message: str) -> ModelRequest:
-    """The request delivering a judge's steering to the run, in framework voice.
+def _steering_prompt(judge: str, message: str) -> SystemPromptPart:
+    """The system prompt delivering a judge's steering to the run, in framework voice.
 
     The framing sentence is the framework's, so it goes in a `SystemPromptPart`. The message
     itself comes from the judge model, which read the run's tool results, so it is quoted as data
@@ -397,19 +390,9 @@ def _steering_request(judge: str, message: str) -> ModelRequest:
     one it arrives with.
     """
     body = _CLOSING_STEERING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', message)
-    content = f'{_STEERING_FRAMING}\n\n<{_STEERING_TAG} judge="{html.escape(judge)}">\n{body}\n</{_STEERING_TAG}>'
-    return ModelRequest(
-        parts=[SystemPromptPart(content)],
-        metadata={'origin': _STEERING_ORIGIN, 'judge': judge, 'message': message},
+    return SystemPromptPart(
+        f'{_STEERING_FRAMING}\n\n<{_STEERING_TAG} judge="{html.escape(judge)}">\n{body}\n</{_STEERING_TAG}>'
     )
-
-
-def _steering_metadata(message: ModelRequest) -> tuple[str, str] | None:
-    """The judge name and message of a steering request, or `None` for any other request."""
-    metadata = message.metadata
-    if metadata is None or metadata.get('origin') != _STEERING_ORIGIN:
-        return None
-    return str(metadata.get('judge')), str(metadata.get('message'))
 
 
 def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | None) -> str:
@@ -451,8 +434,7 @@ def _render_transcript(messages: Sequence[ModelMessage], run_id: str | None) -> 
     the agent's first response or tool activity in this run, including responses that render
     nothing (thinking only). System prompts and thinking parts are omitted: the judge evaluates
     observable behavior (what was asked, said, called, and returned), not the agent's
-    configuration or private reasoning. Steering a judge already sent is the exception: it is
-    rendered from its request's metadata, so the judge can tell whether the agent followed it.
+    configuration or private reasoning.
     """
     start = _run_start(messages, run_id)
     earlier_request, earlier_rest = _render_lines(messages[:start])
@@ -477,10 +459,6 @@ def _render_lines(messages: Sequence[ModelMessage]) -> tuple[list[str], list[str
     for message in messages:
         if isinstance(message, ModelResponse):
             user_lines = lines
-        elif (steering := _steering_metadata(message)) is not None:
-            judge, text = steering
-            lines.append(f'trajectory judge {judge} steered: {text}')
-            continue
         for part in message.parts:
             if isinstance(part, UserPromptPart):
                 text = _prompt_text(part.content)

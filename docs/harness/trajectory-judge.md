@@ -32,7 +32,7 @@ The judge delivers exactly one verdict per evaluation, as its output type:
     </steering>
     ```
 
-    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To find it in message history, match the `ModelRequest`'s `metadata`, not its text: `{'origin': 'pydantic-ai-harness.trajectory_judge.steering.v1', 'judge': 'hallucination-check', 'message': '...'}`. Later evaluations see earlier steering in the transcript, so a judge can tell whether the agent followed it.
+    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe verdicts, including the steering message, use `on_verdict` (see [Observability](#observability)).
 
 Steering is the judge's *output*, not a tool it calls: the judge knows it gets one final verdict per evaluation, rather than being tempted to steer repeatedly mid-thought.
 
