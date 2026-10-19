@@ -173,8 +173,6 @@ class OpenAIServer:
         self._refusals: dict[str, list[str]] = {}
         self._next_error = 1
         self._next_event = 1
-        self.late_terminals: set[str] = set()
-        """Responses whose (cancelled) `response.done` is, or was, held back past the start of the next response."""
         self.late_cancels = 0
         """How many `response.cancel`s arrived with no response left to cancel (it had already finished)."""
         # Client input index (from `event_id`) -> the input's ground-truth key. The connection numbers its
@@ -722,7 +720,6 @@ class OpenAIServer:
         if late:
             assert session.late_done is None, 'one late `response.done` at a time'
             session.late_done = done
-            self.late_terminals.add(truth.key)
         else:
             self._emit(session, done)
         for refusal, refused in session.refused_behind_active:
@@ -875,8 +872,6 @@ class OpenAIServer:
         session = self.session
         assert session is not None and session.late_done is not None
         done, session.late_done = session.late_done, None
-        if done['response']['id'] == self.truth.responses_by_number[self.truth.next_response_number - 1].key:
-            self.late_terminals.discard(done['response']['id'])  # No other response started meanwhile.
         self._emit(session, done)
 
     def repeat_done(self) -> None:
