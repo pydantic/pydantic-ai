@@ -35,6 +35,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    ToolCallPart,
     UserContent,
 )
 from ..usage import RequestUsage
@@ -582,6 +583,22 @@ class RealtimeConnection(ABC):
         truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
         """
         return False
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        """Whether this connection deletes tool rounds that are over (see `_prune_tool_calls`). `False` by default."""
+        return False
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        """Delete the given calls of tool rounds that are over, with their results, from the provider's conversation.
+
+        For a connection whose provider keeps the conversation and bills its input tokens on every response: what
+        it deletes, the model no longer reads. The session calls this, under its send lock, with the answered calls
+        of tool rounds once a response completes without calling a tool, if `_prunes_tool_calls`; history keeps them.
+        Private until the realtime refactor settles. Returns the ids of the calls it asked the provider to delete.
+        """
+        # A connection whose `_prunes_tool_calls` is `True` overrides it.
+        raise NotImplementedError
 
     @property
     def _can_reconnect(self) -> bool:
