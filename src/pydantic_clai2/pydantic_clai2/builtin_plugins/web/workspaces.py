@@ -26,8 +26,10 @@ def enabled(plugins: PluginCatalog | None) -> Workspaces:
 async def workspace_session(service: 'WebService', workspace_id: str, *, start: bool) -> SessionChannel:
     """The live session the orchestrator runs in the workspace, opened again if need be.
 
-    With `start`, a workspace without one, or whose session was never saved or is deleted, gets a new one
-    in its checkout; without, that is a `RuntimeError`. `ValueError` when the checkout is gone.
+    The live session it ran in stays the workspace's while it is live, whatever conversation the user switched
+    it to, which the record then names. With `start`, a workspace without one, or whose session was never
+    saved or is deleted, gets a new one in its checkout; without, that is a `RuntimeError`. `ValueError` when
+    the checkout is gone.
     """
     async with service.workspace_locks[workspace_id]:
         return await _workspace_session(service, workspace_id, start=start)
@@ -36,20 +38,21 @@ async def workspace_session(service: 'WebService', workspace_id: str, *, start: 
 async def _workspace_session(service: 'WebService', workspace_id: str, *, start: bool) -> SessionChannel:
     workspaces = enabled(service.host.plugins)
     workspace = await workspaces.get(workspace_id)
-    if workspace.conversation is not None:
+    live_id = service.workspace_sessions.get(workspace_id)
+    session = next((session for session in service.live.listing() if session.id == live_id), None)
+    if session is None and workspace.conversation is not None:
         try:
             session = await service.live.open(workspace.conversation)
         except LookupError:
             pass
-        else:
-            if (conversation := session.conversation.conversation_id) != workspace.conversation:
-                # Another process holds it, so this one goes on in a copy: the copy is the workspace's from now on.
-                await workspaces.attach(workspace_id, conversation)
-            return service.channel(session)
-    if not start:
-        raise RuntimeError(f'Workspace {workspace_id} has no session yet. Start one with `session_start`.')
-    session = await service.live.new(workspace=workspace.path)
-    await workspaces.attach(workspace_id, session.conversation.conversation_id)
+    if session is None:
+        if not start:
+            raise RuntimeError(f'Workspace {workspace_id} has no session yet. Start one with `session_start`.')
+        session = await service.live.new(workspace=workspace.path)
+    if (conversation := session.conversation.conversation_id) != workspace.conversation:
+        # A new session, a copy where another process holds it, or one the user switched with `/new` or `/resume`.
+        await workspaces.attach(workspace_id, conversation)
+    service.workspace_sessions[workspace_id] = session.id
     return service.channel(session)
 
 

@@ -49,8 +49,6 @@ class _Link:
 
     view: SessionView
     task: asyncio.Task[None]
-    conversation: str
-    """The conversation the workspace's record names, which `/new` or `/resume` in the session moves on from."""
 
 
 def _cut(text: str, chars: int) -> str:
@@ -144,26 +142,19 @@ class WorkspaceTools:
         """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
         async with self._locks[workspace_id]:
             link = self.links.get(workspace_id)
-            if link is None or link.view.closed:
-                link = await self._follow(workspace_id, start=start)
-            if (session := link.view.session) is not None and session.id != link.conversation:
-                # The user switched it with `/new` or `/resume`: open that one again once it closed.
-                await self.workspaces().attach(workspace_id, session.id)
-                link.conversation = session.id
-            return link.view
-
-    async def _follow(self, workspace_id: str, *, start: bool) -> _Link:
-        await self.disconnect(workspace_id)
-        channel = await workspace_session(self.service, workspace_id, start=start)
-        view = SessionView(LocalClient(self.service, channel.session.id))
-        task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
-        link = self.links[workspace_id] = _Link(view=view, task=task, conversation=channel.id)
-        with anyio.move_on_after(CONNECT_TIMEOUT):
-            await view.ready()
-        if view.session is None:
+            if link is not None and not link.view.closed:
+                return link.view
             await self.disconnect(workspace_id)
-            raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
-        return link
+            channel = await workspace_session(self.service, workspace_id, start=start)
+            view = SessionView(LocalClient(self.service, channel.session.id))
+            task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
+            self.links[workspace_id] = _Link(view=view, task=task)
+            with anyio.move_on_after(CONNECT_TIMEOUT):
+                await view.ready()
+            if view.session is None:
+                await self.disconnect(workspace_id)
+                raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
+            return view
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
@@ -222,9 +213,14 @@ class WorkspaceTools:
                 f'Not destroyed. Ask the user first with `ask_user_question`, offering `Destroy {workspace}` '
                 f'and `Keep {workspace}`, and call this again only if they pick `Destroy {workspace}`.'
             )
-        await self.disconnect(workspace)
-        destroyed = await self.workspaces().destroy(workspace, live=self.service.live)
-        self.service.hub.publish(SessionsChanged())
+        service = self.service
+        # Neither a tool call nor the page opens its session again meanwhile.
+        async with self._locks[workspace], service.workspace_locks[workspace]:
+            await self.disconnect(workspace)
+            destroyed = await self.workspaces().destroy(workspace, live=service.live)
+            service.workspace_sessions.pop(workspace, None)
+        del self._locks[workspace], service.workspace_locks[workspace]
+        service.hub.publish(SessionsChanged())
         kept = 'removed' if destroyed.teardown == 'remove' else 'kept'
         return f'Destroyed workspace {destroyed.id}; its checkout at {destroyed.path} was {kept}, its branch kept.'
 

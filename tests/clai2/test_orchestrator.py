@@ -689,6 +689,7 @@ async def test_the_sidebar_and_one_session_per_workspace(tmp_path: Path, reposit
             ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[confirmed])
             assert (await tools.workspace_destroy(ctx, workspace)).startswith(f'Destroyed workspace {workspace};')
             await published(client.queue, SessionsChanged)
+        assert workspace not in service.workspace_sessions and workspace not in service.workspace_locks
 
 
 async def test_the_workspace_session_is_the_users_too(
@@ -720,9 +721,10 @@ async def test_the_workspace_session_is_the_users_too(
         with anyio.fail_after(10):
             await switched.wait()
         assert await tools.view(workspace) is view, 'still followed, in its new conversation'
-        assert view.session is not None
-        assert (await tools.workspaces().get(workspace)).conversation == view.session.id != before
-        # Followed again, it is the same session, not the conversation it held before.
+        assert view.session is not None and view.session.id != before
+        # The page's Open shows that session too, not the conversation it held before, and the record names it.
+        assert await open_workspace(service, workspace) == view.session.id
+        assert (await tools.workspaces().get(workspace)).conversation == view.session.id
         await tools.disconnect(workspace)
         assert (await tools.view(workspace)).session == view.session and made.sessions_in(path) == [session]
         await tools.session_send(workspace, 'again')
