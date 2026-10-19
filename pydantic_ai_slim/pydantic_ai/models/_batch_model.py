@@ -116,6 +116,8 @@ class _Queued:
     request: EncodedBatchRequest
     future: asyncio.Future[tuple[Batch, dict[str, str] | None]]
     requester: _Requester | None
+    withdrawn: bool = False
+    """Whether the request was cancelled after its queue was taken for submission, so nobody waits on its result."""
 
 
 @dataclass
@@ -289,8 +291,12 @@ class BatchPool:
             # Waits without cancelling the future on cancellation, as the submission resolves it.
             await asyncio.wait((queued.future,))
         except asyncio.CancelledError:
-            # Leaves the batch if it's still queued; a submitted batch has already taken the queue's requests.
+            # Leaves the batch if it's still queued. A submission has already taken the queue's requests, so the
+            # request is in its batch: it's abandoned once the batch exists, which can cancel the batch.
             queue.requests = [other for other in queue.requests if other is not queued]
+            queued.withdrawn = True
+            if queued.future.done() and not queued.future.cancelled() and queued.future.exception() is None:
+                self._withdraw(model, queued.future.result()[0], custom_id)
             raise
         if queued.future.cancelled():
             # The submission was cancelled, so there's no batch to wait for.
@@ -323,10 +329,24 @@ class BatchPool:
         else:
             for queued in requests:
                 queued.future.set_result((batch, trace_context))
+            for queued in requests:
+                if queued.withdrawn:
+                    self._withdraw(queue.model, batch, queued.request.custom_id)
         finally:
             # A submission that was itself cancelled, for example as the event loop shuts down, leaves nothing to wait for.
             for queued in requests:
                 queued.future.cancel()
+
+    def _withdraw(self, model: Model, batch: Batch, custom_id: str) -> None:
+        """Abandon a request that was submitted without anyone left to wait on it, cancelling the batch if it's the last."""
+        if self.abandon(batch, custom_id):
+            # In a task of its own, as the request's own task is being cancelled.
+            task = asyncio.get_running_loop().create_task(self._cancel(model, batch))
+            self._submissions.add(task)
+            task.add_done_callback(self._submissions.discard)
+
+    async def _cancel(self, model: Model, batch: Batch) -> None:
+        await model.batch_cancel(batch)
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether none still does."""

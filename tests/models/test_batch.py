@@ -923,3 +923,63 @@ async def test_providers_with_the_same_group_and_batch_ids_are_kept_apart() -> N
     results = await asyncio.gather(first.run('Hello'), second.run('Hello'))
 
     assert [result.output for result in results] == ['from first', 'from second']
+
+
+@pytest.mark.parametrize('cancelled', [1, 2])
+async def test_requests_cancelled_during_submission_are_abandoned_in_their_batch(cancelled: int) -> None:
+    """A request cancelled while its batch is being created is in the batch anyway, with nobody waiting on it.
+
+    It's abandoned once the batch exists, so the batch is cancelled once every request in it has been abandoned.
+    """
+    submitting = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedBatchModel(SlowBatchTestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            submitting.set()
+            await release.wait()
+            return await super().batch_create(requests)
+
+    wrapped = GatedBatchModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
+    requests = [asyncio.create_task(_pending_response(model)) for _ in range(2)]
+    await submitting.wait()
+    for request in requests[:cancelled]:
+        request.cancel()
+    release.set()
+    for request in requests[:cancelled]:
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    if cancelled == 1:
+        # The other request still waits on the batch, until it's abandoned too.
+        pending = await requests[1]
+        assert wrapped.canceled == []
+        await model.cancel_suspended_response(pending)
+    else:
+        # The cancellation runs in a task of its own.
+        with anyio.fail_after(5):
+            while not wrapped.canceled:
+                await asyncio.sleep(0)
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_request_cancelled_as_its_batch_is_created_is_abandoned_in_it() -> None:
+    """Cancelled after the submission handed it its batch, but before it saw it, a request abandons the batch."""
+    requests: list[asyncio.Task[ModelResponse]] = []
+
+    class CancellingBatchModel(SlowBatchTestModel):
+        async def batch_create(self, requests_to_create: Sequence[EncodedBatchRequest]) -> Batch:
+            batch = await super().batch_create(requests_to_create)
+            # Runs before the requests wake up to the batch the submission is about to hand them.
+            asyncio.get_running_loop().call_soon(requests[0].cancel)
+            return batch
+
+    wrapped = CancellingBatchModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=1, max_wait=None)
+    requests.append(asyncio.create_task(_pending_response(model)))
+    with pytest.raises(asyncio.CancelledError):
+        await requests[0]
+    with anyio.fail_after(5):
+        while not wrapped.canceled:
+            await asyncio.sleep(0)
+    assert wrapped.canceled == [wrapped.created[0].id]
