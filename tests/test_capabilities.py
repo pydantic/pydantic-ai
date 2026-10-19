@@ -1139,6 +1139,45 @@ async def test_concurrent_runs_capability_isolation():
     assert results[1].output == 'Done'
 
 
+async def test_before_model_request_sees_run_id_on_resumed_message_history_request():
+    """The trailing `ModelRequest` of a `message_history` resume is stamped with the run's
+    `run_id` before `before_model_request` hooks run, just like a fresh user-prompt request.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/10614: through a UI
+    adapter each turn's new content arrives as the trailing `ModelRequest` of `message_history`
+    (no separate `user_prompt`), and hooks that persist the outgoing request lost its run
+    attribution. A resumed request that already carries a `run_id` from a previous run keeps it.
+    """
+    seen_run_ids: list[str | None] = []
+
+    @dataclass
+    class RecordRunId(AbstractCapability[Any]):
+        async def before_model_request(
+            self,
+            ctx: RunContext[Any],
+            request_context: ModelRequestContext,
+        ) -> ModelRequestContext:
+            seen_run_ids.append(request_context.messages[-1].run_id)
+            return request_context
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[RecordRunId()])
+
+    result = await agent.run('hi')
+    assert seen_run_ids == [result.run_id]
+
+    # Resuming via `message_history` with no separate user prompt (the UI-adapter path):
+    # the trailing request must already be stamped when the hooks run.
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')])])
+    assert seen_run_ids[-1] == result.run_id
+
+    # A resumed request that already carries a `run_id` from a previous run keeps it.
+    previous_run_id = 'previous-run-id'
+    await agent.run(message_history=[ModelRequest(parts=[UserPromptPart('hi')], run_id=previous_run_id)])
+    assert seen_run_ids[-1] == previous_run_id
+
 @pytest.mark.parametrize(
     'forced_choice',
     [
