@@ -282,6 +282,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),
+    'ToolErrorRecovery': Anonymous(
+        'two nest with separate budgets; an inner `inform` or `fallback` is final, `propagate` reaches the outer'
+    ),
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),

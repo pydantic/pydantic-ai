@@ -1,7 +1,7 @@
 # Control and Safety
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
-guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
+recover from failed tool calls, guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
 a question mid-run, re-inject reminders, and review the trajectory with a judge model. All are
 `AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `PromptInjectionDefender` needs
 an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
@@ -13,6 +13,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | I want to ... | Use |
 |---|---|
 | Stop tool calls failing on trailing commas, single quotes, truncated JSON | `RepairToolArguments()` |
+| Keep the run going when a tool raises: retry it in place, report the failure to the model, or substitute a value | `ToolErrorRecovery()` |
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
@@ -64,6 +65,67 @@ print(agent.run_sync('Greet Ada').output)
 Gotchas: valid JSON and already-parsed dict args pass through untouched; repair is heuristic and
 does not use the tool schema, so missing fields and wrong types still go through normal
 validation/retry. `Coder` already includes it.
+
+## ToolErrorRecovery
+
+Wraps every tool call in `wrap_tool_execute`. When a tool raises, a `classify` callable on the
+`RecoveryPolicy` returns a `RecoveryOutcome`: `retry(n, backoff=..., on_exhausted=...)` calls the tool
+again with the same arguments and no model round trip, `inform(label=..., expose_message=...)` raises
+`ToolFailed` so the model sees a failed tool result, `fallback(value)` returns a substitute result,
+`propagate()` re-raises. The default policy retries timeouts and connection errors, propagates
+programming errors (`KeyError`, `TypeError`, ...), and informs for everything else. No extra.
+
+```python
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import ToolErrorRecovery
+
+
+def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = [p for p in messages[-1].parts if isinstance(p, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(returns[0].content)])
+    return ModelResponse(parts=[ToolCallPart('divide', {'a': 10, 'b': 0})])
+
+
+agent = Agent(FunctionModel(model), capabilities=[ToolErrorRecovery()])
+
+
+@agent.tool_plain
+def divide(a: float, b: float) -> float:
+    return a / b
+
+
+print(agent.run_sync('Divide 10 by 0').output)
+#> Tool 'divide' failed (ZeroDivisionError).
+```
+
+Without the capability the run ends with the `ZeroDivisionError`. With it, the model receives a
+failed tool result that names the exception type, and can answer the user. A `TimeoutError` or
+`ConnectionError` is retried in place first; a `KeyError` still ends the run.
+
+Parameters: `policy=RecoveryPolicy(classify=..., format_error=..., max_message_len=300,
+include_traceback=False, logger=...)`; `max_recoveries=None` and `per_tool_recoveries=None` cap how
+many failures a run smooths over before the error propagates. `classify` takes `(call, error)` or
+`(ctx, call, error)`, may be async, and returns a `RecoveryOutcome` (`None` propagates). The policy
+and outcome types are in `pydantic_ai_harness.tool_error_recovery`.
+
+Gotchas:
+
+- `retry` repeats the call with the same arguments and no model round trip, so only classify as
+  retryable the failures of tools whose effect can be repeated. It is not `ModelRetry` and does not
+  consume the core per-tool retry budget.
+- `ModelRetry`, `ToolFailed`, `ApprovalRequired`, `CallDeferred`, and `SkipToolExecution` raised by
+  a tool pass through unclassified.
+- The model-facing text names the exception type and omits `str(error)` unless `label`,
+  `expose_message`, or `format_error` opts in.
+- List it before a capability that puts a deadline on tool execution; a deadline listed first ends
+  the run before the classifier runs. Capabilities listed after it run their tool hooks once per
+  attempt.
+- Every recovery is logged on `pydantic_ai_harness.tool_error_recovery`; there are no spans of its
+  own. Not spec-serializable.
 
 ## Guardrails
 
@@ -547,6 +609,7 @@ not get the built-in judge instructions, so its `instructions` must describe the
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
+- https://pydantic.dev/docs/ai/harness/tool-error-recovery/
 - https://pydantic.dev/docs/ai/harness/guardrails/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/tool-call-judge/

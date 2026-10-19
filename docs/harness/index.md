@@ -230,6 +230,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | Capability | Package | What it does |
 |---|---|---|
 | [Repair Tool Arguments](repair-tool-arguments.md) | Harness | Repair malformed JSON tool arguments before schema validation. |
+| [Tool Error Recovery](tool-error-recovery.md) | Harness | Recover from failed tool calls: retry, inform the model, fall back, or propagate, with per-run budgets and operator logging |
 | [Guardrails](guardrails.md) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Prompt Injection Defender](prompt-injection-defender.md) | Harness | Classify local tool results for indirect prompt injection and optionally withhold high-risk results |
 | [Spend Limits](spend.md) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
