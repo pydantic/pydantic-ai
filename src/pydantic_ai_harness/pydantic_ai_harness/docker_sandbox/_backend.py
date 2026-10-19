@@ -277,6 +277,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             # The daemon may have created the container before the client was stopped: keep its name so
             # whoever holds the ref can remove it.
             self._ref = WorkspaceRef(provider=PROVIDER, id=name)
+            self._create_failed = False
             raise
         self._ref = WorkspaceRef(provider=PROVIDER, id=name)
         self._create_failed = result.exit_code != 0
