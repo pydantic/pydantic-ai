@@ -29,7 +29,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.ordinal import (
     INSTRUCTIONS,
     INVALID,
@@ -60,6 +59,7 @@ from pydantic_clai2.plugins.loader import (
     PluginLoader,
 )
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu

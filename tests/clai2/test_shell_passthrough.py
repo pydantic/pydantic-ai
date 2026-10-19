@@ -23,7 +23,6 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.shell_passthrough import (
     _ctrl_c_ignored,  # pyright: ignore[reportPrivateUsage]
     _ShellOutput,  # pyright: ignore[reportPrivateUsage]
@@ -36,6 +35,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime._processes import taskkill_path
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs

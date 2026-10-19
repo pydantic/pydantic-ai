@@ -20,7 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.compaction import ReportContextUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
+from pydantic_clai2._app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import _herdr_client, herdr
 from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
 from pydantic_clai2.config import Settings
@@ -36,6 +36,7 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 
 class RecordingClient:
