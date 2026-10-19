@@ -85,7 +85,12 @@ def is_unattached(workspace: Workspace) -> bool:
     return innermost_backend(workspace) is NO_WORKSPACE
 
 
-_PROVIDER_CAPABILITIES = {'modal': 'ModalSandbox()', 'e2b': 'E2BSandbox()', 'sprites': 'SpritesSandbox()'}
+_PROVIDER_CAPABILITIES = {
+    'modal': 'ModalSandbox()',
+    'e2b': 'E2BSandbox()',
+    'sprites': 'SpritesSandbox()',
+    'daytona': 'DaytonaSandbox()',
+}
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 
 
