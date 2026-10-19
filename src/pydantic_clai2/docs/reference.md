@@ -1941,8 +1941,8 @@ Two frontmatter fields decide who can use a skill:
   deploy.
 - `user-invocable: false` makes it model-only: there is no `/command`.
 
-CLAI ignores the other behavioral fields some clients support, such as
-`allowed-tools` or `model`, and names the skills that use them when it starts.
+CLAI quietly ignores the other behavioral fields some clients support, such as
+`allowed-tools` or `model`, so skills shared with those clients load as they are.
 
 When two folders have a skill with the same name, the earlier folder wins:
 project skills over personal ones, `.agents` over `.claude`. A skill reached

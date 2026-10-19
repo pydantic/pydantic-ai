@@ -330,16 +330,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         self._skills = skills
         self._skill_workspace = workspace
         self._skill_definitions = catalog.skills
-        notices = [skipped.message for skipped in catalog.skipped]
-        # CLAI hides library warnings from the prompt, so the run's advice about ignored fields is shown here.
-        ignored = [
-            f'{skill.name}: {", ".join(skill.ignored_behavioral_fields)}'
-            for skill in catalog.skills
-            if skill.ignored_behavioral_fields
-        ]
-        if ignored:
-            notices.append('Ignoring unsupported Agent Skill behavioral frontmatter fields: ' + '; '.join(ignored))
-        self._skill_notices = tuple(notices)
+        # Only skipped skills are reported. Fields such as `allowed-tools` belong to other clients that share
+        # the skill folders, so naming them at every launch would be a warning nobody can act on.
+        self._skill_notices = tuple(skipped.message for skipped in catalog.skipped)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
