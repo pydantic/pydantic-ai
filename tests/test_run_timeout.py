@@ -383,12 +383,24 @@ async def test_sub_agent_own_timeout_is_a_failed_tool_call():
 async def test_nested_timeout_reaching_the_run_edge_keeps_its_type():
     """A nested run's `RunTimedOut` escaping into the outer run (not via a tool) is re-stamped as the outer run's."""
     agent = Agent(TestModel())
-    sub_agent = Agent(FunctionModel(_never_returns))
+    sub_contexts: list[RunContext[object]] = []
+
+    async def expire_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Expired once its request is recorded, rather than racing a real timer against the run's progress.
+        _expire(sub_contexts[-1])
+        return await _never_returns(messages, info)
+
+    sub_agent = Agent(FunctionModel(expire_then_block))
+
+    @sub_agent.instructions
+    def capture_context(ctx: RunContext[object]) -> str:
+        sub_contexts.append(ctx)
+        return 'Sub.'
 
     with pytest.raises(RunTimedOut) as exc_info:
         async with agent.iter('go') as agent_run:
             async for _node in agent_run:  # pragma: no branch
-                await sub_agent.run('sub', timeout=SHORT_TIMEOUT)
+                await sub_agent.run('sub', timeout=LONG_TIMEOUT)
 
     assert str(exc_info.value) == 'The agent run timed out in a nested run.'
     nested = exc_info.value.__cause__
