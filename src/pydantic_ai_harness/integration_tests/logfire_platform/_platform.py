@@ -25,8 +25,9 @@ from typing import NoReturn
 
 import httpx
 import pytest
-from logfire.agent_control import AGENT_CONFIG_JSON_SCHEMA, agent_variable_name
 from pydantic import BaseModel, TypeAdapter
+
+from pydantic_ai_harness.logfire._contract import AGENT_CONFIG_JSON_SCHEMA, agent_variable_name
 
 AGENT_NAME = f'harness_agent_control_live_{uuid.uuid4().hex}'
 """The agent this suite runs, and so the only variable it ever writes to or deletes.

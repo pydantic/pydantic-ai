@@ -1,8 +1,8 @@
 """Back an agent's Agent Control configuration with one Logfire variable.
 
 The contract itself -- what an `AgentConfig` holds, how leniently it validates, and what a published
-value does to a request -- lives in [`logfire.agent_control`][], shared by every framework adapter and
-by the Logfire UI. This module is the Pydantic AI half of it: the capability wiring, the toolset that
+value does to a request -- lives in `pydantic_ai_harness.logfire._contract`, Pydantic AI's copy of the
+contract every Agent Control SDK and the Logfire UI share. This module is the Pydantic AI half of it: the capability wiring, the toolset that
 carries managed definitions to the model, the bridge between the contract's string block ids and
 [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id], and the hint span an agent
 describes itself to Logfire on.
@@ -26,7 +26,18 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import logfire
-from logfire.agent_control import (
+from logfire.variables import Variable
+from logfire.variables.abstract import NoOpVariableProvider
+
+from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionPart
+from pydantic_ai.models import ModelRequestContext, infer_model
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai_harness.logfire._contract import (
     AGENT_VARIABLE_PREFIX,
     SCHEMA_SHA256,
     AgentConfig,
@@ -46,17 +57,6 @@ from logfire.agent_control import (
     canonical_json,
     report_issues,
 )
-from logfire.variables import Variable
-from logfire.variables.abstract import NoOpVariableProvider
-
-from pydantic_ai import AbstractToolset, RunContext, TemplateStr, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, CombinedCapability
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import InstructionPart
-from pydantic_ai.models import ModelRequestContext, infer_model
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.logfire._managed_variable import (
     ManagedVariableCapability,
     resolution_reason,
@@ -477,7 +477,7 @@ class _ToolDefinitionOverridesToolset(WrapperToolset[AgentDepsT]):
 class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
     """Manage an agent's config through one `agent__<name>` Logfire variable.
 
-    The variable holds an [`AgentConfig`][logfire.agent_control.AgentConfig], the contract every
+    The variable holds an [`AgentConfig`][pydantic_ai_harness.logfire.AgentConfig], the contract every
     Agent Control SDK shares. Each present section -- `instructions`, `model`, `settings`, or
     `tool_definitions` -- is managed from Logfire, while an absent section keeps the code-defined
     behavior. Removing a section in Logfire deliberately reverts that section to code.
@@ -721,7 +721,9 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
                 if model is not None:
                     try:
                         infer_model(model)
-                    except (UserError, ValueError) as error:
+                    # `ImportError` is a model whose provider's extra this deployment does not install:
+                    # resolving the provider imports its SDK, and that is not a reason to fail a run.
+                    except (UserError, ValueError, ImportError) as error:
                         _warn_dropped(
                             f'Managed agent config selects unknown model {model!r} ({error}); keeping the code model.'
                         )
@@ -970,8 +972,8 @@ class AgentControl(ManagedVariableCapability[AgentDepsT, AgentConfig]):
           whether that is a name.
         - `agent_control.framework` -- which Agent Control SDK produced the hint; see `_FRAMEWORK`.
         - `agent_control.baseline_source` -- `'code'`, the contract's
-          [`BaselineSource`][logfire.agent_control.BaselineSource] for a baseline read off the running
-          code rather than observed from traffic.
+          `BaselineSource` for a baseline read off the running code rather than observed from
+          traffic.
         - `agent_control.schema_sha256` -- the contract schema this baseline was built against, so a
           consumer stores the matching JSON schema on the variable rather than guessing, and can tell
           a baseline from an older SDK from one it wrote the schema for.

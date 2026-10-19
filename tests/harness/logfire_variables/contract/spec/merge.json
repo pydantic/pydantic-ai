@@ -1,0 +1,46 @@
+[
+  {
+    "name": "published beats code, an explicit run value beats published",
+    "input": {
+      "code": { "temperature": 0.2, "max_tokens": 100 },
+      "published": { "temperature": 0.8 },
+      "run_explicit": { "max_tokens": 500 }
+    },
+    "expected": {
+      "settings": { "temperature": 0.8, "max_tokens": 500 },
+      "sources": { "temperature": "published", "max_tokens": "run" }
+    }
+  },
+  {
+    "name": "an explicitly null run value clears the key and still records that the run owns it",
+    "input": {
+      "code": { "temperature": 0.2 },
+      "published": { "temperature": 0.8 },
+      "run_explicit": { "temperature": null }
+    },
+    "expected": { "settings": {}, "sources": { "temperature": "run" } }
+  },
+  {
+    "name": "a null published value does not clear a code value: only a run can clear",
+    "input": { "code": { "temperature": 0.2 }, "published": { "temperature": null } },
+    "expected": { "settings": { "temperature": 0.2 }, "sources": { "temperature": "code" } }
+  },
+  {
+    "name": "a null code value is the layer not setting the key, so the published one still applies",
+    "input": { "code": { "temperature": null }, "published": { "temperature": 0.8 } },
+    "expected": { "settings": { "temperature": 0.8 }, "sources": { "temperature": "published" } }
+  },
+  {
+    "name": "a key outside the canonical settings passes through with the layer that set it",
+    "input": { "code": { "service_tier": "flex" }, "published": { "temperature": 0.8 } },
+    "expected": {
+      "settings": { "service_tier": "flex", "temperature": 0.8 },
+      "sources": { "service_tier": "code", "temperature": "published" }
+    }
+  },
+  {
+    "name": "no layer sets anything, so nothing is merged and nothing is owned",
+    "input": {},
+    "expected": { "settings": {}, "sources": {} }
+  }
+]

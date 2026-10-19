@@ -19,12 +19,12 @@ from typing import Any
 
 import logfire
 import pytest
-from logfire.agent_control._reporting import reset_warned_messages
 from logfire.testing import CaptureLogfire
 from logfire.variables.local import LocalVariableProvider
 from pydantic import BaseModel
 
 from pydantic_ai_harness.logfire import _agent_control
+from pydantic_ai_harness.logfire._contract._reporting import reset_warned_messages
 
 from ._helpers import Publish, published_value, variables_provider
 
@@ -37,7 +37,7 @@ def _forget_process_state() -> Iterator[None]:
 
     A drop warns once per process and an unconfigured agent is reported once per process, by design,
     so without this a test's outcome would depend on which tests ran before it. The parser's guard
-    lives in `logfire.agent_control` and the capability's in this package; the two never emit the same
+    lives in the vendored contract (`_contract`) and the capability's in this package; the two never emit the same
     message, and a test that counts warnings has to reach both.
     """
     reset_warned_messages()

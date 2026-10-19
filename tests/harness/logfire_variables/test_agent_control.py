@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import warnings
 from dataclasses import dataclass
 from typing import Any, cast
@@ -9,15 +10,6 @@ import logfire
 import pytest
 from inline_snapshot import snapshot
 from logfire._internal.config import LogfireConfig
-from logfire.agent_control import (
-    MAX_MODEL_FACING_TEXT_LENGTH,
-    AgentConfig,
-    AgentConfigSettings,
-    InstructionBlock,
-    ParameterOverride,
-    ToolDefinitionOverride,
-    build_baseline,
-)
 from logfire.testing import CaptureLogfire
 from logfire.variables import Variable, VariablesConfig
 
@@ -34,6 +26,15 @@ from pydantic_ai.toolsets import FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import AgentControl as RootAgentControl
 from pydantic_ai_harness.logfire import AgentControl, _agent_control
+from pydantic_ai_harness.logfire._contract import (
+    MAX_MODEL_FACING_TEXT_LENGTH,
+    AgentConfig,
+    AgentConfigSettings,
+    InstructionBlock,
+    ParameterOverride,
+    ToolDefinitionOverride,
+    build_baseline,
+)
 
 from ._helpers import (
     Publish,
@@ -594,6 +595,34 @@ async def test_an_unknown_managed_model_cannot_crash_a_run_under_an_error_filter
     assert result.output == 'done'
     # The run reached the code-defined model rather than raising, and the section that did parse
     # still applied -- one unusable field costs that field.
+    assert seen == [{'max_tokens': 128}]
+
+
+async def test_a_managed_model_whose_provider_is_not_installed_keeps_the_code_model(
+    publish: Publish, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A model this deployment has no provider extra for is dropped like an unknown one.
+
+    One config serves every deployment of the agent, and they need not install the same providers:
+    an Anthropic-only service is handed `openai:...` as soon as someone publishes it for another. The
+    provider is resolved by importing its SDK, so the missing extra arrives as an `ImportError` rather
+    than the `UserError` an unknown provider raises -- and it took the run down. The import is made to
+    fail here because the test environment installs every extra.
+    """
+    seen: list[dict[str, object]] = []
+
+    def capture_model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(dict(info.model_settings or {}))
+        return ModelResponse(parts=[TextPart('done')])
+
+    monkeypatch.setitem(sys.modules, 'pydantic_ai.providers.openai', None)
+    publish('uninstalledprovider', {'model': 'openai:gpt-5.2', 'settings': {'max_tokens': 128}})
+    with pytest.warns(UserWarning, match="selects unknown model 'openai:gpt-5.2'"):
+        result = await Agent(
+            FunctionModel(capture_model), capabilities=[AgentControl('uninstalledprovider', label='production')]
+        ).run('hello')
+
+    assert result.output == 'done'
     assert seen == [{'max_tokens': 128}]
 
 

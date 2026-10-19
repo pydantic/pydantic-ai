@@ -349,8 +349,7 @@ redeploys.
 
 ### The solution
 
-`AgentControl` resolves one [`AgentConfig`](https://github.com/pydantic/logfire/tree/main/logfire/agent_control)
-value per run with **presence semantics**: each section
+`AgentControl` resolves one `AgentConfig` value per run with **presence semantics**: each section
 that is present -- `instructions`, `model`, `settings`, `tool_definitions` -- is managed from
 Logfire, and each absent section keeps the code-defined behavior. The whole config versions and
 rolls out as one unit, so a prompt change and the model change it depends on land atomically.
@@ -386,9 +385,11 @@ different ways, four tools in two toolsets, and a printout of what resolved on e
 at all, which is the behavior worth seeing first.
 
 The variable holds an `AgentConfig`. The contract -- that model, its stored JSON schema, how leniently
-a published value validates, and what each section does to a request -- lives in `logfire.agent_control`,
-where the Logfire UI and every framework's Agent Control adapter share one copy of it. Import it from
-there when you want to publish a value from code; nothing in this package restates it.
+a published value validates, and what each section does to a request -- is shared with the Logfire UI
+and every other framework's Agent Control SDK. This package carries its own copy in `_contract/`,
+kept module for module with logfire's `logfire.agent_control` and pinned to the same schema digest and
+cross-language vectors, so it needs no particular logfire release. Import `AgentConfig` and its models
+from `pydantic_ai_harness.logfire` when you want to publish a value from code.
 
 ```json
 {
@@ -588,7 +589,7 @@ reach it.
   by the resolved label and version that ride as baggage on all of them.
 - **One stored schema, one writer:** the variable is created by Logfire, which stores the schema the
   UI edits against and validates every later version of the value against -- the hand-maintained
-  `logfire.agent_control.AGENT_CONFIG_JSON_SCHEMA`, which both cores and the UI pin by digest so the
+  `AGENT_CONFIG_JSON_SCHEMA` in `_contract/_schema.py`, which every copy of the contract and the UI pin by digest so the
   copies cannot drift apart quietly. A hint carries that digest as `agent_control.schema_sha256`
   rather than the schema itself, so Logfire stores the schema for the contract version the baseline
   was built against instead of guessing. The schema stays permissive on purpose: `AgentConfig`

@@ -105,11 +105,11 @@ The settings are the canonical ones every framework has a knob for, under the na
 [`ModelSettings`](https://ai.pydantic.dev/api/settings/) gives them. Provider-specific settings
 (`openai_reasoning_effort`, `extra_headers`) stay in code, where they always were.
 
-What a config may hold is the same contract in every Agent Control SDK, and it lives in one place:
-the `logfire.agent_control` package that ships with the `logfire` extra. `AgentControl` reads it
-from there, so what the Logfire UI offers, what a TypeScript service reads, and what this agent
-applies cannot drift apart. Import `AgentConfig` from that package when you want to publish a value
-from code rather than from the UI.
+What a config may hold is the same contract in every Agent Control SDK. Every copy of it -- this
+package's, the TypeScript SDK's, and the Logfire UI's -- is pinned to one schema digest and one set of
+cross-language test vectors, so what the Logfire UI offers, what a TypeScript service reads, and what
+this agent applies cannot drift apart. Import [`AgentConfig`][pydantic_ai_harness.logfire.AgentConfig]
+from `pydantic_ai_harness.logfire` when you want to publish a value from code rather than from the UI.
 
 A tool's implementation and the shape of its arguments stay code-owned: Logfire edits what the model
 is *told* about a tool, never what it *does*. A renamed tool still routes to the same function, and
@@ -320,5 +320,14 @@ current run picked up (`value`, `label`, `version`, `reason`), and is `None` out
 
 ::: pydantic_ai_harness.logfire.AgentControl
 
-The config a variable holds -- `AgentConfig` and the models it is built from -- is documented with the
-contract itself, in [`logfire.agent_control`](https://github.com/pydantic/logfire/tree/main/logfire/agent_control).
+::: pydantic_ai_harness.logfire.AgentConfig
+
+::: pydantic_ai_harness.logfire.AgentConfigSettings
+
+::: pydantic_ai_harness.logfire.InstructionBlock
+
+::: pydantic_ai_harness.logfire.ToolDefinitionOverride
+
+::: pydantic_ai_harness.logfire.ParameterOverride
+
+::: pydantic_ai_harness.logfire.UnmatchedConfigError

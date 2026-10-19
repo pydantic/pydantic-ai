@@ -1,0 +1,114 @@
+[
+  {
+    "name": "a hyphenated name is the canonical example",
+    "input": "checkout-assistant",
+    "display_name": "checkout-assistant",
+    "variable_name": "agent__checkout_assistant"
+  },
+  {
+    "name": "spaces and capitals reach the same variable as the hyphenated name",
+    "input": "Checkout Assistant",
+    "display_name": "Checkout Assistant",
+    "variable_name": "agent__checkout_assistant"
+  },
+  {
+    "name": "the already-normalized form is a fixed point",
+    "input": "checkout_assistant",
+    "display_name": "checkout_assistant",
+    "variable_name": "agent__checkout_assistant"
+  },
+  {
+    "name": "surrounding whitespace is trimmed from both the display name and the key",
+    "input": "  checkout  ",
+    "display_name": "checkout",
+    "variable_name": "agent__checkout"
+  },
+  {
+    "name": "the key lowercases, the display name does not",
+    "input": "CHECKOUT",
+    "display_name": "CHECKOUT",
+    "variable_name": "agent__checkout"
+  },
+  {
+    "name": "punctuation of every kind becomes an underscore",
+    "input": "checkout.assistant",
+    "display_name": "checkout.assistant",
+    "variable_name": "agent__checkout_assistant"
+  },
+  {
+    "name": "a slash is punctuation like any other, not a namespace separator",
+    "input": "billing/refunds",
+    "display_name": "billing/refunds",
+    "variable_name": "agent__billing_refunds"
+  },
+  {
+    "name": "runs of replaced characters collapse to one underscore",
+    "input": "a -- b",
+    "display_name": "a -- b",
+    "variable_name": "agent__a_b"
+  },
+  {
+    "name": "underscores are stripped from both ends",
+    "input": "_leading_and_trailing_",
+    "display_name": "_leading_and_trailing_",
+    "variable_name": "agent__leading_and_trailing"
+  },
+  {
+    "name": "a leading digit is fine, because the prefix is what starts the identifier",
+    "input": "2fa",
+    "display_name": "2fa",
+    "variable_name": "agent__2fa"
+  },
+  {
+    "name": "non-ASCII letters are not transliterated, they are replaced",
+    "input": "café",
+    "display_name": "café",
+    "variable_name": "agent__caf"
+  },
+  {
+    "name": "an emoji is replaced like any other non-key character",
+    "input": "checkout 🛒",
+    "display_name": "checkout 🛒",
+    "variable_name": "agent__checkout"
+  },
+  {
+    "name": "the prefix is added automatically, so passing it is a warning and not a doubled prefix",
+    "input": "agent__checkout",
+    "display_name": "agent__checkout",
+    "variable_name": "agent__checkout",
+    "warning": "prefix-added-automatically"
+  },
+  {
+    "name": "the prefix is recognized case-insensitively, since the key lowercases anyway",
+    "input": "Agent__Checkout",
+    "display_name": "Agent__Checkout",
+    "variable_name": "agent__checkout",
+    "warning": "prefix-added-automatically"
+  },
+  {
+    "name": "an empty name has no key",
+    "input": "",
+    "error": "empty"
+  },
+  {
+    "name": "whitespace only has no key",
+    "input": "   ",
+    "error": "empty"
+  },
+  {
+    "name": "punctuation only has no key",
+    "input": "---",
+    "error": "empty"
+  },
+  {
+    "name": "a name with no ASCII in it at all has no key",
+    "input": "日本語",
+    "error": "empty"
+  },
+  {
+    "name": "the bare prefix leaves nothing behind it",
+    "input": "agent__",
+    "error": "empty",
+    "warning": "prefix-added-automatically"
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "two overrides for one tool keep the first and report the second",
+    "input": {
+      "tools": [{ "name": "get_weather" }],
+      "config": {
+        "tool_definitions": [
+          { "name": "get_weather", "description": "First." },
+          { "name": "get_weather", "description": "Last." }
+        ]
+      }
+    },
+    "expected": {
+      "tools": [{ "name": "get_weather", "description": "First." }],
+      "routes": { "get_weather": "get_weather" },
+      "issues": [{ "section": "tool_definitions", "reason": "duplicate-entry", "tool": "get_weather" }]
+    }
+  },
+  {
+    "name": "one toolset's tool and another's are separate keys, so neither is a duplicate of the other",
+    "input": {
+      "tools": [{ "name": "search", "toolset": "crm" }, { "name": "search", "toolset": "docs" }],
+      "config": {
+        "tool_definitions": [
+          { "name": "search", "toolset": "crm", "description": "CRM." },
+          { "name": "search", "toolset": "docs", "description": "Docs." }
+        ]
+      }
+    },
+    "expected": {
+      "tools": [
+        { "name": "search", "description": "CRM.", "toolset": "crm" },
+        { "name": "search", "description": "Docs.", "toolset": "docs" }
+      ],
+      "issues": []
+    }
+  }
+]

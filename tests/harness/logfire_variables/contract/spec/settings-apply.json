@@ -1,0 +1,80 @@
+[
+  {
+    "name": "a canonical setting this adapter cannot lower is dropped and reported",
+    "input": {
+      "config": { "settings": { "temperature": 0.4, "top_k": 40 } },
+      "support": { "sections": ["settings"], "settings": ["temperature"] }
+    },
+    "expected": {
+      "settings": { "temperature": 0.4 },
+      "issues": [{ "section": "settings", "reason": "unsupported-setting", "setting": "top_k" }]
+    }
+  },
+  {
+    "name": "no support declared is the adapter saying it can lower every canonical setting",
+    "input": { "config": { "settings": { "temperature": 0.4, "top_k": 40 } }, "support": null },
+    "expected": { "settings": { "temperature": 0.4, "top_k": 40 }, "issues": [] }
+  },
+  {
+    "name": "a key this version of the contract has no field for is reported, not forwarded",
+    "input": { "config": { "settings": { "temperature": 0.4, "reasoning_budget": 1024 } }, "support": null },
+    "expected": {
+      "settings": { "temperature": 0.4 },
+      "issues": [{ "section": "settings", "reason": "unknown-setting", "setting": "reasoning_budget" }]
+    }
+  },
+  {
+    "name": "a timeout that is not a request budget is dropped rather than clamped",
+    "input": { "config": { "settings": { "timeout": -1 } }, "support": null },
+    "expected": {
+      "settings": {},
+      "issues": [{ "section": "settings", "reason": "unrepresentable-timeout", "setting": "timeout" }]
+    }
+  },
+  {
+    "name": "issues come back in the order the canonical settings are declared, whatever order the value wrote them in",
+    "input": {
+      "config": { "settings": { "timeout": -1, "top_k": 40 } },
+      "support": { "sections": ["settings"], "settings": ["temperature"] }
+    },
+    "expected": {
+      "settings": {},
+      "issues": [
+        { "section": "settings", "reason": "unsupported-setting", "setting": "top_k" },
+        { "section": "settings", "reason": "unrepresentable-timeout", "setting": "timeout" }
+      ]
+    }
+  },
+  {
+    "name": "a section this adapter cannot apply is reported once, not silently ignored",
+    "input": {
+      "config": { "model": "openai:gpt-5.6-sol" },
+      "support": { "sections": ["instructions", "settings"], "settings": [] }
+    },
+    "expected": { "issues": [{ "section": "model", "reason": "unsupported-section" }] }
+  },
+  {
+    "name": "a settings section the adapter cannot apply yields no patch, whatever keys it can lower",
+    "input": {
+      "config": { "settings": { "temperature": 0.4 } },
+      "support": { "sections": ["instructions"], "settings": ["temperature"] }
+    },
+    "expected": {
+      "settings": {},
+      "issues": [{ "section": "settings", "reason": "unsupported-section" }]
+    }
+  },
+  {
+    "name": "every section the adapter declares is applied without a word about it",
+    "input": {
+      "config": { "instructions": ["Be brief."], "model": "openai:gpt-5.6-sol", "settings": { "temperature": 0.4 } },
+      "support": { "sections": ["instructions", "model", "settings"], "settings": ["temperature"] }
+    },
+    "expected": { "settings": { "temperature": 0.4 }, "issues": [] }
+  },
+  {
+    "name": "a top-level key this SDK version has no section for is reported, not dropped in silence",
+    "input": { "config": { "instructions": ["Be brief."], "mcp_servers": [{ "name": "crm" }] }, "support": null },
+    "expected": { "issues": [{ "section": "mcp_servers", "reason": "unknown-section" }] }
+  }
+]

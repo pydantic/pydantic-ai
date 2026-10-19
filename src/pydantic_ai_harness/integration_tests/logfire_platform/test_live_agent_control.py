@@ -56,15 +56,6 @@ from collections.abc import Iterator
 
 import logfire
 import pytest
-from logfire.agent_control import (
-    AGENT_CONFIG_JSON_SCHEMA,
-    SCHEMA_SHA256,
-    AgentConfig,
-    InstructionBlock,
-    agent_variable_name,
-    canonical_json,
-)
-from logfire.agent_control._reporting import reset_warned_messages
 
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ToolCallPart
@@ -73,6 +64,15 @@ from pydantic_ai.messages import ToolCallPart
 # two once-per-process guards have no public reset, and a suite whose outcome must not depend on the
 # order its tests ran in has to reach both.
 from pydantic_ai_harness.logfire import _agent_control
+from pydantic_ai_harness.logfire._contract import (
+    AGENT_CONFIG_JSON_SCHEMA,
+    SCHEMA_SHA256,
+    AgentConfig,
+    InstructionBlock,
+    agent_variable_name,
+    canonical_json,
+)
+from pydantic_ai_harness.logfire._contract._reporting import reset_warned_messages
 
 from ._agent import (
     CANARY_LABEL,

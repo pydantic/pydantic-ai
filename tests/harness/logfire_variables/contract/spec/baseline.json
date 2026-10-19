@@ -1,0 +1,350 @@
+[
+  {
+    "name": "one prompt, one tool, one setting: the shape every adapter starts from",
+    "input": {
+      "blocks": [
+        {
+          "text": "You are a concise checkout assistant.",
+          "id": "agent"
+        }
+      ],
+      "model": "anthropic:claude-fable-5-1",
+      "settings": {
+        "temperature": 0.1
+      },
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City to look up."
+              }
+            },
+            "required": [
+              "city"
+            ]
+          },
+          "toolset": "<agent>"
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "id": "agent",
+          "instructions": "You are a concise checkout assistant.",
+          "dynamic": false
+        }
+      ],
+      "model": "anthropic:claude-fable-5-1",
+      "settings": {
+        "temperature": 0.1
+      },
+      "tool_definitions": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city.",
+          "parameters": {
+            "city": {
+              "description": "City to look up."
+            }
+          },
+          "toolset": "<agent>"
+        }
+      ]
+    }
+  },
+  {
+    "name": "an undocumented parameter is listed with an empty entry, so it can be described from Logfire",
+    "input": {
+      "tools": [
+        {
+          "name": "refund_order",
+          "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+              "order_id": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "number",
+                "description": "Amount in cents."
+              }
+            }
+          }
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "refund_order",
+          "parameters": {
+            "order_id": {},
+            "amount": {
+              "description": "Amount in cents."
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a tool with no parameters at all has no parameters key",
+    "input": {
+      "tools": [
+        {
+          "name": "ping",
+          "parameters_json_schema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "ping"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a schema with no properties object is not guessed at",
+    "input": {
+      "tools": [
+        {
+          "name": "raw",
+          "parameters_json_schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "raw"
+        }
+      ]
+    }
+  },
+  {
+    "name": "a parameter whose schema is not an object still exists, and is still describable",
+    "input": {
+      "tools": [
+        {
+          "name": "odd",
+          "parameters_json_schema": {
+            "type": "object",
+            "properties": {
+              "flag": true
+            }
+          }
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "odd",
+          "parameters": {
+            "flag": {}
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a dynamic block carries its seam and never its text",
+    "input": {
+      "blocks": [
+        {
+          "text": "You are a concise checkout assistant.",
+          "id": "agent"
+        },
+        {
+          "text": "Today is 2026-09-09.",
+          "id": "agent:today",
+          "dynamic": true
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "id": "agent",
+          "instructions": "You are a concise checkout assistant.",
+          "dynamic": false
+        },
+        {
+          "id": "agent:today",
+          "dynamic": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "a dynamic block with nothing to key it on is left out entirely",
+    "input": {
+      "blocks": [
+        {
+          "text": "Tenant: acme",
+          "dynamic": true
+        }
+      ]
+    },
+    "expected": {}
+  },
+  {
+    "name": "a blank static block is left out; a blank dynamic one with an id is not",
+    "input": {
+      "blocks": [
+        {
+          "text": "   ",
+          "id": "agent:empty"
+        },
+        {
+          "text": "",
+          "id": "agent:rendered",
+          "dynamic": true
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "id": "agent:rendered",
+          "dynamic": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "a static block with no id is published as unaddressable rather than dropped",
+    "input": {
+      "blocks": [
+        {
+          "text": "Escalate anything over $500."
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": "Escalate anything over $500.",
+          "dynamic": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "toolset is present when known and absent when not, never guessed",
+    "input": {
+      "tools": [
+        {
+          "name": "search",
+          "toolset": "crm"
+        },
+        {
+          "name": "lookup"
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "search",
+          "toolset": "crm"
+        },
+        {
+          "name": "lookup"
+        }
+      ]
+    }
+  },
+  {
+    "name": "settings are filtered to the canonical keys, so no header or provider option is published",
+    "input": {
+      "settings": {
+        "temperature": 0.2,
+        "max_tokens": 1024,
+        "extra_headers": {
+          "authorization": "Bearer sk-secret"
+        },
+        "openai_service_tier": "flex"
+      }
+    },
+    "expected": {
+      "settings": {
+        "max_tokens": 1024,
+        "temperature": 0.2
+      }
+    }
+  },
+  {
+    "name": "an effort level the contract has no word for is omitted, never approximated",
+    "input": {
+      "settings": {
+        "thinking": "max",
+        "temperature": 0.3
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 0.3
+      }
+    },
+    "warnings": [
+      "baseline-value-not-describable"
+    ]
+  },
+  {
+    "name": "a timeout outside the representable range is omitted and reported",
+    "input": {
+      "settings": {
+        "timeout": -1,
+        "max_tokens": 512
+      }
+    },
+    "expected": {
+      "settings": {
+        "max_tokens": 512
+      }
+    },
+    "warnings": [
+      "baseline-timeout-not-representable"
+    ]
+  },
+  {
+    "name": "code-side values are read leniently, so an int for a float describes the agent fine",
+    "input": {
+      "settings": {
+        "temperature": 1,
+        "stop_sequences": [
+          "STOP",
+          "HALT"
+        ]
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 1.0,
+        "stop_sequences": [
+          "STOP",
+          "HALT"
+        ]
+      }
+    }
+  },
+  {
+    "name": "an empty agent describes nothing rather than describing emptiness",
+    "input": {},
+    "expected": {}
+  }
+]

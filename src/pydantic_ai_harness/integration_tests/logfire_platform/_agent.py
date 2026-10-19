@@ -31,8 +31,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from logfire.agent_control import AgentConfig, OnUnmatched
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.messages import InstructionPart
@@ -41,6 +39,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.logfire import AgentControl, resolution_reason
+from pydantic_ai_harness.logfire._contract import AgentConfig, OnUnmatched
 
 from ._platform import AGENT_NAME
 

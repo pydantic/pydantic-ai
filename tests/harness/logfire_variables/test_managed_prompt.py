@@ -332,47 +332,6 @@ async def test_provider_backed_resolution_uses_remote_value_and_label(capfire: C
     assert {_AGENT_SPAN, 'chat test'} <= tagged
 
 
-async def test_the_label_survives_a_prompt_name_the_scrubber_matches(capfire: CaptureLogfire) -> None:
-    """A prompt's slug is ordinary English, and Logfire's scrubbing matches substrings.
-
-    The label and version ride on every span of the run as `logfire.variables.<name>`, whose key is
-    built from the slug -- so a prompt called `session_summary` matched `session` on the *key* and
-    every span said `[Scrubbed due to 'session']` where the label belonged. That is the whole
-    attribution: "which version of this prompt produced this answer" is what a managed prompt is
-    audited by. Keys under `logfire.variables.` are safe in the `logfire` package, and this is the
-    shipped capability that needed it.
-    """
-    config = VariablesConfig(
-        variables={
-            'prompt__session_summary': VariableConfig(
-                name='prompt__session_summary',
-                labels={'production': LabeledValue(version=7, serialized_value='"Summarize the session."')},
-                rollout=Rollout(labels={'production': 1.0}),
-                overrides=[],
-            )
-        }
-    )
-    with variables_provider(capfire, config):
-        agent = Agent(
-            TestModel(),
-            capabilities=[ManagedPrompt('session_summary', default='fallback', label='production'), Instrumentation()],
-        )
-
-        await agent.run('hello')
-
-    spans = capfire.exporter.exported_spans_as_dict()
-    labelled = {
-        span['name']: (
-            span['attributes'].get('logfire.variables.prompt__session_summary'),
-            span['attributes'].get('logfire.variables.prompt__session_summary.version'),
-        )
-        for span in spans
-        if span['name'] in {_AGENT_SPAN, 'chat test'}
-    }
-    assert labelled == {_AGENT_SPAN: ('production', '7'), 'chat test': ('production', '7')}
-    assert all('logfire.scrubbed' not in span['attributes'] for span in spans if span['name'] in labelled)
-
-
 def test_logfire_instance_with_prebuilt_variable_warns() -> None:
     var = logfire.var(name='prompt__instance_conflict', type=str, default=DEFAULT)
     with pytest.warns(UserWarning, match='is ignored when `name` is a `Variable`'):

@@ -1,17 +1,33 @@
 """Logfire-backed capabilities: drive agent configuration from Logfire managed variables.
 
-The Agent Control contract -- [`AgentConfig`][logfire.agent_control.AgentConfig] and the models,
-stored JSON schema, and apply semantics around it -- lives in `logfire.agent_control`, where every
-framework adapter and the Logfire UI share one copy of it. Import it from there;
-[`AgentControl`][pydantic_ai_harness.logfire.AgentControl] is what connects it to a Pydantic AI agent.
+[`AgentControl`][pydantic_ai_harness.logfire.AgentControl] connects a Pydantic AI agent to one
+Logfire variable holding an [`AgentConfig`][pydantic_ai_harness.logfire.AgentConfig] -- the Agent
+Control contract every SDK and the Logfire UI share. The contract's models are exported here for
+publishing a value from code rather than from the UI.
 """
 
 from pydantic_ai_harness.logfire._agent_control import AgentControl
+from pydantic_ai_harness.logfire._contract import (
+    AgentConfig,
+    AgentConfigSettings,
+    InstructionBlock,
+    OnUnmatched,
+    ParameterOverride,
+    ToolDefinitionOverride,
+    UnmatchedConfigError,
+)
 from pydantic_ai_harness.logfire._managed_prompt import ManagedPrompt
 from pydantic_ai_harness.logfire._managed_variable import resolution_reason
 
 __all__ = [
+    'AgentConfig',
+    'AgentConfigSettings',
     'AgentControl',
+    'InstructionBlock',
     'ManagedPrompt',
+    'OnUnmatched',
+    'ParameterOverride',
+    'ToolDefinitionOverride',
+    'UnmatchedConfigError',
     'resolution_reason',
 ]

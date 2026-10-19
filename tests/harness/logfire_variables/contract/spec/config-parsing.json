@@ -1,0 +1,534 @@
+[
+  {
+    "name": "a value with every section in play parses whole",
+    "input": {
+      "instructions": [
+        "Escalate anything over $500 to a human.",
+        {
+          "id": "agent",
+          "instructions": "You are a refund specialist."
+        },
+        {
+          "id": "toolset:legacy_crm"
+        }
+      ],
+      "model": "anthropic:claude-fable-5-1",
+      "settings": {
+        "temperature": 0.4,
+        "max_tokens": 2048,
+        "thinking": "high"
+      },
+      "tool_definitions": [
+        {
+          "name": "get_weather",
+          "new_name": "lookup_weather"
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": "Escalate anything over $500 to a human."
+        },
+        {
+          "id": "agent",
+          "instructions": "You are a refund specialist."
+        },
+        {
+          "id": "toolset:legacy_crm"
+        }
+      ],
+      "model": "anthropic:claude-fable-5-1",
+      "settings": {
+        "max_tokens": 2048,
+        "temperature": 0.4,
+        "thinking": "high"
+      },
+      "tool_definitions": [
+        {
+          "name": "get_weather",
+          "new_name": "lookup_weather"
+        }
+      ]
+    },
+    "warnings": []
+  },
+  {
+    "name": "a bare string is kept as a bare string, not rewritten into the list form",
+    "input": {
+      "instructions": "Be concise."
+    },
+    "expected": {
+      "instructions": "Be concise."
+    },
+    "warnings": []
+  },
+  {
+    "name": "an invalid model costs only the model section",
+    "input": {
+      "model": 42,
+      "settings": {
+        "temperature": 0.4
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 0.4
+      }
+    },
+    "warnings": [
+      "invalid-model"
+    ]
+  },
+  {
+    "name": "the empty string is never a model, and costs only the model section",
+    "input": {
+      "model": "",
+      "instructions": "Be concise."
+    },
+    "expected": {
+      "instructions": "Be concise."
+    },
+    "warnings": [
+      "invalid-model"
+    ]
+  },
+  {
+    "name": "a null model is simply absent, and says nothing",
+    "input": {
+      "model": null,
+      "instructions": "Be concise."
+    },
+    "expected": {
+      "instructions": "Be concise."
+    },
+    "warnings": []
+  },
+  {
+    "name": "the empty string is never instruction text either",
+    "input": {
+      "instructions": "",
+      "model": "openai:gpt-5.6-sol"
+    },
+    "expected": {
+      "model": "openai:gpt-5.6-sol"
+    },
+    "warnings": [
+      "instructions-section-empty"
+    ]
+  },
+  {
+    "name": "an entry whose text is the empty string is dropped, and its siblings are not",
+    "input": {
+      "instructions": [
+        {
+          "id": "agent",
+          "instructions": ""
+        },
+        "Be concise."
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": "Be concise."
+        }
+      ]
+    },
+    "warnings": [
+      "instruction-entry-invalid"
+    ]
+  },
+  {
+    "name": "a section one character past the budget is dropped whole",
+    "input": {
+      "instructions": {
+        "repeat": "a",
+        "times": 65537
+      }
+    },
+    "expected": {},
+    "warnings": [
+      "instructions-section-too-long"
+    ]
+  },
+  {
+    "name": "a section exactly at the budget is kept",
+    "input": {
+      "instructions": {
+        "repeat": "a",
+        "times": 65536
+      }
+    },
+    "expected": {
+      "instructions": {
+        "repeat": "a",
+        "times": 65536
+      }
+    },
+    "warnings": []
+  },
+  {
+    "name": "the budget is the total across entries, not per entry",
+    "input": {
+      "instructions": [
+        {
+          "repeat": "a",
+          "times": 65526
+        },
+        {
+          "repeat": "b",
+          "times": 11
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": {
+            "repeat": "a",
+            "times": 65526
+          }
+        }
+      ]
+    },
+    "warnings": [
+      "instruction-entry-too-long"
+    ]
+  },
+  {
+    "name": "only entries that survive are charged against the budget",
+    "input": {
+      "instructions": [
+        {
+          "id": 42,
+          "instructions": {
+            "repeat": "a",
+            "times": 40000
+          }
+        },
+        {
+          "repeat": "b",
+          "times": 40000
+        }
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": {
+            "repeat": "b",
+            "times": 40000
+          }
+        }
+      ]
+    },
+    "warnings": [
+      "instruction-entry-invalid"
+    ]
+  },
+  {
+    "name": "text is measured in code points, so an astral character weighs one and not two",
+    "input": {
+      "instructions": {
+        "repeat": "𝄞",
+        "times": 65536
+      }
+    },
+    "expected": {
+      "instructions": {
+        "repeat": "𝄞",
+        "times": 65536
+      }
+    },
+    "warnings": []
+  },
+  {
+    "name": "one code point past the budget in astral characters is still one code point past it",
+    "input": {
+      "instructions": {
+        "repeat": "𝄞",
+        "times": 65537
+      }
+    },
+    "expected": {},
+    "warnings": [
+      "instructions-section-too-long"
+    ]
+  },
+  {
+    "name": "an entry that says neither what nor where is dropped",
+    "input": {
+      "instructions": [
+        {},
+        "Be concise."
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": "Be concise."
+        }
+      ]
+    },
+    "warnings": [
+      "instruction-entry-empty"
+    ]
+  },
+  {
+    "name": "an entry that is not a string or an object is dropped, and its siblings are not",
+    "input": {
+      "instructions": [
+        7,
+        "Be concise."
+      ]
+    },
+    "expected": {
+      "instructions": [
+        {
+          "instructions": "Be concise."
+        }
+      ]
+    },
+    "warnings": [
+      "instruction-entry-invalid"
+    ]
+  },
+  {
+    "name": "an instructions section that is neither a string nor a list is dropped whole",
+    "input": {
+      "instructions": {
+        "id": "agent"
+      },
+      "model": "openai:gpt-5.6-sol"
+    },
+    "expected": {
+      "model": "openai:gpt-5.6-sol"
+    },
+    "warnings": [
+      "instructions-invalid-container"
+    ]
+  },
+  {
+    "name": "a settings value of the wrong JSON type is dropped, and its siblings are not",
+    "input": {
+      "settings": {
+        "temperature": "hot",
+        "max_tokens": 2048
+      }
+    },
+    "expected": {
+      "settings": {
+        "max_tokens": 2048
+      }
+    },
+    "warnings": [
+      "setting-value-invalid"
+    ]
+  },
+  {
+    "name": "a number written as a string is not coerced, because the stored schema says number",
+    "input": {
+      "settings": {
+        "temperature": "0.4",
+        "max_tokens": 2048
+      }
+    },
+    "expected": {
+      "settings": {
+        "max_tokens": 2048
+      }
+    },
+    "warnings": [
+      "setting-value-invalid"
+    ]
+  },
+  {
+    "name": "an integer is a number, because JSON writes 1 for 1.0",
+    "input": {
+      "settings": {
+        "temperature": 1
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 1.0
+      }
+    },
+    "warnings": []
+  },
+  {
+    "name": "a fraction is not an integer, so a fractional max_tokens is dropped",
+    "input": {
+      "settings": {
+        "max_tokens": 1.5
+      }
+    },
+    "expected": {
+      "settings": {}
+    },
+    "warnings": [
+      "setting-value-invalid"
+    ]
+  },
+  {
+    "name": "a number is not a boolean, so 1 does not enable parallel tool calls",
+    "input": {
+      "settings": {
+        "parallel_tool_calls": 1
+      }
+    },
+    "expected": {
+      "settings": {}
+    },
+    "warnings": [
+      "setting-value-invalid"
+    ]
+  },
+  {
+    "name": "an effort level a newer contract accepts is dropped as newer, not as malformed",
+    "input": {
+      "settings": {
+        "thinking": "extreme",
+        "temperature": 0.4
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 0.4
+      }
+    },
+    "warnings": [
+      "setting-value-not-recognized"
+    ]
+  },
+  {
+    "name": "a settings key this release has no field for is kept out of the patch and remembered",
+    "input": {
+      "settings": {
+        "service_tier": "flex",
+        "temperature": 0.4
+      }
+    },
+    "expected": {
+      "settings": {
+        "temperature": 0.4
+      }
+    },
+    "warnings": [],
+    "unrecognized_settings": [
+      "service_tier"
+    ]
+  },
+  {
+    "name": "a settings section that is not an object is dropped whole",
+    "input": {
+      "settings": [
+        1,
+        2
+      ],
+      "model": "openai:gpt-5.6-sol"
+    },
+    "expected": {
+      "model": "openai:gpt-5.6-sol"
+    },
+    "warnings": [
+      "settings-invalid-container"
+    ]
+  },
+  {
+    "name": "a tool override with no name is dropped, and its siblings are not",
+    "input": {
+      "tool_definitions": [
+        {
+          "new_name": "lookup"
+        },
+        {
+          "name": "search",
+          "description": "Search."
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "search",
+          "description": "Search."
+        }
+      ]
+    },
+    "warnings": [
+      "tool-definition-invalid"
+    ]
+  },
+  {
+    "name": "an override renaming to the empty string is dropped, since '' is never a value",
+    "input": {
+      "tool_definitions": [
+        {
+          "name": "search",
+          "new_name": ""
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": []
+    },
+    "warnings": [
+      "tool-definition-invalid"
+    ]
+  },
+  {
+    "name": "a tool_definitions section that is not a list is dropped whole",
+    "input": {
+      "tool_definitions": {
+        "name": "search"
+      },
+      "model": "openai:gpt-5.6-sol"
+    },
+    "expected": {
+      "model": "openai:gpt-5.6-sol"
+    },
+    "warnings": [
+      "tool-definitions-invalid-container"
+    ]
+  },
+  {
+    "name": "an unknown key inside an override costs nothing",
+    "input": {
+      "tool_definitions": [
+        {
+          "name": "search",
+          "colour": "blue"
+        }
+      ]
+    },
+    "expected": {
+      "tool_definitions": [
+        {
+          "name": "search"
+        }
+      ]
+    },
+    "warnings": []
+  },
+  {
+    "name": "an unknown top-level key costs nothing",
+    "input": {
+      "model": "openai:gpt-5.6-sol",
+      "future_section": {
+        "anything": true
+      }
+    },
+    "expected": {
+      "model": "openai:gpt-5.6-sol"
+    },
+    "warnings": []
+  },
+  {
+    "name": "an empty value is a value that changes nothing",
+    "input": {},
+    "expected": {},
+    "warnings": []
+  }
+]

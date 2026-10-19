@@ -1,7 +1,7 @@
 """What an `AgentConfig` written by a newer Logfire UI or contract costs a *run* of an older SDK.
 
-How leniently a published value validates is the contract's own business, and `logfire.agent_control`
-tests it there: a value it cannot act on costs one setting, one instruction entry, or one tool
+How leniently a published value validates is the contract's own business, and the suite in
+`contract/` tests it there: a value it cannot act on costs one setting, one instruction entry, or one tool
 override rather than the whole config, because an `AgentConfig` that fails validation is reverted
 *whole* by Logfire's resolution fallback. What is tested here is the other end of that promise --
 that an agent keeps running on the managed config around the piece that was dropped, and says where

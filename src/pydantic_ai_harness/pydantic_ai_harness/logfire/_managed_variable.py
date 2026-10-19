@@ -17,13 +17,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic
 
 import logfire
-from logfire.agent_control import normalize_agent_name
 from logfire.variables import Variable
 from typing_extensions import TypeVar
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness.logfire._contract import normalize_agent_name
 
 if TYPE_CHECKING:
     from logfire import Logfire
@@ -183,10 +183,9 @@ class ManagedVariableCapability(AbstractCapability[AgentDepsT], Generic[AgentDep
         variable. Raises [`UserError`][pydantic_ai.exceptions.UserError] when there is no agent name
         to derive from, and when the name has nothing an identifier can be made of.
 
-        The name is reduced to a key by
-        [`normalize_agent_name`][logfire.agent_control.normalize_agent_name], which is the rule the
-        Logfire UI and every other Agent Control SDK apply, so an agent named `checkout-assistant`
-        here and `Checkout Assistant` in another service reach one config. It is lossy in that
+        The name is reduced to a key by the Agent Control contract's `normalize_agent_name`, which is
+        the rule the Logfire UI and every other Agent Control SDK apply, so an agent named
+        `checkout-assistant` here and `Checkout Assistant` in another service reach one config. It is lossy in that
         direction too: two agents whose names differ only in punctuation or case share a variable
         unless one of them is given an explicit `name`.
         """
