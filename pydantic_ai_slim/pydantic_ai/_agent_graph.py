@@ -1874,8 +1874,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
         self.request.timestamp = now_utc()
-        if not self.is_resuming_without_prompt:
-            fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        # Stamp the request before `before_model_request` hooks run, including a resumed request
+        # that arrived via `message_history` (no separate user prompt). `fill_run_metadata` only
+        # fills unset fields, so a resumed request that already carries a `run_id` from a previous
+        # run keeps it.
+        fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
 
         ctx.state.run_step += 1
