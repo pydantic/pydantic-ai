@@ -1146,7 +1146,7 @@ async def _run_task_and_evaluators(
             case_span.set_attribute('attributes', scoring_context.attributes)
 
             evaluators = case.evaluators + dataset_evaluators
-            evaluator_outputs: list[EvaluationResult] = []
+            evaluator_outputs: list[EvaluationResult | EvaluatorFailure] = []
             evaluator_failures: list[EvaluatorFailure] = []
             if evaluators:
                 evaluator_outputs_by_task = await task_group_gather(
@@ -1155,6 +1155,7 @@ async def _run_task_and_evaluators(
                 for outputs in evaluator_outputs_by_task:
                     if isinstance(outputs, EvaluatorFailure):
                         evaluator_failures.append(outputs)
+                        evaluator_outputs.append(outputs)
                     else:
                         evaluator_outputs.extend(outputs)
 
@@ -1219,7 +1220,7 @@ _evaluation_results_adapter = TypeAdapter(Mapping[str, EvaluationResult])
 
 
 def _group_evaluator_outputs_by_type(
-    evaluation_results: Sequence[EvaluationResult],
+    evaluation_results: Sequence[EvaluationResult | EvaluatorFailure],
 ) -> tuple[
     dict[str, EvaluationResult[bool]],
     dict[str, EvaluationResult[int | float]],
@@ -1228,7 +1229,7 @@ def _group_evaluator_outputs_by_type(
     """Group evaluator outputs by their result type.
 
     Args:
-        evaluation_results: Sequence of evaluation results to group.
+        evaluation_results: Ordered evaluation results and failures to group.
 
     Returns:
         A tuple of dictionaries mapping evaluator names to their results, grouped by result type:
@@ -1247,6 +1248,9 @@ def _group_evaluator_outputs_by_type(
                 suffix += 1
             name = f'{name}_{suffix}'
         seen_names.add(name)
+        # Reserve failed evaluators' default names so later results keep their suffixes.
+        if isinstance(er, EvaluatorFailure):
+            continue
         if assertion := er.downcast(bool):
             assertions[name] = assertion
         elif score := er.downcast(int, float):

@@ -837,6 +837,56 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
     )
 
 
+@pytest.mark.parametrize('failed_indices', [(0,), (1,), (0, 1), (0, 1, 2)])
+@pytest.mark.parametrize('values', [(0.0, 0.5, 1.0), (False, True, True), ('strict', 'moderate', 'lenient')])
+async def test_repeated_default_names_with_failures(
+    failed_indices: tuple[int, ...], values: tuple[float, float, float] | tuple[bool, bool, bool] | tuple[str, str, str]
+):
+    @dataclass
+    class Judge(Evaluator[str, str, None]):
+        index: int
+        value: float | bool | str
+
+        def evaluate(self, ctx: EvaluatorContext[str, str, None]) -> float | bool | str:
+            if ctx.inputs != 'c1' and self.index in failed_indices:
+                raise RuntimeError('judge quota exhausted')
+            return self.value
+
+    async def task(inputs: str) -> str:
+        return inputs
+
+    evaluators: list[Judge] = [Judge(index, value) for index, value in enumerate(values)]
+    dataset = Dataset[str, str, None](
+        name='name_shift',
+        cases=[Case(name=f'c{i}', inputs=f'c{i}') for i in range(1, 5)],
+        evaluators=evaluators,
+    )
+    report = await dataset.evaluate(task, progress=False)
+    names = ('Judge', 'Judge_2', 'Judge_3')
+    for case in report.cases:
+        results = {**case.assertions, **case.scores, **case.labels}
+        assert results == {
+            name: EvaluationResult(name='Judge', value=evaluator.value, reason=None, source=evaluator.as_spec())
+            for name, evaluator in zip(names, evaluators)
+            if case.inputs == 'c1' or evaluator.index not in failed_indices
+        }
+        assert [(failure.name, failure.source, failure.error_message) for failure in case.evaluator_failures] == [
+            ('Judge', evaluators[index].as_spec(), 'RuntimeError: judge quota exhausted')
+            for index in failed_indices
+            if case.inputs != 'c1'
+        ]
+    averages = report.averages()
+    assert averages is not None
+    if isinstance(values[0], float):
+        assert averages.scores == {'Judge': 0.0, 'Judge_2': 0.5, 'Judge_3': 1.0}
+    elif isinstance(values[0], str):
+        assert averages.labels == {
+            'Judge': {'strict': 1.0},
+            'Judge_2': {'moderate': 1.0},
+            'Judge_3': {'lenient': 1.0},
+        }
+
+
 async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test the increment_eval_metric function."""
 
