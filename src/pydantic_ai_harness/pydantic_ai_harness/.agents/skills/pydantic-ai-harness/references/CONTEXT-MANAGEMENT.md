@@ -17,6 +17,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | Agent re-reads the same files | `DeduplicateFileReads` |
 | Many turns: slow or costly but not overflowing, or only recent turns matter | `SlidingWindowCompaction(max_messages=...)` (no LLM call), or `SummarizingCompaction` to keep the gist |
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
+| Conversations pause longer than the provider's cache retention | `CompactOnCacheExpiry` (compacts only once the cache has expired) |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -172,6 +173,38 @@ agent = Agent(
                 SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
             ],
         )
+    ],
+)
+```
+
+### `CompactOnCacheExpiry`
+
+`CompactOnCacheExpiry(strategy=ClearToolResults(max_tokens=1, keep_pairs=5), *, max_tokens=None, max_fraction=None, fallback_retention=None)`:
+runs `strategy` on the first request after the provider's prompt cache has expired, when the
+next request pays the full cache write anyway. Uses core `prompt_cache_outlook` with the
+retention the request's settings ask for, else the provider's documented default. Does nothing
+when retention is unknown (Gemini direct, DeepSeek, xAI, Azure, Bedrock Nova, OpenAI before GPT-5.6,
+`FallbackModel`) unless `fallback_retention` is set. The decision reads the wall clock, which is
+not replay-safe under durable execution. `max_tokens` / `max_fraction` skip expired histories at or
+below that size. Register it alongside a size-triggered strategy, not instead of one: it never
+fires while the cache is warm.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+from pydantic_ai_harness.compaction import (
+    ClearToolResults,
+    CompactOnCacheExpiry,
+    TieredCompaction,
+)
+
+agent = Agent(
+    'test',
+    capabilities=[
+        Caching(),
+        CompactOnCacheExpiry(),
+        TieredCompaction(tiers=[ClearToolResults(max_tokens=1, keep_pairs=3)], target_fraction=0.8),
     ],
 )
 ```
