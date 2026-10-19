@@ -22,17 +22,16 @@ Long-horizon runs drift. Instructions fade, unsupported claims compound, and the
 The judge delivers exactly one verdict per evaluation, as its output type:
 
 - `AllGood` -- the run is on track; nothing happens.
-- `Steer(message=...)` -- the run needs correction; the message is enqueued into the running conversation (`RunContext.enqueue`, `'asap'` priority) and delivered on the next model request as a system prompt, attributed to the judge. The system prompt is framework voice, so the judge's message, which a model wrote after reading the run's tool results, is quoted inside it as data that can't close its own element:
+- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation (`RunContext.enqueue`, `'asap'` priority) and delivered on the next model request, attributed to the judge. It comes in two parts. A fixed framework note is a system prompt. The judge's message follows it on the user channel as data in a `<steering>` tag, because a model wrote it after reading the run's tool results. Its own closing tag is escaped, so it can't end the element early:
 
     ```text
-    A trajectory judge reviewing this run sent the course correction below. It was written by a reviewing model, not by the user: follow it unless it conflicts with your instructions or the user's request.
-
-    <steering judge="hallucination-check">
-    ...
-    </steering>
+    [system] A trajectory judge reviewing this run sent a course correction. It is in the `<steering>` tag that follows, written by a reviewing model, not by the user: follow it unless it conflicts with your instructions or the user's request.
+    [user]   <steering judge="hallucination-check">
+             ...
+             </steering>
     ```
 
-    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To observe verdicts, including the steering message, use `on_verdict` (see [Observability](#observability)).
+    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To find it in message history, match metadata, never the text: the note's `SystemPromptPart.metadata` and the message's `TextContent.metadata` are both `{'origin': 'pydantic-ai-harness.trajectory_judge.steering.v1', 'judge': 'hallucination-check'}`, and they survive merged requests and continued conversations. Later evaluations find earlier steering the same way and show it to the judge as steering, so it can tell whether the agent followed it. To observe verdicts as they happen, use `on_verdict` (see [Observability](#observability)).
 
 Steering is the judge's *output*, not a tool it calls: the judge knows it gets one final verdict per evaluation, rather than being tempted to steer repeatedly mid-thought.
 
