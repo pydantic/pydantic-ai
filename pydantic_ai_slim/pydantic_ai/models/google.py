@@ -25,7 +25,6 @@ from ..exceptions import (
     ModelServerError,
     ModelUnavailableError,
     UserError,
-    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     BinaryContent,
@@ -467,7 +466,7 @@ variant drops the leading clause.
 """
 
 
-def _error_category(status: str | None, message: object) -> _HTTPErrorCategory | None:
+def _error_category(status: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
     """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
 
     Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's

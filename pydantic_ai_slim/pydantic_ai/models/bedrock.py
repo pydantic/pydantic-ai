@@ -81,7 +81,6 @@ from pydantic_ai.exceptions import (
     ModelRateLimitError,
     ModelUnavailableError,
     UserError,
-    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -253,7 +252,7 @@ _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
 """The HTTP status Bedrock documents for each `ConverseStream` exception event's error before the stream opens."""
 
 
-def _error_category(code: str | None, message: object) -> _HTTPErrorCategory | None:
+def _error_category(code: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
     """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
     match code and code.lower():
         case 'throttlingexception':

@@ -22,7 +22,6 @@ from ..exceptions import (
     ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
-    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     AudioUrl,
@@ -144,7 +143,7 @@ def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[No
         ) from e
 
 
-_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _HTTPErrorCategory] = {
+_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
     grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
     grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
     grpc.StatusCode.INTERNAL: ModelServerError,

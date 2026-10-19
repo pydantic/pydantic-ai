@@ -15,8 +15,16 @@ from .exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     TransportPhase,
-    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
+
+HTTPErrorCategory = type[
+    ModelRateLimitError
+    | ModelQuotaExceededError
+    | ModelUnavailableError
+    | ModelServerError
+    | ModelContextWindowExceededError
+]
+"""An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
 _OVERLOADED_PHRASES = ('overloaded', 'over capacity')
 
@@ -28,7 +36,7 @@ def says_overloaded(*texts: object) -> bool:
     )
 
 
-def http_status_category(status_code: int, message: object = None) -> _HTTPErrorCategory | None:
+def http_status_category(status_code: int, message: object = None) -> HTTPErrorCategory | None:
     """The error category an HTTP status code implies on its own, without the provider's error code.
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
@@ -78,7 +86,7 @@ def openai_compatible_status(code: str | None, error_type: str | None) -> int | 
 
 def openai_compatible_category(
     status_code: int | None, code: str | None, error_type: str | None, message: object
-) -> _HTTPErrorCategory | None:
+) -> HTTPErrorCategory | None:
     """The error category of an error from an OpenAI-compatible API (OpenAI, Groq, OpenRouter), wherever it was sent."""
     if code in _QUOTA_CODES or error_type in _QUOTA_CODES:
         # Exhausted quota is also a 429, but waiting won't help.

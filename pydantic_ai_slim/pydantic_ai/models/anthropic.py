@@ -29,7 +29,6 @@ from ..exceptions import (
     ModelQuotaExceededError,
     ModelRateLimitError,
     UserError,
-    _HTTPErrorCategory,  # pyright: ignore[reportPrivateUsage]
 )
 from ..messages import (
     AudioUrl,
@@ -491,7 +490,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
-_ERROR_TYPE_CATEGORIES: dict[str, _HTTPErrorCategory] = {
+_ERROR_TYPE_CATEGORIES: dict[str, _model_errors.HTTPErrorCategory] = {
     'rate_limit_error': ModelRateLimitError,
     'billing_error': ModelQuotaExceededError,
     'overloaded_error': ModelOverloadedError,

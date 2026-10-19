@@ -931,16 +931,6 @@ class ModelHTTPError(ModelAPIError):
         return {'true': True, 'false': False}.get(self.headers.get('x-should-retry', '').strip().lower())
 
 
-_HTTPErrorCategory = type[
-    ModelRateLimitError
-    | ModelQuotaExceededError
-    | ModelUnavailableError
-    | ModelServerError
-    | ModelContextWindowExceededError
-]
-"""An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
-
-
 class _CategorizedHTTPError(ModelHTTPError):
     """The base of the classes `ModelHTTPError.for_category` raises, each also a subclass of one error category.
 
