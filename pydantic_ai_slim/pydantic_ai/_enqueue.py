@@ -209,6 +209,9 @@ class PendingMessageQueue(list[PendingMessage]):
         super().__init__(messages)
         self._closed = False
         self._lock = threading.Lock()
+        # The last part delivered next to each tool call's return, so content a later delivery in the same
+        # step brings for that call goes after it.
+        self.last_delivered_for_call: dict[str, ModelRequestPart] = {}
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
         return PendingMessageQueue, (list(self),)
@@ -274,6 +277,14 @@ def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
     return queue
 
 
+def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessageQueue) -> ModelRequestPart:
+    """The part in `target` that content for `tool_call_id` goes right after."""
+    delivered = queue.last_delivered_for_call.get(tool_call_id)
+    if delivered is not None and any(part is delivered for part in target.parts):
+        return delivered
+    return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
+
+
 def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
     """Deliver the queued `'asap'` messages into the request being prepared.
 
@@ -322,15 +333,21 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     events: list[EnqueuedMessagesEvent] = []
     if spliced:
         assert isinstance(target, ModelRequest)
+        queue = run_queue(ctx)
+        # Each call's content goes after its return, or after what an earlier delivery in this step put there.
+        anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
         parts: list[ModelRequestPart] = []
         for part in target.parts:
             parts.append(part)
-            if isinstance(part, ToolReturnPart):
-                for enqueue_id, request in spliced.pop(part.tool_call_id, ()):
-                    parts.extend(request.parts)
-                    events.append(
-                        EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts))
-                    )
+            call_id = anchors.get(id(part))
+            if call_id is None:
+                continue
+            for enqueue_id, request in spliced.pop(call_id, ()):
+                parts.extend(request.parts)
+                queue.last_delivered_for_call[call_id] = request.parts[-1]
+                events.append(
+                    EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts))
+                )
         spliced_target = replace(target, parts=parts)
         ctx.messages[-1] = spliced_target
         request_context.messages = [

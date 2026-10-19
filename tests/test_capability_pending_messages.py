@@ -1503,8 +1503,9 @@ async def test_parallel_tool_enqueues_reach_anthropic(allow_model_requests: None
 async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_request():
     """Content an earlier call enqueues late isn't put next to a later call's return that reuses its id.
 
-    The model calls `tool_a` with `call_0` twice, in two steps. The first call starts a task that enqueues
-    while the second call runs, so the content still carries `call_0`, but it doesn't belong to that return.
+    The model calls `tool_a` with `call_0` twice, in two steps, and each call's own content follows its return.
+    The first call also starts a task that enqueues while the second call runs, so that content still carries
+    `call_0`, but it doesn't belong to the second return.
     """
     model_calls = 0
     second_call_started, late_enqueued = anyio.Event(), anyio.Event()
@@ -1522,6 +1523,7 @@ async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_req
 
         @agent.tool
         async def tool_a(ctx: RunContext[object], call: int) -> str:
+            ctx.enqueue(f'from call {call}')
             if call == 1:
 
                 async def report_later() -> None:
@@ -1536,9 +1538,64 @@ async def test_late_enqueue_from_an_earlier_call_with_a_reused_id_is_its_own_req
             return f'result {call}'
 
         result = await agent.run('Hello')
-        assert [[part.part_kind for part in message.parts] for message in result.all_messages()[4:6]] == [
-            ['tool-return'],
-            ['user-prompt'],
+        assert [
+            [part.content for part in message.parts if isinstance(part, ToolReturnPart | UserPromptPart)]
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+        ] == [
+            ['Hello'],
+            ['result 1', 'from call 1'],
+            ['result 2', 'from call 2'],
+            ['late from the first call'],
+        ]
+
+
+async def test_tool_call_content_delivered_in_two_drains_keeps_enqueue_order():
+    """Content a call enqueues after the first delivery of the step still lands after what that delivery put in.
+
+    A task the tool started enqueues `b` while a `before_model_request` hook runs, between the delivery ahead of
+    the hooks and the one after them.
+    """
+    first_delivered, b_enqueued = anyio.Event(), anyio.Event()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class WaitForLateContent(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(isinstance(part, ToolReturnPart) for part in ctx.messages[-1].parts):
+                first_delivered.set()
+                await b_enqueued.wait()
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WaitForLateContent()])
+
+    async with anyio.create_task_group() as task_group:
+
+        @agent.tool
+        async def inject_msg(ctx: RunContext[object]) -> str:
+            ctx.enqueue('a')
+
+            async def enqueue_later() -> None:
+                await first_delivered.wait()
+                ctx.enqueue('b')
+                b_enqueued.set()
+
+            task_group.start_soon(enqueue_later)
+            return 'ok'
+
+        result = await agent.run('Hello')
+        tool_request = result.all_messages()[2]
+        assert isinstance(tool_request, ModelRequest)
+        assert [part.content for part in tool_request.parts if isinstance(part, ToolReturnPart | UserPromptPart)] == [
+            'ok',
+            'a',
+            'b',
         ]
 
 
