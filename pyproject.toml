@@ -85,6 +85,7 @@ realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
 google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
+elevenlabs-agents-realtime = ["pydantic-ai-slim[elevenlabs-agents-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://pydantic.dev/docs/ai/"
@@ -208,24 +209,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# Admit termflow-md 1.0.0 for CLAI2's live panel (`termflow.live`); later releases stay quarantined.
-# TODO: Remove after 2026-10-09 15:06 UTC.
-termflow-md = "2026-10-02T15:05:25Z"
-# Anthropic 1.12.1 adds `claude-haiku-5-5` to `ModelParam`.
-# TODO(dsfaccini): Remove after 2026-10-15T03:42:01.588842Z. https://github.com/pydantic/pydantic-ai/issues/9997
-# This admits the reviewed 1.12.1 artifacts through one second after the last upload; later artifacts remain quarantined.
-anthropic = "2026-10-08T03:42:01.588842Z"
-# OpenAI 3.26.0 is the first release with `client.decisions`, and the `openai` floor.
-# TODO(dsfaccini): Remove after 2026-10-13 21:32 UTC.
-openai = "2026-10-06T21:31:20Z"
 # google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
 # TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
 google-genai = "2026-10-13T00:38:20Z"
-# asyncpg 0.32.0 is the first release with cp315 wheels, so Python 3.15 CI installs it instead of compiling
-# from source. This admits its artifacts through one second after the last upload.
-# TODO(adtyavrdhn): Remove after 2026-10-13 20:33 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-asyncpg = "2026-10-06T20:32:41Z"
 
 [dependency-groups]
 dev = [
