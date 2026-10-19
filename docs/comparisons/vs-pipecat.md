@@ -26,7 +26,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 
 | | Pipecat | Pydantic AI |
 |---|---|---|
-| Speech-to-speech providers | Services for several providers | [Four](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI; ElevenLabs in [#7964](https://github.com/pydantic/pydantic-ai/pull/7964) |
+| Speech-to-speech providers | Services for several providers | [Five](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI, ElevenLabs Agents |
 | Cascaded STT + LLM + TTS | Yes, the primary path; dozens of STT, LLM and TTS services | Not built in; [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
 | Audio transport | First-party WebRTC and WebSocket transports, Daily and LiveKit among them | Yours: [browser WebRTC sideband or WebSocket relay](../realtime/deployment.md) |
 | Telephony | PSTN and SIP in and out, DTMF, transfers | [Bridge a provider](../realtime/deployment.md#siptelephony-bridge) such as Twilio |

@@ -238,6 +238,7 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
             max_output_tokens=256,
             parallel_tool_calls=False,
             reasoning_effort='low',
+            reasoning_summary='auto',
             verbosity='low',
             service_tier='priority',
         ),
@@ -255,7 +256,7 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
             'max_output_tokens': 256,
             'parallel_tool_calls': False,
             'service_tier': 'priority',
-            'reasoning': {'effort': 'low'},
+            'reasoning': {'effort': 'low', 'summary': 'auto'},
             'text': {'verbosity': 'low'},
         }
     )
@@ -287,6 +288,14 @@ def test_thinking_sets_the_backends_reasoning_effort(
     responses = _config(model, settings=settings)['delegation']['responses']
 
     assert responses.get('reasoning') == ({'effort': expected} if expected is not None else None)
+
+
+def test_a_reasoning_summary_is_requested_without_an_effort(model: OpenAILiveModel) -> None:
+    """A summary needs no effort of its own: the backend reasons at its default and summarizes that."""
+    settings = OpenAILiveModelSettings(openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_summary': 'detailed'})
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses['reasoning'] == {'summary': 'detailed'}
 
 
 def test_delegation_settings_take_precedence_over_shared_ones(model: OpenAILiveModel) -> None:
@@ -3261,8 +3270,13 @@ async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: O
             messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
         ) as connection:
             assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
-            with pytest.raises(websockets.ConnectionClosedError):
-                await _first_events(connection, 1)
+            assert [event async for event in connection] == snapshot(
+                [
+                    RealtimeSessionErrorEvent(
+                        message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+                    )
+                ]
+            )
 
 
 async def test_a_session_with_no_history_reconnects_to_an_unseeded_session(model: OpenAILiveModel) -> None:
@@ -3486,12 +3500,16 @@ async def test_a_drop_while_continuing_a_delegation_reconnects() -> None:
     assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
+async def test_a_drop_while_continuing_without_a_policy_ends_the_session() -> None:
     ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
     connection = OpenAILiveConnection(ws)  # pyright: ignore[reportArgumentType]
     connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(websockets.ConnectionClosedError):
-        await _first_events(connection, 2)
+    events = await _first_events(connection, 2)
+    assert events[-1] == snapshot(
+        RealtimeSessionErrorEvent(
+            message='OpenAI GPT-Live connection closed: no close frame received or sent', recoverable=False
+        )
+    )
 
 
 async def test_a_spoken_turn_without_a_transcript_replays_as_a_marker() -> None:

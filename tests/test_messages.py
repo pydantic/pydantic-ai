@@ -6,7 +6,7 @@ import subprocess
 import sys
 import warnings
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -44,6 +44,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     RequestUsage,
     RetryPromptPart,
+    RunUsage,
     SpeechPart,
     SpeechPartDelta,
     TextContent,
@@ -668,8 +669,10 @@ def test_pre_usage_refactor_messages_deserializable():
         {
             'input_tokens': 13,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 76,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -714,8 +717,10 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
         {
             'input_tokens': 5,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -737,6 +742,33 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
     assert loaded.usage.__dict__['future_tokens'] == 42
+
+
+def test_usage_reasoning_and_one_hour_cache_fields_load_from_older_payloads():
+    """Usage stored before `output_reasoning_tokens` and `cache_write_1h_tokens` were declared loads with them.
+
+    genai-prices already set both as attributes, so older payloads have them as extra keys when they were
+    non-zero and leave them out otherwise. Either way they now read as typed fields, and an absent count
+    equals an explicit zero.
+    """
+    with_counts, without_counts = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'parts': [],
+                'usage': {'output_tokens': 8, 'output_reasoning_tokens': 3, 'cache_write_1h_tokens': 4},
+                'kind': 'response',
+            },
+            {'parts': [], 'usage': {'output_tokens': 8}, 'kind': 'response'},
+        ]
+    )
+    assert isinstance(with_counts, ModelResponse)
+    assert isinstance(without_counts, ModelResponse)
+    assert (with_counts.usage.output_reasoning_tokens, with_counts.usage.cache_write_1h_tokens) == (3, 4)
+    assert (without_counts.usage.output_reasoning_tokens, without_counts.usage.cache_write_1h_tokens) == (0, 0)
+    assert getattr(without_counts.usage, 'cache_write_1h_tokens', 0) == 0
+
+    assert RunUsage(input_tokens=16) == RunUsage(input_tokens=16, output_reasoning_tokens=0)
+    assert {'output_reasoning_tokens', 'cache_write_1h_tokens'} <= {f.name for f in fields(RequestUsage)}
 
 
 async def test_legacy_vendor_message_history_replays_through_agent():
@@ -866,8 +898,10 @@ def test_file_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -887,6 +921,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }
@@ -3133,8 +3168,10 @@ def test_speech_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -3154,6 +3191,7 @@ def test_speech_part_serialization_roundtrip():
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'state': 'complete',
             },

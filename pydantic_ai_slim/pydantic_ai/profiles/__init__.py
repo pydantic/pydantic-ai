@@ -166,9 +166,14 @@ class ModelProfile(TypedDict, total=False):
     supports_auto_cache: bool
     """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
-    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
-    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
