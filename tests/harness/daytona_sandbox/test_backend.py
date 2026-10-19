@@ -53,7 +53,10 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # Every command runs under a `sh` that prints a per-command end marker last on both streams.
-_WRAPPER = 'sh -c \'"$@" </dev/null; status=$?; printf %s MARK; printf %s MARK >&2; exit "$status"\' sh'
+_WRAPPER = (
+    'sh -c \'"$@" </dev/null 2>/tmp/MARK.err; status=$?; '
+    'printf %s MARK; cat -- /tmp/MARK.err; rm -f -- /tmp/MARK.err; printf %s MARK; exit "$status"\' sh'
+)
 
 
 def _unmarked(command: str | None) -> str:
@@ -328,34 +331,21 @@ class TestCommands:
         with pytest.raises(RuntimeError, match='stored logs failed'):
             await backend.run(['true'])
 
-    async def test_output_waits_for_stored_logs_to_catch_up(self, fake_daytona: FakeDaytona) -> None:
-        # Daytona can report the exit status before it has stored the command's last output.
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['complete out']
-        sandbox.process_stderr = ['complete err']
-        sandbox.process_stored_lag = 2
-        result = await backend.run(['true'])
-        assert (result.exit_code, result.stdout, result.stderr) == (0, 'complete out', 'complete err')
-
     @pytest.mark.parametrize('exit_code', [0, 137])
-    async def test_stored_logs_that_never_complete(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, exit_code: int
-    ) -> None:
-        # A successful wrapper always prints its markers, so their absence means lost output; a
-        # killed wrapper never prints them, so what was stored is all there is.
-        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._LOGS_SETTLE_GRACE', 0.05)
+    async def test_stored_output_cut_short(self, fake_daytona: FakeDaytona, exit_code: int) -> None:
+        # A successful wrapper always prints its last marker, so its absence means lost output; a
+        # killed wrapper never prints its stderr file, so the stdout stored is all there is.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_stdout = ['partial']
         sandbox.process_exit_code = exit_code
-        sandbox.process_stored_lag = 1000
+        sandbox.process_output_cut = True
         if exit_code == 0:
             with pytest.raises(WorkspaceError, match=r'^Daytona returned incomplete output for a finished command\.$'):
                 await backend.run(['true'])
         else:
             result = await backend.run(['true'])
-            assert (result.exit_code, result.stdout) == (exit_code, 'partial')
+            assert (result.exit_code, result.stdout, result.stderr) == (exit_code, 'partial', '')
 
     async def test_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -373,8 +363,27 @@ class TestCommands:
         sandbox.process_delete_errors = iter([DaytonaError('bad gateway', status_code=502)])
         with pytest.raises(WorkspaceTimeoutError) as exc_info:
             await backend.run(['sleep', '30'], timeout=0.01)
+        # The partial stderr is read from the file the wrapper sends it to, which is then removed.
         assert (exc_info.value.stdout, exc_info.value.stderr) == ('partial out', 'partial err')
         assert sandbox.process_sessions == set()
+        assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
+
+    async def test_end_markers_before_the_exit_status_keep_polling(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The log stream can deliver the wrapper's last marker before the status RPC has the exit code.
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['out']
+        sandbox.process_follow_open = True
+        statuses = iter([None, 0])
+
+        async def lagging_status(*args: object, **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(exit_code=next(statuses))
+
+        monkeypatch.setattr(sandbox.process, 'get_session_command', lagging_status)
+        result = await backend.run(['true'])
+        assert (result.exit_code, result.stdout) == (0, 'out')
 
     async def test_deadline_includes_exit_status_rpc(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()

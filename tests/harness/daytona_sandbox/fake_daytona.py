@@ -79,6 +79,9 @@ class FakeProcess:
                 return SimpleNamespace(result='missing stage', exit_code=1)
             self.owner.files[destination] = self.owner.files.pop(source)
             return SimpleNamespace(result='', exit_code=0)
+        if command.startswith('rm -f -- '):
+            self.owner.files.pop(shlex.split(command)[-1], None)
+            return SimpleNamespace(result='', exit_code=0)
         assert command.startswith('mkdir -p -- ')
         return SimpleNamespace(result='', exit_code=self.owner.mkdir_exit_code)
 
@@ -109,6 +112,10 @@ class FakeProcess:
             output, self.owner.process_exit_code = self.owner.responder(self.owner.process_command, timeout)
             self.owner.process_stdout = self.owner.process_reply = [output]
         self.owner.session_commands[f'{session_id}-cmd'] = self.owner.process_command
+        marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.process_command)
+        assert marker is not None
+        # The wrapper sends the command's stderr to this file until the command ends.
+        self.owner.files[f'/tmp/{marker.group()}.err'] = ''.join(self.owner.process_stderr).encode()
         return SimpleNamespace(cmd_id=f'{session_id}-cmd')
 
     async def get_session_command_logs_async(
@@ -121,17 +128,14 @@ class FakeProcess:
         self.owner.process_logs_started.set()
         if self.owner.process_logs_error is not None:
             raise self.owner.process_logs_error
-        for handler, chunks in (
-            (on_stdout, self.owner.process_stdout),
-            (on_stderr, self.owner.process_stderr),
-        ):
-            for chunk in chunks:
-                handler(chunk)
+        # The command's stderr goes to a file, so only stdout streams.
+        for chunk in self.owner.process_stdout:
+            on_stdout(chunk)
         if self.owner.process_follow_open:
             marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.process_command)
             assert marker is not None
-            on_stdout(marker.group())
-            on_stderr(marker.group())
+            # The wrapper prints the marker, the command's stderr, and the marker again on stdout.
+            on_stdout(marker.group() + marker.group())
         if self.owner.process_hangs or self.owner.process_follow_open:
             await asyncio.Event().wait()
 
@@ -141,19 +145,22 @@ class FakeProcess:
         command_id: str,
         request_timeout: float | None = None,
     ) -> SimpleNamespace:
-        """The finished command's stored logs; the streamed chunks unless a test sets them apart."""
+        """The finished command's stored logs; the streamed chunks unless a test sets them apart.
+
+        Like the wrapper, `output` holds the command's stdout, the marker, its stderr, and the marker.
+        """
         if self.owner.process_stored_logs_error is not None:
             raise self.owner.process_stored_logs_error
         stdout = self.owner.process_stored_stdout
         stderr = self.owner.process_stored_stderr
-        # The wrapper prints its end marker last on both streams; Daytona can store it late.
+        stdout = ''.join(self.owner.process_stdout) if stdout is None else stdout
+        stderr = ''.join(self.owner.process_stderr) if stderr is None else stderr
         marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.session_commands[command_id])
-        end = marker.group() if marker is not None and not self.owner.process_stored_lag else ''
-        self.owner.process_stored_lag = max(self.owner.process_stored_lag - 1, 0)
-        return SimpleNamespace(
-            stdout=(''.join(self.owner.process_stdout) if stdout is None else stdout) + end,
-            stderr=(''.join(self.owner.process_stderr) if stderr is None else stderr) + end,
-        )
+        assert marker is not None
+        end = '' if self.owner.process_output_cut else marker.group()
+        # Daytona can file a block of one stream under the other, so these fields are swapped to
+        # show the backend reads only `output`.
+        return SimpleNamespace(output=f'{stdout}{marker.group()}{stderr}{end}', stdout=stderr, stderr=stdout)
 
     async def get_session_command(
         self,
@@ -362,7 +369,7 @@ class _HostProcess(FakeProcess):
         stdout, stderr = (
             os.pread(f.fileno(), os.fstat(f.fileno()).st_size, 0).decode(errors='replace') for f in (out, err)
         )
-        return SimpleNamespace(stdout=stdout, stderr=stderr)
+        return SimpleNamespace(output=stdout + stderr, stdout=stdout, stderr=stderr)
 
     async def get_session_command(
         self,
@@ -489,8 +496,8 @@ class FakeSandbox:
         self.process_status_gate: asyncio.Event | None = None
         self.process_logs_error: Exception | None = None
         # What the non-follow `get_session_command_logs` returns, when not the streamed chunks joined.
-        # How many stored-log reads come back before the wrapper's end markers are stored.
-        self.process_stored_lag = 0
+        # Whether the stored output stops before the wrapper's last marker, as when the wrapper was killed.
+        self.process_output_cut = False
         self.process_stored_stdout: str | None = None
         self.process_stored_stderr: str | None = None
         self.process_stored_logs_error: Exception | None = None

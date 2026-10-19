@@ -15,8 +15,11 @@ External assumptions last verified 2026-09-08 against Daytona Python SDK 0.198.0
   prints an end marker last on both streams and the output is cut at it.
 * the log stream's demultiplexer (`daytona/_utils/stream.py` `_std_demux_loop`) misreads a stream prefix
   that ends a websocket frame, injecting the prefix bytes into the output and misrouting it
-  (observed live 2026-09-26 above ~4 KB); the non-follow `get_session_command_logs` is exact, so a
-  finished command's output comes from it.
+  (observed live 2026-09-26 above ~4 KB). The stored logs from `get_session_command_logs` hold every
+  byte in `output`, but Daytona's server can file a block of one stream under the other in its
+  `stdout` and `stderr` fields (observed live 2026-10-19 with ~9 KB on each stream). So a command's
+  stderr goes to a file, which the wrapper prints on stdout after the command's own output, and a
+  finished command's output comes from the stored `output`, which then holds one stream.
 * `sandbox.fs` provides metadata, byte upload/download, and directory operations:
   https://www.daytona.io/docs/en/python-sdk/async/async-file-system/
 * `auto_stop_interval` is a creation-time setting; left unset, Daytona stops an idle container
@@ -104,8 +107,6 @@ _LIFECYCLE_TIMEOUT = 60.0
 _TEARDOWN_TIMEOUT = 30.0
 # Bound the wait for the SDK's event connection to settle before its client is closed.
 _EVENT_CONNECT_GRACE = 6.0
-# Bound the wait for a finished command's stored logs to catch up with its exit status.
-_LOGS_SETTLE_GRACE = 5.0
 # Pause between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # Streamed logs are only a timeout preview; finished output comes from stored logs.
@@ -200,8 +201,9 @@ def _command_line(
 ) -> str:
     """Build the session command: the quoted argv, with the environment and directory applied.
 
-    The argv runs under a `sh` that prints `marker` last on stdout and stderr and exits with the
-    argv's status, so `_until_marker` can drop what Daytona appends after a stream's last byte.
+    The argv runs under a `sh` that sends its stderr to a file, then prints `marker`, that file,
+    and `marker` again on stdout and exits with the argv's status. Daytona then sees one stream, and
+    `_split_output` can drop what Daytona appends after a stream's last byte.
     `env` runs inside that `sh`: a `sh` such as dash drops variables whose names are not shell
     identifiers from the environment it passes on.
     """
@@ -210,16 +212,30 @@ def _command_line(
         # `--` ends `env`'s options, so a name starting with `-` is not read as one.
         argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
     # Distinct marker lets run() distinguish a missing cwd from a command exiting with the same status.
-    prefix = f'cd -- {shlex.quote(cwd)} || {{ printf %s {marker}-cwd >&2; exit 125; }}; ' if cwd is not None else ''
-    script = f'{prefix}"$@" </dev/null; status=$?; printf %s {marker}; printf %s {marker} >&2; exit "$status"'
+    prefix = f'cd -- {shlex.quote(cwd)} || {{ printf %s {marker}-cwd; exit 125; }}; ' if cwd is not None else ''
+    errors = _stderr_path(marker)
+    script = (
+        f'{prefix}"$@" </dev/null 2>{errors}; status=$?; '
+        f'printf %s {marker}; cat -- {errors}; rm -f -- {errors}; printf %s {marker}; exit "$status"'
+    )
     return shlex.join(['sh', '-c', script, 'sh', *argv])
 
 
+def _stderr_path(marker: str) -> str:
+    """Where the command's stderr waits until the wrapper prints it."""
+    return f'/tmp/{marker}.err'
+
+
 def _until_marker(chunks: list[str], marker: str) -> str:
-    """The stream's output before `marker`; all of it when the command never printed the marker."""
-    output = ''.join(chunks)
-    head, found, _ = output.rpartition(marker)
-    return head if found else output
+    """The command's stdout: the output before the first `marker`, or all of it when none was printed yet."""
+    return ''.join(chunks).partition(marker)[0]
+
+
+def _split_output(output: str, marker: str) -> tuple[str, str] | None:
+    """The command's stdout and stderr from the wrapper's output; `None` when it was cut short."""
+    stdout, found, rest = output.partition(marker)
+    stderr, end, _ = rest.rpartition(marker)
+    return (stdout, stderr) if found and end else None
 
 
 def _stream_callbacks(
@@ -229,17 +245,18 @@ def _stream_callbacks(
     stderr: list[str] = ['']
     ended = anyio.Event()
     tails = ['', '']
-    markers_seen = [False, False]
+    markers_seen = [0]
 
     def on_chunk(chunk: str, index: int, preview: list[str]) -> None:
         # Only the marker can straddle frames; neither detection nor timeout output
         # needs the full follow stream (which grows quadratically when joined).
         candidate = tails[index] + chunk
-        if marker in candidate:
-            markers_seen[index] = True
+        if index == 0:
+            # The wrapper prints the marker twice on stdout, the second time last.
+            markers_seen[0] += candidate.count(marker)
         tails[index] = candidate[-(len(marker) - 1) :]
         preview[0] = (preview[0] + chunk)[-_PARTIAL_OUTPUT_LIMIT:]
-        if all(markers_seen):
+        if markers_seen[0] >= 2:
             ended.set()
 
     def on_stdout(chunk: str) -> None:
@@ -265,6 +282,7 @@ class _DaytonaProcess:
     _ended: anyio.Event
     _on_stdout: Callable[[str], None]
     _on_stderr: Callable[[str], None]
+    _finished: bool = False
 
     async def wait(self) -> CommandResult:
         logs_finished = anyio.Event()
@@ -322,43 +340,50 @@ class _DaytonaProcess:
             await _raise_failure(self._sandbox, error, 'Could not read the command result')
         if exit_code is None:
             raise WorkspaceError('Daytona closed the command output before reporting an exit status.')
-        # The streamed copy is only for partial output on a timeout: SDK 0.198.0's stream
-        # demultiplexer misreads a stream prefix split across websocket frames, corrupting output
-        # over a few KB. The finished command's stored logs are exact.
-        stdout, stderr = await self._stored_logs(exit_code)
-        if f'{self.marker}-cwd' in stderr:
-            return CommandResult(exit_code=exit_code, stdout='', stderr=f'{self.marker}-cwd')
-        return CommandResult(
-            exit_code=exit_code,
-            stdout=_until_marker([stdout], self.marker),
-            stderr=_until_marker([stderr], self.marker),
-        )
+        self._finished = True
+        return await self._result(exit_code)
 
-    async def _stored_logs(self, exit_code: int) -> tuple[str, str]:
-        """The finished command's stored stdout and stderr, once they are complete.
+    async def _result(self, exit_code: int) -> CommandResult:
+        """The finished command's result, from its stored `output`, which holds every byte.
 
-        The stored logs can trail the exit status; the wrapper's end markers show they are complete.
+        The streamed copy is only for partial output on a timeout: SDK 0.198.0's stream
+        demultiplexer misreads a stream prefix split across websocket frames, corrupting output
+        over a few KB.
         """
-        settle_deadline = anyio.current_time() + _LOGS_SETTLE_GRACE
-        while True:
-            try:
-                logs = await self._process.get_session_command_logs(
-                    self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
-                )
-            except Exception as error:
-                await _raise_failure(self._sandbox, error, 'Could not read the command output')
-            stdout, stderr = logs.stdout or '', logs.stderr or ''
-            if f'{self.marker}-cwd' in stderr or (self.marker in stdout and self.marker in stderr):
-                return stdout, stderr
-            if anyio.current_time() >= settle_deadline:
-                if exit_code == 0:
-                    raise WorkspaceError('Daytona returned incomplete output for a finished command.')
-                return stdout, stderr  # The wrapper itself was killed, so no marker is coming.
-            await anyio.sleep(0.2)
+        try:
+            logs = await self._process.get_session_command_logs(
+                self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
+            )
+        except Exception as error:
+            await _raise_failure(self._sandbox, error, 'Could not read the command output')
+        output = logs.output or ''
+        if f'{self.marker}-cwd' in output:
+            return CommandResult(exit_code=exit_code, stdout='', stderr=f'{self.marker}-cwd')
+        if (split := _split_output(output, self.marker)) is None:
+            if exit_code == 0:
+                raise WorkspaceError('Daytona returned incomplete output for a finished command.')
+            # The wrapper itself was killed, so its stderr file was never printed.
+            return CommandResult(exit_code=exit_code, stdout=_until_marker([output], self.marker), stderr='')
+        stdout, stderr = split
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
     async def kill(self) -> None:
-        """Delete the Daytona process session, which kills its command."""
+        """Delete the Daytona process session, which kills its command, and keep its stderr so far."""
         await _delete_session(self._process, self._session_id)
+        if self._finished:
+            return  # The wrapper printed and removed the stderr file.
+        path = _stderr_path(self.marker)
+        # Best effort: the stderr file only adds the partial stderr a timeout reports.
+        with anyio.move_on_after(_REQUEST_TIMEOUT):
+            try:
+                data = await self._sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
+                self.stderr[0] = data.decode(errors='replace')[-_PARTIAL_OUTPUT_LIMIT:]
+            except Exception:
+                pass
+            try:
+                await self._process.exec(f'rm -f -- {path}', timeout=_REQUEST_TIMEOUT)
+            except Exception:
+                pass
 
 
 async def _close_quietly(client: AsyncDaytona) -> bool:
