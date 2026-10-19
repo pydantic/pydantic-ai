@@ -1022,3 +1022,22 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(third)
     assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_reconnect_asks_again_for_a_request_a_provider_response_overtook() -> None:
+    """The old socket dropped before refusing (or starting) our request: the new one is asked for it."""
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert ResponseStarted(response_id='resp_vad', user_turn_id='item_u') in events
+    assert [request['event_id'] for request in requests_sent(replacement)] == ['pydantic_ai.response.0']
