@@ -14,7 +14,7 @@ Gating:
   * skipped unless `PYDANTIC_AI_HARNESS_DAYTONA_LIVE=1` opts in explicitly.
   * also requires a non-empty `DAYTONA_API_KEY`; without one it skips, or fails when
     `DAYTONA_REQUIRE_LIVE=1` (CI's live job). The gate is `pytest_runtest_setup` in `conftest.py`.
-  * the module-scoped async `client` fixture keeps the shared Daytona client on one asyncio loop.
+  * the async `client` fixture opens a Daytona client per test and closes it when the test ends.
 
 Run locally:
 `PYDANTIC_AI_HARNESS_DAYTONA_LIVE=1 uv run pytest -m daytona_live tests/harness/daytona_sandbox/test_daytona_live.py`
@@ -48,9 +48,13 @@ def _unique(prefix: str) -> str:
     return f'{prefix}-{uuid.uuid4().hex}'
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 async def client() -> AsyncIterator[daytona.AsyncDaytona]:
-    """One caller-owned API client for every backend in this module, closed at the end."""
+    """A caller-owned API client for one test's backends, closed when the test ends.
+
+    Not module-scoped: the client's event socket must not stay open through the synchronous docs
+    tests, which block the loop for minutes, or socket.io reconnects it while the client closes.
+    """
     client = daytona.AsyncDaytona()
     try:
         yield client
