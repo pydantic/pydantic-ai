@@ -167,8 +167,10 @@ class Weight(UseEnumMemberDocstrings, Enum):
 def test_strict_true_described_options():
     """With strict=True, untyped `const` options become typed one-value `enum`s.
 
-    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's `transform_schema()` raises on an option without a `type`, and moves a `const` into the
-    description. A unit test, since the failure is raised before any request is sent.
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
+    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
+    which would leave the option unconstrained. A unit test, so the shape of the schema is pinned directly
+    rather than through a cassette whose matcher may not compare request bodies.
     """
 
     class Ticket(BaseModel):
