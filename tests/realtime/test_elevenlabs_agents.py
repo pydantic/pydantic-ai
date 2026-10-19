@@ -2014,6 +2014,25 @@ async def test_audio_tags_are_kept_when_stripping_is_off() -> None:
         ResponseDone(),
     ]
 
+    # Audio mode: the correction of a reply cut off keeps its tags too.
+    ws = FakeWebSocket(
+        [
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi! Listen.'}},
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {
+                'type': 'agent_response_correction',
+                'agent_response_correction_event': {'corrected_agent_response': '[laughs] Hi! Li'},
+            },
+        ]
+    )
+    connection = ElevenLabsAgentsRealtimeConnection(ws, strip_audio_tags=False)  # type: ignore[arg-type]
+    events = await collect_codec_events(connection)
+    assert events == [
+        OutputTranscript(text='[laughs] Hi! Listen.', is_final=True),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(interrupted=True, provider_details={'corrected_agent_response': '[laughs] Hi! Li'}),
+    ]
+
 
 async def test_the_strip_audio_tags_setting_reaches_the_connection() -> None:
     model = _model(RestRecorder(agent_json()))
