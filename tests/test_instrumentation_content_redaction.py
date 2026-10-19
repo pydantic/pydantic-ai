@@ -30,7 +30,9 @@ from pydantic_ai._instrumentation import (
     span_include_content,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -145,6 +147,35 @@ def test_mcp_server_credentials_never_reach_request_parameters_attribute(include
     assert tool.authorization_token == 'SENTINEL-mcp-token'
     assert tool.url == 'https://mcp.example.com?access_token=SENTINEL-mcp-url-token'
     assert tool.headers == {'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'}
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_mcp_server_url_derived_id_never_reaches_telemetry(include_content: bool) -> None:
+    capability = MCP('https://mcp.example.com/private/SENTINEL-mcp-path-token', native=True, local=False)
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+    parameters = ModelRequestParameters(native_tools=[tool])
+    tool_name = f'mcp_server:{tool.id}'
+    call = NativeToolCallPart(tool_name=tool_name, tool_call_id='call-1', provider_name='openai')
+    returned = NativeToolReturnPart(tool_name=tool_name, tool_call_id='call-1', content={}, provider_name='openai')
+    response = ModelResponse(parts=[call, returned])
+    settings, exporter = redacted_setup(include_content)
+
+    with settings.tracer.start_as_current_span('chat') as span:
+        span.set_attributes(model_request_parameters_attributes(parameters, include_content=include_content))
+        settings.handle_messages([], response, 'openai', span)
+
+    assert 'SENTINEL-mcp-path-token' in tool.id  # The provider request still uses the derived ID.
+    assert call.tool_name == returned.tool_name == tool_name
+    attributes = exporter.get_finished_spans()[0].attributes
+    assert attributes is not None
+    assert 'SENTINEL-mcp-path-token' not in str(attributes)
+    request_parameters = attributes['model_request_parameters']
+    output_messages = attributes['gen_ai.output.messages']
+    assert isinstance(request_parameters, str)
+    assert isinstance(output_messages, str)
+    assert '"id":"[REDACTED]"' in request_parameters
+    assert output_messages.count('mcp_server:[REDACTED]') == 2
 
 
 class Output(BaseModel):

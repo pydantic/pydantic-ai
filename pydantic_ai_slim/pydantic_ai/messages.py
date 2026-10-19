@@ -2096,6 +2096,11 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+def _otel_native_tool_name(name: str) -> str:
+    # MCP server labels may be derived from credential-bearing URL paths.
+    return 'mcp_server:[REDACTED]' if name.startswith('mcp_server:') else name
+
+
 @dataclass(repr=False)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
@@ -2329,7 +2334,10 @@ class ModelResponse:
                     _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
                 )
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+                tool_name = (
+                    _otel_native_tool_name(part.tool_name) if isinstance(part, NativeToolCallPart) else part.tool_name
+                )
+                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=tool_name)
                 if isinstance(part, NativeToolCallPart):
                     call_part['builtin'] = True
                 if part.otel_metadata:
@@ -2348,7 +2356,7 @@ class ModelResponse:
                 return_part = _otel_messages.ToolCallResponsePart(
                     type='tool_call_response',
                     id=part.tool_call_id,
-                    name=part.tool_name,
+                    name=_otel_native_tool_name(part.tool_name),
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch

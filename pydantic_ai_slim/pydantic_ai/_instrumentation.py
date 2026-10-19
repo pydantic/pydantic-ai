@@ -122,7 +122,7 @@ def model_request_parameters_attributes(
             model_request_parameters,
             native_tools=[
                 MCPServerTool(
-                    id=tool.id,
+                    id='[REDACTED]',
                     url='[REDACTED]',
                     authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
                     description=tool.description,
