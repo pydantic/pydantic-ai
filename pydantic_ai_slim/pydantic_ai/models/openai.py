@@ -5152,6 +5152,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             _, return_part = _map_mcp_list_tools(item, self.provider_name)
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
+                        # A stream resumed with `starting_after` doesn't replay the `output_item.done` of a message
+                        # that completed before the cursor, so also collect file citations from the full response.
+                        # Duplicates of citations already collected are only downloaded once.
+                        elif isinstance(item, responses.ResponseOutputMessage) and self._model_settings.get(
+                            'openai_download_code_execution_files'
+                        ):
+                            _file_citations.extend(_container_file_citations(item))
 
                     self._usage += self._map_usage(chunk.response)
                     self._store_conversation_id(chunk.response)

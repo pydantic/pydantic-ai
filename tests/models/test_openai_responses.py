@@ -16406,6 +16406,83 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
     assert files[1].content.data == b'\x89PNG...'
 
 
+async def test_openai_code_execution_download_from_completed_response_stream(allow_model_requests: None):
+    """Streaming: a citation only present in `response.completed` is still downloaded.
+
+    A background stream resumed with `starting_after` doesn't replay the `output_item.done` event of a message that
+    completed before the cursor, so the completed response is the only place its citations appear.
+    """
+    annotation = {
+        'type': 'container_file_citation',
+        'file_id': 'oai_file_1',
+        'container_id': 'ctr_1',
+        'filename': 'output.csv',
+        'start_index': 0,
+        'end_index': 5,
+    }
+    message = ResponseOutputMessage(
+        id='msg_001',
+        content=cast(
+            list[Content],
+            [
+                ResponseOutputText(
+                    text='Here is your file.', type='output_text', annotations=cast(list[Any], [annotation])
+                )
+            ],
+        ),
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Here is your file.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            logprobs=[],
+            sequence_number=5,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'output': [message]}),
+            type='response.completed',
+            sequence_number=6,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    mock_file_content = MagicMock()
+    mock_file_content.content = b'1,1\n2,4\n'
+    cast(Any, mock_client).containers = MagicMock()
+    mock_client.containers.files.content.retrieve = AsyncMock(return_value=mock_file_content)
+
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[NativeTool(CodeExecutionTool())])
+
+    async with agent.run_stream(
+        'Create a CSV',
+        model_settings=OpenAIResponsesModelSettings(openai_download_code_execution_files=True),
+    ) as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.files == snapshot(
+        [BinaryContent(data=b'1,1\n2,4\n', media_type='text/csv', identifier='output.csv')]
+    )
+    mock_client.containers.files.content.retrieve.assert_called_once_with(file_id='oai_file_1', container_id='ctr_1')
+
+
 async def test_openai_code_execution_download_disabled_no_download(allow_model_requests: None):
     """When setting is disabled, a downloadable citation does not trigger a download."""
     annotation = AnnotationContainerFileCitation(
