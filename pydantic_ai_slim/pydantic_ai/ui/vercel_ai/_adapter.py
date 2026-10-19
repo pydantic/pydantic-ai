@@ -564,8 +564,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             # `tool_kind` comes from client-supplied metadata, so each claim is validated
                             # to a known `ToolPartKind` (else dropped) before being set on the base part;
-                            # the final `narrow_message_parts` pass then promotes it best-effort and
-                            # strips any claim whose data doesn't validate against the typed subclass.
+                            # the final `narrow_message_parts` pass then promotes it best-effort. A claim
+                            # whose data doesn't validate leaves a base part; only core's kinds are stripped.
                             raw_call_tool_kind = call_meta.get('tool_kind')
                             call_tool_kind = (
                                 parse_tool_kind(raw_call_tool_kind) if isinstance(raw_call_tool_kind, str) else None
@@ -609,10 +609,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         provider_name=return_meta.get('provider_name') or provider_name,
                                         provider_details=return_meta.get('provider_details') or provider_details,
                                         outcome=outcome,
-                                        # As in the non-builtin branch below, error/denied returns carry
-                                        # no `tool_kind`: a typed return subclass signals shape-valid
-                                        # success to readers like `parse_discovered_tools`.
-                                        tool_kind=(return_tool_kind or tool_kind) if outcome == 'success' else None,
+                                        # Kept on every outcome: a return that isn't a success is never
+                                        # promoted to its typed subclass, so the kind can't pass for success.
+                                        tool_kind=return_tool_kind or tool_kind,
                                     )
                                 )
                         else:
@@ -631,9 +630,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             if part.state == 'output-available':
                                 # A synthesized interrupted return dumps as neutral `output-available`
                                 # with an `'interrupted'` outcome claim in the metadata channel; restore
-                                # it so a round-trip doesn't upgrade the outcome to `'success'`. Like
-                                # error/denied returns it carries no `tool_kind` (typed return subclasses
-                                # signal shape-valid success to their readers).
+                                # it so a round-trip doesn't upgrade the outcome to `'success'`. Every
+                                # return keeps the call's `tool_kind`: one that isn't a success is never
+                                # promoted to its typed subclass, so the kind can't pass for success.
                                 interrupted = provider_meta.get('outcome') == 'interrupted'
                                 pending_returns.append(
                                     ToolReturnPart(
@@ -641,12 +640,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_call_id=tool_call_id,
                                         content=_validate_tool_output(part.output),
                                         outcome='interrupted' if interrupted else 'success',
-                                        tool_kind=None if interrupted else tool_kind,
+                                        tool_kind=tool_kind,
                                     )
                                 )
-                            # Error/denied returns deliberately carry no `tool_kind`: typed return
-                            # subclasses only ever wrap successful, shape-valid content, and readers
-                            # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
                                 pending_returns.append(
                                     ToolReturnPart(
@@ -654,6 +650,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_call_id=tool_call_id,
                                         content=part.error_text,
                                         outcome='failed',
+                                        tool_kind=tool_kind,
                                     )
                                 )
                             elif part.state == 'output-denied':
@@ -663,6 +660,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_call_id=tool_call_id,
                                         content=_denial_reason(part),
                                         outcome='denied',
+                                        tool_kind=tool_kind,
                                     )
                                 )
                     elif isinstance(part, DataUIPart):  # pragma: no cover
