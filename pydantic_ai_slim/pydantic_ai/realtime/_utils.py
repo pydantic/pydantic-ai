@@ -19,6 +19,8 @@ from ..messages import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
+    ModelRequest,
     SpeechPart,
     SpeechPartDelta,
     TextContent,
@@ -27,8 +29,15 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    _neutralize_user_voice_tags,  # pyright: ignore[reportPrivateUsage]
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
@@ -79,6 +88,29 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
     TraceContextTextMapPropagator().inject(headers)
+
+
+def project_seed_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The history a realtime session is seeded with, framed the way its live channel frames it.
+
+    A realtime session has no mid-conversation system role, so this is the projection
+    `Model.prepare_messages` applies for a model that takes none: `<system>` tags in user text are
+    neutralized, and each mid-conversation `SystemPromptPart` becomes `<system>`-tagged user text.
+    The standing system prompt opening the history is left for the seeders, which route it through
+    the session's instructions, and a request-scoped one is dropped: its request was answered before
+    this session started.
+    """
+    projected = [
+        replace(message, parts=parts)
+        if isinstance(message, ModelRequest)
+        and len(parts := [part for part in message.parts if not _is_request_scoped(part)]) != len(message.parts)
+        else message
+        for message in messages
+    ]
+    first_request = next((message for message in projected if isinstance(message, ModelRequest)), None)
+    standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+    projected = _neutralize_user_voice_tags(projected)
+    return _wrap_non_leading_system_prompts(projected, standing_prompt_count=standing_prompt_count)
 
 
 async def seed_user_content(

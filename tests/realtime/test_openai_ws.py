@@ -192,11 +192,7 @@ async def test_session_when_idle_enqueue_waits_for_response_boundary(
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='<system>Say exactly "QUEUED MARKER RECEIVED".</system>', timestamp=IsDatetime()
-                    )
-                ],
+                parts=[SystemPromptPart(content='Say exactly "QUEUED MARKER RECEIVED".', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

@@ -114,6 +114,7 @@ from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
+    project_seed_history,
     reconnect_with_backoff,
     require_pcm_audio,
     resolve_advertised_tools,
@@ -566,11 +567,13 @@ async def _seed_turns(
     because they describe provider-executed work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
-    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
+    The standing `SystemPromptPart`s are routed through `system_instruction`, a mid-conversation one is
+    replayed as `<system>`-tagged user text (see `project_seed_history`), and `CachePoint`s are ignored. User
     speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
     `supports_seeding_audio`; on other models (Gemini 2.5 rejects audio in seeded turns) speech
     requires a transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
+    messages = project_seed_history(messages)
     turns: list[genai_types.Content] = []
     supports_images = profile.get('supports_seeding_images', False)
     supports_audio = profile.get('supports_seeding_audio', False)
