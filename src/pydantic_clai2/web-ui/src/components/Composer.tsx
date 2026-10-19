@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api, interrupt } from '../api'
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { SessionContext, api, interrupt } from '../api'
 import type { CompletionInfo } from '../protocol'
 import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
 
@@ -18,10 +18,12 @@ interface Props {
   placeholder: string
   /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
   local?: Readonly<Record<string, () => void>>
+  /** A bare command the server answered by naming its menu, such as `/set`, which the page shows instead. */
+  onMenu?: (command: string) => void
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
-  /** Where a message goes, and what stops the running turn: the session's by default. */
+  /** Where a message goes, and what stops the running turn: the shown session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
@@ -39,6 +41,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     disabled,
     placeholder,
     local,
+    onMenu,
     draft: text,
     onDraft: setText,
     chat,
@@ -53,6 +56,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  const session = useContext(SessionContext)
+
+  // Another session shown: the last one's completions and model list are not this one's.
+  useEffect(() => {
+    request.current++
+    setSuggestions([])
+    setModels(null)
+  }, [session])
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
@@ -73,7 +84,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      const found = await api.complete(value)
+      const found = await session.complete(value)
       if (id === request.current) {
         setSuggestions(found.slice(0, 50))
         setSelected(0)
@@ -81,7 +92,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } catch {
       if (id === request.current) setSuggestions([])
     }
-  }, [commands])
+  }, [commands, session])
 
   useEffect(() => {
     if (!models) return
@@ -119,7 +130,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      await (chat ? chat.send(value) : api.send(value))
+      if (chat) await chat.send(value)
+      else {
+        const entered = await session.send(value)
+        if (entered.menu !== null) onMenu?.(entered.menu)
+      }
     } catch (error) {
       setText(value)
       onError(error instanceof Error ? error.message : String(error))
@@ -169,7 +184,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const pickModel = async (name: string) => {
     setModels(null)
     try {
-      await api.selectModel(name)
+      await session.selectModel(name)
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
@@ -244,7 +259,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               )}
             </div>
           ) : (
-            <span className="pill static" title="The orchestrator uses this session's model">
+            <span className="pill static" title="The orchestrator runs on the saved default model, as a new session starts with">
               <span className="model-name">{model}</span>
             </span>
           )}
@@ -253,7 +268,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           {running && !text.trim() ? (
             <button
               className="send stop"
-              onClick={() => void interrupt(onError, chat?.interrupt)}
+              onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
               title="Interrupt (Esc)"
               aria-label="Interrupt"
             >

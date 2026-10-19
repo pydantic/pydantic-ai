@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
 
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -397,6 +398,7 @@ _STR_SET_ADAPTER: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),
     ('usage_limits', dict, TypeAdapter(UsageLimits)),
+    ('deadline', str, TypeAdapter(datetime)),
     ('loaded_capability_ids', list, _STR_SET_ADAPTER),
     ('discovered_tool_names', list, _STR_SET_ADAPTER),
     ('available_tool_names', list, _STR_SET_ADAPTER),
@@ -418,8 +420,10 @@ _NONE_UNLESS_ATTACHED = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
 )
+# `deadline` is defaulted so a payload from a workflow that predates it reads as a run without one.
 _DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
     ('_anchored_evidence', AnchoredEvidence()),
+    ('deadline', None),
     ('_tool_name_path', ()),
 )
 _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
@@ -536,6 +540,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'instrumentation_version': ctx.instrumentation_version,
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
+            'deadline': ctx.deadline,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
             '_anchored_evidence': ctx._anchored_evidence,

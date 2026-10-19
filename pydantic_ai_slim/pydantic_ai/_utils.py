@@ -414,9 +414,12 @@ async def _cleanup_temporal_group(
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
+        # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
-            await task
+            task.result()
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()
@@ -710,9 +713,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
         # Wait for the cancelled pull to release the source before closing it, so we don't close a
-        # generator that's still running.
-        async with self._source_lock:
-            await aclose_if_supported(value)
+        # generator that's still running. Shielded, as this is teardown: it often runs inside an anyio scope that
+        # was cancelled, e.g. at a `request_timeout` deadline, where waiting for the lock would raise again and
+        # leave the source open.
+        with anyio.CancelScope(shield=True):
+            async with self._source_lock:
+                await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:

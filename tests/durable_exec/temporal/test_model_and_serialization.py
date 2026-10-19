@@ -72,6 +72,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -889,7 +890,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134214)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134268)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1637,6 +1638,34 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.model_name == 'alt-model'
         assert temporal_model_with_registry.system == alt_model.system
         assert temporal_model_with_registry.profile == alt_model.profile
+
+
+class _NoRestrictionsTestModel(TestModel):
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+def test_temporal_model_unsupported_native_tool_settings_follow_active_model():
+    """The native tool settings check asks the active model, so a swapped-in model's limits are the ones applied.
+
+    A raw model string has no model class to ask, so it reports none; the activity's concrete model decides.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__unsupported_native_tool_settings',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': _NoRestrictionsTestModel(model_name='alt-model')},
+    )
+    web_search = WebSearchTool(allowed_domains=['pydantic.dev'])
+
+    assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset({'allowed_domains'})
+
+    with temporal_model.using_model('google-gla:gemini-2.5-flash'):
+        assert temporal_model.unsupported_native_tool_settings(web_search) == frozenset()
 
 
 class DefaultHostModel(TestModel):

@@ -23,13 +23,15 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings, api_keys
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins.menus import Dialogs
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
@@ -56,7 +58,7 @@ def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -
                 raise value
             return value
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 @pytest.mark.parametrize('mode', ['eof', 'interrupt', 'error', 'cancel', 'double', 'structured'])
@@ -221,8 +223,8 @@ async def test_keys_command_in_shell(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
     original = key_menu.run_keys_flow
 
-    def scripted(*, runners: Runners = script.runners) -> None:
-        original(runners=runners)
+    async def scripted(*, runners: Runners = script.runners) -> None:
+        await original(runners=runners)
 
     monkeypatch.setattr(key_menu, 'run_keys_flow', scripted)
     output = io.StringIO()
@@ -306,8 +308,8 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
     inputs(monkeypatch, ['/login openai-codex', 'hello', 'again', '/exit'])
     instances: list[CodexAuth] = []
 
-    async def login(self: CodexAuth, args: list[str]) -> str:
-        assert args == []  # /login resolved the name; Codex gets no arguments
+    async def login(self: CodexAuth, args: list[str], *, dialogs: Dialogs | None) -> str:
+        assert args == [] and dialogs is None  # /login resolved the name; Codex gets no arguments
         instances.append(self)
         return 'Signed in.'
 

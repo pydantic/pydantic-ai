@@ -248,6 +248,66 @@ Phrase the instruction as what changed rather than as an override of the user. M
 
     This matters most for late-arriving results, which is a common reason to reach for `enqueue`: a background job whose tool returned `'started'` long before the work finished, a webhook, a long-running search. Deliver those as data — enqueue the payload as user content, or return it from a tool — and reserve `SystemPromptPart` for instructions you wrote yourself. Where a background result should also *change how the agent behaves*, write that instruction yourself and enqueue the untrusted payload separately.
 
+### Request-scoped system prompts
+
+Some instructions are only true for one model request: a nudge against instruction fade, a note that the user can't see a tool's output, the budget left right now. Give such a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] [`scope='request'`][pydantic_ai.messages.SystemPromptPart.scope] and the model sees it for the request it's part of, and not for any request after that:
+
+```python {title="request_scoped_system_prompt.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('{{ anthropic:large }}')
+
+
+@agent.tool
+def run_tests(ctx: RunContext) -> str:
+    ctx.enqueue(
+        SystemPromptPart(
+            "The user can't see this tool's output. Summarize the failures for them.",
+            scope='request',
+        )
+    )
+    return '3 failed, 41 passed'
+```
+
+A capability that nudges the model on every request enqueues one from `before_model_request`. Content enqueued there goes into the request being prepared and into the message history, as a `ModelRequest` of its own:
+
+```python {title="request_scoped_reminder_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass
+class StayTerse(AbstractCapability[Any]):
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep answers to one line.', scope='request'))
+        return request_context
+
+
+agent = Agent('{{ anthropic:large }}', capabilities=[StayTerse()])
+```
+
+A request-scoped prompt is not a request-only change: the prompt stays in history and only what the model is shown changes, while a request-only change, such as assigning `request_context.messages`, never reaches history at all. So don't add it to `request_context.messages` alone: it then never enters the history, so the next request doesn't send it, and on a model that ties its reasoning to the exact conversation, dropping it from one request to the next counts as editing the conversation. See [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders) for the other ways a capability can change what's sent, and what each does to the prompt cache.
+
+A request-scoped prompt stays in the message history like any other part, so the history records what each request was sent. How it reaches the model depends on the provider:
+
+* Where the API can keep it in the conversation and stop showing it to the model itself, every request-scoped prompt is sent unchanged with every request, and costs nothing once its request has been answered. [Anthropic](models/anthropic.md#turn-scoped-system-messages) supports this on the models that take mid-conversation system messages. Sending it unchanged is what keeps the cached prefix valid, and on models that tie their reasoning to the exact conversation it was produced in, it keeps that reasoning valid as well: removing an instruction from a later request counts as editing the conversation.
+* Everywhere else, it's sent with its own request and left out of every later one. It goes at the end of that request and renders like any other [mid-conversation system prompt](#mid-conversation-system-prompts).
+
+With server-side conversation state, such as OpenAI Responses with `openai_previous_response_id` or `openai_conversation_id`, each request sends only the messages after the last response, and the provider replays everything it was sent before. A request-scoped prompt it was sent once stays visible to the model on every later request, because the provider keeps it, and leaving it out of a later request changes nothing.
+
+With either rendering, the cache breakpoints Pydantic AI places for you, through settings like `anthropic_cache_messages`, land before it, so the next request can still read what was cached. A request and any continuation of it (such as an Anthropic `pause_turn`) count as the same request, and so does a retry or [fallback](models/overview.md#fallback-model) attempt at it. A request-scoped prompt in a request that never gets a response, because the run failed or was cancelled, is removed from the history when the run gives up on that request, so it doesn't carry into the next one.
+
+Use a request-scoped prompt for something about the current moment. Something that stays true belongs in the agent's [instructions](agent.md#instructions) or a regular mid-conversation system prompt, and the same rule about untrusted content applies to both.
+
+!!! note "Histories sent back from a frontend"
+    The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave request-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its request-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
+
 ### Making histories provider-valid
 
 Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.
@@ -259,7 +319,7 @@ The guiding rule is to adapt the history to what the provider accepts without ev
 - **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way. Its arguments stay verbatim in the history, but the request serializers send them as `{"INVALID_JSON": "<raw args>"}` (see [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]) so that a provider requiring an object still accepts the request.
 - **Removes** an orphaned tool result — a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] whose tool call is absent from the history (including a result placed before its call). If this empties an interior [`ModelRequest`][pydantic_ai.messages.ModelRequest] the request is removed; if it empties the last message, an empty request is kept so the history still ends on a `ModelRequest`.
 
-After the invalid parts are handled, consecutive compatible messages are **merged** into one (two adjacent [`ModelRequest`][pydantic_ai.messages.ModelRequest]s become a single turn, with tool results ordered ahead of user parts). This changes message boundaries but preserves all content, so processed history you inspect afterwards may have fewer messages than you passed in.
+After the invalid parts are handled, consecutive compatible messages are **merged** into one (two adjacent [`ModelRequest`][pydantic_ai.messages.ModelRequest]s become a single turn, with tool results ordered ahead of user parts). This changes message boundaries but preserves all content, so processed history you inspect afterwards may have fewer messages than you passed in. The tool results answering a response are also sent in the order of the calls they answer, however the history stores them: `end_strategy='early'` stores output tool results first, and a UI client may rebuild them in the order the tools completed.
 
 The repair is deterministic and idempotent: repairing the same history always produces the same output, running a repaired history through another run leaves it untouched, and synthesized parts contain no wall-clock data, so reuse doesn't invalidate provider prompt caches.
 
@@ -779,7 +839,8 @@ The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empt
 ### From inside a tool or hook
 
 Use [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] when you have a
-`RunContext` in scope:
+`RunContext` in scope. For a capability adding steering messages or reminders from
+`before_model_request`, see [Changing what the model sees](capabilities/custom.md#steering-messages-and-reminders):
 
 ```python {title="enqueue_from_tool.py"}
 from pydantic_ai import Agent, RunContext
@@ -838,7 +899,9 @@ async def main():
 
 `'when_idle'` messages are only drained when the agent would otherwise reach an `End`. That
 drain runs after every capability's `after_node_run` hook, so a capability that redirects the run
-can still enqueue there. `'asap'` messages are drained in `before_model_request`, and also at the
+can still enqueue there. `'asap'` messages are drained in `before_model_request`, once ahead of the other
+capabilities' hooks and once after them, so content a `before_model_request` hook enqueues goes into the request
+being prepared. They're also drained at the
 same end-of-run point if anything arrived during the final step. Both fire however
 you drive the run, so [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
 [`AgentRun.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
