@@ -193,6 +193,7 @@ async def test_conversations_list_newest_first_by_scope() -> None:
 
     assert [record.conversation_id for record in listed] == [second.conversation_id, first.conversation_id]
     assert len(await store.list_conversations()) == 3
+    assert [record.conversation_id for record in await store.list_conversations(limit=1)] == [second.conversation_id]
 
 
 async def test_deleting_a_conversation_keeps_the_entries_a_fork_still_uses() -> None:
@@ -227,19 +228,22 @@ async def test_a_saved_request_a_run_sends_is_stored_again_with_its_run_metadata
     assert await store.load(conversation.conversation_id) == continued
 
 
-async def test_a_results_conversation_can_be_saved_and_continued_from_directly() -> None:
+async def test_a_saved_conversation_carries_its_revision_into_the_next_run() -> None:
     store = InMemoryConversationStore()
     agent = Agent(TestModel())
-    result = await agent.run('Hello')
-    await store.save(result.conversation)
+    conversation = (await agent.run('Hello')).conversation
+    await store.save(conversation)
 
-    result = await agent.run('Again', conversation=result.conversation)
-    await store.save(result.conversation)
+    result = await agent.run('Again', conversation=conversation)
+    conversation = result.conversation
+    await store.save(conversation)
 
-    assert result.conversation is result.conversation
-    record = await store.read_record(result.conversation.conversation_id)
+    record = await store.read_record(conversation.conversation_id)
     assert record is not None
-    assert result.conversation.revision == record.revision
+    assert conversation.revision == record.revision
+    # Each access builds a new conversation, so changing one doesn't change the next.
+    assert result.conversation is not conversation
+    assert result.conversation.revision != conversation.revision
 
 
 async def test_a_whole_fork_keeps_what_a_paused_conversation_is_waiting_on() -> None:

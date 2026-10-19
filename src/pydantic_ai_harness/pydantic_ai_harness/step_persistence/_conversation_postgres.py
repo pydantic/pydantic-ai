@@ -36,7 +36,7 @@ class PostgresConversationStore(ConversationStore):
     `PostgresStepStore`. `table` is a prefix for the store's tables, created on first use, and
     defaults to the step store's, so the two can share one prefix:
 
-    - `{table}_conv_records(conversation_id PK, revision, head_id, scope, record)`
+    - `{table}_conv_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
     - `{table}_conv_entries(id PK, parent_id, kind, sha256)`
     - `{table}_conv_messages(sha256 PK, message)`: each message's JSON once, however many entries hold it.
 
@@ -104,12 +104,18 @@ class PostgresConversationStore(ConversationStore):
                     'revision TEXT NOT NULL, '
                     f'head_id TEXT REFERENCES {self._entries} (id), '
                     'scope TEXT, '
+                    'updated_at TIMESTAMPTZ NOT NULL, '
                     'record TEXT NOT NULL)'
                 )
                 await connection.execute(
                     f'CREATE INDEX IF NOT EXISTS {self._records}_head ON {self._records} (head_id)'
                 )
-                await connection.execute(f'CREATE INDEX IF NOT EXISTS {self._records}_scope ON {self._records} (scope)')
+                await connection.execute(
+                    f'CREATE INDEX IF NOT EXISTS {self._records}_scope ON {self._records} (scope, updated_at DESC)'
+                )
+                await connection.execute(
+                    f'CREATE INDEX IF NOT EXISTS {self._records}_updated_at ON {self._records} (updated_at DESC)'
+                )
             self._schema_ready = True
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
@@ -120,13 +126,19 @@ class PostgresConversationStore(ConversationStore):
             )
         return RECORD_ADAPTER.validate_json(str(text)) if text is not None else None
 
-    async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
+    async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
-            if scope is None:
-                rows = await connection.fetch(f'SELECT record FROM {self._records}')
-            else:
-                rows = await connection.fetch(f'SELECT record FROM {self._records} WHERE scope = $1', scope)
+            query = f'SELECT record FROM {self._records}'
+            args: list[object] = []
+            if scope is not None:
+                args.append(scope)
+                query += f' WHERE scope = ${len(args)}'
+            query += ' ORDER BY updated_at DESC'
+            if limit is not None:
+                args.append(limit)
+                query += f' LIMIT ${len(args)}'
+            rows = await connection.fetch(query, *args)
         return [RECORD_ADAPTER.validate_json(str(row[0])) for row in rows]
 
     async def write_record(
@@ -158,22 +170,24 @@ class PostgresConversationStore(ConversationStore):
             text = RECORD_ADAPTER.dump_json(record).decode()
             if expected_revision is None:
                 written = await connection.fetchval(
-                    f'INSERT INTO {self._records} (conversation_id, revision, head_id, scope, record) '
-                    'VALUES ($1, $2, $3, $4, $5) ON CONFLICT (conversation_id) DO NOTHING RETURNING conversation_id',
+                    f'INSERT INTO {self._records} (conversation_id, revision, head_id, scope, updated_at, record) '
+                    'VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (conversation_id) DO NOTHING RETURNING conversation_id',
                     record.conversation_id,
                     record.revision,
                     record.head_id,
                     record.scope,
+                    record.updated_at,
                     text,
                 )
             else:
                 written = await connection.fetchval(
-                    f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, record = $5 '
-                    'WHERE conversation_id = $1 AND revision = $6 RETURNING conversation_id',
+                    f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, updated_at = $5, record = $6 '
+                    'WHERE conversation_id = $1 AND revision = $7 RETURNING conversation_id',
                     record.conversation_id,
                     record.revision,
                     record.head_id,
                     record.scope,
+                    record.updated_at,
                     text,
                     expected_revision,
                 )

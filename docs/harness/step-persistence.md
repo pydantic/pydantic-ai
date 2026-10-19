@@ -577,7 +577,8 @@ asyncio.run(main())
 A save is checked against the conversation's [`revision`][pydantic_ai.conversation.Conversation.revision], which
 `load` sets and a run carries through to its result. When someone else saved the conversation in between, or a
 conversation with that ID already exists, `save` raises
-[`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict] instead of overwriting it.
+[`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict] instead of overwriting it. `save` advances
+the revision of the conversation you pass it, so keep that conversation in a variable to save again or continue from.
 
 Each message's JSON is stored once, keyed by its SHA-256, however many conversations hold it. Binary and text parts
 at or above `media_threshold_bytes` (64 KiB by default) are externalized like step snapshots' (see

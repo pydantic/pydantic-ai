@@ -18,6 +18,7 @@ import sqlite3
 import zlib
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import datetime
 
 import anyio
 import anyio.lowlevel
@@ -37,7 +38,12 @@ def _to_sqlite(query: str) -> str:
 
 def _to_sqlite_value(value: object) -> object:
     # The only lists the stores bind are arrays, which `_to_sqlite` reads with `json_each`.
-    return json.dumps(value) if isinstance(value, list) else value
+    if isinstance(value, list):
+        return json.dumps(value)
+    # Timestamps are bound as seconds since the epoch, which SQLite orders like Postgres orders `TIMESTAMPTZ`.
+    if isinstance(value, datetime):
+        return value.timestamp()
+    return value
 
 
 def _hashtext(text: str) -> int:

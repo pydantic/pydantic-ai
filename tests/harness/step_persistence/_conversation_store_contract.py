@@ -9,11 +9,18 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent, BinaryImage, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationStore
+from pydantic_ai.conversation_store import (
+    ConversationConflict,
+    ConversationEntry,
+    ConversationRecord,
+    ConversationStore,
+)
 from pydantic_ai.models.test import TestModel
 
 
@@ -136,16 +143,28 @@ class ConversationStoreContract:
         assert record.head_id is None
         assert await backend.store.load(conversation.conversation_id) == conversation
 
-    async def test_conversations_list_by_scope(self, backend: Backend) -> None:
-        first = Conversation()
-        other = Conversation()
-        await backend.store.save(first, scope='user-1')
-        await backend.store.save(other, scope='user-2')
+    async def test_conversations_list_newest_first_by_scope_and_limit(self, backend: Backend) -> None:
+        store = backend.store
+        saved_at = datetime(2026, 1, 1, tzinfo=UTC)
+        for minute, (conversation_id, scope) in enumerate(
+            [('a', 'user-1'), ('b', 'user-2'), ('c', 'user-1'), ('d', 'user-1')]
+        ):
+            record = ConversationRecord(
+                conversation_id=conversation_id,
+                head_id=None,
+                scope=scope,
+                updated_at=saved_at + timedelta(minutes=minute),
+            )
+            await store.write_record(record, expected_revision=None)
 
-        listed = await backend.store.list_conversations(scope='user-1')
+        async def listed(**kwargs: Any) -> list[str]:
+            return [record.conversation_id for record in await store.list_conversations(**kwargs)]
 
-        assert [record.conversation_id for record in listed] == [first.conversation_id]
-        assert len(await backend.store.list_conversations()) == 2
+        assert await listed() == ['d', 'c', 'b', 'a']
+        assert await listed(scope='user-1') == ['d', 'c', 'a']
+        assert await listed(scope='user-1', limit=2) == ['d', 'c']
+        assert await listed(limit=1) == ['d']
+        assert await listed(limit=0) == []
 
     async def test_a_fork_shares_entries_and_deleting_keeps_what_it_uses(self, backend: Backend) -> None:
         store = backend.store

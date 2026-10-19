@@ -103,7 +103,12 @@ class ConversationRecord:
 
 
 class ConversationConflict(UserError):
-    """Raised when a conversation changed in the store since it was loaded, so saving it would lose those changes."""
+    """Raised when a conversation changed in the store since it was loaded, so saving it would lose those changes.
+
+    It's an expected outcome when more than one writer saves the same conversation: catch it, load the
+    conversation again, and retry. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a
+    broad `except UserError` catches it too.
+    """
 
     conversation_id: str
     """The conversation that changed."""
@@ -246,10 +251,16 @@ class ConversationStore(ABC):
             revision=fork.revision,
         )
 
-    async def list_conversations(self, *, scope: str | None = None) -> list[ConversationRecord]:
-        """The stored conversations, most recently saved first, limited to `scope` if given."""
-        records = await self.read_records(scope=scope)
-        return sorted(records, key=lambda record: record.updated_at, reverse=True)
+    async def list_conversations(
+        self, *, scope: str | None = None, limit: int | None = None
+    ) -> list[ConversationRecord]:
+        """The stored conversations, most recently saved first.
+
+        Args:
+            scope: Only list the conversations saved with this `scope`.
+            limit: List at most this many, the most recently saved.
+        """
+        return list(await self.read_records(scope=scope, limit=limit))
 
     async def delete(self, conversation_id: str) -> None:
         """Delete a conversation, so it no longer loads or lists.
@@ -292,8 +303,8 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
-        """Every stored record, or those with the given `scope`."""
+    async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
+        """The stored records, or those with the given `scope`, newest `updated_at` first, and at most `limit` of them."""
         raise NotImplementedError
 
     @abstractmethod
@@ -350,8 +361,10 @@ class InMemoryConversationStore(ConversationStore):
         record = self._records.get(conversation_id)
         return deepcopy(record)
 
-    async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
-        return [deepcopy(record) for record in self._records.values() if scope is None or record.scope == scope]
+    async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
+        records = [record for record in self._records.values() if scope is None or record.scope == scope]
+        records.sort(key=lambda record: record.updated_at, reverse=True)
+        return [deepcopy(record) for record in records[:limit]]
 
     async def write_record(
         self,

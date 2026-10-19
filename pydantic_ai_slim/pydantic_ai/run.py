@@ -1050,16 +1050,13 @@ class AgentRunResult(Generic[OutputDataT]):
         can be stored, carried into another run, and mutated without touching this result's own
         accounting.
 
-        It is built on first access and is the same object on every access after, so a
-        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advancing its
-        [`revision`][pydantic_ai.conversation.Conversation.revision] on `save` carries into a run
-        started from `result.conversation` afterwards.
+        Each access builds a new conversation. A
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advances the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
+        so keep that one in a variable to carry into the next run or save again.
         """
-        # Kept in `__dict__` beside the dataclass fields, like `_workspace`, so it isn't serialized.
-        if (conversation := self.__dict__.get('_conversation')) is not None:
-            return conversation
         output = self.output
-        conversation = Conversation(
+        return Conversation(
             messages=list(self.all_messages()),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
@@ -1072,8 +1069,6 @@ class AgentRunResult(Generic[OutputDataT]):
             ),
             revision=self._state.conversation_revision,
         )
-        self.__dict__['_conversation'] = conversation
-        return conversation
 
     @property
     def timestamp(self) -> datetime:

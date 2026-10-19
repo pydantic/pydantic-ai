@@ -47,10 +47,12 @@ CREATE TABLE IF NOT EXISTS conversation_records (
     revision TEXT NOT NULL,
     head_id TEXT REFERENCES conversation_entries (id),
     scope TEXT,
+    updated_at REAL NOT NULL,
     record TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS conversation_records_head ON conversation_records (head_id);
-CREATE INDEX IF NOT EXISTS conversation_records_scope ON conversation_records (scope);
+CREATE INDEX IF NOT EXISTS conversation_records_scope ON conversation_records (scope, updated_at);
+CREATE INDEX IF NOT EXISTS conversation_records_updated_at ON conversation_records (updated_at);
 """
 
 # The entries from `head_id` back to the first, deepest first, with each one's message.
@@ -85,7 +87,7 @@ class SqliteConversationStore(ConversationStore):
 
     Tables:
 
-    - `conversation_records(conversation_id PK, revision, head_id, scope, record)`
+    - `conversation_records(conversation_id PK, revision, head_id, scope, updated_at, record)`
     - `conversation_entries(id PK, parent_id, kind, sha256)`
     - `conversation_messages(sha256 PK, message)`
     """
@@ -158,14 +160,22 @@ class SqliteConversationStore(ConversationStore):
             ).fetchone()
         return RECORD_ADAPTER.validate_json(row[0]) if row is not None else None
 
-    async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
-        return await anyio.to_thread.run_sync(self._sync_read_records, scope)
+    async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
+        return await anyio.to_thread.run_sync(self._sync_read_records, scope, limit)
 
-    def _sync_read_records(self, scope: str | None) -> list[ConversationRecord]:
+    def _sync_read_records(self, scope: str | None, limit: int | None) -> list[ConversationRecord]:
+        # A negative `LIMIT` is no limit in SQLite.
+        limit = -1 if limit is None else limit
         with self._connected() as conn:
-            rows = conn.execute(
-                'SELECT record FROM conversation_records WHERE ? IS NULL OR scope = ?', (scope, scope)
-            ).fetchall()
+            if scope is None:
+                rows = conn.execute(
+                    'SELECT record FROM conversation_records ORDER BY updated_at DESC LIMIT ?', (limit,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    'SELECT record FROM conversation_records WHERE scope = ? ORDER BY updated_at DESC LIMIT ?',
+                    (scope, limit),
+                ).fetchall()
         return [RECORD_ADAPTER.validate_json(row[0]) for row in rows]
 
     async def write_record(
@@ -205,15 +215,16 @@ class SqliteConversationStore(ConversationStore):
                     ],
                 )
                 conn.execute(
-                    'INSERT INTO conversation_records (conversation_id, revision, head_id, scope, record) '
-                    'VALUES (?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET '
+                    'INSERT INTO conversation_records (conversation_id, revision, head_id, scope, updated_at, record) '
+                    'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET '
                     'revision = excluded.revision, head_id = excluded.head_id, scope = excluded.scope, '
-                    'record = excluded.record',
+                    'updated_at = excluded.updated_at, record = excluded.record',
                     (
                         record.conversation_id,
                         record.revision,
                         record.head_id,
                         record.scope,
+                        record.updated_at.timestamp(),
                         RECORD_ADAPTER.dump_json(record).decode(),
                     ),
                 )

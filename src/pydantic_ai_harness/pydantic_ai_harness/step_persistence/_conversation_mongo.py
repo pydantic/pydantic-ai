@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import NotRequired
 
 from pydantic import TypeAdapter
-from pymongo import AsyncMongoClient
+from pymongo import ASCENDING, DESCENDING, AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 from typing_extensions import TypedDict
@@ -96,19 +96,21 @@ class MongoConversationStore(ConversationStore):
     async def _ensure_indexes(self) -> None:
         if self._indexes_ready:
             return
-        await self._db['conversation_records'].create_index('scope')
+        await self._db['conversation_records'].create_index([('scope', ASCENDING), ('updated_at', DESCENDING)])
+        await self._db['conversation_records'].create_index([('updated_at', DESCENDING)])
         self._indexes_ready = True
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         doc = await self._db['conversation_records'].find_one({'_id': conversation_id})
         return RECORD_ADAPTER.validate_json(str(doc['record'])) if doc is not None else None
 
-    async def read_records(self, *, scope: str | None = None) -> Sequence[ConversationRecord]:
+    async def read_records(self, *, scope: str | None = None, limit: int | None = None) -> Sequence[ConversationRecord]:
+        if limit == 0:
+            # MongoDB reads a limit of 0 as no limit.
+            return []
         query: _MongoDocument = {} if scope is None else {'scope': scope}
-        return [
-            RECORD_ADAPTER.validate_json(str(doc['record']))
-            async for doc in self._db['conversation_records'].find(query)
-        ]
+        cursor = self._db['conversation_records'].find(query).sort('updated_at', DESCENDING).limit(limit or 0)
+        return [RECORD_ADAPTER.validate_json(str(doc['record'])) async for doc in cursor]
 
     async def write_record(
         self,
@@ -134,6 +136,7 @@ class MongoConversationStore(ConversationStore):
             'revision': record.revision,
             'head_id': record.head_id,
             'scope': record.scope,
+            'updated_at': record.updated_at,
             'record': RECORD_ADAPTER.dump_json(record).decode(),
         }
         records = self._db['conversation_records']

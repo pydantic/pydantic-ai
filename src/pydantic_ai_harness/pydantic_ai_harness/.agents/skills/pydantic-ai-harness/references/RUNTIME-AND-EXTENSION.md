@@ -94,6 +94,8 @@ Conversation stores:
   `conversation=conversation`, then `await store.save(result.conversation)`.
 - `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
   (it checks `Conversation.revision`, which `load` sets and a run carries through), so reload and retry.
+  `save` advances that revision on the conversation it's given, so keep that object to save again.
+- `list_conversations(scope=..., limit=...)` lists the most recently saved first.
 - `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
   entries nothing else uses on SQLite and Postgres; MongoDB keeps them.
 - The browser-oriented store CLAI uses is `step_persistence.conversations.SqliteSessionStore`, formerly

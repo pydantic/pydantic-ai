@@ -799,6 +799,8 @@ class RealtimeSession:
         self._conversation_id = conversation_id
         # The revision of the stored conversation the session continues, set by `AgentRealtime.session`.
         self._conversation_revision: str | None = None
+        # The last conversation `conversation` handed out, whose revision a store's `save` may have advanced.
+        self._last_conversation: Conversation | None = None
         self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
@@ -1446,7 +1448,7 @@ class RealtimeSession:
         `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
         """
         state.message_history = self.all_messages()
-        state.conversation_revision = self._conversation_revision
+        state.conversation_revision = self._current_conversation_revision()
         return AgentRunResult(
             self._final_result_text() or '',
             None,
@@ -1773,6 +1775,11 @@ class RealtimeSession:
         conversation its seeded history belongs to, or starting a new one — and keeps it, so every
         bundle taken from the session and every message it records shares one identity to store the
         conversation under.
+
+        Each access builds a new conversation, carrying the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the one before it, so a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save
+        `session.conversation` again as the session goes on.
         """
         if self._conversation_id is None:
             self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
@@ -1785,12 +1792,18 @@ class RealtimeSession:
             # The session span was opened before this id existed too, and has to agree for the
             # session to correlate with the text run that continues it.
             self._session_instrumentation.set_conversation_id(self._conversation_id)
-        return Conversation(
+        self._last_conversation = Conversation(
             messages=self.all_messages(),
             usage=copy(self.usage),
             conversation_id=self._conversation_id,
-            revision=self._conversation_revision,
+            revision=self._current_conversation_revision(),
         )
+        return self._last_conversation
+
+    def _current_conversation_revision(self) -> str | None:
+        if self._last_conversation is not None:
+            return self._last_conversation.revision
+        return self._conversation_revision
 
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
