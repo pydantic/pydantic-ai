@@ -116,7 +116,7 @@ class SqliteConversationStore(ConversationStore):
             media_store = (
                 SqliteMediaStore(database=self._database)
                 if self._database is not None
-                else SqliteMediaStore(connection=connection)
+                else _LockedSqliteMediaStore(connection=connection, lock=self._lock)
             )
         self._media_store: MediaStore | None = media_store
         self._media_threshold_bytes = media_threshold_bytes
@@ -316,3 +316,25 @@ def _release(conn: sqlite3.Connection, entry_id: str | None) -> None:
             'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE sha256 = ?)',
             (sha256, sha256),
         )
+
+
+class _LockedSqliteMediaStore(SqliteMediaStore):
+    """A `SqliteMediaStore` on a caller-owned connection the conversation store shares, under the store's lock.
+
+    Media is stored before a save takes the lock, so without it a save's media could run on the connection
+    in the middle of another save's transaction.
+    """
+
+    def __init__(self, *, connection: sqlite3.Connection | None, lock: threading.Lock) -> None:
+        super().__init__(connection=connection)
+        self._lock = lock
+
+    def _open(self) -> sqlite3.Connection:
+        self._lock.acquire()
+        return super()._open()
+
+    def _maybe_close(self, conn: sqlite3.Connection) -> None:
+        try:
+            super()._maybe_close(conn)
+        finally:
+            self._lock.release()

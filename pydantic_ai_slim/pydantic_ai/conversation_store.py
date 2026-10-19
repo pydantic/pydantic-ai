@@ -259,7 +259,12 @@ class ConversationStore(ABC):
         Args:
             scope: Only list the conversations saved with this `scope`.
             limit: List at most this many, the most recently saved.
+
+        Raises:
+            UserError: If `limit` is negative.
         """
+        if limit is not None and limit < 0:
+            raise UserError('`limit` must not be negative.')
         return list(await self.read_records(scope=scope, limit=limit))
 
     async def delete(self, conversation_id: str) -> None:

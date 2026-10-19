@@ -194,6 +194,8 @@ async def test_conversations_list_newest_first_by_scope() -> None:
     assert [record.conversation_id for record in listed] == [second.conversation_id, first.conversation_id]
     assert len(await store.list_conversations()) == 3
     assert [record.conversation_id for record in await store.list_conversations(limit=1)] == [second.conversation_id]
+    with pytest.raises(UserError, match='`limit` must not be negative'):
+        await store.list_conversations(limit=-1)
 
 
 async def test_deleting_a_conversation_keeps_the_entries_a_fork_still_uses() -> None:

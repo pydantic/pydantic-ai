@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path, PureWindowsPath
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from anyio.to_thread import run_sync
@@ -380,6 +380,12 @@ class SqliteSessionStore:
                             (source.id,),
                         )
                 conn.execute('DELETE FROM runs WHERE conversation_id=?', (source.id,))
+
+
+if TYPE_CHECKING:
+    # Deprecated aliases, resolved by `__getattr__` at runtime with a warning.
+    SqliteConversationStore = SqliteSessionStore
+    ConversationConflict = SessionConflict
 
 
 def __getattr__(name: str) -> object:

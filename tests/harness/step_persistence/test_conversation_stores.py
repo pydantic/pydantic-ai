@@ -17,6 +17,7 @@ import pytest
 
 from pydantic_ai import BinaryImage, Conversation, ModelRequest, UserPromptPart
 from pydantic_ai.conversation_store import ConversationConflict, ConversationRecord
+from pydantic_ai_harness.media import SqliteMediaStore
 from pydantic_ai_harness.step_persistence import PostgresConversationStore, SqliteConversationStore
 from tests.harness._postgres_sqlite import SqlitePool
 from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
@@ -93,6 +94,20 @@ async def test_sqlite_creates_its_tables_again_after_a_caller_rolls_them_back() 
 
         await store.save(conversation := Conversation())
         assert await store.load(conversation.conversation_id) == conversation
+
+
+def test_sqlite_media_on_a_caller_connection_takes_the_store_lock() -> None:
+    """Media is stored before a save takes the lock, so it takes the lock itself rather than run mid-transaction."""
+    with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
+        store = SqliteConversationStore(connection=connection)
+        media = store._media_store  # pyright: ignore[reportPrivateUsage]
+        lock = store._lock  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(media, SqliteMediaStore)
+
+        conn = media._open()  # pyright: ignore[reportPrivateUsage]
+        assert lock.locked()
+        media._maybe_close(conn)  # pyright: ignore[reportPrivateUsage]
+        assert not lock.locked()
 
 
 class TestPostgresConversationStore(ConversationStoreContract):
