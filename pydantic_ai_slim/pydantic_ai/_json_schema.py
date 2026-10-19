@@ -284,16 +284,28 @@ class JsonSchemaTransformer(ABC):
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     """Transforms the JSON Schema to inline `$defs`, and `$ref`s that point elsewhere in the schema like `#/properties/from`.
 
-    Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked when `type` is
-    `'object'`, and array keywords (`items`, `prefixItems`) only when it is `'array'`. On a schema with no `type`, or
-    with a `type` list such as `['object', 'null']`, they are left as written, so a `$ref` inside them is not inlined
-    and can point at a definition the output no longer contains. If the schema is only meant to accept objects (or
-    arrays), set `type` to `'object'` (or `'array'`) to have it inlined; for a nullable one, put it in an `anyOf`
-    with `{'type': 'null'}` instead of using a `type` list.
+    Object keywords (`properties`, `additionalProperties`, `patternProperties`, `propertyNames`) are only walked
+    when `type` is `'object'`, and array keywords (`items`, `prefixItems`, `contains`) only when it is `'array'`.
+    On a schema with no `type`, or with a `type` list such as `['object', 'null']`, they are left as written,
+    so a `$ref` inside them is not inlined and can point at a definition the output no longer contains.
+    If the schema is only meant to accept objects (or arrays), set `type` to `'object'` (or `'array'`) to have
+    it inlined; for a nullable one, put it in an `anyOf` with `{'type': 'null'}` instead of using a `type` list.
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_object(schema)
+        if (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+        return schema
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        schema = super()._handle_array(schema)
+        if (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
+        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema

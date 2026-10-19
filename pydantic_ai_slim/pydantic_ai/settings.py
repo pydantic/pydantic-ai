@@ -144,6 +144,13 @@ class ModelSettings(TypedDict, total=False):
     `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
     parentheses after the name.
 
+    A model ignores a setting it doesn't support, so the same settings work across models. For the settings
+    whose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,
+    `parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,
+    are ignored silently. A model class declares what it ignores in
+    [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].
+
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
     provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
@@ -269,6 +276,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -321,11 +329,13 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
-    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
+      warning)
     * Cohere
     * Cerebras
     * Crusoe
@@ -345,6 +355,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -518,6 +529,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -655,6 +667,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -674,6 +687,31 @@ class ModelSettings(TypedDict, total=False):
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
+
+
+ModelSettingName: TypeAlias = Literal[
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'timeout',
+    'request_timeout',
+    'max_retries',
+    'parallel_tool_calls',
+    'tool_choice',
+    'seed',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'stop_sequences',
+    'extra_headers',
+    'thinking',
+    'cache',
+    'service_tier',
+    'extra_body',
+]
+"""The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
+[`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

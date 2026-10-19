@@ -65,8 +65,8 @@ class MistralProvider(Provider[Mistral]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
         profile = mistral_model_profile(model_name)
-        if profile is None and model_name in _ADJUSTABLE_REASONING_MODELS:
-            profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+        if model_name in _ADJUSTABLE_REASONING_MODELS:
+            profile = merge_profile(profile, ModelProfile(supports_thinking=True, thinking_always_enabled=False))
         return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload

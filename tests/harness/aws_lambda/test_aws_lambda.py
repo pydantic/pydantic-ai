@@ -989,7 +989,10 @@ class TestBridgeFailureModes:
         with pytest.raises(Suspend):
             run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
 
-        assert cleanup_reached.is_set()
+        # The handler waits only `cancel_timeout` plus a short join before giving up, so on a loaded
+        # runner the abandoned run's `finally` may not have started yet. It must still run on the
+        # retired loop before that loop stops.
+        assert cleanup_reached.wait(timeout=5)
         # The handler returned while the abandoned run still holds `abandoned`, so the next
         # invocation must not be handed that loop.
         replacement = loops.get()
