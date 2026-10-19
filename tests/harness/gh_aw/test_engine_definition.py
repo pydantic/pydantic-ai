@@ -578,6 +578,21 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
 
 
+def test_interpreter_fallback_resolves_python3_on_path(tmp_path: Path) -> None:
+    interpreter_dir = tmp_path / 'python' / 'bin'
+    invocation = launch(
+        tmp_path,
+        {
+            **proxy_env('openai', 'openai/gpt-5'),
+            'pythonLocation': '',
+            'PATH': f'{interpreter_dir}:{os.environ["PATH"]}',
+        },
+    )
+
+    assert invocation.target == 'gh_aw_agent:agent'
+    assert invocation.parent_pid == os.getpid()
+
+
 def test_recorder_events_use_the_dedicated_capture_pipe(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,

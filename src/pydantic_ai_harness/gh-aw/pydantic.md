@@ -61,9 +61,9 @@ engine:
       provider-env-mode: universal-llm-consumer
       protected-session-capture: true
     harness-script: |
-      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync, writeSync } = require("fs");
+      const { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, writeFileSync, writeSync } = require("fs");
       const { homedir, tmpdir } = require("os");
-      const { join } = require("path");
+      const { join, resolve } = require("path");
       const { fetchAWFReflect, resolveProviderEndpointFromReflect, deriveBaseUrlFromModelsURL } = require("./awf_reflect.cjs");
 
       // gh-aw passes `execution.command-name` (or a workflow's `engine.command`)
@@ -569,8 +569,22 @@ engine:
         // putting its `bin` on PATH also gives the agent's own shell tool a
         // `python3` that can see the installed packages.
         const pythonBin = process.env.pythonLocation ? join(process.env.pythonLocation, "bin") : "";
-        const python = pythonBin ? join(pythonBin, "python3") : "python3";
         env.PATH = [join(homedir(), ".local", "bin"), pythonBin, process.env.PATH || ""].filter(Boolean).join(":");
+        let python = pythonBin ? join(pythonBin, "python3") : "";
+        if (!python) {
+          // execve requires an absolute path; spawn previously searched PATH.
+          for (const directory of env.PATH.split(":")) {
+            const candidate = resolve(directory || ".", "python3");
+            try {
+              accessSync(candidate, constants.X_OK);
+              python = candidate;
+              break;
+            } catch {
+              // Keep searching PATH.
+            }
+          }
+          if (!python) throw new Error("python3 is missing from PATH");
+        }
         // The module is reached through PYTHONPATH rather than by importing it as a
         // package, and prepending keeps a caller-supplied PYTHONPATH usable. That
         // path is trusted in-process configuration: Python can import from it at
