@@ -3299,6 +3299,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
             _history=history,
+            _is_websocket=self._websocket is not None,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )
@@ -5190,10 +5191,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _last_sequence_number: int | None = field(default=None, init=False)
     _history: _Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
+    _is_websocket: bool = False
 
     def get(self) -> ModelResponse:
         response = super().get()
-        if not isinstance(self._response.source, AsyncStream):
+        if self._is_websocket:
             response.provider_details = {**(response.provider_details or {}), 'transport': 'websocket'}
         return _with_history_digest(response, self._history)
 
