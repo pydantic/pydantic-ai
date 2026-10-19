@@ -1048,3 +1048,23 @@ def test_giving_up_on_a_request_already_settled_refuses_nothing() -> None:
     lifecycle.requests_dropped([0])
     lifecycle.requests_refused([0])
     assert lifecycle.take_pending() == snapshot([InputLost(input_ids=(0,))])
+
+
+async def test_a_request_a_provider_response_overtook_and_then_refused_for_good_is_not_asked_again() -> None:
+    """Refused for any other reason, it is settled: a reconnect doesn't ask for it again."""
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        refusal('pydantic_ai.response.0'),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert ResponseRequestRefused(input_ids=(0,)) in events
+    assert requests_sent(replacement) == []

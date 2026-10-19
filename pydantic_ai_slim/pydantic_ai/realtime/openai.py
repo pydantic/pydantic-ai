@@ -1158,6 +1158,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         rejected = rejected_inputs(error)
         if error.code == ACTIVE_RESPONSE_ERROR_CODE and await self._ask_again(error.event_id):
             return None
+        if (in_flight := self._request_in_flight) is not None and error.event_id == client_event_id(
+            'response', in_flight[0]
+        ):
+            # Refused for good: nothing asks for it again, not a reconnect either.
+            self._request_in_flight = None
         if (
             self._response_active
             and not self._response_started
