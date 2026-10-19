@@ -1530,3 +1530,10 @@ def test_a_round_still_running_or_unanswered_waits_and_one_without_a_result_is_n
     assert named() == []  # (c2's result isn't answered yet)
     feed(session_core, started('r4', 1), ended('r4'))
     assert named() == [['c2']]
+
+
+def test_a_native_part_with_no_response_to_join_streams_neither_its_start_nor_its_end() -> None:
+    """A native part the core drops (no single response under way) doesn't leave an end for a start never streamed."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(core(), PartStartEvent(index=7, part=call), PartEndEvent(index=7, part=call))
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == []
