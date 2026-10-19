@@ -1,6 +1,7 @@
 name: CodSpeed
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -20,7 +21,7 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      content_only: ${{ steps.classify.outputs.content_only }}
+      run_benchmarks: ${{ steps.classify.outputs.run_benchmarks }}
     steps:
       - name: Classify pull request changes
         id: classify
@@ -30,7 +31,7 @@ jobs:
         run: |
           # Keep classification inline so this token-bearing job never executes PR-authored files.
           run_benchmarks() {
-            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+            echo 'run_benchmarks=true' >> "$GITHUB_OUTPUT"
           }
 
           if [ "${{ github.event_name }}" != "pull_request" ]; then
@@ -62,45 +63,40 @@ jobs:
             exit 0
           fi
 
-          needs_docs_checks() {
-            # `test_examples.py` also scans Markdown under the published package directories.
+          affects_benchmarks() {
             case "$1" in
-              README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
-              docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
-              examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
-              *) return 1 ;;
+              # Installation and test configuration can affect every benchmark, even in skipped packages.
+              pyproject.toml|*/pyproject.toml|uv.lock|*/uv.lock|uv.toml|*/uv.toml|.python-version|*/.python-version) return 0 ;;
+              requirements*.txt|*/requirements*.txt|requirements*.in|*/requirements*.in) return 0 ;;
+              setup.py|*/setup.py|setup.cfg|*/setup.cfg|pytest.ini|*/pytest.ini|tox.ini|*/tox.ini) return 0 ;;
+              package.json|*/package.json|package-lock.json|*/package-lock.json|pnpm-lock.yaml|*/pnpm-lock.yaml|yarn.lock|*/yarn.lock|bun.lock|*/bun.lock) return 0 ;;
+              # These test inputs also include the root fixtures and their imports.
+              tests/harness/*|tests/clai2/*|tests/clai/*) return 1 ;;
+              tests/*) return 0 ;;
+              docs/*|agent_docs/*|examples/*.md|examples/*.mdc) return 1 ;;
+              .agents/*.md|.agents/*.tsv|.claude/*.md) return 1 ;;
+              src/pydantic_ai_harness/*|src/pydantic_clai2/*|clai/*) return 1 ;;
+              pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) return 1 ;;
+              *.md) [[ "$1" == */* ]] ;;
+              *) return 0 ;;
             esac
           }
 
-          is_non_test_content() {
-            case "$1" in
-              tests/*|.github/*|.macroscope/*) return 1 ;;
-            esac
-            if needs_docs_checks "$1"; then
-              return 0
-            fi
-            case "$1" in
-              .agents/*.md|.agents/*.tsv|.claude/*.md|agent_docs/*.md|*/AGENTS.md|*/CLAUDE.md) return 0 ;;
-              *.md) [[ "$1" != */* ]] ;;
-              *) return 1 ;;
-            esac
-          }
-
-          content_only=true
+          run_benchmarks=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            if ! is_non_test_content "$filename" || \
-              { [ -n "$previous_filename" ] && ! is_non_test_content "$previous_filename"; }; then
-              content_only=false
+            if affects_benchmarks "$filename" || \
+              { [ -n "$previous_filename" ] && affects_benchmarks "$previous_filename"; }; then
+              run_benchmarks=true
               break
             fi
           done
-          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+          echo "run_benchmarks=$run_benchmarks" >> "$GITHUB_OUTPUT"
 
   benchmarks:
     name: Run benchmarks
     needs: classify
-    if: needs.classify.outputs.content_only != 'true'
+    if: always() && !cancelled() && needs.classify.outputs.run_benchmarks != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

@@ -17,7 +17,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 !!! tip
-    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI.
+    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI. To let the users of your open-source or local app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md).
 
 ## Environment variable
 

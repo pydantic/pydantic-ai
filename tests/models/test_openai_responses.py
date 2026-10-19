@@ -5543,6 +5543,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'output_tokens': 269,
                         'thinking_tokens': 23,
                     },
+                    output_reasoning_tokens=23,
                     cost=Decimal('0.004164'),
                 ),
                 model_name='claude-sonnet-4-6',
