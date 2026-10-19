@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .repo_context import RepoContext
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
+    from .restate import RestateDurability
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
@@ -130,6 +131,7 @@ __all__ = [
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
+    'RestateDurability',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
     'Shell',
@@ -196,6 +198,7 @@ _CAPABILITY_EXPORTS = {
     'ReportContextUsage': 'compaction',
     'RepoContext': 'repo_context',
     'Researcher': 'researcher',
+    'RestateDurability': 'restate',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
