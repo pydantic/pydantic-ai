@@ -590,6 +590,23 @@ async def test_a_draft_set_aside_to_edit_a_queued_prompt_keeps_its_images() -> N
         assert live.images.resolve(live.buffer.text) == ('look', [BinaryContent(data=b'image', media_type='image/png')])
 
 
+async def test_a_draft_down_restores_after_the_queue_runs_keeps_its_images() -> None:
+    image = BinaryContent(data=b'image', media_type='image/png')
+    async with editor() as (live, _, _):
+        queue(live, 'queued')
+        marker = live.images.attach([image])
+        live.buffer.replace(f'look {marker}')
+        live.feed('up')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # As the session's read loop does before each read.
+        live.images.retain(live.drafts)
+        # The walk still holds the draft from before Up, so Down brings it back with its image.
+        live.feed('down')
+        assert live.images.resolve(live.buffer.text) == ('look', [image])
+
+
 @pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
 async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
     async with editor() as (live, _, _):
@@ -606,14 +623,16 @@ async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
             await live.read()
 
 
-async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_the_input() -> None:
+@pytest.mark.parametrize('queued', [('a', 'b'), ('b',)])
+async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_and_the_draft(queued: tuple[str, ...]) -> None:
     async with editor() as (live, _, _):
         async with running(live):
-            queue(live, 'a', 'b')
+            queue(live, *queued)
+            live.buffer.replace('draft')
             live.feed('up')
             live.buffer.insert('2')
             live.feed('ctrl-c')
-        assert (live.buffer.text, live.queued_messages) == ('a\nb2', ())
+        assert (live.buffer.text, live.queued_messages) == ('\n'.join([*queued[:-1], 'b2', 'draft']), ())
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:

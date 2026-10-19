@@ -1117,7 +1117,8 @@ Press Esc or Ctrl-C to cancel the active agent turn without discarding your draf
 As in Claude Code and Codex, queued messages and commands do not run after the
 interrupt: they move into the input, one per line and ahead of your draft, so you
 can edit them and press Enter to send them. While you edit a queued message, the
-first Esc stops editing instead of interrupting. Turns cancelled from elsewhere, such as
+first Esc stops editing instead of interrupting; Ctrl-C interrupts, keeping your edit in the
+input with the draft you had before pressing Up after it. Turns cancelled from elsewhere, such as
 the web UI or a plugin's `host.interrupt()`, leave the queue to run as before.
 Tool cleanup finishes before the next prompt starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their

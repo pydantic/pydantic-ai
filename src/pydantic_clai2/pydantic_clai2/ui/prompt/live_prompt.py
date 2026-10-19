@@ -151,10 +151,12 @@ class LivePrompt:
     def drafts(self) -> tuple[str, ...]:
         """Every text the editor may still send, whose image attachments must stay.
 
-        That is the draft, the one Esc restores while a queued prompt is edited, and the queued prompts.
+        That is the draft, the one Esc restores while a queued prompt is edited, the one Down restores during a
+        recall walk, and the queued prompts.
         """
         shelved = (self._shelved_draft,) if self._editing is not None else ()
-        return (self.buffer.text, *shelved, *self.queued_messages)
+        walked = (self.buffer.saved_draft,) if self.buffer.history_index is not None else ()
+        return (self.buffer.text, *shelved, *walked, *self.queued_messages)
 
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
@@ -348,17 +350,19 @@ class LivePrompt:
     def _unqueue(self) -> None:
         """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
 
-        Control signals stay queued. A prompt being edited is already in the draft, which follows the others.
+        Control signals stay queued. A prompt being edited is already in the draft, which follows the others,
+        and the draft set aside to edit it comes last.
         """
+        shelved = self._shelved_draft if self._editing is not None else ''
         self._editing = None
         queued = self._queued()
-        if not queued:
+        if not queued and not shelved:
             return
         for entry in queued:
             self._discard(entry)
         self.buffer.search = None
         self.buffer.history_index = None
-        self.buffer.replace('\n'.join([*(entry.text for entry in queued), *filter(None, [self.buffer.text])]))
+        self.buffer.replace('\n'.join([*(entry.text for entry in queued), *filter(None, [self.buffer.text, shelved])]))
         self.notice = 'Queued messages moved to the input. Press Enter to send them.'
 
     def restore_draft(self, text: str) -> None:
