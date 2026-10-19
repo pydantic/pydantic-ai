@@ -169,7 +169,7 @@ class EffectRecorder:
         if usage is None or before is None:
             return None
         delta = usage - before
-        return delta if delta.has_values() else None
+        return delta if delta.has_values() or delta.unmeasured_requests else None
 
 
 _EFFECT_RECORDER: ContextVar[EffectRecorder | None] = ContextVar(
