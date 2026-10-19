@@ -390,6 +390,19 @@ jobs:
       - uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.CLAUDE_CODE_BASE_URL }}
+          # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
+          # https://code.claude.com/docs/en/monitoring-usage#traces-beta
+          # https://pydantic.dev/docs/logfire/guides/alternative-clients/
+          CLAUDE_CODE_ENABLE_TELEMETRY: '1'
+          CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1'
+          OTEL_TRACES_EXPORTER: otlp
+          OTEL_METRICS_EXPORTER: none
+          OTEL_LOGS_EXPORTER: none
+          OTEL_SERVICE_NAME: douwebot
+          OTEL_RESOURCE_ATTRIBUTES: service.name=douwebot
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
+          OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
         with:
           anthropic_api_key: ${{ secrets.CLAUDE_CODE_API_KEY || secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
