@@ -43,7 +43,7 @@ from pydantic_ai_harness.daytona_sandbox import (
     DaytonaSandboxBackend,
 )
 
-from .fake_daytona import FakeDaytona
+from .fake_daytona import CreateParams, FakeClient, FakeDaytona, FakeSandbox
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
@@ -619,8 +619,10 @@ class TestCommands:
         assert sandbox.process_delete_calls == 1
         assert sandbox.process_command == ''
 
+    # A second cancellation arrives while the setup task is still deleting the session.
+    @pytest.mark.parametrize('cancels', [1, 2])
     async def test_native_cancellation_of_committed_session_deletes_it(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, cancels: int
     ) -> None:
         monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._REQUEST_TIMEOUT', 0.02)
         backend = await started()
@@ -630,7 +632,9 @@ class TestCommands:
         with anyio.fail_after(2):
             while not sandbox.process_sessions:
                 await asyncio.sleep(0)
-        task.cancel()
+        for _ in range(cancels):
+            task.cancel()
+            await asyncio.sleep(0)
         with pytest.raises(asyncio.CancelledError):
             await task
         assert sandbox.process_sessions == set()
@@ -1216,6 +1220,36 @@ class TestLazyOperations:
             await task
         assert backend.ref == WorkspaceRef(provider='daytona', id=fake_daytona.sandboxes[0].id)
         assert len(fake_daytona.sandboxes) == 1
+
+    async def test_a_creation_failure_after_cancellation_is_not_reported_to_the_loop(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Creation keeps going after the caller is cancelled, then Daytona refuses it.
+        gate = fake_daytona.create_gate = asyncio.Event()
+        create = FakeClient.create
+
+        async def create_then_refuse(self: FakeClient, params: CreateParams, *, timeout: float = 60) -> FakeSandbox:
+            await create(self, params, timeout=timeout)
+            raise DaytonaValidationError('unknown snapshot', status_code=400)
+
+        monkeypatch.setattr(FakeClient, 'create', create_then_refuse)
+        backend = DaytonaSandboxBackend()
+        # What reaches the loop's exception handler, such as a failure reported as never retrieved.
+        loop = asyncio.get_running_loop()
+        errors: list[dict[str, Any]] = []
+        previous = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _, context: errors.append(context))
+        try:
+            task = asyncio.create_task(backend.get_sandbox())
+            await fake_daytona.create_started.wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            gate.set()
+            with pytest.raises(WorkspaceUnavailableError, match='unknown snapshot'):
+                await task
+        finally:
+            loop.set_exception_handler(previous)
+        assert errors == []
 
     async def test_cancellation_during_creation_keeps_the_created_sandbox(self, fake_daytona: FakeDaytona) -> None:
         gate = fake_daytona.create_gate = asyncio.Event()
