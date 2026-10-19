@@ -49,6 +49,8 @@ Checked at rest (`settle()`):
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
   one truncated, as though the user had heard all of it;
+- `prune.unanswered` / `prune.dropped_from_history`: the session deleted a tool call's items from the server
+  conversation before the model answered its result, or history lost what it deleted (history keeps everything);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -534,6 +536,7 @@ class Checker:
         self._check_completeness(messages)
         self._check_spoken_turns(messages)
         self._check_restored(messages)
+        self._check_pruned(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -729,6 +732,26 @@ class Checker:
             [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
             if recorded < len(committed)
             else [],
+        )
+
+    def _check_pruned(self, messages: list[ModelMessage]) -> None:
+        """Tool rounds deleted from the server conversation were answered, and history still holds them."""
+        truth = self.sim.truth
+        self.report(
+            'prune.unanswered',
+            [
+                (f'{call} was deleted before the model answered its result', {'call': call})
+                for call in truth.pruned_unanswered
+            ],
+        )
+        recorded = conversation_fingerprints(messages)
+        self.report(
+            'prune.dropped_from_history',
+            [
+                (f'{fingerprint} was deleted from the server conversation and from history', {'item': fingerprint})
+                for fingerprint in truth.pruned
+                if fingerprint not in recorded
+            ],
         )
 
     def _check_restored(self, messages: list[ModelMessage]) -> None:
