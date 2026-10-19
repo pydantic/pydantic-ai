@@ -3563,13 +3563,17 @@ def _map_usage(
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
-    return usage.RequestUsage.extract(
+    request_usage = usage.RequestUsage.extract(
         dict(model=model, usage=usage_for_extraction),
         provider=provider,
         provider_url=provider_url,
         provider_fallback='anthropic',
         details=details,
     )
+    # genai-prices doesn't map Anthropic's thinking token count, which is already priced inside `output_tokens`.
+    if thinking_tokens := details.get('thinking_tokens'):
+        request_usage.output_reasoning_tokens = thinking_tokens
+    return request_usage
 
 
 def _compaction_provider_details(encrypted_content: str | None) -> dict[str, Any] | None:
