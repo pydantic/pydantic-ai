@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import uuid4
 from weakref import ref
 
@@ -199,11 +200,11 @@ class SessionTracing(AbstractCapability[None]):
                 raise
 
 
-async def git_email() -> str | None:
-    """Read the configured Git author email, without making telemetry depend on Git."""
+async def git_email(*, cwd: Path) -> str | None:
+    """Read the Git author email configured for `cwd`, without making telemetry depend on Git."""
     with move_on_after(2):
         try:
-            result = await run_process(['git', 'config', '--get', 'user.email'], check=False)
+            result = await run_process(['git', 'config', '--get', 'user.email'], cwd=cwd, check=False)
         except OSError:
             return None
         if result.returncode == 0:

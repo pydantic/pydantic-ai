@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import sys
 from collections import deque
 from collections.abc import Iterator, Mapping
 from contextlib import AsyncExitStack, nullcontext
+from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_type_hints
@@ -21,16 +24,19 @@ from typing_extensions import Unpack
 from pydantic_ai import (
     Agent,
     CompactionPart,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RunContext,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import SelectModel
+from pydantic_ai.capabilities import Hooks, SelectModel
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelResponsePart
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
@@ -701,6 +707,105 @@ async def test_older_socket_response_replays_history(allow_model_requests: None,
     assert 'previous_response_id' not in socket.sent[2]
     assert socket.sent[2]['input'] == [
         {'role': 'user', 'content': 'first question'},
+        {'role': 'assistant', 'content': 'first answer'},
+        {'role': 'user', 'content': 'follow up'},
+    ]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('edit_history', [False, True])
+async def test_same_socket_continuation_validates_history(
+    allow_model_requests: None, sockets: SocketHarness, stream: bool, edit_history: bool
+):
+    """A copied connected model keeps its digest key and continues only the unchanged history."""
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events('first answer', 'resp_first'), text_events('again', 'resp_second')])
+    key = b'conversation secret'
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), history_digest_key=key)
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+
+    async with source.connect() as connected:
+        agent = Agent(connected, model_settings=settings)
+        if stream:
+            async with agent.run_stream('secret') as first_stream:
+                await first_stream.get_output()
+                history = first_stream.all_messages()
+        else:
+            first = await agent.run('secret')
+            history = first.all_messages()
+
+        request, response = history
+        assert isinstance(request, ModelRequest)
+        assert isinstance(response, ModelResponse)
+        digest = hmac.new(key, ModelMessagesTypeAdapter.dump_json([request], exclude_none=True), hashlib.sha256)
+        part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
+        for part in response.parts:
+            digest.update(b'\n' + part_adapter.dump_json(part, exclude_none=True))
+        assert response.history_digest == digest.hexdigest()
+        if edit_history:
+            request.parts = [UserPromptPart('[redacted]')]
+
+        copied = copy(connected)
+        if stream:
+            async with agent.run_stream('follow up', model=copied, message_history=history) as second_stream:
+                assert await second_stream.get_output() == 'again'
+        else:
+            second = await agent.run('follow up', model=copied, message_history=history)
+            assert second.output == 'again'
+
+    assert sockets.opened == [socket]
+    assert len(socket.sent) == 2
+    assert all(frame['store'] is False for frame in socket.sent)
+    if edit_history:
+        assert 'previous_response_id' not in socket.sent[1]
+        assert socket.sent[1]['input'] == [
+            {'role': 'user', 'content': '[redacted]'},
+            {'role': 'assistant', 'content': 'first answer'},
+            {'role': 'user', 'content': 'follow up'},
+        ]
+    else:
+        assert socket.sent[1]['previous_response_id'] == 'resp_first'
+        assert socket.sent[1]['input'] == [{'role': 'user', 'content': 'follow up'}]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_same_socket_continuation_replays_after_request_scoped_prompt(
+    allow_model_requests: None, sockets: SocketHarness, stream: bool
+):
+    """The next request must replay history so the socket does not retain an expired prompt."""
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events('first answer', 'resp_first'), text_events('again')])
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    hooks: Hooks[None] = Hooks()
+
+    @hooks.on.before_model_request
+    async def add_prompt(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        if len(ctx.messages) == 1:
+            ctx.enqueue(SystemPromptPart('Only for this request.', scope='request'))
+        return request_context
+
+    async with source.connect() as connected:
+        agent = Agent(connected, model_settings=settings, capabilities=[hooks], deps_type=type(None))
+        if stream:
+            async with agent.run_stream('hello') as first_stream:
+                await first_stream.get_output()
+                history = first_stream.all_messages()
+            async with agent.run_stream('follow up', message_history=history) as second_stream:
+                assert await second_stream.get_output() == 'again'
+        else:
+            first = await agent.run('hello')
+            second = await agent.run('follow up', message_history=first.all_messages())
+            assert second.output == 'again'
+
+    assert len(socket.sent) == 2
+    assert socket.sent[0]['input'] == [
+        {'role': 'user', 'content': 'hello'},
+        {'role': 'system', 'content': 'Only for this request.'},
+    ]
+    assert 'previous_response_id' not in socket.sent[1]
+    assert socket.sent[1]['input'] == [
+        {'role': 'user', 'content': 'hello'},
         {'role': 'assistant', 'content': 'first answer'},
         {'role': 'user', 'content': 'follow up'},
     ]

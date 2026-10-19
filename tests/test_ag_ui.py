@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.metadata
 import inspect
 import json
@@ -43,6 +44,8 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    RunCancelled,
+    RunTimedOut,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -53,6 +56,7 @@ from pydantic_ai import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
@@ -61,9 +65,9 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
@@ -72,6 +76,7 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -2378,6 +2383,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('"just a string"', id='non-dict-string'),
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
@@ -2867,6 +2873,94 @@ def test_dump_load_roundtrip_native_tool_return_outcome() -> None:
     assert reloaded_return.outcome == 'failed'
 
 
+_LOOKUP_KIND = ToolKind('ag_ui_test', 'lookup', content=dict[str, bool])
+"""A kind with a content shape, so a successful return of it would be promoted."""
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.parametrize('outcome', ['failed', 'denied'])
+def test_dump_load_roundtrip_non_success_return_keeps_tool_kind(outcome: Literal['failed', 'denied']) -> None:
+    """A failed or denied return keeps its `tool_kind` through dump/load, but stays a plain, un-promoted return.
+
+    Matches the Vercel AI adapter and `ModelMessagesTypeAdapter`: only successful returns are promoted.
+
+    Not VCR-backed: this pins local adapter serialization and makes no model request.
+    """
+    original: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='lookup', tool_call_id='c1', args='{}', tool_kind=_LOOKUP_KIND.id),
+                NativeToolCallPart(
+                    tool_name='lookup',
+                    tool_call_id='s1',
+                    args='{}',
+                    provider_name='anthropic',
+                    tool_kind=_LOOKUP_KIND.id,
+                ),
+                NativeToolReturnPart(
+                    tool_name='lookup',
+                    tool_call_id='s1',
+                    content={'in_stock': True},
+                    provider_name='anthropic',
+                    tool_kind=_LOOKUP_KIND.id,
+                    outcome=outcome,
+                ),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='lookup',
+                    tool_call_id='c1',
+                    content={'in_stock': True},
+                    tool_kind=_LOOKUP_KIND.id,
+                    outcome=outcome,
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
+    tool_msgs = [msg for msg in ag_ui_msgs if isinstance(msg, ToolMessage)]
+    assert [msg.encrypted_value for msg in tool_msgs] == [
+        f'{{"pydantic_ai": {{"tool_kind": "ag_ui_test.lookup", "outcome": "{outcome}"}}}}'
+    ] * 2
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    tool_return = next(iter_message_parts(reloaded, ModelRequest, ToolReturnPart))
+    native_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
+    for part in (tool_return, native_return):
+        assert type(part) in (ToolReturnPart, NativeToolReturnPart)
+        assert (part.tool_kind, part.outcome) == ('ag_ui_test.lookup', outcome)
+
+
+def test_load_error_result_keeps_the_calls_tool_kind() -> None:
+    """A result with `error` set falls back to the call's kind claim, and still stays an un-promoted return."""
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1',
+                tool_calls=[
+                    ToolCall(
+                        id='c1',
+                        function=FunctionCall(name='lookup', arguments='{}'),
+                        encrypted_value='{"pydantic_ai": {"tool_kind": "ag_ui_test.lookup"}}',
+                    )
+                ],
+            ),
+            ToolMessage(id='msg-2', tool_call_id='c1', content='{"in_stock": true}', error='Lookup failed'),
+        ]
+    )
+
+    tool_return = loaded[1].parts[0]
+    assert type(tool_return) is ToolReturnPart
+    # Below 0.1.11 the call's `encrypted_value` claim doesn't exist, so there is no kind to keep.
+    assert (tool_return.tool_kind, tool_return.outcome) == (
+        'ag_ui_test.lookup' if _has_ag_ui('0.1.11') else None,
+        'failed',
+    )
+
+
 def test_load_forged_encrypted_outcome_stays_success() -> None:
     """An unrecognized client-supplied outcome claim is ignored and loads as a successful return.
 
@@ -2921,7 +3015,7 @@ def test_load_tool_kind_falls_back_to_call_claim() -> None:
 
 
 def test_load_tool_kind_error_result_stays_plain() -> None:
-    """A ToolMessage with `error` set never narrows: typed return parts imply success to their readers."""
+    """A ToolMessage with `error` set never narrows, as only successful returns are promoted, but keeps its kind."""
     loaded = AGUIAdapter.load_messages(
         [
             AssistantMessage(
@@ -2943,7 +3037,13 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
         ]
     )
 
-    assert type(loaded[1].parts[0]) is ToolReturnPart
+    error_return = loaded[1].parts[0]
+    assert type(error_return) is ToolReturnPart
+    # Below 0.1.11 the call's `encrypted_value` claim doesn't exist, so there is no kind to keep.
+    assert (error_return.tool_kind, error_return.outcome) == (
+        'capability-load' if _has_ag_ui('0.1.11') else None,
+        'failed',
+    )
     assert parse_loaded_capabilities(loaded) == set()
 
 
@@ -6274,6 +6374,53 @@ def _client_messages_from_tool_events(events: list[dict[str, Any]]) -> list[Mess
     return [AssistantMessage(id=parent_message_ids.pop(), content='', tool_calls=tool_calls), *tool_messages]
 
 
+@requires_ag_ui('0.1.11')
+async def test_stream_failed_return_carries_its_tool_kind() -> None:
+    """A streamed non-success return carries its `tool_kind` with its outcome, as `dump_messages` does."""
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | str]:
+        if len(messages) > 1:
+            yield 'done'
+            return
+        yield {
+            0: NativeToolCallPart(
+                tool_name='lookup',
+                args='{}',
+                tool_call_id='lookup-1',
+                provider_name='function',
+                tool_kind=_LOOKUP_KIND.id,
+            )
+        }
+        yield {
+            1: NativeToolReturnPart(
+                tool_name='lookup',
+                content='Inventory offline',
+                tool_call_id='lookup-1',
+                provider_name='function',
+                tool_kind=_LOOKUP_KIND.id,
+                outcome='failed',
+            )
+        }
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    events = await run_and_collect_events(
+        agent, create_input(UserMessage(id='msg-1', content='Look it up')), ag_ui_version='0.1.11'
+    )
+    assert [
+        event['encryptedValue']
+        for event in events
+        if event['type'] == 'REASONING_ENCRYPTED_VALUE' and event['subtype'] == 'message'
+    ] == ['{"pydantic_ai": {"tool_kind": "ag_ui_test.lookup", "outcome": "failed"}}']
+
+    reloaded = AGUIAdapter.load_messages(_client_messages_from_tool_events(events))
+    tool_return = next(iter_message_parts(reloaded, ModelResponse, NativeToolReturnPart))
+    assert type(tool_return) is NativeToolReturnPart
+    assert (tool_return.tool_kind, tool_return.outcome) == ('ag_ui_test.lookup', 'failed')
+
+
 @pytest.mark.parametrize(
     'ag_ui_version,expected_outcome',
     [('0.1.10', 'success'), pytest.param('0.1.11', 'failed', marks=requires_ag_ui('0.1.11'))],
@@ -8481,6 +8628,46 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     assert 'RUN_ERROR' not in event_types
 
 
+async def test_run_timeout_finishes_like_cancellation() -> None:
+    """A run that outlives `timeout=` ends like a first-party cancellation: a bare `RUN_FINISHED`, and `on_cancel` gets the `RunTimedOut`."""
+
+    async def stream_then_time_out(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+        yield 'partial'
+        ctx = get_current_run_context()
+        assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+        ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_then_time_out))
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='m1', content='hi')))
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream(timeout=60, on_cancel=cancelled.append))
+    ]
+
+    assert [event['type'] for event in events] == snapshot(
+        ['RUN_STARTED', 'TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END', 'RUN_FINISHED']
+    )
+    assert 'outcome' not in events[-1]
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='partial')],
+            usage=RequestUsage(output_tokens=1, input_tokens=50),
+            model_name='function::stream_then_time_out',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
@@ -9126,6 +9313,38 @@ def _enqueuing_agent() -> Agent[object, str]:
         return 'started'
 
     return agent
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `pydantic_ai_enqueued_messages` activity at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    adapter = AGUIAdapter(
+        agent,
+        create_input(UserMessage(id='user-1', content='Go')),
+        ag_ui_version='0.1.19',
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert 'Reminder' not in json.dumps(events)
 
 
 @requires_ag_ui('0.1.19')

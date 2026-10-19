@@ -15,13 +15,13 @@ interactions:
     - reasoning.encrypted_content
 - kind: message
   direction: received
-  at: 0.155
+  at: 0.164
   data:
     type: response.created
     response:
-      id: resp_0d2e2326d6a124a0006ad23847823087d2baf4dec3dd7c7631
+      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
       object: response
-      created_at: 1792161863
+      created_at: 1792452923
       status: in_progress
       access_programs: null
       background: false
@@ -77,13 +77,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 0.169
+  at: 0.246
   data:
     type: response.in_progress
     response:
-      id: resp_0d2e2326d6a124a0006ad23847823087d2baf4dec3dd7c7631
+      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
       object: response
-      created_at: 1792161863
+      created_at: 1792452923
       status: in_progress
       access_programs: null
       background: false
@@ -139,11 +139,11 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 2.421
+  at: 1.55
   data:
     type: response.output_item.added
     item:
-      id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
       type: message
       status: in_progress
       content: []
@@ -153,11 +153,11 @@ interactions:
     sequence_number: 2
 - kind: message
   direction: received
-  at: 2.422
+  at: 1.552
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
     output_index: 0
     part:
       type: output_text
@@ -167,34 +167,34 @@ interactions:
     sequence_number: 3
 - kind: message
   direction: received
-  at: 2.43
+  at: 1.56
   data:
     type: response.output_text.delta
     content_index: 0
     delta: amber
-    item_id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
     logprobs: []
-    obfuscation: dPb5SSCAzxu
+    obfuscation: UTzSuGJ9hhY
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 2.503
+  at: 1.629
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
     logprobs: []
     output_index: 0
     sequence_number: 5
     text: amber
 - kind: message
   direction: received
-  at: 2.504
+  at: 1.63
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
     output_index: 0
     part:
       type: output_text
@@ -204,11 +204,11 @@ interactions:
     sequence_number: 6
 - kind: message
   direction: received
-  at: 2.504
+  at: 1.631
   data:
     type: response.output_item.done
     item:
-      id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
       type: message
       status: completed
       content:
@@ -222,17 +222,17 @@ interactions:
     sequence_number: 7
 - kind: message
   direction: received
-  at: 2.607
+  at: 1.734
   data:
     type: response.completed
     response:
-      id: resp_0d2e2326d6a124a0006ad23847823087d2baf4dec3dd7c7631
+      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
       object: response
-      created_at: 1792161863
+      created_at: 1792452923
       status: completed
       access_programs: null
       background: false
-      completed_at: 1792161865
+      completed_at: 1792452925
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
@@ -242,7 +242,7 @@ interactions:
       model: gpt-6-astra
       moderation: null
       output:
-      - id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+      - id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
         type: message
         status: completed
         content:
@@ -302,7 +302,7 @@ interactions:
     sequence_number: 8
 - kind: message
   direction: sent
-  at: 2.617
+  at: 1.818
   data:
     type: response.create
     model: gpt-6-astra
@@ -310,7 +310,7 @@ interactions:
     - role: user
       content: Reply with the word amber.
     - role: assistant
-      id: msg_0d2e2326d6a124a0006ad23849d33c87d2ac1448edd9475944
+      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
       content:
       - text: amber
         type: output_text
@@ -324,15 +324,17 @@ interactions:
       context: all_turns
     include:
     - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
 - kind: message
   direction: received
-  at: 2.784
+  at: 1.96
   data:
     type: response.created
     response:
-      id: resp_0d2e2326d6a124a0006ad2384a1e5c87d2a77fdfdf8e929f8b
+      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
       object: response
-      created_at: 1792161866
+      created_at: 1792452925
       status: in_progress
       access_programs: null
       background: false
@@ -350,6 +352,10 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        mode: implicit
+        ttl: 30m
       prompt_cache_retention: 24h
       reasoning:
         context: all_turns
@@ -388,13 +394,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 2.798
+  at: 1.974
   data:
     type: response.in_progress
     response:
-      id: resp_0d2e2326d6a124a0006ad2384a1e5c87d2a77fdfdf8e929f8b
+      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
       object: response
-      created_at: 1792161866
+      created_at: 1792452925
       status: in_progress
       access_programs: null
       background: false
@@ -411,7 +417,13 @@ interactions:
       parallel_tool_calls: true
       presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_diagnostics:
+        type: unavailable
       prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        mode: implicit
+        ttl: 30m
       prompt_cache_retention: 24h
       reasoning:
         context: all_turns
@@ -450,11 +462,11 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 4.185
+  at: 2.958
   data:
     type: response.output_item.added
     item:
-      id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+      id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
       type: message
       status: in_progress
       content: []
@@ -464,11 +476,11 @@ interactions:
     sequence_number: 2
 - kind: message
   direction: received
-  at: 4.186
+  at: 2.96
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
     output_index: 0
     part:
       type: output_text
@@ -478,46 +490,46 @@ interactions:
     sequence_number: 3
 - kind: message
   direction: received
-  at: 4.193
+  at: 2.961
   data:
     type: response.output_text.delta
     content_index: 0
     delta: c
-    item_id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
     logprobs: []
-    obfuscation: Na1HlOOT8SqsvZQ
+    obfuscation: EjfVkc1kOzBMV16
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 4.197
+  at: 2.966
   data:
     type: response.output_text.delta
     content_index: 0
     delta: obalt
-    item_id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
     logprobs: []
-    obfuscation: wIVXqi1Gvz9
+    obfuscation: jHT6GeZSSo3
     output_index: 0
     sequence_number: 5
 - kind: message
   direction: received
-  at: 4.263
+  at: 3.021
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
     logprobs: []
     output_index: 0
     sequence_number: 6
     text: cobalt
 - kind: message
   direction: received
-  at: 4.264
+  at: 3.024
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
     output_index: 0
     part:
       type: output_text
@@ -527,11 +539,11 @@ interactions:
     sequence_number: 7
 - kind: message
   direction: received
-  at: 4.265
+  at: 3.024
   data:
     type: response.output_item.done
     item:
-      id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+      id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
       type: message
       status: completed
       content:
@@ -545,17 +557,17 @@ interactions:
     sequence_number: 8
 - kind: message
   direction: received
-  at: 4.342
+  at: 3.118
   data:
     type: response.completed
     response:
-      id: resp_0d2e2326d6a124a0006ad2384a1e5c87d2a77fdfdf8e929f8b
+      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
       object: response
-      created_at: 1792161866
+      created_at: 1792452925
       status: completed
       access_programs: null
       background: false
-      completed_at: 1792161867
+      completed_at: 1792452926
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
@@ -565,7 +577,7 @@ interactions:
       model: gpt-6-astra
       moderation: null
       output:
-      - id: msg_0d2e2326d6a124a0006ad2384b970887d29dcc0fd831801b02
+      - id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
         type: message
         status: completed
         content:
@@ -578,7 +590,13 @@ interactions:
       parallel_tool_calls: true
       presence_penalty: 0.0
       previous_response_id: null
+      prompt_cache_diagnostics:
+        type: cache_hit
       prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        mode: implicit
+        ttl: 30m
       prompt_cache_retention: 24h
       reasoning:
         context: all_turns

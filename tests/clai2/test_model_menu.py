@@ -17,13 +17,13 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
 from pydantic_clai2.ui.menus.model_picker import (
@@ -34,7 +34,7 @@ from pydantic_clai2.ui.menus.model_picker import (
     model_completions,
 )
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
-from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 
 
 def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
@@ -182,7 +182,7 @@ async def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
         choices=[],
         texts=[typed('42')],
     )
-    assert await open_add_model_menu(context, runners=script.runners) == '\n'.join(
+    assert await open_add_model_menu(context, console=QUIET, runners=script.runners) == '\n'.join(
         [f'Saved max_tokens for {priced.value}. Applies when this model is selected.', 'Saved model. Applied.']
     )
     assert script.opened == ['list', 'list', 'list', 'text', 'list', 'list']
@@ -190,7 +190,7 @@ async def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     # Again from the reopened list, and backing out of it returns to the providers.
     closed = MenuResult(cancelled=True)
     script = Script(lists=[pick('anthropic'), marker, closed, marker, closed, closed, closed], choices=[], texts=[])
-    assert await open_add_model_menu(context, runners=script.runners) == 'No changes.'
+    assert await open_add_model_menu(context, console=QUIET, runners=script.runners) == 'No changes.'
     assert script.opened == ['list'] * 7
     assert applied == ['model']
     assert 'settings  max_tokens=42' in menu.details(priced)
@@ -200,8 +200,11 @@ async def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
 
 async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
-    assert await open_add_model_menu(context, run=lambda menu: []) == 'No changes.'
-    assert await open_add_model_menu(context, run=lambda menu: [menu.choose('test')]) == 'Saved model. Applied.'
+    assert await open_add_model_menu(context, console=QUIET, run=lambda menu: []) == 'No changes.'
+    assert (
+        await open_add_model_menu(context, console=QUIET, run=lambda menu: [menu.choose('test')])
+        == 'Saved model. Applied.'
+    )
     context.store.save_model_settings('test', {'max_tokens': 3, 'seed': 7})
     assert context.model_settings('test') == {'max_tokens': 3, 'seed': 7, 'cache': True}
     assert context.model_settings('other') == {'cache': True}
@@ -257,19 +260,19 @@ async def test_saved_model_picker_and_completion(tmp_path: Path) -> None:
     widget = build_model_picker(context)
     assert widget.highlighted == MenuItem(f'{original} (current)', value=original)
     script = Script(lists=[pick('test')], choices=[], texts=[])
-    assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'test' and applied == ['model']
-    assert await model_command(context, [original]) == 'Saved model. Applied.'
+    assert await model_command(context, [original], console=QUIET) == 'Saved model. Applied.'
     with pytest.raises(ValueError, match=r'Usage: /model \[NAME\] \| /model add \[NAME\]'):
-        await model_command(context, ['test', 'extra'])
+        await model_command(context, ['test', 'extra'], console=QUIET)
     with pytest.raises(ValueError, match='Usage: /model'):
-        await model_command(context, ['add', 'test', 'extra'])
+        await model_command(context, ['add', 'test', 'extra'], console=QUIET)
 
 
 @pytest.mark.parametrize('args', [['unsaved:model'], ['add', 'unsaved:model']])
 async def test_model_name_not_yet_saved_is_added_and_selected(tmp_path: Path, args: list[str]) -> None:
     context, applied = make_context(tmp_path)
-    assert await model_command(context, args) == 'Saved model. Applied.'
+    assert await model_command(context, args, console=QUIET) == 'Saved model. Applied.'
     assert context.settings.model == 'unsaved:model' and applied == ['model']
     reopened = SettingsStore(context.store.path)
     assert 'unsaved:model' in reopened.models() and reopened.load().model == 'unsaved:model'
@@ -278,7 +281,7 @@ async def test_model_name_not_yet_saved_is_added_and_selected(tmp_path: Path, ar
 async def test_model_add_subcommand_opens_add_flow(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     script = Script(lists=[pick('anthropic'), pick('anthropic:claude-sonnet-4-5')], choices=[], texts=[])
-    assert await model_command(context, ['add'], runners=script.runners) == 'Saved model. Applied.'
+    assert await model_command(context, ['add'], console=QUIET, runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'anthropic:claude-sonnet-4-5' and applied == ['model']
 
 
@@ -287,16 +290,16 @@ async def test_model_settings_subcommand(tmp_path: Path) -> None:
     model = context.settings.model
     assert model is not None
     direct = Script(lists=[pick('max_tokens'), MenuResult(cancelled=True)], choices=[], texts=[typed('42')])
-    assert await model_command(context, ['settings', model], runners=direct.runners) == (
+    assert await model_command(context, ['settings', model], console=QUIET, runners=direct.runners) == (
         f'Saved max_tokens for {model}. Applies when this model is selected.'
     )
     assert context.store.model_settings(model) == {'max_tokens': 42}
     picked = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
-    assert await model_command(context, ['settings'], runners=picked.runners) == 'No changes.'
+    assert await model_command(context, ['settings'], console=QUIET, runners=picked.runners) == 'No changes.'
     with pytest.raises(ValueError, match=r'Model not added: unsaved:model. Use /model add unsaved:model first.'):
-        await model_command(context, ['settings', 'unsaved:model'])
+        await model_command(context, ['settings', 'unsaved:model'], console=QUIET)
     with pytest.raises(ValueError, match=r'Usage: /model settings \[NAME\]'):
-        await model_command(context, ['settings', model, 'extra'])
+        await model_command(context, ['settings', model, 'extra'], console=QUIET)
     assert context.settings.model == model and applied == []
 
 
@@ -305,7 +308,7 @@ async def test_saved_model_picker_cancel(tmp_path: Path, result: MenuResult) -> 
 
     context, applied = make_context(tmp_path)
     script = Script(lists=[result], choices=[], texts=[])
-    assert await model_command(context, [], runners=script.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'No changes.'
     assert applied == []
 
 
@@ -337,7 +340,7 @@ async def test_select_new_model_from_picker(tmp_path: Path, initial_model: str |
         choices=[],
         texts=[],
     )
-    assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Saved model. Applied.'
     assert context.settings.model == 'anthropic:claude-sonnet-4-5'
     assert SettingsStore(context.store.path).load().model == context.settings.model
     assert context.settings.model in model_completions(context, [])
@@ -348,7 +351,7 @@ async def test_cancel_adding_from_picker(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     original = context.settings.model
     script = Script(lists=[pick(ModelPickerAction.ADD), MenuResult(cancelled=True)], choices=[], texts=[])
-    assert await model_command(context, [], runners=script.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'No changes.'
     assert context.settings.model == original
     assert applied == []
 
@@ -392,7 +395,7 @@ async def test_delete_model_through_picker_keys(
     pressed = iter([*'unused:', delete_key, 'down', 'enter', 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
 
-    assert await model_command(context, []) == 'Deleted unused:model.'
+    assert await model_command(context, [], console=QUIET) == 'Deleted unused:model.'
     assert context.settings.model == context.store.load().model == original
     assert applied == []
     assert SettingsStore(context.store.path).models() == [original]
@@ -426,7 +429,7 @@ async def test_cancel_deleting_model(tmp_path: Path, confirmation: MenuResult) -
     script = Script(
         lists=[pick(DeleteModel(name='unused:model')), MenuResult(cancelled=True)], choices=[confirmation], texts=[]
     )
-    assert await model_command(context, [], runners=script.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'No changes.'
     assert 'unused:model' in context.store.models()
     assert context.store.model_settings('unused:model') == {'max_tokens': 5}
     assert applied == []
@@ -442,7 +445,7 @@ async def test_cannot_delete_current_model(
     context.store.save_model_settings(original, {'max_tokens': 5})
     pressed = iter(['ctrl-d', 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
-    assert await model_command(context, []) == 'No changes.'
+    assert await model_command(context, [], console=QUIET) == 'No changes.'
     assert context.store.models() == [original]
     assert context.store.model_settings(original) == {'max_tokens': 5}
     assert context.settings.model == original and applied == []
@@ -460,7 +463,7 @@ async def test_saved_default_changed_during_delete_confirmation(tmp_path: Path) 
         return pick(True)
 
     runners = Runners(run_list=script.run_list, run_choice=confirm_after_default_changes, run_text=script.run_text)
-    assert await model_command(context, [], runners=runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=runners) == 'No changes.'
     assert 'unused:model' in context.store.models()
     assert context.store.model_settings('unused:model') == {'max_tokens': 5}
     assert context.store.load().model == 'unused:model' and applied == []
@@ -480,7 +483,7 @@ async def test_cannot_delete_saved_default_model(
     )
     pressed = iter(['home', 'ctrl-d', 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
-    assert await model_command(context, []) == 'No changes.'
+    assert await model_command(context, [], console=QUIET) == 'No changes.'
     output = capsys.readouterr().out
     assert 'saved:default (saved default)' in output
     assert 'This is your saved default model.' in output
@@ -500,7 +503,7 @@ async def test_delete_confirmation_keeps_model_by_default(
     context.store.add_model(name='unused:model')
     pressed = iter([*'unused:', 'ctrl-d', *keys, 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
-    assert await model_command(context, []) == 'No changes.'
+    assert await model_command(context, [], console=QUIET) == 'No changes.'
     assert 'unused:model' in context.store.models() and applied == []
 
 
@@ -512,7 +515,7 @@ async def test_delete_then_leave_or_select_model(tmp_path: Path, ending: MenuRes
     script = Script(lists=[pick(DeleteModel(name='unused:model')), ending], choices=[pick(True)], texts=[])
     selected = ending.item is not None and ending.item.value == 'test'
     expected = 'Deleted unused:model.' + ('\nSaved model. Applied.' if selected else '')
-    assert await model_command(context, [], runners=script.runners) == expected
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == expected
     assert 'unused:model' not in context.store.models()
     assert applied == (['model'] if selected else [])
 
@@ -525,11 +528,11 @@ async def test_delete_last_model_then_add_from_picker(tmp_path: Path, monkeypatc
     context.store.add_model(name='unused:model')
     pressed = iter(['ctrl-d', 'down', 'enter', 'ctrl-d', 'escape'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
-    assert await model_command(context, []) == 'Deleted unused:model.'
+    assert await model_command(context, [], console=QUIET) == 'Deleted unused:model.'
     assert context.store.models() == [] and applied == []
     assert build_model_picker(context).highlighted == MenuItem('Add a model...', value=ModelPickerAction.ADD)
     script = Script(lists=[pick(ModelPickerAction.ADD), pick('test'), pick('test')], choices=[], texts=[])
-    assert await model_command(context, [], runners=script.runners) == 'Saved model. Applied.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Saved model. Applied.'
     assert context.store.models() == ['test'] and applied == ['model']
 
 
@@ -538,7 +541,7 @@ async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, mo
     monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
     context, applied = make_context(tmp_path)
     context.store.add_model(name='typesafe:jev-latest')
-    assert await model_command(context, ['typesafe:jev-latest']) == 'Saved model. Applied.'
+    assert await model_command(context, ['typesafe:jev-latest'], console=QUIET) == 'Saved model. Applied.'
     assert applied == ['model']
     assert infer_model('typesafe:jev-latest').system == 'typesafe'
 
@@ -573,7 +576,7 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     original = context.settings.model
     context.store.add_model(name=model)
     with pytest.raises(ValueError) as exc_info:
-        await model_command(context, [model])
+        await model_command(context, [model], console=QUIET)
     message = str(exc_info.value)
     assert all(part in message for part in expected), message
     assert sys.executable in message

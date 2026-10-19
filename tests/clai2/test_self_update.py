@@ -49,6 +49,7 @@ from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import UpdateProgress
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from pydantic_clai2.ui.menus.update_menu import VERSION, update_menu
@@ -575,7 +576,7 @@ async def _relaunch_after(
     def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, [*prompts, '/update', '/exit'])
     with pytest.raises(Relaunch) as raised:
         await chat(
@@ -761,7 +762,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
         channels.append(channel())
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
     inputs(monkeypatch, ['/update', '/exit'])
     output = StringIO()
     await chat(
@@ -812,3 +813,7 @@ async def test_the_about_menu_keeps_the_version_read_only_and_updates_only_when_
     assert await update(asked) == ['Running /update on the stable channel.']
     assert entered == ['/update'], 'entered as typing it would, so it queues behind a running turn'
     assert 'stable channel' in asked.asked[0].description
+    refusals = iter([None, 'A session started a turn.'])
+    racing = update_menu(context, updates, run=entered.append, refusal=lambda: next(refusals))
+    assert await racing.actions[VERSION](ScriptedDialogs([Confirm(yes=True)])) == ['A session started a turn.']
+    assert entered == ['/update'], 'refused after the dialog: nothing entered'
