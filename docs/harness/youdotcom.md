@@ -222,7 +222,7 @@ contributes the same default research guidance.
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each You.com request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each You.com request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -232,7 +232,7 @@ exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts).
 
 The records are named after the capability's `id`, which defaults to
 `you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
@@ -272,8 +272,10 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   `get_page` stays available on every model. `include_domains` and
   `exclude_domains` become the native tool's `allowed_domains` and
   `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  You.com's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means You.com
+  searches.
 - Or pass You.com's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
