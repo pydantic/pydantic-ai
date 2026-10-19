@@ -8,9 +8,10 @@ ownership of as much of the conversation as ElevenLabs allows per-conversation:
 
 - Instructions, LLM choice, first message, language, voice, TTS knobs, and text-only mode are pushed
   through `conversation_initiation_client_data.conversation_config_override`. Every overridable field
-  is gated by a per-field toggle under Security > Overrides in the agent's settings (`platform_settings.overrides`); the
-  connect-time preflight fetches the agent and raises a [`UserError`][pydantic_ai.exceptions.UserError]
-  naming the exact toggle when an override the session needs is not permitted. (The raw
+  is gated by a per-field toggle under Security > Overrides in the agent's settings
+  (`platform_settings.overrides`); the connect-time preflight fetches the agent and raises a
+  [`UserError`][pydantic_ai.exceptions.UserError] naming the exact toggle when an override the session needs
+  is not permitted. (The raw
   `elevenlabs_agents_config_override` escape hatch skips this check by design and is judged by the server
   after the handshake instead.) When the Pydantic AI
   agent defines no instructions, the ElevenLabs-side prompt is inherited silently.
@@ -142,8 +143,8 @@ stretch, or at the next frame of any other kind (verified live: each result the 
 _CONTEXT_USAGE_MISSING = (
     "The ElevenLabs agent {agent_id!r} doesn't send `context_usage` reports, so the session has no context usage, "
     'and a spoken reply is taken to end after a second without audio rather than with its last audio. Add '
-    "`context_usage` to the agent's `conversation.client_events` (Advanced > Client events in the agent's settings in the ElevenLabs dashboard) for "
-    'both.'
+    "`context_usage` to the agent's `conversation.client_events` (Advanced > Client events in the agent's settings "
+    'in the ElevenLabs dashboard) for both.'
 )
 
 _MCP_APPROVAL_DENIED = (
@@ -247,8 +248,8 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to ElevenLabs Agents realtime sessions.
 
     Every `elevenlabs_agents_*` field below that maps to a `conversation_config_override` entry requires the
-    matching override toggle to be enabled under Security > Overrides in the agent's settings; the connect-time preflight
-    raises [`UserError`][pydantic_ai.exceptions.UserError] naming the toggle otherwise.
+    matching override toggle to be enabled under Security > Overrides in the agent's settings; the connect-time
+    preflight raises [`UserError`][pydantic_ai.exceptions.UserError] naming the toggle otherwise.
 
     Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override, and
     a `tool_choice` of `'none'` or an allow-list to the `agent.prompt.tool_ids` override, which narrows
@@ -288,8 +289,9 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
       session doesn't define; ElevenLabs-side webhook/MCP/system tools are left untouched). This
       mutates workspace state shared by every conversation with the agent, which is why it is opt-in.
     - `'off'`: skip the check and trust the agent's own tool definitions, e.g. for client tools configured on the
-      ElevenLabs side with settings Pydantic AI doesn't sync. A call to a tool the session does not define reaches the tool manager like any other call and
-      is answered with the standard unknown-tool error, which lands in the session's history.
+      ElevenLabs side with settings Pydantic AI doesn't sync. A call to a tool the session does not define reaches
+      the tool manager like any other call and is answered with the standard unknown-tool error, which lands in
+      the session's history.
     """
     elevenlabs_agents_strip_audio_tags: bool
     """Whether to remove expressive audio tags such as `[laughs]` from the agent's transcripts. Defaults to `False`.
@@ -1354,8 +1356,8 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                     f'The ElevenLabs agent {self.agent_id!r} does not permit the `{dotted}` conversation '
                     f'override required by {source}. Enable the override toggle at '
                     f'`platform_settings.overrides.conversation_config_override.{dotted}` '
-                    "(Security > Overrides in the agent's settings in the ElevenLabs dashboard), or remove the conflicting "
-                    'input.'
+                    "(Security > Overrides in the agent's settings in the ElevenLabs dashboard), or remove the "
+                    'conflicting input.'
                 )
         if (
             settings.get('elevenlabs_agents_custom_llm_extra_body') is not None
@@ -1364,8 +1366,8 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
             raise UserError(
                 f'The ElevenLabs agent {self.agent_id!r} does not permit `custom_llm_extra_body`. '
                 'Enable the toggle at `platform_settings.overrides.custom_llm_extra_body` '
-                "(Security > Overrides in the agent's settings), or remove the `elevenlabs_agents_custom_llm_extra_body` "
-                'setting.'
+                "(Security > Overrides in the agent's settings), or remove the "
+                '`elevenlabs_agents_custom_llm_extra_body` setting.'
             )
 
     def _initiation_payload(

@@ -17,8 +17,8 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
     """
     return {
         # Text mode exists as the per-conversation `conversation.text_only` override, gated by that
-        # override's toggle (Security > Overrides in the agent's settings); the connect-time preflight checks the toggle and raises a
-        # `UserError` naming it when `output_modality='text'` is requested without it.
+        # override's toggle (Security > Overrides in the agent's settings); the connect-time preflight
+        # checks the toggle and raises a `UserError` naming it when `output_modality='text'` is requested without it.
         'supports_text_output': True,
         # The agent WebSocket accepts `multimodal_message` file references, but they require a prior
         # REST file upload; discrete image frames are future work.
