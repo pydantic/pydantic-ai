@@ -38,12 +38,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.compaction import (
     ClearToolResults,
     CompactOnCacheExpiry,
     SlidingWindowCompaction,
+    TieredCompaction,
     compact_now,
+    estimate_token_count,
     is_pinned,
     pin,
 )
@@ -88,9 +90,10 @@ class _Local(WrapperModel):
     the retention window exactly as it would against the provider.
     """
 
-    def __init__(self, wrapped: Model, tool_steps: int = 0) -> None:
+    def __init__(self, wrapped: Model, tool_steps: int = 0, report_usage: bool = False) -> None:
         super().__init__(wrapped)
         self.tool_steps = tool_steps
+        self.report_usage = report_usage
         self.sent: list[list[ModelMessage]] = []
 
     async def request(
@@ -100,11 +103,13 @@ class _Local(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         self.sent.append(list(messages))
+        # Reported like a provider would: about what the history weighs, which size-based strategies anchor on.
+        usage = RequestUsage(input_tokens=estimate_token_count(messages)) if self.report_usage else RequestUsage()
         step = sum(isinstance(message, ModelResponse) for message in messages[_last_user_prompt(messages) :])
         if step < self.tool_steps:
             part = ToolCallPart('lookup', {'n': step}, tool_call_id=f'call_{len(self.sent)}')
-            return ModelResponse(parts=[part], model_name=self.model_name)
-        return ModelResponse(parts=[TextPart('done')], model_name=self.model_name)
+            return ModelResponse(parts=[part], model_name=self.model_name, usage=usage)
+        return ModelResponse(parts=[TextPart('done')], model_name=self.model_name, usage=usage)
 
 
 def _last_user_prompt(messages: Sequence[ModelMessage]) -> int:
@@ -125,9 +130,9 @@ def _agent(model: Model, *capabilities: AbstractCapability[None], **kwargs: Any)
     return agent
 
 
-async def _conversation(model: Model, **kwargs: Any) -> list[ModelMessage]:
+async def _conversation(model: Model, report_usage: bool = False, **kwargs: Any) -> list[ModelMessage]:
     """A stored conversation with `TOOL_STEPS` tool results, made by running the agent without the capability."""
-    result = await _agent(_Local(model, tool_steps=TOOL_STEPS), **kwargs).run('investigate')
+    result = await _agent(_Local(model, tool_steps=TOOL_STEPS, report_usage=report_usage), **kwargs).run('investigate')
     return result.all_messages()
 
 
@@ -458,6 +463,39 @@ class TestCompactOnCacheExpiry:
         large = _Local(model)
         await _agent(large, CompactOnCacheExpiry(max_tokens=100)).run('next', message_history=history)
         assert len(_cleared(large.sent[0])) == TOOL_STEPS - 5
+
+    @pytest.mark.moves_cache_prefix(reason='The size-based strategy clears tool results; that is the setup.')
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_size_floor_sees_what_an_earlier_strategy_cleared(self) -> None:
+        """Listed after a size-based strategy, as the docs advise, the floor measures the history that strategy left.
+
+        The usage the last response reported predates that clear, so the floor subtracts what was reclaimed.
+        """
+
+        @dataclass
+        class Recording:
+            calls: int = 0
+
+            async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
+                self.calls += 1
+                return messages
+
+        model = _anthropic()
+        history = _idle(await _conversation(model, report_usage=True), timedelta(minutes=6))
+        size = estimate_token_count(history)
+
+        alone = Recording()
+        await _agent(_Local(model), CompactOnCacheExpiry(alone, max_tokens=size // 2)).run(
+            'next', message_history=history
+        )
+        assert alone.calls == 1
+
+        after_clear = Recording()
+        tiered = TieredCompaction(tiers=[ClearToolResults(max_tokens=1, keep_pairs=1)], target_tokens=size // 4)
+        await _agent(_Local(model), tiered, CompactOnCacheExpiry(after_clear, max_tokens=size // 2)).run(
+            'next', message_history=history
+        )
+        assert after_clear.calls == 0
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_strategy_is_configurable_and_pins_survive(self) -> None:

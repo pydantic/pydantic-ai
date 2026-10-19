@@ -287,7 +287,7 @@ The edit persists into the run's history, so later requests extend the compacted
 
 ### When the cache counts as expired
 
-The decision is core's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, both read from the history's timestamps, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it.
+The decision is core's [`prompt_cache_outlook`](https://pydantic.dev/docs/ai/core-concepts/message-history/#scheduling-maintenance-into-cache-cold-windows): the time from the last model response to the request being sent, both read from the history's timestamps, compared with the retention the request's settings ask for (such as `Caching(retention='1h')` or `anthropic_cache='1h'`), or else the provider's documented default. A `CachePoint(ttl='1h')` the provider already received extends it. If a history processor leaves the history without the request the run stamped, the current time stands in for that request's timestamp.
 
 | Model | Retention |
 |---|---|

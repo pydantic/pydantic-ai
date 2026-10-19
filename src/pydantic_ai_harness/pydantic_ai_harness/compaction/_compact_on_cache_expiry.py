@@ -21,6 +21,8 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_context_tokens,
     estimate_token_count,
+    get_compaction_reclaim,
+    has_context_usage_anchor,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -145,13 +147,7 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
         floor = resolve_token_trigger(
             self.max_tokens, self.max_fraction, model, self.fallback_context_window, self.context_window
         )
-        if (
-            floor is not None
-            and estimate_context_tokens(
-                messages, self.tokenizer, model_request_parameters=request_context.model_request_parameters
-            )
-            <= floor
-        ):
+        if floor is not None and self._size(ctx, messages, request_context) <= floor:
             return request_context
         compacted = await compact_with_span(
             request_ctx,
@@ -168,6 +164,18 @@ class CompactOnCacheExpiry(AbstractCapability[AgentDepsT]):
             estimate_token_count(compacted, self.tokenizer),
         )
         return replace(request_context, messages=compacted)
+
+    def _size(
+        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], request_context: ModelRequestContext
+    ) -> int:
+        size = estimate_context_tokens(
+            messages, self.tokenizer, model_request_parameters=request_context.model_request_parameters
+        )
+        if has_context_usage_anchor(messages):
+            # The anchor is the last response's reported usage, which predates edits an earlier strategy made to
+            # this request; subtract what they reclaimed, as `ReportContextUsage` does.
+            size = max(size - get_compaction_reclaim(ctx), 0)
+        return size
 
     def _outlook(
         self, messages: list[ModelMessage], model: Model, model_settings: ModelSettings | None, now: datetime
