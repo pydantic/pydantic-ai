@@ -89,6 +89,48 @@ class TestConformance:
         await provider.destroy(WorkspaceRef(provider='daytona', id=sandbox.id))
         assert sandbox.state == daytona.SandboxState.DESTROYING
         assert sandbox.start_calls == []
+        # A sandbox being deleted, or one Daytona no longer knows, is already gone.
+        await provider.destroy(WorkspaceRef(provider='daytona', id=sandbox.id))
+        await provider.destroy(WorkspaceRef(provider='daytona', id='sb-unknown'))
+        # Each call opened its own client and closed it.
+        assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (3, 3)
+        fake_daytona.get_error = DaytonaAuthenticationError('expired token secret-value', status_code=401)
+        with pytest.raises(WorkspaceUnavailableError) as exc_info:
+            await provider.destroy(WorkspaceRef(provider='daytona', id=sandbox.id))
+        assert str(exc_info.value) == (
+            'Credential expired. Daytona rejected the credentials. '
+            'Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
+        )
+
+    async def test_a_new_sandbox_gets_its_working_dir_and_an_attached_one_does_not(
+        self, fake_daytona: FakeDaytona, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.INFO, logger='pydantic_ai_harness.daytona_sandbox._backend'):
+            backend = await started(working_dir='/home/daytona/project')
+        sandbox = fake_daytona.sandboxes[0]
+        assert sandbox.exec_commands == ['mkdir -p -- /home/daytona/project']
+        # Logged at creation, so a sandbox whose run ended before its ref was stored can be found.
+        assert caplog.messages == [f'Created Daytona sandbox {sandbox.id}']
+        await started(ref=backend.ref, working_dir='/home/daytona/other')
+        assert sandbox.exec_commands == ['mkdir -p -- /home/daytona/project']
+
+    async def test_a_failed_working_dir_is_retried_by_the_next_operation(self, fake_daytona: FakeDaytona) -> None:
+        fake_daytona.create_gate = gate = asyncio.Event()
+        backend = DaytonaSandboxBackend(working_dir='/root/project')
+        task = asyncio.create_task(backend.get_sandbox())
+        await fake_daytona.create_started.wait()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.mkdir_exit_code = 1
+        gate.set()
+        with pytest.raises(
+            WorkspaceError, match=r"^Could not create working_dir '/root/project' in Daytona sandbox sb-1"
+        ):
+            await task
+        # The sandbox is recorded, so the caller can clean it up, and the next operation tries again.
+        assert backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
+        sandbox.mkdir_exit_code = 0
+        assert await backend.get_sandbox() is sandbox
+        assert sandbox.exec_commands == ['mkdir -p -- /root/project'] * 2
 
     async def test_get_sandbox_is_lazy_and_reuses_the_sandbox(self, fake_daytona: FakeDaytona) -> None:
         backend = DaytonaSandboxBackend()
@@ -536,8 +578,11 @@ class TestErrorsAndFilesystem:
 
     async def test_missing_api_key_is_unavailable_with_the_auth_message(self, fake_daytona: FakeDaytona) -> None:
         fake_daytona.client_error = DaytonaAuthenticationError('Authentication credentials not found.')
-        with pytest.raises(WorkspaceUnavailableError, match='Set DAYTONA_API_KEY'):
+        with pytest.raises(WorkspaceUnavailableError) as exc_info:
             await DaytonaSandboxBackend().run(['true'])
+        assert str(exc_info.value) == (
+            'No Daytona credentials found. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
+        )
 
     async def test_client_setup_failure_other_than_credentials_propagates(self, fake_daytona: FakeDaytona) -> None:
         error = DaytonaConnectionError('offline')

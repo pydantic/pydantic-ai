@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, NoReturn
 import anyio
 import anyio.lowlevel
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -65,6 +66,8 @@ from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
     command_deadline,
+    run_to_completion,
+    running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -87,6 +90,9 @@ except ImportError as error:  # pragma: no cover - exercised by the isolated mis
 _AUTH_MESSAGE = (
     'Daytona rejected the credentials. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
 )
+_MISSING_CREDENTIALS_MESSAGE = (
+    'No Daytona credentials found. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
+)
 # Bound sandbox acquisition so a wedged control plane cannot hang creation or connection.
 _CREATE_TIMEOUT = 120
 # Bound routine SDK requests so a stalled control plane cannot hang an operation.
@@ -101,6 +107,58 @@ _RETRY_DELAY = 1.0
 _PARTIAL_OUTPUT_LIMIT = 4096
 
 _logger = logging.getLogger(__name__)
+
+
+def _require_asyncio() -> None:
+    if not running_on_asyncio():
+        raise UserError('Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks.')
+
+
+def _new_client() -> AsyncDaytona:
+    """An `AsyncDaytona` configured from the environment: `DAYTONA_API_KEY`, or a JWT token and organization ID."""
+    # The SDK installs an ERROR-level engineio handler that logs routine empty queues.
+    # Preserve an application-configured level while muting that SDK default.
+    engineio_logger = logging.getLogger('engineio.client')
+    if engineio_logger.level == logging.NOTSET:
+        engineio_logger.setLevel(logging.CRITICAL)
+    try:
+        return daytona.AsyncDaytona()
+    except daytona.DaytonaAuthenticationError as error:
+        # The SDK reads the credentials here, so this is a missing key rather than a rejected one.
+        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS_MESSAGE) from error
+    except Exception as error:
+        _raise_translated(error, 'Could not configure the Daytona client')
+
+
+async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
+    """Delete a sandbox by ID without starting it, including one Daytona has stopped or archived.
+
+    A sandbox that no longer exists returns quietly; rejected credentials raise
+    `WorkspaceUnavailableError`, like any other operation. Without `client`, one is opened from
+    the environment and closed afterwards.
+
+    Raises:
+        UserError: The event loop is not asyncio.
+    """
+    _require_asyncio()
+    if not sandbox_id.strip():
+        raise ValueError('Daytona workspace ref id cannot be empty')
+    owned: AsyncDaytona | None = None
+    if client is None:
+        client = owned = _new_client()
+    try:
+        sandbox = await client.get(sandbox_id, request_timeout=_REQUEST_TIMEOUT)
+        if not _in_deleted_state(sandbox):
+            await sandbox.delete(timeout=_LIFECYCLE_TIMEOUT)
+    except daytona.DaytonaNotFoundError:
+        return
+    except (daytona.DaytonaAuthenticationError, daytona.DaytonaAuthorizationError) as error:
+        raise WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}') from error
+    finally:
+        if owned is not None:
+            # Deleting a sandbox must release the API client even if deletion is cancelled.
+            with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True):
+                await _close_sdk_client(owned)
 
 
 async def _delete_session(process: AsyncProcess, session_id: str) -> None:
@@ -281,6 +339,23 @@ class _DaytonaProcess:
         await _delete_session(self._process, self._session_id)
 
 
+async def _close_quietly(client: AsyncDaytona) -> bool:
+    """Close an API client, bounded and shielded so a cancelled run still releases it; report whether it closed.
+
+    A failure is logged, not raised: it must not replace the outcome of the run being cleaned up.
+    """
+    with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
+        try:
+            await _close_sdk_client(client)
+        except Exception:
+            _logger.warning('Could not close the Daytona API client.', exc_info=True)
+            return False
+    if deadline.cancelled_caught:
+        _logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
+        return False
+    return True
+
+
 async def _close_sdk_client(client: AsyncDaytona) -> None:
     """Close an SDK client and its event transport even after a failed socket handshake."""
     # SDK 0.198.0 cancels its event connect task in close() without joining it.
@@ -376,7 +451,13 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = absolute_path('working_dir', working_dir)
         # `pwd -P` of `_working_dir` (or of the image default): the protocol needs a canonical absolute path.
         self._resolved_working_dir: str | None = None
+        # A sandbox this backend creates starts without `working_dir`; it is made on first acquisition.
+        self._working_dir_pending = False
         self._lock = anyio.Lock()
+        # Set while nothing will call `aclose()`: the owned client then closes when the last
+        # operation in flight ends, so a dropped backend leaves no open connection behind.
+        self._close_after_operation = False
+        self._operations = 0
         self._active_runs = 0
         self._runs_drained = anyio.Event()
         self._runs_drained.set()
@@ -405,58 +486,79 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         create a replacement. Creation is not cut short by cancellation, so
         a sandbox Daytona created is always recorded in `ref` before the cancellation propagates.
         """
+        _require_asyncio()
         cancelled = False
         async with self._lock:
-            if (sandbox := self._sandbox) is not None:
-                return sandbox
-            ref = self._ref
-            try:
-                if self._client is None:
-                    try:
-                        # The SDK installs an ERROR-level engineio handler that logs routine empty queues.
-                        # Preserve an application-configured level while muting that SDK default.
-                        engineio_logger = logging.getLogger('engineio.client')
-                        if engineio_logger.level == logging.NOTSET:
-                            engineio_logger.setLevel(logging.CRITICAL)
-                        # Reads the credentials, so a missing key surfaces here as an auth error.
-                        self._client = daytona.AsyncDaytona()
-                    except Exception as error:
-                        _raise_translated(error, 'Could not configure the Daytona client')
-                client = self._client
-                if ref is not None:
-                    sandbox = await self._attach(client, ref.id)
-                else:
-
-                    async def create_and_record() -> AsyncSandbox:
-                        created = await self._create(client)
-                        # A native Task.cancel interrupts inline shields; record the accepted ID in
-                        # the independent task before allowing cancellation to escape the caller.
-                        self._ref = WorkspaceRef(provider='daytona', id=created.id)
-                        return created
-
-                    # Keep the child handle until creation completes even after native cancellation.
-                    task = asyncio.create_task(create_and_record())
-                    while True:
-                        try:
-                            sandbox = await asyncio.shield(task)
-                            break
-                        except asyncio.CancelledError:
-                            cancelled = True
-                            if task.done():
-                                sandbox = task.result()
-                                break
-                    self._sandbox = sandbox
-            except BaseException:
-                await self._close_owned_client()
-                raise
-            self._sandbox = sandbox
-            # `client.get` also accepts a name; record the ID it resolved to.
-            self._ref = WorkspaceRef(provider='daytona', id=sandbox.id)
+            if (sandbox := self._sandbox) is None:
+                sandbox, cancelled = await self._acquire_locked()
+            if self._working_dir_pending and not cancelled:
+                # Still pending after a failed attempt, so the next acquisition retries it.
+                await self._make_working_dir(sandbox)
         # A caller cancelled during the shielded creation stops here, with the sandbox recorded.
         await anyio.lowlevel.checkpoint_if_cancelled()
         if cancelled:
             raise asyncio.CancelledError
         return sandbox
+
+    async def _acquire_locked(self) -> tuple[AsyncSandbox, bool]:
+        """Create or attach to the sandbox; the caller holds `_lock`.
+
+        Also returns whether the caller was cancelled while a creation it started was completing.
+        """
+        ref = self._ref
+        cancelled = False
+        try:
+            if self._client is None:
+                self._client = _new_client()
+            client = self._client
+            if ref is not None:
+                sandbox = await self._attach(client, ref.id)
+            else:
+
+                async def create_and_record() -> AsyncSandbox:
+                    created = await self._create(client)
+                    # A native Task.cancel interrupts inline shields; record the accepted ID in
+                    # the independent task before allowing cancellation to escape the caller.
+                    self._ref = WorkspaceRef(provider='daytona', id=created.id)
+                    # Logged at creation, so the id can be found whatever ends the run before it is stored.
+                    _logger.info('Created Daytona sandbox %s', created.id)
+                    return created
+
+                # Keep the child handle until creation completes even after native cancellation.
+                task = asyncio.create_task(create_and_record())
+                while True:
+                    try:
+                        sandbox = await asyncio.shield(task)
+                        break
+                    except asyncio.CancelledError:
+                        cancelled = True
+                        if task.done():
+                            sandbox = task.result()
+                            break
+                self._working_dir_pending = self._working_dir is not None
+        except BaseException:
+            await self._close_owned_client()
+            raise
+        self._sandbox = sandbox
+        # `client.get` also accepts a name; record the ID it resolved to.
+        self._ref = WorkspaceRef(provider='daytona', id=sandbox.id)
+        return sandbox, cancelled
+
+    async def _make_working_dir(self, sandbox: AsyncSandbox) -> None:
+        directory = self._working_dir
+        assert directory is not None
+        # Shielded so a cancelled first operation cannot leave the directory half made and the flag unset.
+        with anyio.CancelScope(shield=True):
+            try:
+                result = await sandbox.process.exec(f'mkdir -p -- {shlex.quote(directory)}', timeout=_REQUEST_TIMEOUT)
+            except Exception as error:
+                await _raise_failure(sandbox, error, f'Could not create working_dir {directory!r}')
+            if result.exit_code != 0:
+                raise WorkspaceError(
+                    f'Could not create working_dir {directory!r} in Daytona sandbox {sandbox.id}: '
+                    f'{result.result.strip()}'
+                )
+            self._working_dir_pending = False
 
     async def aclose(self) -> None:
         """Close the `AsyncDaytona` API client this backend opened for itself.
@@ -467,7 +569,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         `client=` or `sandbox=` backend after its caller closes that client leaks an aiohttp session.
         `DaytonaSandbox` calls this when the run that used the backend ends.
         """
-        if self._client is None or not self._owns_client:
+        # Under another event loop every operation refused before opening a client: nothing to close.
+        if self._client is None or not self._owns_client or not running_on_asyncio():
             return
 
         async def close() -> None:
@@ -476,223 +579,217 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             with anyio.move_on_after(_TEARDOWN_TIMEOUT):
                 await self._runs_drained.wait()
             async with self._lock:
-                await self._close_owned_client()
+                if (client := self._client) is not None and await _close_quietly(client):
+                    # Dropped only once closed, so a failed close is retried by the next `aclose()`. The
+                    # next operation reattaches and checks the working directory again, so a sandbox
+                    # deleted meanwhile is reported rather than hidden by the cached path.
+                    self._client, self._sandbox, self._resolved_working_dir = None, None, None
 
-        # A separate task outlives native asyncio cancellation; the bounded SDK close still
-        # finishes before the caller observes cancellation, even if cancellation repeats.
-        task = asyncio.create_task(close())
-        cancelled = False
-        while True:
-            try:
-                await asyncio.shield(task)
-                break
-            except asyncio.CancelledError:
-                cancelled = True
-                if task.done():
-                    break
-        if cancelled:
-            raise asyncio.CancelledError
+        # Finished even when the caller (a run being cancelled) is cancelled meanwhile.
+        await run_to_completion(close)
+
+    @asynccontextmanager
+    async def _operation(self) -> AsyncGenerator[None]:
+        self._operations += 1
+        try:
+            yield
+        finally:
+            self._operations -= 1
+            if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
+                # Detached before any await, so an operation starting meanwhile opens its own client.
+                client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
+                await run_to_completion(lambda: _close_quietly(client))
 
     async def _close_owned_client(self) -> None:
-        """Close the API client this backend opened, bounded and shielded so a cancelled run still releases it.
-
-        The client, and the sandbox handle and working directory learned through it, are dropped only
-        once it closed, so a failed close is retried by the next `aclose()`. The failure is logged, not
-        raised: it must not replace the outcome of the run being cleaned up.
-        """
-        client = self._client
-        if client is None or not self._owns_client:
-            return
-        with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
-            try:
-                await _close_sdk_client(client)
-            except Exception:
-                _logger.warning('Could not close the Daytona API client.', exc_info=True)
-                return
-        if deadline.cancelled_caught:
-            _logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
-            return
-        self._client = None
-        self._sandbox = None
-        self._resolved_working_dir = None
+        """Close the API client this backend opened after a failed acquisition, so a retry starts from a clean one."""
+        if (client := self._client) is not None and self._owns_client and await _close_quietly(client):
+            self._client, self._sandbox, self._resolved_working_dir = None, None, None
 
     async def realpath(self, path: str) -> str:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        try:
-            result = await sandbox.process.exec(
-                f'realpath -m -- {shlex.quote(path)}', cwd=self._working_dir, timeout=_REQUEST_TIMEOUT
-            )
-        except Exception as error:
-            await _raise_failure(sandbox, error, f'Could not resolve {path!r}', path=path)
-        if result.exit_code != 0:
-            raise WorkspaceError(f'Could not resolve {path!r}: {result.result}')
-        return result.result.strip()
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            try:
+                result = await sandbox.process.exec(
+                    f'realpath -m -- {shlex.quote(path)}', cwd=self._working_dir, timeout=_REQUEST_TIMEOUT
+                )
+            except Exception as error:
+                await _raise_failure(sandbox, error, f'Could not resolve {path!r}', path=path)
+            if result.exit_code != 0:
+                raise WorkspaceError(f'Could not resolve {path!r}: {result.result}')
+            return result.result.strip()
 
     async def read_bytes(self, path: str) -> bytes:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        async with _translated_filesystem_error(sandbox, path):
-            # The toolbox download opens FIFOs for reading and can wait forever for a writer.
-            probe = await sandbox.process.exec(f'[ -p {shlex.quote(path)} ]', timeout=_REQUEST_TIMEOUT)
-            if probe.exit_code == 0:
-                raise OSError(f'Cannot read FIFO in the Daytona sandbox: {path!r}')
-            try:
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            async with _translated_filesystem_error(sandbox, path):
+                # The toolbox download opens FIFOs for reading and can wait forever for a writer.
+                probe = await sandbox.process.exec(f'[ -p {shlex.quote(path)} ]', timeout=_REQUEST_TIMEOUT)
+                if probe.exit_code == 0:
+                    raise OSError(f'Cannot read FIFO in the Daytona sandbox: {path!r}')
                 try:
-                    return await sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
+                    try:
+                        return await sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
+                    except daytona.DaytonaError as error:
+                        if await _entry_is_dir(sandbox, path, error):
+                            raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}') from error
+                        raise
                 except daytona.DaytonaError as error:
-                    if await _entry_is_dir(sandbox, path, error):
+                    if isinstance(error, daytona.DaytonaNotFoundError):
+                        raise
+                    # The toolbox's answer for reading a directory is not a documented error type; the
+                    # entry type tells it apart from other failures.
+                    if (await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)).is_dir:
                         raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}') from error
                     raise
-            except daytona.DaytonaError as error:
-                if isinstance(error, daytona.DaytonaNotFoundError):
-                    raise
-                # The toolbox's answer for reading a directory is not a documented error type; the
-                # entry type tells it apart from other failures.
-                if (await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)).is_dir:
-                    raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}') from error
-                raise
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        parent = posixpath.dirname(path)
-        if parent not in ('', '.', '/'):
-            try:
-                mkdir = await sandbox.process.exec(f'mkdir -p -- {shlex.quote(parent)}', timeout=_REQUEST_TIMEOUT)
-            except Exception as error:
-                await _raise_failure(sandbox, error, f'Could not create {parent!r}')
-            if mkdir.exit_code != 0:
-                raise _mkdir_error(mkdir.result, parent)
-        # Resolve the destination before renaming: replacing the symlink itself would change
-        # write_bytes' previous follow-symlink behavior. A sibling stage keeps rename on one filesystem.
-        destination = await self.realpath(path)
-        staged = f'{destination}.pydantic-ai-{uuid.uuid4().hex}.tmp'
-        async with _translated_filesystem_error(sandbox, path):
-            # Staging bypasses the toolbox's directory check on the original destination.
-            try:
-                info = await sandbox.fs.get_file_info(destination, request_timeout=_REQUEST_TIMEOUT)
-            except daytona.DaytonaNotFoundError:
-                pass
-            else:
-                if info.is_dir:
-                    raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}')
-            try:
-                await sandbox.fs.upload_file(data, staged, timeout=_REQUEST_TIMEOUT)
-                command = (
-                    f'if [ -e {shlex.quote(destination)} ] && [ ! -w {shlex.quote(destination)} ]; then '
-                    'echo Permission denied >&2; exit 13; fi; '
-                    f'if [ -e {shlex.quote(destination)} ]; then '
-                    f'chmod --reference={shlex.quote(destination)} -- {shlex.quote(staged)}; fi && '
-                    f'mv -fT -- {shlex.quote(staged)} {shlex.quote(destination)}'
-                )
-                result = await sandbox.process.exec(command, timeout=_REQUEST_TIMEOUT)
-                if result.exit_code == 13:
-                    raise PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
-                if result.exit_code != 0:
-                    raise WorkspaceError(f'Could not replace {path!r}: {result.result}')
-            except BaseException:
-                # SIGKILL cannot clean an in-flight upload, but ordinary errors and cancellation can.
-                with anyio.move_on_after(5, shield=True):
-                    try:
-                        await sandbox.fs.delete_file(staged, request_timeout=_REQUEST_TIMEOUT)
-                    except Exception:
-                        pass
-                raise
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            parent = posixpath.dirname(path)
+            if parent not in ('', '.', '/'):
+                try:
+                    mkdir = await sandbox.process.exec(f'mkdir -p -- {shlex.quote(parent)}', timeout=_REQUEST_TIMEOUT)
+                except Exception as error:
+                    await _raise_failure(sandbox, error, f'Could not create {parent!r}')
+                if mkdir.exit_code != 0:
+                    raise _mkdir_error(mkdir.result, parent)
+            # Resolve the destination before renaming: replacing the symlink itself would change
+            # write_bytes' previous follow-symlink behavior. A sibling stage keeps rename on one filesystem.
+            destination = await self.realpath(path)
+            staged = f'{destination}.pydantic-ai-{uuid.uuid4().hex}.tmp'
+            async with _translated_filesystem_error(sandbox, path):
+                # Staging bypasses the toolbox's directory check on the original destination.
+                try:
+                    info = await sandbox.fs.get_file_info(destination, request_timeout=_REQUEST_TIMEOUT)
+                except daytona.DaytonaNotFoundError:
+                    pass
+                else:
+                    if info.is_dir:
+                        raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}')
+                try:
+                    await sandbox.fs.upload_file(data, staged, timeout=_REQUEST_TIMEOUT)
+                    command = (
+                        f'if [ -e {shlex.quote(destination)} ] && [ ! -w {shlex.quote(destination)} ]; then '
+                        'echo Permission denied >&2; exit 13; fi; '
+                        f'if [ -e {shlex.quote(destination)} ]; then '
+                        f'chmod --reference={shlex.quote(destination)} -- {shlex.quote(staged)}; fi && '
+                        f'mv -fT -- {shlex.quote(staged)} {shlex.quote(destination)}'
+                    )
+                    result = await sandbox.process.exec(command, timeout=_REQUEST_TIMEOUT)
+                    if result.exit_code == 13:
+                        raise PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
+                    if result.exit_code != 0:
+                        raise WorkspaceError(f'Could not replace {path!r}: {result.result}')
+                except BaseException:
+                    # SIGKILL cannot clean an in-flight upload, but ordinary errors and cancellation can.
+                    with anyio.move_on_after(5, shield=True):
+                        try:
+                            await sandbox.fs.delete_file(staged, request_timeout=_REQUEST_TIMEOUT)
+                        except Exception:
+                            pass
+                    raise
 
     async def stat(self, path: str) -> FileEntry:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        async with _translated_filesystem_error(sandbox, path):
-            entry = await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
-        return FileEntry(
-            name=posixpath.basename(path.rstrip('/')),
-            path=path,
-            is_dir=entry.is_dir,
-            size=None if entry.is_dir else entry.size,
-        )
-
-    async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        async with _translated_filesystem_error(sandbox, path):
-            try:
-                entries = await sandbox.fs.list_files(path, request_timeout=_REQUEST_TIMEOUT)
-            except daytona.DaytonaError as error:
-                if await _entry_is_dir(sandbox, path, error) is False:
-                    raise NotADirectoryError(f'Not a directory in the Daytona sandbox: {path!r}') from error
-                raise
-        result = [
-            FileEntry(
-                name=entry.name,
-                path=posixpath.join(path, entry.name),
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            async with _translated_filesystem_error(sandbox, path):
+                entry = await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
+            return FileEntry(
+                name=posixpath.basename(path.rstrip('/')),
+                path=path,
                 is_dir=entry.is_dir,
                 size=None if entry.is_dir else entry.size,
             )
-            for entry in entries
-        ]
-        # Daytona's toolbox silently omits looping symlinks (verified against live SDK);
-        # find sees the directory entries without following their targets.
-        try:
-            links = await sandbox.process.exec(
-                f'find {shlex.quote(path)} -mindepth 1 -maxdepth 1 -type l', timeout=_REQUEST_TIMEOUT
-            )
-        except Exception as error:
-            await _raise_failure(sandbox, error, f'Could not list symlinks in {path!r}', path=path)
-        if links.exit_code == 0:
-            existing = {entry.path for entry in result}
-            for link in links.result.splitlines():
-                if link not in existing:
-                    result.append(FileEntry(name=posixpath.basename(link), path=link, is_dir=False, size=None))
-        return sorted(result, key=lambda entry: entry.name)
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            async with _translated_filesystem_error(sandbox, path):
+                try:
+                    entries = await sandbox.fs.list_files(path, request_timeout=_REQUEST_TIMEOUT)
+                except daytona.DaytonaError as error:
+                    if await _entry_is_dir(sandbox, path, error) is False:
+                        raise NotADirectoryError(f'Not a directory in the Daytona sandbox: {path!r}') from error
+                    raise
+            result = [
+                FileEntry(
+                    name=entry.name,
+                    path=posixpath.join(path, entry.name),
+                    is_dir=entry.is_dir,
+                    size=None if entry.is_dir else entry.size,
+                )
+                for entry in entries
+            ]
+            # Daytona's toolbox silently omits looping symlinks (verified against live SDK);
+            # find sees the directory entries without following their targets.
+            try:
+                links = await sandbox.process.exec(
+                    f'find {shlex.quote(path)} -mindepth 1 -maxdepth 1 -type l', timeout=_REQUEST_TIMEOUT
+                )
+            except Exception as error:
+                await _raise_failure(sandbox, error, f'Could not list symlinks in {path!r}', path=path)
+            if links.exit_code == 0:
+                existing = {entry.path for entry in result}
+                for link in links.result.splitlines():
+                    if link not in existing:
+                        result.append(FileEntry(name=posixpath.basename(link), path=link, is_dir=False, size=None))
+            return sorted(result, key=lambda entry: entry.name)
 
     async def make_dir(self, path: str) -> None:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        async with _translated_filesystem_error(sandbox, path):
-            try:
-                await sandbox.fs.create_folder(path, '755', request_timeout=_REQUEST_TIMEOUT)
-            except daytona.DaytonaValidationError as error:
-                # Toolbox says "not a directory" for both a file at the target and
-                # a file in its parents; a target file is the protocol's FileExistsError.
-                if 'not a directory' in str(error).lower():
-                    try:
-                        info = await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
-                    except daytona.DaytonaError:
-                        pass
-                    else:
-                        if not info.is_dir:
-                            raise FileExistsError(f'File exists in the Daytona sandbox: {path!r}') from error
-                raise
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            async with _translated_filesystem_error(sandbox, path):
+                try:
+                    await sandbox.fs.create_folder(path, '755', request_timeout=_REQUEST_TIMEOUT)
+                except daytona.DaytonaValidationError as error:
+                    # Toolbox says "not a directory" for both a file at the target and
+                    # a file in its parents; a target file is the protocol's FileExistsError.
+                    if 'not a directory' in str(error).lower():
+                        try:
+                            info = await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
+                        except daytona.DaytonaError:
+                            pass
+                        else:
+                            if not info.is_dir:
+                                raise FileExistsError(f'File exists in the Daytona sandbox: {path!r}') from error
+                    raise
 
     async def remove(self, path: str) -> None:
-        _check_path(path)
-        sandbox = await self.get_sandbox()
-        async with _translated_filesystem_error(sandbox, path):
-            # Whether the toolbox rejects removing a missing path is not documented; looking it up
-            # first reports that as the protocol's `FileNotFoundError` either way.
-            await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
-            # The removal is recursive, so refuse the working directory and its ancestors, like the
-            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
-            root = await self.working_dir()
-            parent = await self.realpath(posixpath.dirname(path) or '.')
-            target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
-            if root == target or root.startswith(target.rstrip('/') + '/'):
-                raise ValueError('cannot remove the workspace root or its ancestor')
-            await sandbox.fs.delete_file(path, recursive=True, request_timeout=_REQUEST_TIMEOUT)
+        async with self._operation():
+            _check_path(path)
+            sandbox = await self.get_sandbox()
+            async with _translated_filesystem_error(sandbox, path):
+                # Whether the toolbox rejects removing a missing path is not documented; looking it up
+                # first reports that as the protocol's `FileNotFoundError` either way.
+                await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)
+                # The removal is recursive, so refuse the working directory and its ancestors, like the
+                # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+                root = await self.working_dir()
+                parent = await self.realpath(posixpath.dirname(path) or '.')
+                target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+                if root == target or root.startswith(target.rstrip('/') + '/'):
+                    raise ValueError('cannot remove the workspace root or its ancestor')
+                await sandbox.fs.delete_file(path, recursive=True, request_timeout=_REQUEST_TIMEOUT)
 
     async def exists(self, path: str) -> bool:
-        try:
-            await self.stat(path)
-        except FileNotFoundError:
-            return False
-        except WorkspaceError as error:
-            if isinstance(error.__cause__, daytona.DaytonaValidationError) and (
-                'Too many levels of symbolic links' in str(error.__cause__)
-            ):
+        async with self._operation():
+            try:
+                await self.stat(path)
+            except FileNotFoundError:
                 return False
-            raise
-        return True
+            except WorkspaceError as error:
+                if isinstance(error.__cause__, daytona.DaytonaValidationError) and (
+                    'Too many levels of symbolic links' in str(error.__cause__)
+                ):
+                    return False
+                raise
+            return True
 
     async def _create(self, client: AsyncDaytona) -> AsyncSandbox:
         # Keep the same unique name across retries: a lost create reply must not orphan the
@@ -771,19 +868,20 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         The probe runs only on the first call per connection. If the sandbox was deleted, that
         call raises `WorkspaceUnavailableError`; later calls return the cached path without probing.
         """
-        if self._resolved_working_dir is None:
-            sandbox = await self.get_sandbox()
-            try:
-                result = await sandbox.process.exec('pwd -P', cwd=self._working_dir, timeout=_REQUEST_TIMEOUT)
-            except Exception as error:
-                await _raise_failure(sandbox, error, 'Could not determine the working directory')
-            printed = result.result.removesuffix('\n')
-            if result.exit_code != 0 or not posixpath.isabs(printed):
-                raise WorkspaceUnavailableError(
-                    f'Could not determine the working directory of Daytona sandbox {sandbox.id}: {result.result}'
-                )
-            self._resolved_working_dir = printed
-        return self._resolved_working_dir
+        async with self._operation():
+            if self._resolved_working_dir is None:
+                sandbox = await self.get_sandbox()
+                try:
+                    result = await sandbox.process.exec('pwd -P', cwd=self._working_dir, timeout=_REQUEST_TIMEOUT)
+                except Exception as error:
+                    await _raise_failure(sandbox, error, 'Could not determine the working directory')
+                printed = result.result.removesuffix('\n')
+                if result.exit_code != 0 or not posixpath.isabs(printed):
+                    raise WorkspaceUnavailableError(
+                        f'Could not determine the working directory of Daytona sandbox {sandbox.id}: {result.result}'
+                    )
+                self._resolved_working_dir = printed
+            return self._resolved_working_dir
 
     async def run(
         self,
@@ -794,58 +892,48 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        argv = command_argv(command, shell)
-        checked_cwd = absolute_path('cwd', cwd)
-        # Acquiring the sandbox has its own bound; the timeout is the command's alone.
-        sandbox = await self.get_sandbox()
-        process: _DaytonaProcess | None = None
+        async with self._operation():
+            if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+                raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+            argv = command_argv(command, shell)
+            checked_cwd = absolute_path('cwd', cwd)
+            # Acquiring the sandbox has its own bound; the timeout is the command's alone.
+            sandbox = await self.get_sandbox()
+            process: _DaytonaProcess | None = None
 
-        async def stop() -> None:
-            if process is not None:
-                await process.kill()
+            async def stop() -> None:
+                if process is not None:
+                    await process.kill()
 
-        def output() -> tuple[str, str]:
-            if process is None:
-                return '', ''
-            return _until_marker(process.stdout, process.marker), _until_marker(process.stderr, process.marker)
+            def output() -> tuple[str, str]:
+                if process is None:
+                    return '', ''
+                return _until_marker(process.stdout, process.marker), _until_marker(process.stderr, process.marker)
 
-        self._active_runs += 1
-        if self._active_runs == 1:
-            self._runs_drained = anyio.Event()
-        try:
-            async with command_deadline(timeout, stop=stop, output=output):
-                try:
-                    process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
-                except Exception:
-                    # A held handle may outlive Daytona's idle auto-stop; only retry setup,
-                    # where no command was accepted, so the command cannot be duplicated.
-                    if not await _restart_if_stopped(sandbox):
-                        raise
-                    process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
-                result = await process.wait()
-                if checked_cwd is not None and f'{process.marker}-cwd' in result.stderr:
-                    raise FileNotFoundError(checked_cwd)
-            # Native Task.cancel() pierces AnyIO shields. Keep the bounded stop in a child
-            # and wait for it before reporting runs drained or releasing the HTTP client.
-            cleanup = asyncio.create_task(stop_shielded(stop))
-            cancelled = False
-            while True:
-                try:
-                    await asyncio.shield(cleanup)
-                    break
-                except asyncio.CancelledError:
-                    cancelled = True
-                    if cleanup.done():
-                        break
-            if cancelled:
-                raise asyncio.CancelledError
-            return result
-        finally:
-            self._active_runs -= 1
-            if not self._active_runs:
-                self._runs_drained.set()
+            self._active_runs += 1
+            if self._active_runs == 1:
+                self._runs_drained = anyio.Event()
+            try:
+                async with command_deadline(timeout, stop=stop, output=output):
+                    try:
+                        process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
+                    except Exception:
+                        # A held handle may outlive Daytona's idle auto-stop; only retry setup,
+                        # where no command was accepted, so the command cannot be duplicated.
+                        if not await _restart_if_stopped(sandbox):
+                            raise
+                        process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
+                    result = await process.wait()
+                    if checked_cwd is not None and f'{process.marker}-cwd' in result.stderr:
+                        raise FileNotFoundError(checked_cwd)
+                # Native Task.cancel() pierces AnyIO shields. Keep the bounded stop in a child
+                # and wait for it before reporting runs drained or releasing the HTTP client.
+                await run_to_completion(lambda: stop_shielded(stop))
+                return result
+            finally:
+                self._active_runs -= 1
+                if not self._active_runs:
+                    self._runs_drained.set()
 
     async def _start(
         self,

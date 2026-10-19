@@ -69,7 +69,7 @@ async def test_lifetimes_default_to_daytonas_own(fake_daytona: FakeDaytona) -> N
         ({'working_dir': 'repo'}, 'working_dir must be an absolute POSIX path'),
         ({'auto_stop_interval': -1}, 'auto_stop_interval must be an integer of at least 0'),
         ({'auto_stop_interval': 1.5}, 'auto_stop_interval must be an integer of at least 0'),
-        ({'defer_loading': True, 'id': 'sandbox'}, 'cannot be deferred'),
+        ({'defer_loading': True, 'id': 'sandbox'}, 'does not support `defer_loading=True`'),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message: str) -> None:
@@ -252,9 +252,47 @@ async def test_run_closes_the_client_it_opened_and_the_result_workspace_reopens(
         TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[DaytonaSandbox()]
     )
     result = await agent.run('go')
-    assert fake_daytona.closed_clients == 1
+    # The run keeps one client across its operations and closes it at the end.
+    assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (1, 1)
+
+    # After the run nothing would close the backend, so each operation closes its own client.
     assert await result.workspace.read_bytes('/note') == b'kept'
+    assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (2, 2)
     assert len(fake_daytona.sandboxes) == 1
+
+
+async def test_backend_used_outside_a_run_closes_its_client_after_each_operation(fake_daytona: FakeDaytona) -> None:
+    # What a Temporal activity does: rebuild the backend from the ref, use it, and drop it.
+    backend = DaytonaSandbox[None]().get_workspace(_ctx(), ref=None)
+    assert isinstance(backend, DaytonaSandboxBackend)
+    await backend.write_bytes('/note', b'hi')
+    assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (1, 1)
+
+    attached = DaytonaSandbox[None]().get_workspace(_ctx(), ref=backend.ref)
+    assert isinstance(attached, DaytonaSandboxBackend)
+    # One operation, however many requests it makes, and concurrent operations share one client,
+    # closed once the last of them ends.
+    first, second = await asyncio.gather(attached.read_bytes('/note'), attached.exists('/note'))
+    assert (first, second) == (b'hi', True)
+    assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (2, 2)
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_trio_is_refused_before_any_daytona_call(fake_daytona: FakeDaytona) -> None:
+    """The Daytona SDK runs its calls on asyncio tasks, so Trio gets a clear `UserError` instead."""
+    message = r'^Daytona needs the asyncio event loop: the Daytona SDK runs its calls on asyncio tasks\.$'
+    backend = DaytonaSandbox[None]().get_workspace(_ctx(), ref=None)
+    assert isinstance(backend, DaytonaSandboxBackend)
+    with pytest.raises(UserError, match=message):
+        await backend.run(['true'])
+    with pytest.raises(UserError, match=message):
+        await backend.read_bytes('/file')
+    with pytest.raises(UserError, match=message):
+        await backend.get_sandbox()
+    with pytest.raises(UserError, match=message):
+        await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
+    await backend.aclose()
+    assert fake_daytona.opened_clients == 0
 
 
 @pytest.mark.parametrize('supplied', ['client', 'workspace'])

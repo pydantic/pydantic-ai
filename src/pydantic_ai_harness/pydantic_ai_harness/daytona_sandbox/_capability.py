@@ -1,4 +1,4 @@
-"""Capability that supplies a Daytona workspace to an agent run."""
+"""Capability that supplies a Daytona sandbox to an agent run."""
 
 from __future__ import annotations
 
@@ -6,120 +6,124 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import anyio
-
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
-from pydantic_ai_harness.daytona_sandbox._backend import (
-    DaytonaSandboxBackend,
-    _close_sdk_client,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness.daytona_sandbox._backend import DaytonaSandboxBackend, destroy_sandbox
 
 if TYPE_CHECKING:
     from daytona import AsyncDaytona
 
+    from pydantic_ai.agent import AgentRunResult
 
-class _RunBackend(DaytonaSandboxBackend):
-    """A backend `DaytonaSandbox` built for one run; that run closes its API client when it ends."""
 
-    run_id: str | None = None
-    """The run that built this backend. A child run handed it through `workspace=` has another ID."""
+class _SuppliedBackend(DaytonaSandboxBackend):
+    """The backend `DaytonaSandbox` built for one run; the capability closes its client when that run ends."""
+
+    def __init__(self, *, run_id: str | None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.run_id = run_id
+        # Until a run claims it, nothing closes this backend: Temporal builds one per activity and
+        # drops it, so its own client closes after each operation instead.
+        self._close_after_operation = True
+
+    def claim(self, owned: bool) -> None:
+        """Keep the client open across operations while the run that closes it is in progress."""
+        self._close_after_operation = not owned
 
 
 @dataclass(kw_only=True)
 class DaytonaSandbox(AbstractCapability[AgentDepsT]):
-    """Run the agent's commands and file operations in an isolated [Daytona](https://www.daytona.io) sandbox.
+    """Supply an isolated [Daytona](https://www.daytona.io) sandbox as the run's workspace.
 
-    A run with no workspace ref creates a fresh sandbox; pass a `WorkspaceRef` to attach to an
-    existing one. Shell commands run under `/bin/sh -c`.
+    A run with no reference creates a fresh sandbox on first use; pass a `WorkspaceRef` to attach
+    to an existing one. Ending a run does not delete the sandbox: Daytona stops it when idle and
+    keeps it until you delete it. Commands run under `sh -c` as the sandbox's default user.
 
-    This capability supplies the sandbox only. Compose it with capabilities that use the run's
-    workspace, such as `Coder`, `Shell`, or `FileSystem`.
-
-    Without `client=`, each run opens its own `AsyncDaytona` API client on first use and closes it
-    when the run ends; the sandbox keeps running, and `result.workspace` opens a new client if it
-    is used afterwards.
+    This capability supplies the workspace only. Compose it with capabilities that use it, such
+    as `Coder`, `Shell`, and `FileSystem`. See
+    [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
     """
 
     client: AsyncDaytona | None = None
-    """A caller-owned `daytona.AsyncDaytona` client, never closed by the capability. Supply one to
-    share it across runs and own its lifecycle with `async with AsyncDaytona() as client:`."""
+    """A caller-owned `daytona.AsyncDaytona`, which is never closed for you. When omitted, each
+    run's backend creates one on first use from `DAYTONA_API_KEY` and closes it when the run ends;
+    a backend this capability supplies outside a run (under Temporal, one per activity) closes its
+    client after each operation. A backend from `backend(ref)` needs `aclose()`. Supply one to
+    share its connections across runs, on one event loop."""
 
     snapshot: str | None = None
-    """Daytona snapshot used for a newly created workspace; Daytona's default when `None`."""
-
-    working_dir: str | None = None
-    """Absolute directory commands start in and relative paths resolve against; the sandbox's
-    default when `None`. It applies to attached sandboxes too."""
-
-    env: Mapping[str, str] | None = field(default=None, repr=False)
-    """Environment variables every command in the sandbox gets; a command's own `env` is layered on
-    top. Nothing is read from the agent process's environment."""
+    """Daytona snapshot a newly created sandbox starts from; Daytona's default when `None`.
+    An unknown snapshot raises `WorkspaceUnavailableError` on first use."""
 
     auto_stop_interval: int | None = None
-    """Idle minutes before Daytona stops a newly created workspace; `0` disables it, and `None`
-    keeps Daytona's default (15 minutes)."""
+    """Idle minutes before Daytona stops a newly created sandbox; `0` disables it, and `None`
+    keeps Daytona's default (15 minutes). Attaching starts a stopped sandbox again."""
 
     network_block_all: bool = False
-    """Whether to block outbound traffic from a newly created workspace."""
+    """Whether to block outbound traffic from a newly created sandbox."""
+
+    working_dir: str | None = None
+    """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own.
+    Created on a new sandbox; an attached sandbox must already have it."""
+
+    env: Mapping[str, str] | None = field(default=None, repr=False)
+    """Environment variables every command gets, also on an attached sandbox; a command's `env` is
+    layered on top. Nothing is read from the host."""
 
     def __post_init__(self) -> None:
-        # Checked here rather than when the backend first creates a sandbox, so a bad value fails
-        # where it is written instead of at the first workspace operation of some later run.
+        if self.defer_loading:
+            # Core picks the run's workspace from the always-on capabilities only.
+            raise UserError(
+                '`DaytonaSandbox` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
+            )
+        # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
         check_integer('auto_stop_interval', self.auto_stop_interval, minimum=0, optional=True)
-        if self.defer_loading:
-            # Core skips deferred capabilities when it selects the run's workspace.
-            raise UserError('DaytonaSandbox cannot be deferred: a deferred capability never supplies the workspace.')
 
     def backend(self, ref: WorkspaceRef) -> DaytonaSandboxBackend:
-        """Build a lazy backend for an existing sandbox."""
+        """Construct a lazy backend for an existing sandbox."""
         return DaytonaSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
-        """Delete a sandbox without starting it, including one Daytona has stopped."""
-        if ref.provider != 'daytona' or not ref.id.strip():
-            raise ValueError('expected a Daytona workspace ref with a nonempty id')
-        if self.client is not None:
-            await (await self.client.get(ref.id)).delete()
-        else:
-            import daytona  # optional SDK is imported only when needed
+        """Delete a sandbox by ID without starting it, including one Daytona has stopped.
 
-            client = daytona.AsyncDaytona()
-            try:
-                await (await client.get(ref.id)).delete()
-            finally:
-                # Deleting a sandbox must release the API client even if deletion is cancelled.
-                with anyio.move_on_after(30, shield=True):
-                    await _close_sdk_client(client)
+        A sandbox that no longer exists is already gone, so destroying it returns quietly.
+        """
+        if ref.provider != 'daytona':
+            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'daytona'")
+        await destroy_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'daytona':
             return None
-        backend = _RunBackend(
+        return _SuppliedBackend(
+            run_id=ctx.run_id,
             client=self.client,
             ref=ref,
             snapshot=self.snapshot,
             auto_stop_interval=self.auto_stop_interval,
+            network_block_all=self.network_block_all,
             working_dir=self.working_dir,
             env=self.env,
-            network_block_all=self.network_block_all,
         )
-        backend.run_id = ctx.run_id
-        return backend
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        # Only the backend this run built: one passed in as `workspace=`, such as a parent run's
+        # handed to a subagent, belongs to the run that built it and may still be in use.
+        backend = innermost_backend(ctx.workspace)
+        owned = backend if isinstance(backend, _SuppliedBackend) and backend.run_id == ctx.run_id else None
+        if owned is not None:
+            owned.claim(True)
         try:
             return await handler()
         finally:
-            # Only the backend this run built: one passed through `workspace=`, such as a parent
-            # run's handed to a subagent, may be shared with runs still using its client.
-            backend = innermost_backend(ctx.workspace)
-            if isinstance(backend, _RunBackend) and backend.run_id == ctx.run_id:
-                await backend.aclose()
+            if owned is not None:
+                # `result.workspace` outlives the run, with no one left to close it.
+                owned.claim(False)
+                await owned.aclose()

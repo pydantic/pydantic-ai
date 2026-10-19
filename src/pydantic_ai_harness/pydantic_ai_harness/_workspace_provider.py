@@ -7,6 +7,7 @@ import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
@@ -18,6 +19,8 @@ try:
     import sniffio as _sniffio
 except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
     _sniffio = None
+
+_T = TypeVar('_T')
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -123,6 +126,31 @@ async def command_deadline(
     if scope.cancelled_caught:
         stdout, stderr = output()
         raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
+
+
+async def run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Await `call` in a task of its own and see it finish even if the caller is cancelled meanwhile.
+
+    For work whose outcome must be recorded, such as a created Sprite or a closed client: the
+    caller's cancellation is re-raised only once `call` has finished, and nothing outlives this
+    await. `call` must be bounded; the caller waits for it.
+    """
+    # AnyIO has no detached task: keep this native task alive and referenced until its result is recorded.
+    task = asyncio.ensure_future(call())
+    # Preserve the native cancellation to re-raise after the provider call finishes.
+    cancelled: asyncio.CancelledError | None = None
+    # The AnyIO shield holds off cancel scopes, but native `Task.cancel()` can still interrupt the
+    # caller. `asyncio.wait` does not propagate that cancellation to the independent provider task.
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                await asyncio.wait([task])
+            except asyncio.CancelledError as error:
+                cancelled = error
+    if cancelled is not None:
+        task.exception()  # Retrieve a provider failure before the native cancellation takes precedence.
+        raise cancelled
+    return task.result()
 
 
 def absolute_path(name: str, value: str | None) -> str | None:

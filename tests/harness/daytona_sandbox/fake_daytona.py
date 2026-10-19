@@ -55,6 +55,7 @@ class FakeProcess:
         timeout: int | None = None,
     ) -> SimpleNamespace:
         self.owner.check_alive()
+        self.owner.exec_commands.append(command)
         if command == 'pwd -P':
             self.owner.workdir_calls += 1
             self.owner.workdir_started.set()
@@ -441,6 +442,8 @@ class FakeSandbox:
         self.files: dict[str, bytes] = {}
         self.directories: set[str] = set()
         self.exec_error: Exception | None = None
+        # Every `process.exec` command line, in order.
+        self.exec_commands: list[str] = []
         self.fs_error: Exception | None = None
         self.workdir = '/srv/repo'
         self.workdir_error: Exception | None = None
@@ -592,6 +595,7 @@ class FakeDaytona:
     def __init__(self) -> None:
         self.sandboxes: list[FakeSandbox] = []
         self.create_params: list[CreateParams] = []
+        self.opened_clients = 0
         self.closed_clients = 0
         self.create_error: Exception | None = None
         self.lose_create_reply = False
@@ -613,6 +617,7 @@ class FakeDaytona:
     def client(self, _config: object = None) -> FakeClient:
         if self.client_error is not None:
             raise self.client_error
+        self.opened_clients += 1
         return FakeClient(self)
 
     def purge(self, sandbox: FakeSandbox) -> None:
