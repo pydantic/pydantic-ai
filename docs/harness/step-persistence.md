@@ -327,7 +327,7 @@ The store issues `createIndex` on its first write, for ten indexes: `conversatio
 - The unique index build fails if an existing `tool_effects` collection already holds duplicate `(run_id, tool_call_id)` pairs.
 - Index builds against already-populated collections cost time and I/O on that first call.
 
-`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against `mongo:8`.
+`RunRecord.metadata` and `StepEvent.metadata` are stored as nested documents, so their keys become BSON field names: keys containing `.` or starting with `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/), and a key containing a NULL byte is rejected by the BSON encoder before it reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
 
 Install MongoDB support:
 

@@ -431,7 +431,7 @@ deployment:
 so their keys become BSON field names: keys containing `.` or starting with
 `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/),
 and a key containing a NULL byte is rejected by the BSON encoder before it
-reaches the server. CI exercises both Mongo backends against `mongo:8`.
+reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
 
 Install MongoDB support:
 
@@ -856,7 +856,8 @@ asyncio.run(main())
 A save is checked against the conversation's `revision`, which
 `load` sets and a run carries through to its result. When someone else saved the conversation in between, or a
 conversation with that ID already exists, `save` raises
-`ConversationConflict` instead of overwriting it.
+`ConversationConflict` instead of overwriting it. `save` advances
+the revision of the conversation you pass it, so keep that conversation in a variable to save again or continue from.
 
 Each message's JSON is stored once, keyed by its SHA-256, however many conversations hold it. Binary and text parts
 at or above `media_threshold_bytes` (64 KiB by default) are externalized like step snapshots' (see

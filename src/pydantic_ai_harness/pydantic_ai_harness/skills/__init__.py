@@ -8,6 +8,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillDefinition,
     SkippedSkill,
     SkipReason,
+    UnknownNames,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     'SkipReason',
     'SkippedSkill',
     'Skills',
+    'UnknownNames',
 ]
