@@ -2680,6 +2680,57 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+@pytest.mark.parametrize('args', ['[]', '[1, 2, 3]', '123', 'true', '"str"', 'null'])
+def test_load_capability_call_part_non_dict_json(args: str):
+    """LoadCapabilityCallPart should treat non-dict JSON args as invalid, yielding None capability_id."""
+    part = LoadCapabilityCallPart(args=args)
+    assert part.capability_id is None
+    assert part.typed_args is None
+    assert part.args_as_dict() == {INVALID_JSON_KEY: args}
+
+
+@pytest.mark.subprocess(reason='runs an optimized interpreter where assert statements are disabled')
+def test_args_as_dict_rejects_non_dict_json_under_optimization():
+    """Non-object JSON should remain invalid when Python optimization is enabled."""
+    script = (
+        'import sys\n'
+        'from pydantic_ai.messages import INVALID_JSON_KEY, LoadCapabilityCallPart, NativeToolCallPart, ToolCallPart\n'
+        "payloads = ['[]', '[1, 2]', '123', 'true', '\"str\"', 'null']\n"
+        'for raw in payloads:\n'
+        "    part = ToolCallPart(tool_name='example', args=raw)\n"
+        '    dict_result = part.args_as_dict()\n'
+        '    if dict_result != {INVALID_JSON_KEY: raw}:\n'
+        "        sys.exit(f'args_as_dict failed for {raw}: got {dict_result}')\n"
+        "    native_part = NativeToolCallPart(tool_name='example', args=raw)\n"
+        '    if native_part.args_as_dict() != {INVALID_JSON_KEY: raw}:\n'
+        "        sys.exit(f'native args_as_dict failed for {raw}')\n"
+        '    cap_part = LoadCapabilityCallPart(args=raw)\n'
+        '    if cap_part.capability_id is not None:\n'
+        "        sys.exit(f'capability_id not None for {raw}: {cap_part.capability_id}')\n"
+        '    if cap_part.typed_args is not None:\n'
+        "        sys.exit(f'typed_args not None for {raw}')\n"
+        '    try:\n'
+        '        part.args_as_dict(raise_if_invalid=True)\n'
+        "        sys.exit(f'raise_if_invalid did not raise for {raw}')\n"
+        '    except AssertionError:\n'
+        '        pass\n'
+        'sys.exit(0)\n'
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-O',
+            '-c',
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_args_as_json_str_valid_json_canonical():
     """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
 
