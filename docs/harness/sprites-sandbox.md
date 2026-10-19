@@ -74,7 +74,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.sprites.dev/working-with-sprites/services/).
+A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services).
 
 Commands run as the non-root `sprite` user, but Unix permissions do not restrict it: a file with mode `000` is still readable. Do not rely on them to keep tools out of a path.
 
