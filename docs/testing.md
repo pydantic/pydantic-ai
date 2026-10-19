@@ -4,6 +4,8 @@ description: "Unit test Pydantic AI agents with pytest by swapping in TestModel 
 
 # Unit testing
 
+Before you deploy an agent, and on every change after, unit tests check your own code around the model: tools, dependencies, output validation and failure handling, with no model requests and the same result every run. They don't tell you whether the model's answers are good; that is what [evals](evals.md) are for.
+
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
 Because for the most part they're nothing new, we have pretty well established tools and patterns for writing and running these kinds of tests.
@@ -48,7 +50,7 @@ from fake_database import DatabaseConn  # (1)!
 from weather_service import WeatherService  # (2)!
 
 weather_agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     deps_type=WeatherService,
     instructions='Providing a weather forecast at the locations the user provides.',
 )
@@ -92,7 +94,7 @@ Here we have a function that takes a list of `#!python (user_prompt, user_id)` t
 Here's how we would write tests using [`TestModel`][pydantic_ai.models.test.TestModel]:
 
 ```python {title="test_weather_app.py" call_name="test_forecast" requires="weather_app.py" typecheck="skip - dirty-equals matchers stand in for timestamps and IDs"}
-from datetime import timezone
+from datetime import UTC
 import pytest
 
 from dirty_equals import IsNow, IsStr
@@ -131,11 +133,11 @@ async def test_forecast():
             parts=[
                 UserPromptPart(
                     content='What will the weather be like in London on 2024-11-28?',
-                    timestamp=IsNow(tz=timezone.utc),  # (7)!
+                    timestamp=IsNow(tz=UTC),  # (7)!
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -155,7 +157,7 @@ async def test_forecast():
                 output_tokens=7,
             ),
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),
@@ -166,11 +168,11 @@ async def test_forecast():
                     tool_name='weather_forecast',
                     content='Sunny with a chance of rain',
                     tool_call_id=IsStr(),
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=UTC),
                 ),
             ],
             instructions='Providing a weather forecast at the locations the user provides.',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             run_id=IsStr(),
             conversation_id=IsStr(),
         ),
@@ -185,7 +187,7 @@ async def test_forecast():
                 output_tokens=16,
             ),
             model_name='test',
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='test',
             run_id=IsStr(),
             conversation_id=IsStr(),

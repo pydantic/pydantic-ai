@@ -84,16 +84,20 @@ async def speak_continuously(
                 await anyio.sleep(FRAME_SECONDS)  # pragma: no cover  # only while recording
 
 
-def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[str]) -> None:
+def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[str | None]) -> None:
     """Check the history of a finished scripted conversation against what every provider must produce.
 
-    `keywords` holds a word from each utterance, in the order they were spoken.
+    `keywords` holds a word from each utterance, in the order they were spoken, or `None` for an
+    utterance spoken with input transcription off.
 
     - one user request per utterance, in speaking order, each with its whole transcript (never a lone
-      fragment, never blank), which is what containing its keyword checks;
+      fragment, never blank), which is what containing its keyword checks; an untranscribed utterance
+      has no transcript at all, so the check there is that no stray (silent) user turn was recorded;
     - requests and responses strictly alternate, from the first user turn to the final answer;
     - every tool call is answered by the request right after its response;
-    - `session.usage.requests` counts every recorded `ModelResponse`;
+    - `session.usage.requests` counts every recorded `ModelResponse` where the profile's
+      `responses_are_requests` says that is what a request is, and otherwise at least every response
+      that carries usage;
     - the history survives a round trip through `ModelMessagesTypeAdapter`.
     """
     messages = session.all_messages()
@@ -111,7 +115,10 @@ def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[
     ]
     assert len(user_turns) == len(keywords), shape
     for turn, keyword in zip(user_turns, keywords):
-        assert turn.transcript and keyword in turn.transcript.lower(), shape
+        if keyword is None:
+            assert turn.transcript is None, shape
+        else:
+            assert turn.transcript and keyword in turn.transcript.lower(), shape
 
     for index, message in enumerate(messages):
         calls = [part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart)]
@@ -120,7 +127,13 @@ def assert_conversation_invariants(session: RealtimeSession, keywords: Sequence[
             returns = [part.tool_call_id for part in answer.parts if isinstance(part, ToolReturnPart)]
             assert sorted(returns) == sorted(calls), shape
 
-    assert session.usage.requests == sum(isinstance(message, ModelResponse) for message in messages), shape
+    responses = [message for message in messages if isinstance(message, ModelResponse)]
+    if session.profile.get('responses_are_requests', True):
+        assert session.usage.requests == len(responses), shape
+    else:
+        # The requests are the ones the model delegated, each reporting its usage on the response it
+        # contributed to. A spoken reply can carry more than one, so the history bounds them from below.
+        assert session.usage.requests >= sum(response.usage.has_values() for response in responses), shape
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
 
 

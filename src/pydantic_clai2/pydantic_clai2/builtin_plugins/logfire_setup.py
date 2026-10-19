@@ -1,0 +1,261 @@
+"""The `observability` plugin's setup: pick which Logfire traces go to, sign in there, pick a project.
+
+It asks through the `Dialogs` the settings menu's project row gets, so it runs in the terminal or in the web UI.
+It runs Logfire's own device sign-in (the one behind `logfire auth`) behind a waiting screen the user can cancel,
+not the MCP OAuth in `pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
+tokens. The user token lives only for the duration of setup. What is kept is a project write token, saved in
+`/keys`, and the plugin settings naming it and the signed-in account's email, so the loader reloads the plugin
+and traces go to that project, with session roots tagged with that email.
+"""
+
+import platform
+import re
+import time
+import webbrowser
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import TypeVar
+from urllib.parse import urlsplit
+
+import anyio
+import httpx
+from anyio import to_thread
+from pydantic import BaseModel, TypeAdapter, ValidationError
+
+from pydantic_clai2.builtin_plugins.logfire_destination import Destination, choose_destination, remember
+from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
+from pydantic_clai2.plugins.menus import Dialogs, Option
+from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.browser import open_browser
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
+
+SELF_HOSTED = 'self-hosted'
+"""What telemetry records for a Logfire that is not a hosted region, instead of its host."""
+SIGN_IN_TIMEOUT = 600.0
+"""Seconds to wait for the browser approval, as `logfire auth` does."""
+_POLL_FAILURES = 4
+
+ModelT = TypeVar('ModelT', bound=BaseModel)
+
+Show = Callable[[str], None]
+"""What the sign-in's waiting screen shows, such as the link to open."""
+OpenBrowser = Callable[[str], bool]
+
+
+class SetupError(ValueError):
+    """Setup stopped; the message says why and what to do. A `ValueError`, so the loader shows it as one."""
+
+    def __init__(self, message: str) -> None:
+        # Messages can quote a self-hosted server's own text, so terminal controls in it are made inert.
+        super().__init__(terminal_text(message))
+
+
+class _Device(BaseModel):
+    device_code: str
+    frontend_auth_url: str
+
+
+class _UserToken(BaseModel):
+    token: str
+
+
+class _Account(BaseModel):
+    email: str
+
+
+class Project(BaseModel):
+    """A project the signed-in user can write to."""
+
+    organization_name: str
+    project_name: str
+
+    @property
+    def label(self) -> str:
+        """As Logfire shows it: `organization/project`."""
+        # A self-hosted server chooses these names, so terminal controls in them are made inert.
+        return terminal_text(f'{self.organization_name}/{self.project_name}', keep='')
+
+    @property
+    def key_name(self) -> str:
+        """The `/keys` entry for this project's write token, such as `LOGFIRE_TOKEN_PYDANTIC_CLAI2`."""
+        return re.sub(r'[^A-Z0-9]+', '_', f'LOGFIRE_TOKEN_{self.organization_name}_{self.project_name}'.upper())
+
+
+_PROJECTS: TypeAdapter[list[Project]] = TypeAdapter(list[Project])
+
+
+@dataclass(frozen=True, kw_only=True)
+class Setup:
+    """Everything setup touches outside the plugin and its dialogs, so tests can swap each piece."""
+
+    http: Callable[[], httpx.AsyncClient] = lambda: httpx.AsyncClient(timeout=httpx.Timeout(30, read=60))
+    open_browser: OpenBrowser = open_browser
+    sleep: Callable[[float], Awaitable[None]] = anyio.sleep
+
+
+@dataclass(frozen=True)
+class Chosen:
+    """What setup produced: the saved key, the Logfire it belongs to, and the account that signed in."""
+
+    token: KeyReference
+    destination: Destination
+    project: Project
+    account_email: str | None
+
+
+_THEN = 'Then sign in (or sign up) in your browser,\nand pick a project to send traces to.\nIts write token is saved in /keys.'
+SIGNING_IN = 'Approve the sign-in in your browser.\nCLAI then lists the projects you can\nsend traces to.'
+"""The sign-in's waiting screen, above the link; one short line each, as the terminal's preview panel cuts long ones."""
+
+
+@dataclass(frozen=True)
+class _SignedIn:
+    user_token: str
+    account_email: str | None
+    projects: list[Project]
+
+
+async def run_setup(
+    dialogs: Dialogs, setup: Setup, *, current: Destination | None, owned: KeyReference | None
+) -> Chosen | None:
+    """Pick a Logfire, sign in, pick a project, and save its write token; `None` when cancelled.
+
+    `current` is the Logfire selected first. `owned` is the key the plugin already uses: setting up the same
+    project again replaces it, but any other key of the same name is left alone.
+    """
+    destination = await choose_destination(dialogs, current=current, then=_THEN)
+    if destination is None:
+        return None
+    base_url = destination.base_url
+    with telemetry.span('logfire setup', destination=destination.region or SELF_HOSTED) as span:
+        async with setup.http() as http:
+            found: list[_SignedIn] = []
+
+            async def signing_in(show: Show) -> None:
+                user_token = await sign_in(http, base_url, setup, show)
+                show('Signed in. Listing your projects...')
+                email = await _account_email(http, base_url, user_token)
+                found.append(_SignedIn(user_token, email, await _projects(http, base_url, user_token)))
+
+            if not await dialogs.wait(title='Sign in to Logfire', description=SIGNING_IN, task=signing_in):
+                span.set('outcome', 'cancelled')
+                return None
+            [signed_in] = found
+            if not signed_in.projects:
+                raise SetupError(f'You cannot write to any project on {base_url} yet. Create one there, then retry.')
+            project = await choose_project(dialogs, signed_in.projects)
+            if project is None:
+                span.set('outcome', 'cancelled')
+                return None
+            value = await _write_token(http, base_url, signed_in.user_token, project)
+        name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
+        await to_thread.run_sync(remember, destination)
+        span.set('outcome', 'saved')
+    return Chosen(
+        token=KeyReference(name=name), destination=destination, project=project, account_email=signed_in.account_email
+    )
+
+
+async def choose_project(dialogs: Dialogs, projects: list[Project]) -> Project | None:
+    """One of the projects the user can write to; `None` when cancelled."""
+    picked = await dialogs.choose(
+        title='Send traces to which project?',
+        options=[Option(value=str(index), label=project.label) for index, project in enumerate(projects)],
+        description='CLAI creates a write token for this project and saves it in /keys.',
+    )
+    return None if picked is None else projects[int(picked)]
+
+
+async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup, show: Show) -> str:
+    """Logfire's device sign-in: show and open the link, then wait for approval; returns the user token."""
+    response = await _call(http.post(f'{base_url}/v1/device-auth/new/', params={'machine_name': platform.node()}))
+    device = _parse(_Device, response)
+    if urlsplit(device.frontend_auth_url).scheme != 'https':
+        raise SetupError(f'{base_url} sent a sign-in link that is not https; not opening it.')
+    # Links can come from a self-hosted server, so terminal controls in them are made inert.
+    link = f'Sign in to Logfire (new users can sign up there):\n{terminal_text(device.frontend_auth_url, keep="")}'
+    show(link)
+    if not await to_thread.run_sync(lambda: _open(setup.open_browser, device.frontend_auth_url)):
+        show(f'{link}\n\nNo browser opened; open the link yourself, on any device.')
+    deadline = time.monotonic() + SIGN_IN_TIMEOUT
+    failures = 0
+    while time.monotonic() < deadline:
+        # Logfire holds each poll open for a while and answers `null` until the link is approved.
+        try:
+            response = await http.get(f'{base_url}/v1/device-auth/wait/{device.device_code}')
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            failures += 1
+            if failures >= _POLL_FAILURES:
+                raise SetupError(f'Lost contact with {base_url} while waiting for sign-in ({type(exc).__name__}).')
+            await setup.sleep(1)
+            continue
+        failures = 0
+        if response.content.strip() not in (b'', b'null'):
+            return _parse(_UserToken, response).token
+    raise SetupError('The sign-in link expired before it was approved. Run /plugins configure observability to retry.')
+
+
+async def _account_email(http: httpx.AsyncClient, base_url: str, user_token: str) -> str | None:
+    """The signed-in account's email, from the SDK's `get_user_information` endpoint.
+
+    `None` when the server does not say: only the session root's tag needs it, so setup carries on.
+    """
+    try:
+        response = await _call(http.get(f'{base_url}/v1/account/me', headers={'Authorization': user_token}))
+        return _parse(_Account, response).email
+    except SetupError:
+        return None
+
+
+async def _projects(http: httpx.AsyncClient, base_url: str, user_token: str) -> list[Project]:
+    response = await _call(http.get(f'{base_url}/v1/writable-projects/', headers={'Authorization': user_token}))
+    try:
+        return _PROJECTS.validate_json(response.content)
+    except ValidationError:
+        raise SetupError(f'{base_url} answered the project list with something unexpected.') from None
+
+
+async def _write_token(http: httpx.AsyncClient, base_url: str, user_token: str, project: Project) -> str:
+    path = f'/v1/organizations/{project.organization_name}/projects/{project.project_name}/write-tokens/'
+    response = await _call(http.post(f'{base_url}{path}', headers={'Authorization': user_token}))
+    return _parse(_UserToken, response).token
+
+
+async def _call(request: Awaitable[httpx.Response]) -> httpx.Response:
+    try:
+        response = await request
+    except httpx.HTTPError as exc:
+        raise SetupError(f'Could not reach Logfire ({type(exc).__name__}). Check the URL and retry.') from None
+    if response.is_error:
+        raise SetupError(f'Logfire refused {response.request.url.path} (HTTP {response.status_code}).')
+    return response
+
+
+def _parse(model: type[ModelT], response: httpx.Response) -> ModelT:
+    try:
+        return model.model_validate_json(response.content)
+    except ValidationError:
+        raise SetupError(f'Logfire answered {response.request.url.path} with something unexpected.') from None
+
+
+def _save(name: str, value: str, *, owned: KeyReference | None) -> str:
+    """Save under `name`, or `name_2`, `name_3`, ... when another credential already has it; returns the name."""
+    candidates = [name, *(f'{name}_{number}' for number in range(2, 100))]
+    if owned is not None and owned.name in candidates:
+        save_key(name=owned.name, value=value)
+        return owned.name
+    for candidate in candidates:
+        try:
+            save_key(name=candidate, value=value, replace=False)
+        except KeyExistsError:
+            continue
+        return candidate
+    raise SetupError(f'Too many /keys entries start with {name}; delete some and retry.')
+
+
+def _open(open_browser: OpenBrowser, url: str) -> bool:
+    try:
+        return open_browser(url)
+    except webbrowser.Error:
+        return False

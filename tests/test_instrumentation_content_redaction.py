@@ -18,6 +18,7 @@ from a user, and is expected to appear on spans; content in there is the caller'
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 from opentelemetry.context import Context
@@ -25,11 +26,13 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai._instrumentation import ContentPolicy, include_content_ctx, open_request_policy, span_include_content
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import Tool
 
@@ -43,7 +46,6 @@ with try_import() as otel_sdk_installed:
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
 ]
 
@@ -92,6 +94,22 @@ def redacted_setup(include_content: bool = False) -> tuple[InstrumentationSettin
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     return InstrumentationSettings(include_content=include_content, tracer_provider=provider), exporter
+
+
+async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) -> None:
+    settings, exporter = redacted_setup(include_content=False)
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)])
+    await agent.run('go')
+    run_spans = [
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'invoke_agent'
+    ]
+    assert len(run_spans) == 1
+    attributes = run_spans[0].attributes
+    assert attributes is not None
+    assert attributes['pydantic_ai.workspace.provider'] == 'local'
+    assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
 
 
 def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
@@ -294,6 +312,33 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
     await agent.run(SECRETS['user_prompt'])
 
     check(exporter, include_content, {'user_prompt', 'prompted_output_template'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(include_content: bool) -> None:
+    """An error `FallbackModel` fell back from gets its own span even though the run succeeds.
+
+    The error is also kept in the answering response's `failed_attempts`, so the history a later run
+    continues from carries it too.
+    """
+    settings, exporter = redacted_setup(include_content)
+
+    def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(status_code=500, model_name='first', body=SECRETS['provider_error_body'])
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(
+        FallbackModel(FunctionModel(fail), FunctionModel(respond)), capabilities=[Instrumentation(settings=settings)]
+    )
+    result = await agent.run(SECRETS['user_prompt'])
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse) and response.failed_attempts
+    assert SECRETS['provider_error_body'] in (response.failed_attempts[0].error or '')
+    await agent.run('again', message_history=result.all_messages())
+
+    check(exporter, include_content, {'user_prompt', 'model_text', 'provider_error_body'})
 
 
 @pytest.mark.parametrize('include_content', [True, False])

@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent, ModelHTTPError
 
@@ -37,7 +36,7 @@ with try_import() as groq_imports:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.providers.groq import GroqProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 ProviderCase = Literal['openai-responses', 'openai-chat', 'anthropic', 'google', 'bedrock', 'groq']

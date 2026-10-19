@@ -29,8 +29,6 @@ from pydantic_ai.usage import RequestUsage
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsStr
 
-pytestmark = [pytest.mark.anyio]
-
 
 @pytest.fixture
 def received_messages() -> list[ModelMessage]:

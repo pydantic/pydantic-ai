@@ -28,7 +28,6 @@ input and output rates can differ.
 Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then tune for
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
-[OpenAI GPT-Live](openai-live.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
 [xAI](xai.md#feature-support-and-limitations).
@@ -63,7 +62,7 @@ async def show_transcripts(parts: AsyncIterator[SpeechPart]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         audio_task = asyncio.create_task(play_audio(session.stream_audio()))
         transcript_task = asyncio.create_task(show_transcripts(session.stream_transcripts()))
         async for event in session:
@@ -174,7 +173,7 @@ bound local history; they do not change which frames the provider receives. See
 A model whose profile reports
 [`image_input_requires_response`][pydantic_ai.realtime.RealtimeModelProfile.image_input_requires_response]
 takes an image only with `respond=True`, and a context-only image raises. OpenAI GPT-Live works this way,
-because only its delegated backend sees images; see [Images go to the backend](openai-live.md#images-go-to-the-backend).
+because only its delegated backend sees images; see [Images go to the backend](openai.md#images-go-to-the-backend).
 
 ## Edge cases
 

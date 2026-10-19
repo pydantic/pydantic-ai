@@ -60,3 +60,9 @@ Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.Reconn
 session resumption is enabled automatically alongside it. Recovery uses the latest in-memory server
 handle after the drop. See [Gemini session resumption](gemini.md#session-resumption) and
 [provider session limits](lifecycle.md#provider-session-limits).
+
+## Azure Voice Live fails with "Only Azure voice is supported"
+
+Cascade models such as `gpt-5` and `gpt-4.1` speak only through Azure text-to-speech voices, so
+they reject `openai_voice`. Choose their voice with `azure_voice_live_voice` instead. See
+[Voice Live voices](azure.md#voices).

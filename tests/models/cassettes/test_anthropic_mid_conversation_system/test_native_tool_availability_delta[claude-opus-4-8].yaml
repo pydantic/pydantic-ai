@@ -1,0 +1,126 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "743"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: I need help with a refund for order A-4417.
+            type: text
+        - role: assistant
+          content:
+          - text: I can check that.
+            type: text
+        - role: user
+          content:
+          - text: '.'
+            type: text
+        - role: system
+          content:
+          - type: tool_addition
+            tool:
+              type: tool_reference
+              name: lookup_refund_policy
+        model: claude-opus-4-8
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: lookup_refund_policy
+          description: Look up the refund policy for an order.
+          input_schema:
+            type: object
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8b0640eb95494348deeee77467b06121-584a4271209087f4-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-4-8","id":"msg_011CfY3quQEpGAbXeEKyCkVU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":803,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll look up the refund"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" policy for your"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" order."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_013AsyhX96MAoAANtYxr8zm4","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"order"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"A-4417\"}"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":803,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":73,"output_tokens_details":{"thinking_tokens":0}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T16:31:08.777430+00:00

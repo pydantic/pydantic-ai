@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
+from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -24,11 +25,13 @@ from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    Caching,
     Capability,
     CapabilityOrdering,
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -48,6 +51,8 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
+from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext
@@ -58,8 +63,7 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-pytestmark = pytest.mark.anyio
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -85,6 +89,10 @@ class Combines:
 
 
 Policy = Anonymous | Combines
+
+
+def _check_caching(merged: Caching) -> None:
+    assert merged.retention == '1h', 'a scalar takes the later value'
 
 
 def _check_thinking(merged: Thinking) -> None:
@@ -133,6 +141,11 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -143,6 +156,11 @@ def _check_thread_executor(merged: UseThreadExecutor) -> None:
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Caching': Combines(
+        'an agent has one caching configuration',
+        lambda: (Caching('5m'), Caching('1h')),
+        _check_caching,
+    ),
     'Thinking': Combines(
         'an agent has one thinking configuration',
         lambda: (Thinking(effort='low'), Thinking(effort='high')),
@@ -192,6 +210,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
     ),
+    'LocalWorkspace': Combines(
+        'the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
+        _check_local_workspace,
+    ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
         lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
@@ -231,17 +254,8 @@ COMBINE_POLICY: dict[str, Policy] = {
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
-    if not isinstance(obj, type):
-        return False
-    try:
-        return issubclass(obj, AbstractCapability)
-    except TypeError:
-        return False
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
+    return isinstance(obj, type) and issubclass(obj, AbstractCapability)
 
 
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
@@ -443,11 +457,14 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
         [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
     )
     assert isinstance(merged, WebFetch)
-    local = merged.local
-    assert isinstance(local, Tool)
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
     # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
-    fetcher = cast('Any', local).function.__self__
-    assert fetcher.allowed_domains == ['a.com', 'b.com']
+    fetch = toolset.wrapped.tools['web_fetch'].function
+    assert isinstance(fetch, MethodType)
+    assert isinstance(fetch.__self__, WebFetchLocalTool)
+    assert fetch.__self__.allowed_domains == ['a.com', 'b.com']
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
@@ -854,10 +871,14 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
 
     assert isinstance(merged, XSearch)
     assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
-    local = merged.local
-    assert isinstance(local, Tool)
-    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
-    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    subagent_tool = toolset.wrapped.tools['x_search'].function
+    assert isinstance(subagent_tool, MethodType)
+    assert isinstance(subagent_tool.__self__, XSearchSubagentTool)
+    assert subagent_tool.__self__.model == 'xai:grok-4.3'
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
@@ -1256,6 +1277,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings is not None
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
+
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
 
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:
