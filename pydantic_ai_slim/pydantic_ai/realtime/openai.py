@@ -707,15 +707,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         batch = self._tool_call_batches[response_id]
         batch.unanswered.discard(content.tool_call_id)
         batch.inputs.append(input_index)
-        await self._answer_tool_call_batch_if_complete(response_id)
+        await self._answer_tool_call_batch_if_complete(response_id, solicited=True)
 
-    async def _answer_tool_call_batch_if_complete(self, response_id: str) -> None:
-        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs."""
+    async def _answer_tool_call_batch_if_complete(self, response_id: str, *, solicited: bool = False) -> None:
+        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs.
+
+        `solicited` is for a caller's `send()` of the last output, which is told when the request didn't go out
+        (see `_solicit_response`).
+        """
         batch = self._tool_call_batches[response_id]
         if batch.done and not batch.unanswered:
             del self._tool_call_batches[response_id]
             # One input names the request, as the batch gets one reply; the response answers every output.
-            await self._request_response((batch.inputs[-1],), answers=batch.inputs)
+            request = self._solicit_response if solicited else self._request_response
+            await request((batch.inputs[-1],), answers=batch.inputs)
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         self._lifecycle.message_sent(input_index)
@@ -734,7 +739,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if respond:
             await self._solicit_response((input_index,))
 
-    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+    async def _solicit_response(
+        self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None
+    ) -> None:
         """Request a response for a caller's `send()`, which is told when the request didn't go out.
 
         A `response.create` that fails on a dead socket never reached the server, so no response is
@@ -744,7 +751,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         ws = self._ws
         try:
-            await self._request_response(input_indexes)
+            await self._request_response(input_indexes, answers=answers)
         except self.transport_errors:
             # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
             # the link was replaced meanwhile, the active response is the new socket's, not this one.
