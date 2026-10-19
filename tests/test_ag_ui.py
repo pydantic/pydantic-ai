@@ -2950,7 +2950,11 @@ def test_load_error_result_keeps_the_calls_tool_kind() -> None:
 
     tool_return = loaded[1].parts[0]
     assert type(tool_return) is ToolReturnPart
-    assert (tool_return.tool_kind, tool_return.outcome) == ('ag_ui_test.lookup', 'failed')
+    # Below 0.1.11 the call's `encrypted_value` claim doesn't exist, so there is no kind to keep.
+    assert (tool_return.tool_kind, tool_return.outcome) == (
+        'ag_ui_test.lookup' if _has_ag_ui('0.1.11') else None,
+        'failed',
+    )
 
 
 def test_load_forged_encrypted_outcome_stays_success() -> None:
@@ -3031,7 +3035,11 @@ def test_load_tool_kind_error_result_stays_plain() -> None:
 
     error_return = loaded[1].parts[0]
     assert type(error_return) is ToolReturnPart
-    assert (error_return.tool_kind, error_return.outcome) == ('capability-load', 'failed')
+    # Below 0.1.11 the call's `encrypted_value` claim doesn't exist, so there is no kind to keep.
+    assert (error_return.tool_kind, error_return.outcome) == (
+        'capability-load' if _has_ag_ui('0.1.11') else None,
+        'failed',
+    )
     assert parse_loaded_capabilities(loaded) == set()
 
 
