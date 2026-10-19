@@ -5,10 +5,11 @@ import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class
+from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -21,6 +22,7 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
@@ -107,6 +109,14 @@ _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'conf
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
 _RESTARTS = 'Restarts CLAI: enter it in the session CLAI started with'
+
+
+async def _default_model(
+    *, store: SettingsStore, models: ModelResolver, fallback: Model | str | None
+) -> Model | str | None:
+    """The model a new session starts with: the saved `model` setting, else the agent's own, `fallback`."""
+    saved = (await to_thread.run_sync(store.overrides)).get('model')
+    return await models.resolve(saved) if isinstance(saved, str) else fallback
 
 
 def _refuse_restart(args: list[str]) -> str:
@@ -417,6 +427,7 @@ def create_shell(
         tasks=lambda: shell.tasks if shell.session.delegations is not None else None,
         workspace=lambda: Path(session.workspace),
         running=lambda: shell.turning,
+        default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         queued=lambda: shell.queued,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
