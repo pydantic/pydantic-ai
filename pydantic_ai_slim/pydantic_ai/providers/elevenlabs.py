@@ -16,7 +16,7 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
     optionally syncing tool definitions.)
 
     `base_url` doubles as the region switch: pass `https://api.eu.residency.elevenlabs.io` (or the
-    `us`/`in`/`sg` residency hosts) to keep both the REST calls and the derived WebSocket endpoint
+    India and Singapore hosts, `api.in.residency.elevenlabs.io` and `api.sg.residency.elevenlabs.io`) to keep both the REST calls and the derived WebSocket endpoint
     inside a data-residency region.
     """
 

@@ -17,7 +17,7 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
     """
     return {
         # Text mode exists as the per-conversation `conversation.text_only` override, gated by that
-        # override's Security-tab toggle; the connect-time preflight checks the toggle and raises a
+        # override's toggle (Security > Overrides in the agent's settings); the connect-time preflight checks the toggle and raises a
         # `UserError` naming it when `output_modality='text'` is requested without it.
         'supports_text_output': True,
         # The agent WebSocket accepts `multimodal_message` file references, but they require a prior
@@ -62,7 +62,7 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
         # matching output default. Both are fixed per agent (not per conversation); the connect
         # handshake echoes the actual formats and the adapter raises when they disagree with the
         # profile, pointing at `profile={'audio_..._sample_rate': ...}` for agents configured
-        # differently (e.g. `pcm_24000` or telephony `ulaw_8000`).
+        # differently (e.g. `pcm_24000`; telephony `ulaw_8000` agents are rejected outright).
         'audio_input_sample_rate': 16000,
         'audio_output_sample_rate': 16000,
     }

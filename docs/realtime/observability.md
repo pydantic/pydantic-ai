@@ -68,8 +68,9 @@ session context exits if only an audio or transcript view is consumed.
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages. OpenAI's
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#usage-and-cost) pages. OpenAI's
 [GPT-Live](openai.md#usage-is-measured-in-seconds) is the one that reports no tokens for
 itself: it meters the spoken call in seconds, recorded as `audio_seconds` and priced, so a
 `cost_limit` bounds the call once its rate is known. The backend it delegates to is billed per token

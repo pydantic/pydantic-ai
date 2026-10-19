@@ -1,13 +1,18 @@
+---
+description: "Connect a Pydantic AI agent to a hosted ElevenLabs agent with ElevenLabsAgentsRealtimeModel: setup, agent ids, configuration overrides, tool sync and transcripts."
+---
+
 # ElevenLabs
 
 Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) through ElevenLabs Agents.
 
 ## ElevenLabs Agents
 
-[`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] connects an
-agent to the [ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview),
-where the conversation runs on a hosted agent. Start with the
-[realtime quickstart](overview.md#quickstart).
+Use an `elevenlabs-agents:<agent_id>` model string, or
+[`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] for
+model-level configuration, to connect an agent to the
+[ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview), where the conversation runs on a
+hosted agent. Start with the [realtime quickstart](overview.md#quickstart).
 
 ElevenLabs Agents runs a cascaded pipeline (realtime ASR, a configurable LLM, ElevenLabs TTS, and
 a server-side turn-taking model) behind a pre-provisioned agent, which the conversation reaches
@@ -18,8 +23,7 @@ Pydantic AI takes ownership of as much of the conversation as ElevenLabs allows 
 ### Setup
 
 To use ElevenLabs Agents, install `pydantic-ai-slim` with the `elevenlabs-agents-realtime` optional group,
-which bundles the realtime WebSocket transport — the REST calls around the WebSocket go through
-Pydantic AI's own HTTP client, so no ElevenLabs SDK is required:
+which bundles the realtime WebSocket transport:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[elevenlabs-agents-realtime]"
@@ -30,14 +34,58 @@ Set `ELEVENLABS_API_KEY`, or pass an
 key is required even for public agents, because the connect-time preflight authenticates with it.
 The provider's `base_url` doubles as the region switch: pass a
 [data-residency host](https://elevenlabs.io/docs/product-guides/administration/data-residency) such
-as `https://api.eu.residency.elevenlabs.io` (the India and Singapore hosts follow the same pattern)
-to keep both the REST calls and the WebSocket inside a region.
+as `https://api.eu.residency.elevenlabs.io` (or the India and Singapore hosts,
+`api.in.residency.elevenlabs.io` and `api.sg.residency.elevenlabs.io`) to keep both the REST calls and the
+WebSocket inside a region.
+
+Connecting starts with a REST preflight that fetches the agent: a bad key or an unknown agent id raises a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] from it, and an API that can't be reached raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError]. With `elevenlabs_agents_tool_sync` set to `'error'` (the
+default) or `'off'`, the key only reads; `'sync'` also needs write access to agents and tools.
+
+### Before you connect
+
+1. Create the agent in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or through the ElevenLabs API,
+   and copy its id.
+2. Under *Security* > *Overrides* in the agent's settings, turn on *System prompt* if the Pydantic AI agent has
+   instructions, plus the toggle of each override setting you use (see [Settings](#settings)).
+3. Under *Advanced* > *Client events*, add `context_usage`, which reports context usage and marks where a spoken
+   response ends (see [Usage and cost](#usage-and-cost)).
+4. Pick a [tool synchronization](#tool-synchronization) mode: with the default, `'error'`, a difference between the
+   session's tools and the agent's client tools fails the connect.
+
+This agent keeps the ElevenLabs agent's client tools in sync with its own:
+
+```python {title="elevenlabs_agents_tools.py"}
+from pydantic_ai import Agent
+from pydantic_ai.realtime.elevenlabs_agents import ElevenLabsAgentsRealtimeModelSettings
+
+agent = Agent(instructions='You are a friendly concierge. Keep answers short.')
+
+
+@agent.tool_plain
+async def find_restaurant(cuisine: str, party_size: int) -> str:
+    """Find a restaurant with a free table.
+
+    Args:
+        cuisine: The kind of food the guests want, e.g. 'Italian'.
+        party_size: How many guests need a seat.
+    """
+    return f'Trattoria Roma has a table for {party_size} ({cuisine}).'
+
+
+realtime_agent = agent.realtime(
+    'elevenlabs-agents:agent_0101k2example',
+    model_settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync'),
+)
+```
+
+ElevenLabs needs a description for every tool parameter, which the `Args:` section of the docstring provides.
 
 ### Model names
 
-Use the id of an agent created in the [ElevenLabs dashboard](https://elevenlabs.io/app/agents) or
-through the ElevenLabs API, for example `agent_0101k2...`, or `elevenlabs-agents:agent_0101k2...` as a
-model string. The agent's own configuration decides the ASR setup, audio formats, turn-taking, and
+Use `elevenlabs-agents:<agent_id>` as a model string, for example `elevenlabs-agents:agent_0101k2...`, or pass the
+agent id, `agent_0101k2...`, to `ElevenLabsAgentsRealtimeModel`. The agent's own configuration decides the ASR setup, audio formats, turn-taking, and
 which per-conversation overrides are permitted. Every
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] is stamped with the agent id as its
 `model_name`; the LLM the agent runs on is part of the agent configuration and is not reported per
@@ -54,7 +102,7 @@ fails loudly where it does not:
   instructions, the ElevenLabs-side prompt is inherited silently.
 - **Overrides**: first message, language, voice, TTS knobs, the pipeline LLM, and text-only mode
   are sent in the conversation-initiation override payload. Every override is gated by a per-field
-  toggle under *Settings* > *Security* > *Overrides* in the agents dashboard
+  toggle under *Security* > *Overrides* in the agent's settings
   (`platform_settings.overrides` via the API); the preflight checks each override setting against
   the agent's allowlist before dialing. The raw `elevenlabs_agents_config_override` escape hatch is the one
   exception; see [Settings](#settings).
@@ -99,7 +147,9 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
 | `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
-Each `elevenlabs_agents_*` override setting requires its toggle on the agent, as described above.
+Each `elevenlabs_agents_*` override setting requires its toggle on the agent, as described above;
+`elevenlabs_agents_dynamic_variables`, `elevenlabs_agents_user_id`, `elevenlabs_agents_strip_audio_tags`, and
+`elevenlabs_agents_tool_sync` need none.
 `elevenlabs_agents_config_override` is the one setting deliberately not checked against the permission
 allowlist — being raw is its point — so a field the agent does not permit there surfaces as the
 server closing the socket (code 1008, naming the field) after the handshake, not as a local
@@ -116,82 +166,10 @@ Of the shared settings:
 - `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
   value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
 - `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
-- `reconnect` raises: ElevenLabs has an experimental, text-only way to resume a conversation
-  (`persistent_session_token`), enabled per workspace, which Pydantic AI doesn't use yet. A dropped
-  connection ends the session, and a reconnect policy would silently start a conversation that
-  remembers nothing.
+- `reconnect` raises: a dropped connection ends the session, and a reconnect policy would silently start a
+  conversation that remembers nothing.
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
   surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
-
-### Tool synchronization
-
-`elevenlabs_agents_tool_sync` controls how the session's
-[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]s are reconciled with the agent's client tools
-at connect time:
-
-- `'error'` (default): raise a [`UserError`][pydantic_ai.exceptions.UserError] describing every
-  difference (missing, extra, or differing tools), so the two can never silently disagree.
-- `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
-  tools, update differing ones, and re-point the agent's `tool_ids`. A differing tool that another
-  agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
-  state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
-  deploy-time step — a warm-up connect after a tool change — rather than something a customer's
-  first call should pay for: the writes run sequentially at roughly half a second each, and two
-  processes syncing the same agent concurrently race on the final `tool_ids` re-point, last
-  writer wins.
-- `'off'`: trust the agent's configuration, for example with a read-scoped API key. A call to a
-  tool the session does not define reaches the tool manager like any other call and is answered
-  with the standard unknown-tool error, which lands in the session's history.
-
-Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched, and
-ElevenLabs runs them itself. Its calls to MCP tools are recorded as a
-[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
-[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. MCP tools that require approval on
-the ElevenLabs side aren't supported: the session denies such a call (with a warning) rather than leave
-the conversation waiting. Give the agent those tools through a Pydantic AI
-[MCP toolset](../mcp/client.md) instead, which is the recommended way, or turn approval off for the tool
-in the agent's configuration. The agent's attached
-tools are read from the resolved `prompt.tools` in its configuration; should ElevenLabs stop
-returning them inline (the field is deprecated in favor of `tool_ids`), each attached id is fetched
-from the workspace instead, so the comparison keeps working.
-
-ElevenLabs stores tool parameters in its own restricted schema dialect rather than JSON Schema.
-`type`, `description`, `enum`, `items`, `properties`, and `required` are supported; other keywords
-(such as `additionalProperties` or numeric bounds) are not; and **every parameter needs a
-description**. Nested models (`$defs`/`$ref`) are inlined, and optional (nullable) parameters are
-collapsed onto their non-null type before conversion, with optionality carried by `required` alone.
-The dialect has no way to say `null` — a required nullable parameter is advertised as its
-non-null type, and the agent's LLM, which only ever sees the advertised schema, always supplies a
-value for it. `'sync'` therefore fails loudly for a tool whose parameters lack descriptions (add
-them in the function docstring) or use a shape the dialect cannot express (a union of types, or a
-recursive reference). The `'error'` comparison checks what the dialect can express, comparing a
-parameter's description only when the local schema declares one.
-
-### Feature support and limitations
-
-| Feature | Support | Notes |
-| --- | --- | --- |
-| Audio format | Full feature support | Mono PCM16; rates are fixed per agent (16 kHz default) and validated at connect, see [Audio formats](#audio-formats) |
-| Text output | Limited parameter support | `output_modality='text'` maps to the text-only override, which needs its toggle on the agent |
-| Image input | Unsupported | Audio/text input only |
-| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection` must stay `True` |
-| Interruption | Limited parameter support | Barge-in is detected server-side and reported as `RealtimeResponseInterruptedEvent`; there is no client `interrupt()` verb |
-| Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
-| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
-| Native tools | Limited parameter support | Server-side tools live on the agent, outside the session: none can be configured from it, and the agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
-| Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
-| Context window | Limited parameter support | `context_window` is `None` because the agent's LLM is configurable, and a profile value would not be used: the live limit is `ElevenLabsAgentsRealtimeConnection.context_limit_tokens` once the agent reports `context_usage`, and `session.context_window_used` is the ratio from the same reports |
-| Session duration | Limited parameter support | Capped by the agent's `max_duration_seconds` (600 s by default, up to 7,200 s, set on the agent, not per conversation); the conversation ends at the cap |
-| State-restoring reconnect | Unsupported | A dropped connection ends the session: ElevenLabs' experimental, workspace-gated, text-only resume isn't used yet, and `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
-
-See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
-[Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
-
-### Gateway
-
-ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
-with an `elevenlabs-agents:<agent_id>` model string, or with `provider='elevenlabs'` or an
-`ElevenLabsProvider`.
 
 ### Audio formats
 
@@ -210,6 +188,79 @@ model = ElevenLabsAgentsRealtimeModel(
 ```
 
 Telephony (`ulaw_8000`) agents are not supported.
+
+### Tool synchronization
+
+`elevenlabs_agents_tool_sync` controls how the session's
+[`ToolDefinition`][pydantic_ai.tools.ToolDefinition]s are reconciled with the agent's client tools
+at connect time:
+
+- `'error'` (default): raise a [`UserError`][pydantic_ai.exceptions.UserError] describing every
+  difference (missing, extra, or differing tools), so the two can never silently disagree.
+- `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
+  tools, update differing ones, and re-point the agent's `tool_ids`. A differing tool that another
+  agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
+  state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
+  deploy-time step — a warm-up connect after a tool change — rather than something a customer's
+  first call should pay for: the writes run one after another, and two processes syncing the same
+  agent concurrently race on the final `tool_ids` re-point, last writer wins. Synced tools get
+  ElevenLabs' default 20-second response timeout (`response_timeout_secs`); a tool that already has a
+  timeout of its own keeps it when it is updated.
+- `'off'`: trust the agent's own tool definitions, e.g. for client tools set up on the ElevenLabs side
+  with settings Pydantic AI doesn't sync. A call to a tool the session does not define reaches the tool
+  manager like any other call and is answered with the standard unknown-tool error, which lands in the
+  session's history.
+
+Server-side webhook, MCP, and system tools on the agent are ElevenLabs-owned and never touched, and
+ElevenLabs runs them itself. Its calls to webhook and system tools (such as `end_call`) aren't recorded in the
+session's history; its calls to MCP tools are recorded as a
+[`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
+[`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. MCP tools that require approval on
+the ElevenLabs side aren't supported: the session denies such a call (with a warning) rather than leave
+the conversation waiting. Give the agent those tools through a Pydantic AI
+[MCP toolset](../mcp/client.md) instead, which is the recommended way, or turn approval off for the tool
+in the agent's configuration.
+
+ElevenLabs stores tool parameters in its own restricted schema dialect rather than JSON Schema.
+`type`, `description`, `enum`, `items`, `properties`, and `required` are supported; other keywords
+(such as `additionalProperties` or numeric bounds) are not; and **every parameter needs a
+description**. Nested models (`$defs`/`$ref`) are inlined, and optional (nullable) parameters are
+collapsed onto their non-null type before conversion, with optionality carried by `required` alone.
+The dialect has no way to say `null` — a required nullable parameter is advertised as its
+non-null type, and the agent's LLM, which only ever sees the advertised schema, always supplies a
+value for it. `'sync'` therefore fails loudly for a tool whose parameters lack descriptions (add
+them in the function docstring, and set
+[`require_parameter_descriptions=True`](../tools.md#function-tools-and-schema) to catch a missing one when the
+tool is defined) or use a shape the dialect cannot express (a union of types, or a
+recursive reference). The `'error'` comparison checks what the dialect can express, comparing a
+parameter's description only when the local schema declares one.
+
+### Feature support and limitations
+
+| Feature | Support | Notes |
+| --- | --- | --- |
+| Audio format | Full feature support | Mono PCM16; rates are fixed per agent (16 kHz default) and validated at connect, see [Audio formats](#audio-formats) |
+| Text output | Limited parameter support | `output_modality='text'` maps to the text-only override, which needs its toggle on the agent |
+| Image input | Unsupported | [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects images with a `UserError` |
+| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection` must stay `True` |
+| Explicit interruption/truncation | Unsupported | ElevenLabs [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent`; `interrupt()` raises |
+| Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
+| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
+| Native tools | Unsupported | None can be configured from the session; configure [local fallbacks](tools.md#native-tools) for web capabilities. The agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
+| Async tool calls | Unsupported | The agent waits for each tool result (see [concurrent tool execution](tools.md#concurrent-tool-execution)) |
+| Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
+| Context window | Limited parameter support | Known only once the agent reports `context_usage`: `session.context_window_used` then gives the share of the LLM's context in use (see [Usage and cost](#usage-and-cost)) |
+| Session duration | Limited parameter support | Capped by the agent's [maximum conversation duration](https://elevenlabs.io/docs/eleven-agents/customization/conversation-flow) (600 s by default, up to 7,200 s, set on the agent, not per conversation); at the cap the session gets a non-recoverable `RealtimeSessionErrorEvent` and raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] |
+| State-restoring reconnect | Unsupported | A dropped connection ends the session, and `reconnect` raises, see [Provider session limits](lifecycle.md#provider-session-limits) |
+
+See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
+[Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
+
+### Gateway
+
+ElevenLabs is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect
+with an `elevenlabs-agents:<agent_id>` model string, or with `provider='elevenlabs'` or an
+`ElevenLabsProvider`.
 
 ### Usage and cost
 
@@ -234,11 +285,8 @@ itself closes has none), and the live connection has it as
 ### Provider-specific quirks
 
 - In audio mode, a response's transcript arrives whole once the agent's LLM has finished, which can be
-  before or during its audio; only text-only mode streams it. The response ends with its last audio:
-  ElevenLabs marks that with the `context_usage` report when the agent sends it, and otherwise the
-  response ends when the next turn starts, or after a second without audio. Synthesis outruns
-  playback, so a spoken response is usually delivered in full while the user is still hearing its
-  first words.
+  before or during its audio; only text-only mode streams it. Synthesis outruns playback, so a spoken
+  response is usually delivered in full while the user is still hearing its first words.
 - With a TTS model that voices expressive audio tags, such as `eleven_v3_conversational` or `eleven_v4_turbo`,
   the agent's LLM writes the tags into its reply, and they are part of the response's transcript
   (`[laughs] Hi there.`), as ElevenLabs sends it. To show or store the transcript as plain text, set
@@ -252,11 +300,10 @@ itself closes has none), and the live connection has it as
   text in history; ElevenLabs' correction of it is dropped.
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
   its next turn on, without stopping or replying.
-- ElevenLabs sends a response's parallel tool calls one frame each, and nothing after them until their
-  results are in, so the response they end is taken to be over 50 ms after the last one; their tools run
-  as each call arrives.
-- Client tools registered with `expects_response: false` are fire-and-forget: the session still runs
-  them, but their results are never sent back to the agent.
+- A response's parallel tool calls each run as soon as they arrive.
+- With `elevenlabs_agents_tool_sync='off'`, client tools registered on the ElevenLabs side with
+  `expects_response: false` are fire-and-forget: the session still runs them, but their results are never sent
+  back to the agent. (The other modes require every client tool to expect a response.)
 - A conversation waiting in the workspace's concurrency queue hears ElevenLabs' hold audio, which
   isn't part of the conversation; one that times out there ends with a
   [`RealtimeError`][pydantic_ai.realtime.RealtimeError] saying so.
