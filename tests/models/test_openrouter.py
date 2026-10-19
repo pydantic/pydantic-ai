@@ -1274,7 +1274,7 @@ def _openrouter_completion(content: str) -> ChatCompletion:
 
 
 async def test_openrouter_metadata_non_string_value(allow_model_requests: None) -> None:
-    # The locked SDK lacks metadata; emulate newer SDKs' strict schema and unvalidated responses.
+    # Emulate the SDK's strict metadata schema and unvalidated responses.
     class ChatCompletionWithMetadata(ChatCompletion):
         metadata: dict[str, str] | None = None
 
