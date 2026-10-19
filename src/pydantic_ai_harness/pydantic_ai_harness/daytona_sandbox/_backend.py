@@ -15,11 +15,11 @@ External assumptions last verified 2026-09-08 against Daytona Python SDK 0.198.0
   prints an end marker last on both streams and the output is cut at it.
 * the log stream's demultiplexer (`daytona/_utils/stream.py` `_std_demux_loop`) misreads a stream prefix
   that ends a websocket frame, injecting the prefix bytes into the output and misrouting it
-  (observed live 2026-09-26 above ~4 KB). The stored logs from `get_session_command_logs` hold every
-  byte in `output`, but Daytona's server can file a block of one stream under the other in its
-  `stdout` and `stderr` fields (observed live 2026-10-19 with ~9 KB on each stream). So a command's
-  stderr goes to a file, which the wrapper prints on stdout after the command's own output, and a
-  finished command's output comes from the stored `output`, which then holds one stream.
+  (observed live 2026-09-26 above ~4 KB). The stored logs from `get_session_command_logs` are not
+  exact either: Daytona's server can file a block of one stream under the other (observed live
+  2026-10-19 with ~9 KB on each stream), and its combined `output` can carry the stream prefixes and
+  added newlines. So a command writes its stdout and stderr to files, read back with
+  `sandbox.fs.download_file` once it exits, and the log stream only signals that it ended.
 * `sandbox.fs` provides metadata, byte upload/download, and directory operations:
   https://www.daytona.io/docs/en/python-sdk/async/async-file-system/
 * `auto_stop_interval` is a creation-time setting; left unset, Daytona stops an idle container
@@ -109,7 +109,7 @@ _TEARDOWN_TIMEOUT = 30.0
 _EVENT_CONNECT_GRACE = 6.0
 # Pause between attempts to delete a command session.
 _RETRY_DELAY = 1.0
-# Streamed logs are only a timeout preview; finished output comes from stored logs.
+# The most partial output a timeout reports per stream, read from the output files.
 _PARTIAL_OUTPUT_LIMIT = 4096
 
 _logger = logging.getLogger(__name__)
@@ -201,9 +201,8 @@ def _command_line(
 ) -> str:
     """Build the session command: the quoted argv, with the environment and directory applied.
 
-    The argv runs under a `sh` that sends its stderr to a file, then prints `marker`, that file,
-    and `marker` again on stdout and exits with the argv's status. Daytona then sees one stream, and
-    `_split_output` can drop what Daytona appends after a stream's last byte.
+    The argv runs under a `sh` that sends its stdout and stderr to the files `_output_paths` names,
+    then prints `marker` on the session's stdout and exits with the argv's status.
     `env` runs inside that `sh`: a `sh` such as dash drops variables whose names are not shell
     identifiers from the environment it passes on.
     """
@@ -212,30 +211,15 @@ def _command_line(
         # `--` ends `env`'s options, so a name starting with `-` is not read as one.
         argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
     # Distinct marker lets run() distinguish a missing cwd from a command exiting with the same status.
-    prefix = f'cd -- {shlex.quote(cwd)} || {{ printf %s {marker}-cwd; exit 125; }}; ' if cwd is not None else ''
-    errors = _stderr_path(marker)
-    script = (
-        f'{prefix}"$@" </dev/null 2>{errors}; status=$?; '
-        f'printf %s {marker}; cat -- {errors}; rm -f -- {errors}; printf %s {marker}; exit "$status"'
-    )
+    out, err = _output_paths(marker)
+    prefix = f'cd -- {shlex.quote(cwd)} || {{ printf %s {marker}-cwd >{out}; exit 125; }}; ' if cwd is not None else ''
+    script = f'{prefix}"$@" </dev/null >{out} 2>{err}; status=$?; printf %s {marker}; exit "$status"'
     return shlex.join(['sh', '-c', script, 'sh', *argv])
 
 
-def _stderr_path(marker: str) -> str:
-    """Where the command's stderr waits until the wrapper prints it."""
-    return f'/tmp/{marker}.err'
-
-
-def _until_marker(chunks: list[str], marker: str) -> str:
-    """The command's stdout: the output before the first `marker`, or all of it when none was printed yet."""
-    return ''.join(chunks).partition(marker)[0]
-
-
-def _split_output(output: str, marker: str) -> tuple[str, str] | None:
-    """The command's stdout and stderr from the wrapper's output; `None` when it was cut short."""
-    stdout, found, rest = output.partition(marker)
-    stderr, end, _ = rest.rpartition(marker)
-    return (stdout, stderr) if found and end else None
+def _output_paths(marker: str) -> tuple[str, str]:
+    """The files a command's stdout and stderr go to, until the backend reads and removes them."""
+    return f'/tmp/{marker}.out', f'/tmp/{marker}.err'
 
 
 def _stream_callbacks(
@@ -245,18 +229,14 @@ def _stream_callbacks(
     stderr: list[str] = ['']
     ended = anyio.Event()
     tails = ['', '']
-    markers_seen = [0]
 
     def on_chunk(chunk: str, index: int, preview: list[str]) -> None:
-        # Only the marker can straddle frames; neither detection nor timeout output
-        # needs the full follow stream (which grows quadratically when joined).
+        # Only the marker can straddle frames; the stream carries little besides it, since the
+        # command's own output goes to files.
         candidate = tails[index] + chunk
-        if index == 0:
-            # The wrapper prints the marker twice on stdout, the second time last.
-            markers_seen[0] += candidate.count(marker)
         tails[index] = candidate[-(len(marker) - 1) :]
         preview[0] = (preview[0] + chunk)[-_PARTIAL_OUTPUT_LIMIT:]
-        if markers_seen[0] >= 2:
+        if index == 0 and marker in candidate:
             ended.set()
 
     def on_stdout(chunk: str) -> None:
@@ -344,46 +324,52 @@ class _DaytonaProcess:
         return await self._result(exit_code)
 
     async def _result(self, exit_code: int) -> CommandResult:
-        """The finished command's result, from its stored `output`, which holds every byte.
+        """The finished command's result, from the files its stdout and stderr went to.
 
-        The streamed copy is only for partial output on a timeout: SDK 0.198.0's stream
-        demultiplexer misreads a stream prefix split across websocket frames, corrupting output
-        over a few KB.
+        Neither the log stream nor the stored logs return a command's bytes exactly; see the module notes.
         """
+        out_path, err_path = _output_paths(self.marker)
         try:
-            logs = await self._process.get_session_command_logs(
-                self._session_id, self._command_id, request_timeout=_REQUEST_TIMEOUT
-            )
+            with anyio.fail_after(_REQUEST_TIMEOUT):
+                stdout = await self._sandbox.fs.download_file(out_path, _REQUEST_TIMEOUT)
+                try:
+                    stderr = await self._sandbox.fs.download_file(err_path, _REQUEST_TIMEOUT)
+                except daytona.DaytonaNotFoundError:
+                    stderr = b''  # The working directory was missing, so the command never started.
         except Exception as error:
             await _raise_failure(self._sandbox, error, 'Could not read the command output')
-        output = logs.output or ''
+        finally:
+            await self._remove_output_files()
+        output = stdout.decode(errors='replace')
         if f'{self.marker}-cwd' in output:
             return CommandResult(exit_code=exit_code, stdout='', stderr=f'{self.marker}-cwd')
-        if (split := _split_output(output, self.marker)) is None:
-            if exit_code == 0:
-                raise WorkspaceError('Daytona returned incomplete output for a finished command.')
-            # The wrapper itself was killed, so its stderr file was never printed.
-            return CommandResult(exit_code=exit_code, stdout=_until_marker([output], self.marker), stderr='')
-        stdout, stderr = split
-        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+        return CommandResult(exit_code=exit_code, stdout=output, stderr=stderr.decode(errors='replace'))
+
+    async def _remove_output_files(self) -> None:
+        """Best effort: a file left behind only takes space in the sandbox's `/tmp`."""
+        with anyio.move_on_after(_REQUEST_TIMEOUT, shield=True):
+            try:
+                await self._process.exec(
+                    f'rm -f -- {" ".join(_output_paths(self.marker))}', timeout=_REQUEST_TIMEOUT
+                )
+            except Exception:
+                pass
 
     async def kill(self) -> None:
-        """Delete the Daytona process session, which kills its command, and keep its stderr so far."""
+        """Delete the Daytona process session, which kills its command, and keep its output so far."""
         await _delete_session(self._process, self._session_id)
         if self._finished:
-            return  # The wrapper printed and removed the stderr file.
-        path = _stderr_path(self.marker)
-        # Best effort: the stderr file only adds the partial stderr a timeout reports.
+            return  # The result already read and removed the output files.
+        # Best effort: the files only add the partial output a timeout reports.
         with anyio.move_on_after(_REQUEST_TIMEOUT):
-            try:
-                data = await self._sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
-                self.stderr[0] = data.decode(errors='replace')[-_PARTIAL_OUTPUT_LIMIT:]
-            except Exception:
-                pass
-            try:
-                await self._process.exec(f'rm -f -- {path}', timeout=_REQUEST_TIMEOUT)
-            except Exception:
-                pass
+            for preview, path in zip((self.stdout, self.stderr), _output_paths(self.marker)):
+                try:
+                    data = await self._sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
+                except Exception:
+                    preview[0] = ''
+                    continue
+                preview[0] = data.decode(errors='replace')[-_PARTIAL_OUTPUT_LIMIT:]
+        await self._remove_output_files()
 
 
 async def _close_quietly(client: AsyncDaytona) -> bool:
@@ -957,7 +943,8 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             def output() -> tuple[str, str]:
                 if process is None:
                     return '', ''
-                return _until_marker(process.stdout, process.marker), _until_marker(process.stderr, process.marker)
+                # Read from the output files when the command was stopped.
+                return process.stdout[0], process.stderr[0]
 
             async with command_deadline(timeout, stop=stop, output=output):
                 try:

@@ -53,10 +53,7 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # Every command runs under a `sh` that prints a per-command end marker last on both streams.
-_WRAPPER = (
-    'sh -c \'"$@" </dev/null 2>/tmp/MARK.err; status=$?; '
-    'printf %s MARK; cat -- /tmp/MARK.err; rm -f -- /tmp/MARK.err; printf %s MARK; exit "$status"\' sh'
-)
+_WRAPPER = 'sh -c \'"$@" </dev/null >/tmp/MARK.out 2>/tmp/MARK.err; status=$?; printf %s MARK; exit "$status"\' sh'
 
 
 def _unmarked(command: str | None) -> str:
@@ -235,40 +232,38 @@ class TestCommands:
         await DaytonaSandboxBackend().run(['true'])
         assert '"$@" </dev/null' in fake_daytona.sandboxes[-1].process_command
 
-    async def test_output_comes_from_the_stored_logs_not_the_stream(self, fake_daytona: FakeDaytona) -> None:
-        # SDK 0.198.0's stream demultiplexer injects prefix bytes and misroutes output above ~4 KB.
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['1\n\x01\x01\x012\n']
-        sandbox.process_stderr = ['\x02\x02\x02']
-        sandbox.process_stored_stdout = '1\n2\n'
-        sandbox.process_stored_stderr = ''
-        result = await backend.run(['seq', '1', '2'])
-        assert (result.stdout, result.stderr) == ('1\n2\n', '')
-
-    async def test_many_stream_chunks_keep_only_bounded_partial_output(
+    async def test_output_comes_from_the_files_not_the_log_stream(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # SDK 0.198.0's stream demultiplexer injects prefix bytes and misroutes output above ~4 KB, and
+        # Daytona's stored logs can file output under the wrong stream; the files hold the exact bytes.
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['1\n2\n']
+
+        async def corrupt_stream(session_id: str, command_id: str, on_stdout: Any, on_stderr: Any) -> None:
+            marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', sandbox.process_command)
+            assert marker is not None
+            on_stdout('1\n\x01\x01\x012\n' + marker.group())
+            on_stderr('\x02\x02\x02')
+
+        monkeypatch.setattr(sandbox.process, 'get_session_command_logs_async', corrupt_stream)
+        result = await backend.run(['seq', '1', '2'])
+        assert (result.stdout, result.stderr) == ('1\n2\n', '')
+        assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
+
+    async def test_large_output_is_exact_and_a_timeout_keeps_a_bounded_tail(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_stdout = ['abc'] * 20000
         sandbox.process_stderr = ['def'] * 20000
-        sandbox.process_stored_stdout = 'abc' * 20000
-        sandbox.process_stored_stderr = 'def' * 20000
-        original = backend._start  # pyright: ignore[reportPrivateUsage]
-        captured: list[Any] = []
-
-        async def capture(*args: Any, **kwargs: Any) -> Any:
-            process = await original(*args, **kwargs)
-            captured.append(process)
-            return process
-
-        monkeypatch.setattr(backend, '_start', capture)
         result = await backend.run(['true'])
-        assert result.stdout == 'abc' * 20000
-        assert result.stderr == 'def' * 20000
-        assert len(''.join(captured[0].stdout)) <= 4096
-        assert len(''.join(captured[0].stderr)) <= 4096
+        assert (result.stdout, result.stderr) == ('abc' * 20000, 'def' * 20000)
+
+        sandbox.process_hangs = True
+        with pytest.raises(WorkspaceTimeoutError) as exc_info:
+            await backend.run(['true'], timeout=0.01)
+        assert (exc_info.value.stdout, exc_info.value.stderr) == (('abc' * 20000)[-4096:], ('def' * 20000)[-4096:])
 
     async def test_split_markers_stop_open_follow_stream(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -279,15 +274,12 @@ class TestCommands:
         async def split_markers(session_id: str, command_id: str, on_stdout: Any, on_stderr: Any) -> None:
             marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', sandbox.process_command)
             assert marker is not None
-            on_stdout('before' + marker.group()[:9])
+            on_stdout(marker.group()[:9])
             on_stdout(marker.group()[9:])
-            on_stderr(marker.group()[:7])
-            on_stderr(marker.group()[7:])
             await asyncio.Event().wait()
 
         monkeypatch.setattr(sandbox.process, 'get_session_command_logs_async', split_markers)
-        sandbox.process_stored_stdout = 'before'
-        sandbox.process_stored_stderr = ''
+        sandbox.process_stdout = ['before']
         with anyio.fail_after(1):
             result = await backend.run(['true'])
         assert result.stdout == 'before'
@@ -325,27 +317,23 @@ class TestCommands:
         assert (result.exit_code, result.stdout, result.stderr) == (0, 'complete out', 'complete err')
         assert sandbox.process_sessions == set()
 
-    async def test_stored_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        fake_daytona.sandboxes[0].process_stored_logs_error = RuntimeError('stored logs failed')
-        with pytest.raises(RuntimeError, match='stored logs failed'):
-            await backend.run(['true'])
-
-    @pytest.mark.parametrize('exit_code', [0, 137])
-    async def test_stored_output_cut_short(self, fake_daytona: FakeDaytona, exit_code: int) -> None:
-        # A successful wrapper always prints its last marker, so its absence means lost output; a
-        # killed wrapper never prints its stderr file, so the stdout stored is all there is.
+    @pytest.mark.parametrize(
+        ('error', 'expected'),
+        [
+            (RuntimeError('download failed'), RuntimeError),
+            (DaytonaNotFoundError('no file'), WorkspaceError),
+        ],
+    )
+    async def test_an_output_file_read_failure_propagates(
+        self, fake_daytona: FakeDaytona, error: Exception, expected: type[Exception]
+    ) -> None:
+        # A lost output file on a live sandbox is a failed command result, not a missing path.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['partial']
-        sandbox.process_exit_code = exit_code
-        sandbox.process_output_cut = True
-        if exit_code == 0:
-            with pytest.raises(WorkspaceError, match=r'^Daytona returned incomplete output for a finished command\.$'):
-                await backend.run(['true'])
-        else:
-            result = await backend.run(['true'])
-            assert (result.exit_code, result.stdout, result.stderr) == (exit_code, 'partial', '')
+        sandbox.download_error = error
+        with pytest.raises(expected):
+            await backend.run(['true'])
+        assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
 
     async def test_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
