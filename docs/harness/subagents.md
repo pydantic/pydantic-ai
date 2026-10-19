@@ -455,6 +455,17 @@ parent ceilings. A per-child budget is converted to an absolute ceiling at launc
 concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
 parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
 
+A managed child also inherits `count_tokens_before_request=True`, so on a model that
+implements `count_tokens` each child request is checked against the token and cost
+ceilings before it is sent. A child model that does not implement it fails with
+`NotImplementedError` before its first request. The delegation then starts the child
+once more, under a new run ID and without the up-front count, so those ceilings are
+checked against each response's usage instead. There is no second start once the shared
+`usage` has counted a request since the child started, so a tool that raises
+`NotImplementedError` does not run twice; a sibling's request in that window also rules
+it out. A per-child `usage_limits` that sets `count_tokens_before_request=True` itself
+is kept, so on such a model the child fails as a top-level run would.
+
 `agents`, `aliases`, and `instructions` extend the roster and guidance only inside
 the bound scope; they do not add delegation to an agent without `SubAgents`.
 `SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.

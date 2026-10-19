@@ -10,11 +10,12 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
 from typing import Any, Generic
+from uuid import uuid4
 
 import anyio
 from typing_extensions import TypeIs
 
-from pydantic_ai import AgentStreamEvent
+from pydantic_ai import AgentStreamEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability, HookTimeoutError
 from pydantic_ai.exceptions import (
@@ -40,6 +41,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
+from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -531,24 +533,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 else None
             )
             settings = None
-        run = sub_agent.agent.run(
-            task,
-            deps=ctx.deps,
+        run = self._child_run(
+            ctx,
+            sub_agent,
+            task=task,
             model=run_model,
-            model_settings=settings,
+            settings=settings,
             usage=ctx.usage if child_usage is None else child_usage,
             usage_limits=usage_limits,
             toolsets=toolsets,
             capabilities=capabilities,
-            workspace=ReadOnlyWorkspace(ctx.workspace) if sub_agent.read_only else ctx.workspace,
-            event_stream_handler=partial(self._stream_child, owner=owner, record=record)
-            if record is not None
-            else self._event_stream_handler,
-            # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
-            # the resumed run adds a new prompt, so close them out as interrupted first.
-            message_history=repair_messages(record.messages) if record is not None else None,
-            conversation_id=record.id if record is not None else None,
-            run_id=record.run_id if record is not None else None,
+            owner=owner,
+            record=record,
         )
         token = _depth.set(_depth.get() + 1)
         try:
@@ -591,6 +587,65 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended.cause is not None:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
+
+    def _child_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        sub_agent: SubAgent[AgentDepsT],
+        *,
+        task: str,
+        model: Model | KnownModelName | str | None,
+        settings: ModelSettings | None,
+        usage: RunUsage,
+        usage_limits: UsageLimits | None,
+        toolsets: list[AbstractToolset[AgentDepsT]] | None,
+        capabilities: list[AgentCapability[AgentDepsT]],
+        owner: DelegationTasks | None,
+        record: DelegationTask | None,
+    ) -> Coroutine[Any, Any, AgentRunResult[Any]]:
+        """The child run, dropping token counting inherited from the parent if the child's model can't count.
+
+        Token counting the delegate asks for in its own `usage_limits` is kept, as on a top-level run.
+        """
+        # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
+        # the resumed run adds a new prompt, so close them out as interrupted first.
+        message_history = repair_messages(record.messages) if record is not None else None
+        attempted = False
+
+        async def start(limits: UsageLimits | None) -> AgentRunResult[Any]:
+            # `run_with_count_tokens_fallback` may start the child a second time. That is a new run:
+            # `StepPersistence` rejects a reused run id, and the record keeps the messages of the run
+            # that counts rather than `DelegationTasks` capturing the first run's.
+            nonlocal attempted
+            if attempted and record is not None:
+                record.run_id = uuid4().hex
+            attempted = True
+            with capture_run_messages() as messages:
+                try:
+                    return await sub_agent.agent.run(
+                        task,
+                        deps=ctx.deps,
+                        model=model,
+                        model_settings=settings,
+                        usage=usage,
+                        usage_limits=limits,
+                        toolsets=toolsets,
+                        capabilities=capabilities,
+                        workspace=ReadOnlyWorkspace(ctx.workspace) if sub_agent.read_only else ctx.workspace,
+                        event_stream_handler=partial(self._stream_child, owner=owner, record=record)
+                        if record is not None
+                        else self._event_stream_handler,
+                        message_history=message_history,
+                        conversation_id=record.id if record is not None else None,
+                        run_id=record.run_id if record is not None else None,
+                    )
+                finally:
+                    if record is not None and messages:
+                        record.messages = messages
+
+        if sub_agent.usage_limits is not None and sub_agent.usage_limits.count_tokens_before_request:
+            return start(usage_limits)
+        return run_with_count_tokens_fallback(start, usage_limits, usage)
 
     async def _stream_child(
         self,
