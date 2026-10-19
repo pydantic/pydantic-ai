@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -166,6 +167,13 @@ class TestReminderValidation:
         ):
             r = Reminder('text')
         assert r.tag is None
+
+    def test_unset_defaults_read_as_none_in_the_signatures(self) -> None:
+        assert str(inspect.signature(Reminder).parameters['tag']) == "tag: 'str | None' = None"
+        assert (
+            str(inspect.signature(SystemReminders).parameters['cache_ttl'])
+            == "cache_ttl: \"Literal['5m', '1h'] | None\" = None"
+        )
 
     @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
     @pytest.mark.parametrize('tag', [None, 'system-reminder'])
