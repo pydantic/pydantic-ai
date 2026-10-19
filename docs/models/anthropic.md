@@ -247,7 +247,7 @@ agent = Agent(
 )
 ```
 
-On Anthropic, `cache=True` (or a retention like `cache='1h'`) places cache breakpoints at the end of the tool definitions and the static instructions, like `anthropic_cache_tool_definitions` and `anthropic_cache_instructions` below, so a new conversation reads back the prefix it shares with earlier ones. It caches the conversation with automatic caching, like `anthropic_cache`, or on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, with a breakpoint at the end of the conversation. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) places cache breakpoints at the end of the tool definitions and the static instructions, like `anthropic_cache_tool_definitions` and `anthropic_cache_instructions` below, so a new conversation reads back the prefix it shares with earlier ones. It caches the conversation with automatic caching, like `anthropic_cache`, or on the legacy `AsyncAnthropicBedrock` client, which doesn't support automatic caching, with a breakpoint at the end of the conversation. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
@@ -277,8 +277,8 @@ print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
 
-!!! note "Bedrock and Vertex"
-    Bedrock and Vertex [do not yet support automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching). On these platforms, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations.
+!!! note "Automatic caching on the legacy `AsyncAnthropicBedrock` client"
+    The legacy Bedrock `InvokeModel` API [doesn't support automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching). On the `AsyncAnthropicBedrock` client, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations. The `AsyncAnthropicBedrockMantle`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients support automatic caching.
 
 ### Per-block Message Caching
 
@@ -430,7 +430,7 @@ print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
-`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, or in `usage.details['compaction_ephemeral_1h_input_tokens']` for writes made during [message compaction](#message-compaction), and the cost is calculated at the one-hour rate for those tokens.
+`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, `cache_write_1h_tokens` counts those, and the cost is calculated at the one-hour rate for them. Anthropic's own counts are also in `usage.details`: `'ephemeral_1h_input_tokens'`, and `'compaction_ephemeral_1h_input_tokens'` for writes made during [message compaction](#message-compaction).
 
 ### Cache Diagnostics
 

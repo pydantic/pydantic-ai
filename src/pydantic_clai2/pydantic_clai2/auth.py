@@ -199,15 +199,25 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
 
 class CodexAuth:
-    """Conversation-owned login command and one cached native Codex provider per profile."""
+    """One session's Codex login command, over the native Codex provider cached per profile."""
 
-    def __init__(self, console: Console, *, read_line: ReadLine | None = None, login_timeout: float = 300) -> None:
-        """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`."""
+    def __init__(
+        self,
+        console: Console,
+        *,
+        read_line: ReadLine | None = None,
+        login_timeout: float = 300,
+        providers: dict[str, OpenAICodexProvider] | None = None,
+    ) -> None:
+        """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`.
+
+        `providers` is the cache the process's sessions share, so each account refreshes its tokens once.
+        """
         self.console = console
         self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
-        self._providers: dict[str, OpenAICodexProvider] = {}
+        self._providers: dict[str, OpenAICodexProvider] = {} if providers is None else providers
 
     @property
     def provider(self) -> OpenAICodexProvider | None:
