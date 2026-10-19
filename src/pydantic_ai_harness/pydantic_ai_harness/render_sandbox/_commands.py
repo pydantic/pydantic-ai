@@ -32,8 +32,7 @@ from pydantic_ai.workspaces import (
 
 _CLAIM_ROOT = '/tmp'
 _MAX_FRAME_CHARS = 131_072
-# Linux limits each exec argument (including Render's bash -c argument). The raw
-# JSON payload avoids another base64 expansion of Workspace's file-write chunks.
+# Linux limits each exec argument, and Render passes the whole launch as one `bash -c` argument.
 _MAX_LAUNCH_BYTES = 126_000
 # After the direct child exits its bytes are already in the pipes; a background child still writing to
 # an inherited pipe gets this long before the result returns, as core's local backend allows.
@@ -189,29 +188,33 @@ async def _stop_shielded(
     return interrupted
 
 
-async def run_command(
-    client: RenderAsync,
-    sandbox_id: str,
+_SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
+
+
+@dataclass(frozen=True)
+class PreparedCommand:
+    """A command's supervisor launch and stop requests, built before any sandbox exists."""
+
+    nonce: str
+    launch: str
+    stop: str
+    max_output_bytes: int
+
+
+def prepare_command(
     argv: list[str],
     *,
     working_dir: str,
     env: Mapping[str, str] | None = None,
     timeout: float | None = None,
     max_output_bytes: int = 1_048_576,
-    stop_timeout: float = 12.0,
-) -> CommandResult:
-    """Run once, preserving the sandbox on timeout, cancellation or stream failure.
+) -> PreparedCommand:
+    """Build the supervisor requests, raising `ValueError` if they exceed the exec argument limit.
 
-    The backend validates arguments and settings before acquiring a sandbox and
-    supplies its own argument list. Acquisition also uses this runner with validated
-    configuration. Keep validation there so invalid input cannot create resources.
-    The remote supervisor independently checks its received payload. Exceptions from
-    Render propagate unchanged, including after an uncertain start. No command
-    is replayed. Stop failures remain explicit in exception notes and causes.
+    The backend calls this before acquiring a sandbox, so a command too large to send creates nothing.
     """
     nonce = uuid.uuid4().hex
     claim = f'{_CLAIM_ROOT}/pydantic-render-command-{nonce}'
-    source = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
     config: dict[str, object] = {
         'claim': claim,
         'nonce': nonce,
@@ -222,8 +225,29 @@ async def run_command(
         'limit': max_output_bytes,
         'drain': _DRAIN_GRACE,
     }
-    launch = _launch(source, 'run', config)
-    stop = _launch(source, 'stop', {'claim': claim, 'nonce': nonce})
+    return PreparedCommand(
+        nonce=nonce,
+        launch=_launch(_SOURCE, 'run', config),
+        stop=_launch(_SOURCE, 'stop', {'claim': claim, 'nonce': nonce}),
+        max_output_bytes=max_output_bytes,
+    )
+
+
+async def run_command(
+    client: RenderAsync,
+    sandbox_id: str,
+    command: PreparedCommand,
+    *,
+    timeout: float | None = None,
+    stop_timeout: float = 12.0,
+) -> CommandResult:
+    """Run once, preserving the sandbox on timeout, cancellation or stream failure.
+
+    The remote supervisor independently checks its received payload. Exceptions from
+    Render propagate unchanged, including after an uncertain start. No command
+    is replayed. Stop failures remain explicit in exception notes and causes.
+    """
+    nonce, launch, stop, max_output_bytes = command.nonce, command.launch, command.stop, command.max_output_bytes
     capture = _Capture(nonce, max_output_bytes)
     try:
         deadline = asyncio.timeout(timeout)

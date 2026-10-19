@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
-from collections.abc import Callable
 from pathlib import Path
-from typing import ParamSpec, TypeVar
+from typing import Any
 
 import pytest
 
@@ -14,7 +14,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render.client.errors import ClientError, RateLimitError, ServerError
-    from render.experimental.sandbox import SandboxFileNotFoundError, SandboxNotFoundError
+    from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 
     from pydantic_ai.workspaces import (
         Workspace,
@@ -25,13 +25,7 @@ with try_import() as imports_successful:
 
     from .workspace_helpers import WorkspaceHarness
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='render not installed'),
-    pytest.mark.subprocess(reason='Exercise real POSIX workspace commands and file helper processes', conditional=True),
-]
-
-_P = ParamSpec('_P')
-_T = TypeVar('_T')
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
 async def test_native_bytes_do_not_travel_in_commands(workspace_harness: WorkspaceHarness) -> None:
@@ -40,9 +34,8 @@ async def test_native_bytes_do_not_travel_in_commands(workspace_harness: Workspa
     await workspace.write_bytes('native.bin', data)
     assert await workspace.read_bytes('native.bin') == data
     assert [call[0] for call in workspace_harness.transfers] == ['upload', 'download']
-    # Keep the control-request budget constant instead of chunking the payload.
-    assert len(workspace_harness.commands) <= 8
-    assert all(len(str(command)) < 16_000 for command in workspace_harness.commands)
+    encodings = [data.hex(), base64.b64encode(data).decode(), data.decode('latin-1')]
+    assert not any(encoded in str(command) for command in workspace_harness.commands for encoded in encodings)
     assert not list(workspace_harness.root.glob('.render-pydantic-*'))
     for direction, _, source, target in workspace_harness.transfers:
         remote = target if direction == 'upload' else source
@@ -84,8 +77,11 @@ async def test_overwrite_preserves_mode_and_dangling_symlink(
         (SandboxNotFoundError('gone'), WorkspaceUnavailableError),
         (RateLimitError('quota'), RateLimitError),
         (ClientError('denied'), WorkspaceError),
-        (ServerError('transient'), WorkspaceError),
+        (SandboxDownloadError('unsafe archive'), WorkspaceError),
+        (ServerError('transient'), ServerError),
+        (TimeoutError('deadline'), WorkspaceTimeoutError),
     ],
+    ids=repr,
 )
 async def test_sdk_errors_are_not_replayed(
     direction: str,
@@ -108,22 +104,15 @@ async def test_sdk_errors_are_not_replayed(
     assert not Path(source if direction == 'read' else target).parent.exists()
 
 
-@pytest.mark.parametrize('stop', ['timeout', 'cancel'])
-async def test_interrupted_upload_preserves_old_file(
-    stop: str,
-    workspace_harness: WorkspaceHarness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._OPERATION_TIMEOUT', 1)
+async def test_cancelled_upload_preserves_old_file(workspace_harness: WorkspaceHarness) -> None:
     workspace_harness.transfer_gate = asyncio.Event()
     path = workspace_harness.root / 'existing'
     path.write_bytes(b'original')
     backend = workspace_harness.backend()
     task = asyncio.create_task(Workspace(backend).write_bytes('existing', b'replacement'))
     await workspace_harness.transfer_started.wait()
-    if stop == 'cancel':
-        task.cancel()
-    with pytest.raises(WorkspaceTimeoutError if stop == 'timeout' else asyncio.CancelledError):
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
         await task
     assert path.read_bytes() == b'original'
     assert len(workspace_harness.transfers) == 1
@@ -177,18 +166,14 @@ async def test_backend_file_paths_are_validated_before_creation(workspace_harnes
 async def test_malformed_file_helper_result_cannot_replace_existing_file(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, response: str
 ) -> None:
-    from render import RenderAsync
-
     from pydantic_ai.workspaces import CommandResult, WorkspaceCommand
 
     original = workspace_harness.execute
 
-    async def malformed(
-        client: RenderAsync, sandbox_id: str, command: WorkspaceCommand, **kwargs: object
-    ) -> CommandResult:
+    async def malformed(sandbox_id: str, command: WorkspaceCommand, **kwargs: Any) -> CommandResult:
         # Readiness remains normal; only the remote file helper returns unusable metadata.
         if kwargs['working_dir'] == '/':
-            return await original(client, sandbox_id, command, **kwargs)
+            return await original(sandbox_id, command, **kwargs)
         return CommandResult(exit_code=0, stdout=response, stderr='')
 
     monkeypatch.setattr(workspace_harness, 'execute', malformed)
@@ -199,33 +184,6 @@ async def test_malformed_file_helper_result_cannot_replace_existing_file(
         await backend.write_bytes(str(target), b'replacement')
     assert target.read_bytes() == b'original'
     assert workspace_harness.transfers == []
-
-
-async def test_expired_sandbox_during_upload_remains_unavailable(workspace_harness: WorkspaceHarness) -> None:
-    import shutil
-
-    from pydantic_ai.workspaces import WorkspaceUnavailableError
-
-    # Let preparation finish, then expire the provider before its upload completes.
-    workspace_harness.transfer_gate = asyncio.Event()
-    backend = workspace_harness.backend()
-    target = workspace_harness.root / 'existing'
-    target.write_bytes(b'original')
-    pending = asyncio.create_task(backend.write_bytes(str(target), b'replacement'))
-    try:
-        await workspace_harness.transfer_started.wait()
-        assert backend.ref is not None
-        workspace_harness.sandboxes[backend.ref.id].status = 'terminated'
-        workspace_harness.transfer_gate.set()
-        with pytest.raises(WorkspaceUnavailableError):
-            await pending
-        assert target.read_bytes() == b'original'
-        assert len(workspace_harness.created) == 1
-    finally:
-        workspace_harness.transfer_gate.set()
-        await asyncio.gather(pending, return_exceptions=True)
-        # The local SDK double does not remove remote staging when it marks termination.
-        shutil.rmtree(Path(workspace_harness.transfers[0][3]).parent, ignore_errors=True)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason='root bypasses file write permissions')
@@ -260,51 +218,7 @@ async def test_native_file_operations_reject_named_pipes(workspace_harness: Work
     assert workspace_harness.transfers == []
 
 
-def interpret_file_helpers(
-    workspace_harness: WorkspaceHarness,
-    monkeypatch: pytest.MonkeyPatch,
-    fault: Callable[[pytest.MonkeyPatch, str], None],
-) -> None:
-    """Execute the exact dispatched program while controlling its local OS boundary."""
-    import io
-    import runpy
-    import sys
-    from contextlib import redirect_stdout
-    from importlib.resources import files
-
-    from render import RenderAsync
-
-    from pydantic_ai.workspaces import CommandResult, WorkspaceCommand
-
-    original = workspace_harness.execute
-    program = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py')
-
-    async def interpret(
-        client: RenderAsync, sandbox_id: str, command: WorkspaceCommand, **kwargs: object
-    ) -> CommandResult:
-        if isinstance(command, str) or list(command[:4]) != ['python3', '-I', '-c', program.read_text()]:
-            return await original(client, sandbox_id, command, **kwargs)
-        # Keep OS injection inside this one synchronous program invocation, so it
-        # cannot affect Pydantic, SDK transport, or another test's file operations.
-        output = io.StringIO()
-        exit_code = 0
-        with monkeypatch.context() as child:
-            child.setattr(sys, 'argv', [str(program), *command[4:]])
-            fault(child, command[4])
-            with redirect_stdout(output):
-                try:
-                    runpy.run_path(str(program), run_name='__main__')
-                except SystemExit as error:
-                    assert isinstance(error.code, int)
-                    exit_code = error.code
-        return CommandResult(exit_code=exit_code, stdout=output.getvalue(), stderr='')
-
-    monkeypatch.setattr(workspace_harness, 'execute', interpret)
-
-
-async def test_file_shrinking_during_snapshot_is_not_partial_success(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_file_shrinking_during_snapshot_is_not_partial_success(workspace_harness: WorkspaceHarness) -> None:
     import errno
 
     target = workspace_harness.root / 'shrinking'
@@ -323,7 +237,7 @@ async def test_file_shrinking_during_snapshot_is_not_partial_success(
 
             child.setattr(os, 'fstat', snapshot_stat)
 
-    interpret_file_helpers(workspace_harness, monkeypatch, shrink_during_read)
+    workspace_harness.helper_fault = shrink_during_read
     backend = workspace_harness.backend()
     with pytest.raises(OSError) as caught:
         await backend.read_bytes(str(target))
@@ -332,7 +246,7 @@ async def test_file_shrinking_during_snapshot_is_not_partial_success(
 
 
 async def test_destination_becoming_dangling_link_does_not_create_its_target(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+    workspace_harness: WorkspaceHarness,
 ) -> None:
     import errno
 
@@ -353,7 +267,7 @@ async def test_destination_becoming_dangling_link_does_not_create_its_target(
 
             child.setattr(os, 'stat', changed_stat)
 
-    interpret_file_helpers(workspace_harness, monkeypatch, replace_destination)
+    workspace_harness.helper_fault = replace_destination
     backend = workspace_harness.backend()
     with pytest.raises(OSError) as caught:
         await backend.write_bytes(str(target), b'replacement')

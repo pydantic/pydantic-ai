@@ -1,7 +1,7 @@
 """Pydantic AI's workspace backend conformance suite, run against `RenderSandboxBackend`.
 
-The fake Render SDK in `workspace_helpers.py` runs commands and the shipped file helper as local
-subprocesses under a temporary host directory. The same rules run against a real sandbox in
+The fake Render SDK in `workspace_helpers.py` runs commands as local subprocesses under a temporary
+host directory, and the shipped file helper in-process. The same rules run against a real sandbox in
 `test_workspace_live.py`.
 """
 
@@ -20,10 +20,7 @@ with try_import() as imports_successful:
 
     from .workspace_helpers import WorkspaceHarness
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='render not installed'),
-    pytest.mark.subprocess(reason='Exercise real POSIX workspace commands and file helper processes', conditional=True),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
 class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):

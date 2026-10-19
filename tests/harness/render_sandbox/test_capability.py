@@ -9,7 +9,7 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from render.client.errors import ClientError
+    from render.client.errors import ClientError, RateLimitError, ServerError
     from render.experimental.sandbox import SandboxNotFoundError
 
     from pydantic_ai.exceptions import UserError
@@ -23,10 +23,7 @@ with try_import() as imports_successful:
     from .._tool_calls import call_tools
     from .workspace_helpers import CreateCall, WorkspaceHarness, client_is_closed, use_host_credentials
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='render not installed'),
-    pytest.mark.subprocess(reason='Exercise real POSIX workspace commands and file helper processes', conditional=True),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
 def _ctx() -> RunContext[None]:
@@ -121,10 +118,28 @@ async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
     await capability.destroy(backend.ref)
 
 
-async def test_destroy_propagates_other_provider_errors(workspace_harness: WorkspaceHarness) -> None:
-    workspace_harness.terminate_error = ClientError('denied')
-    with pytest.raises(ClientError, match='denied'):
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (ClientError('denied'), WorkspaceUnavailableError),
+        (RateLimitError('try later'), RateLimitError),
+        (ServerError('transient'), ServerError),
+    ],
+    ids=repr,
+)
+async def test_destroy_maps_a_rejection_and_propagates_transient_errors(
+    workspace_harness: WorkspaceHarness, error: Exception, expected: type[Exception]
+) -> None:
+    workspace_harness.terminate_error = error
+    with pytest.raises(expected):
         await RenderSandbox(client=workspace_harness.client).destroy(WorkspaceRef(provider='render', id='sb-1'))
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_destroy_refuses_trio(workspace_harness: WorkspaceHarness) -> None:
+    with pytest.raises(UserError, match='asyncio event loop'):
+        await RenderSandbox(client=workspace_harness.client).destroy(WorkspaceRef(provider='render', id='sb-1'))
+    assert workspace_harness.terminated == []
 
 
 async def test_foreign_reference_is_rejected() -> None:

@@ -237,9 +237,10 @@ def _capture(
                 elif terminal is None and timeout is not None and now - started >= timeout:
                     terminal = 'timeout'
                     _signal_owned(claim)
-            ready = selector.select(0 if direct_exit is not None else 0.02)
-            if drain_deadline is not None and (not ready or terminal == 'limit' or now >= drain_deadline):
+            # After the direct child exits, keep reading until every pipe reaches EOF or the drain grace ends.
+            if drain_deadline is not None and (not selector.get_map() or terminal == 'limit' or now >= drain_deadline):
                 break
+            ready = selector.select(0.02 if drain_deadline is None else min(0.02, drain_deadline - now))
             for key, _ in ready:
                 fd = key.fd
                 stream_name, pipe = pipes[fd]

@@ -34,7 +34,7 @@ with try_import() as imports_successful:
     from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
     from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 
-    from .workspace_live_helpers import ResourceLedger
+    from .resources_live import ResourceLedger
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 

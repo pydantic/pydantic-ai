@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import anyio
 from render import RenderAsync
-from render.client.errors import RateLimitError, RenderError
-from render.experimental.sandbox import SandboxFileNotFoundError, SandboxNotFoundError
+from render.client.errors import ClientError, RateLimitError
+from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -112,12 +112,12 @@ class NativeFilesystem:
             raise FileNotFoundError(path) from error
         except SandboxNotFoundError as error:
             raise WorkspaceUnavailableError('Render sandbox is unavailable') from error
-        except RateLimitError:
-            raise
         except TimeoutError as error:
             raise WorkspaceTimeoutError(f'Render file transfer exceeded {self.timeout}s') from error
-        except RenderError as error:
-            # SDK download errors and transient failures are not evidence of a missing file.
+        except RateLimitError:
+            raise
+        except (ClientError, SandboxDownloadError) as error:
+            # A rejected request or an unsafe download; transient SDK errors propagate for durable engines to retry.
             raise WorkspaceError(f'Render file transfer failed for {path!r}') from error
         finally:
             # Shield bounded best-effort staging cleanup, preserving the original error.

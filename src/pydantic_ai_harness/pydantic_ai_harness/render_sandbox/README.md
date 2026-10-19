@@ -11,18 +11,18 @@ Run your agent's commands and file edits in an isolated [Render sandbox](https:/
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[render-sandbox,anthropic]"
+uv add "pydantic-ai-harness[render,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[render-sandbox,anthropic]"
+pip install "pydantic-ai-harness[render,anthropic]"
 ```
 
 The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `RENDER_API_KEY` to a [Render API key](https://render.com/docs/api#1-create-an-api-key), `RENDER_WORKSPACE_ID` to the `tea-...` ID of a [workspace](https://render.com/docs/workspaces) with Sandboxes access, and `ANTHROPIC_API_KEY` for the examples.
 
-Render Sandboxes are in early access, so the `render-sandbox` extra pins the Render SDK to its tested 1.2 minor series.
+Render Sandboxes are in early access, and their SDK API sits under `render.experimental`, so it may change between SDK releases; this integration is tested against Render SDK 1.2.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ Commands start in `/workspace`, which is created on a new sandbox. Pass `working
 
 `RenderSandbox` supplies the workspace only. Add [`Coder`](../coder/) for a coding agent, or the narrower [`Shell`](../shell/) and [`FileSystem`](../filesystem/).
 
-A string command runs under `/bin/sh -c`; an argument list runs as given. Standard input is closed, and a non-zero exit is a normal result. A command whose combined output passes 1 MiB is stopped and raises `WorkspaceOutputLimitError` with the captured beginning in `stdout` and `stderr`; redirect large output to a file instead.
+A string command runs under `/bin/sh -c`; an argument list runs as given. Standard input is closed, and a non-zero exit is a normal result. A command whose combined output passes 1 MiB is stopped and raises `WorkspaceOutputLimitError` with the captured beginning in `stdout` and `stderr`; redirect large output to a file instead. A command and its environment must fit in about 110 KB, the limit on one exec argument; write larger content with the file tools.
 
 Render's exec API cannot stop a command, so the backend runs each command under a small Python supervisor sent with the exec request. On a timeout or cancellation, it kills the command's process group and leaves the sandbox usable. A background child that detaches into its own session keeps running. The supervisor and the file helpers need `python3` in the sandbox image, which Render's default image provides.
 
@@ -126,7 +126,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
     await RenderSandbox().destroy(ref)
 ```
 
-`RenderSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` terminates by ID without attaching, and returns quietly for a sandbox that is already gone. If a create is cancelled while in flight, the backend still records the ref when Render responds; a lost response may leave a sandbox without a ref, which `sandbox_timeout` then bounds. Creating a sandbox logs `Created Render sandbox <id>` at INFO on the `pydantic_ai_harness.render_sandbox._backend` logger, so the ID is on record even then.
+`RenderSandbox.backend(ref)` constructs an attached backend without I/O; `destroy(ref)` terminates by ID without attaching, and returns quietly for a sandbox that is already terminated or unknown. Rejected credentials raise `WorkspaceUnavailableError`. If a create is cancelled while in flight, the backend still records the ref when Render responds; a lost response may leave a sandbox without a ref, which `sandbox_timeout` then bounds. Creating a sandbox logs `Created Render sandbox <id>` at INFO on the `pydantic_ai_harness.render_sandbox._backend` logger, so the ID is on record even then.
 
 To terminate every run's sandbox, including failed runs, which return no result to read the ref from, use `after_run` and `on_run_error` hooks:
 
@@ -176,7 +176,7 @@ Commands run on the asyncio event loop only.
 
 ## Render Workflows
 
-`RenderSandbox` composes with [`RenderWorkflows`](../render/): the workspace ref crosses task boundaries, so model and tool tasks share one sandbox. Install `pydantic-ai-harness[render,render-sandbox,anthropic]` and set the Render variables on every worker. A root-task retry starts the agent again and can repeat work, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
+`RenderSandbox` composes with [`RenderWorkflows`](../render/): the workspace ref crosses task boundaries, so model and tool tasks share one sandbox. The same `render` extra covers both; set the Render variables on every worker. A root-task retry starts the agent again and can repeat work, so terminate the sandbox from the task that runs the agent, as in [Clean up](#clean-up).
 
 ## Telemetry
 

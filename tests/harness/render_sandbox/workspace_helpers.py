@@ -1,27 +1,30 @@
-"""Reusable fake Render SDK and local-shell harness for workspace tests.
+"""A fake Render SDK whose sandboxes are local directories.
 
-Normal mode preserves a caller-selected local working directory. Isolation mode maps
-remote sandbox identities to distinct local directories, while still executing the
-real Workspace filesystem fallback in subprocesses. Deliberate sharing flags are
-negative controls used to prove that integration assertions detect leaked state.
+User commands run as local subprocesses. The shipped file helper runs in-process, so its
+coverage needs no child interpreter; `inline_helpers` runs it as Render does instead, under
+`python3 -I -c` in the command's directory. Isolation mode gives each fake sandbox its own root.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import os
+import runpy
 import shlex
 import shutil
 import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from render import RenderAsync
 from render.experimental.sandbox import (
@@ -36,6 +39,7 @@ from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceRef
 from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
 _BACKEND_MODULE = 'pydantic_ai_harness.render_sandbox._backend'
+FILE_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py')
 
 
 @dataclass(frozen=True)
@@ -45,23 +49,13 @@ class CreateCall:
     env: dict[str, str]
 
 
-@dataclass(frozen=True)
-class DispatchCall:
-    sandbox_id: str
-    command: WorkspaceCommand
-    working_dir: str
-    env: dict[str, str]
-
-
 @dataclass
 class WorkspaceHarness:
     client: RenderAsync
     root: Path
+    monkeypatch: pytest.MonkeyPatch
     isolated_filesystems: bool = False
-    share_filesystem: bool = False
-    share_environment: bool = False
     create_calls: dict[str, CreateCall] = field(default_factory=dict[str, CreateCall])
-    dispatch_calls: list[DispatchCall] = field(default_factory=list[DispatchCall])
     sandbox_roots: dict[str, Path] = field(default_factory=dict[str, Path])
     sandboxes: dict[str, Sandbox] = field(default_factory=dict[str, Sandbox])
     created: list[str] = field(default_factory=list[str])
@@ -76,13 +70,10 @@ class WorkspaceHarness:
     terminate_error: Exception | None = None
     create_gate: asyncio.Event | None = None
     create_started: asyncio.Event = field(default_factory=asyncio.Event)
-    command_started: asyncio.Event = field(default_factory=asyncio.Event)
-    block_commands: bool = False
     create_status: str = 'running'
-    terminate_gate: asyncio.Event | None = None
-    terminate_started: asyncio.Event = field(default_factory=asyncio.Event)
-    # Run shipped helpers as Render does, inline under `python3 -I -c` in the command's directory.
     inline_helpers: bool = False
+    # Called inside an in-process file helper run with a scoped monkeypatch and the helper's action.
+    helper_fault: Callable[[pytest.MonkeyPatch, str], None] | None = None
     opened_clients: list[RenderAsync] = field(default_factory=list[RenderAsync])
 
     execute: Callable[..., Awaitable[CommandResult]] = field(init=False)
@@ -102,6 +93,7 @@ def make_workspace_harness(
     harness = WorkspaceHarness(
         RenderAsync(token='test-only', owner_id='tea-test'),
         root=tmp_path,
+        monkeypatch=monkeypatch,
         isolated_filesystems=isolated_filesystems,
     )
 
@@ -152,19 +144,9 @@ def lifecycle(
         if harness.create_error is not None:
             raise harness.create_error
         identifier = f'sb-{len(harness.created) + 1}'
-        sandbox = Sandbox(
-            identifier,
-            harness.create_status,
-            'starter',
-            'deny-all',
-            'oregon',
-            300,
-            datetime.now(UTC),
-        )
+        sandbox = Sandbox(identifier, harness.create_status, 'starter', 'deny-all', 'oregon', 300, datetime.now(UTC))
         harness.create_calls[identifier] = CreateCall(timeout_seconds, network_policy, dict(env or {}))
-        harness.sandbox_roots[identifier] = harness.root / (
-            'shared-sandbox' if harness.share_filesystem else identifier
-        )
+        harness.sandbox_roots[identifier] = harness.root / identifier
         harness.sandboxes[identifier] = sandbox
         harness.created.append(identifier)
         return sandbox
@@ -175,9 +157,6 @@ def lifecycle(
         return harness.sandboxes[identifier]
 
     async def terminate(identifier: str) -> None:
-        harness.terminate_started.set()
-        if harness.terminate_gate is not None:
-            await harness.terminate_gate.wait()
         if harness.terminate_error is not None:
             raise harness.terminate_error
         harness.terminated.append(identifier)
@@ -197,8 +176,6 @@ def transfers(harness: WorkspaceHarness) -> tuple[Callable[..., Awaitable[None]]
             await harness.transfer_gate.wait()
         if harness.transfer_error is not None:
             raise harness.transfer_error
-        if harness.sandboxes[identifier].status != 'running':
-            raise SandboxNotFoundError('not running')
         # Atomic replacement matches Render's file endpoint. Following a symlink
         # here would hide an adapter bug, so explicitly replace the leaf itself.
         temporary = Path(target + '.sdk-tmp')
@@ -215,73 +192,60 @@ def transfers(harness: WorkspaceHarness) -> tuple[Callable[..., Awaitable[None]]
     return copy_to, copy_from
 
 
-def local_python_command(argv: list[str]) -> list[str]:
-    """Run shipped helper bytes from their matching file so child coverage has a source path."""
-    # Render receives inline source. The local test transport recognizes that exact
-    # source and executes its package file with the same arguments and interpreter.
-    # Ordinary user commands keep their original arguments.
-    if len(argv) >= 4 and argv[:3] == ['python3', '-I', '-c']:
-        for name in ('_command_runner.py', '_file_transfer.py'):
-            path = files('pydantic_ai_harness.render_sandbox').joinpath(name)
-            if path.read_text() == argv[3]:
-                return [sys.executable, str(path), *argv[4:]]
-    return argv
+def _run_file_helper(harness: WorkspaceHarness, args: list[str]) -> CommandResult:
+    """Run the shipped file helper in this process, as its `__main__`."""
+    output = io.StringIO()
+    exit_code = 0
+    with harness.monkeypatch.context() as child:
+        child.setattr(sys, 'argv', [str(FILE_HELPER), *args])
+        if harness.helper_fault is not None:
+            harness.helper_fault(child, args[0])
+        with redirect_stdout(output):
+            try:
+                runpy.run_path(str(FILE_HELPER), run_name='__main__')
+            except SystemExit as error:
+                assert isinstance(error.code, int)
+                exit_code = error.code
+    return CommandResult(exit_code=exit_code, stdout=output.getvalue(), stderr='')
 
 
 def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult]]:
     async def command(
-        client: RenderAsync,
         sandbox_id: str,
         command: WorkspaceCommand,
         *,
         working_dir: str,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-        max_output_bytes: int = 1_048_576,
-        stop_timeout: float = 12.0,
+        env: Mapping[str, str],
+        timeout: float | None,
     ) -> CommandResult:
         harness.commands.append(command)
-        harness.dispatch_calls.append(DispatchCall(sandbox_id, command, working_dir, dict(env or {})))
         if harness.sandboxes[sandbox_id].status != 'running':
             raise SandboxNotFoundError('not running')
-        if working_dir != '/':
-            harness.command_started.set()
+        if working_dir == '/':
+            if harness.isolated_filesystems:
+                # Readiness asks for the canonical cwd; each isolated sandbox has its own local root.
+                root = harness.sandbox_roots[sandbox_id]
+                root.mkdir(parents=True, exist_ok=True)
+                return CommandResult(exit_code=0, stdout=str(root) + '\n', stderr='')
+        else:
             if harness.command_error is not None:
                 raise harness.command_error
-            if harness.block_commands:
-                await asyncio.Future[None]()
-        if harness.isolated_filesystems and working_dir == '/':
-            # Readiness asks the provider for its canonical cwd. Each fake sandbox has
-            # its own real local root; later paths come from this public cwd result.
-            root = harness.sandbox_roots[sandbox_id]
-            root.mkdir(parents=True, exist_ok=True)
-            return CommandResult(exit_code=0, stdout=str(root) + '\n', stderr='')
-        configured = harness.create_calls[sandbox_id].env
-        effective_env = {**configured, **dict(env or {})}
-        if harness.share_environment:
-            # Fault injection is limited to this test-owned setting. Preserve all
-            # other per-command environment fields so unrelated behavior stays valid.
-            effective_env['RUN_LABEL'] = next(iter(harness.create_calls.values())).env['RUN_LABEL']
-        # Preserve coverage's child-process configuration so local helper execution is measured.
-        values = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith('COVERAGE_') or key == 'COVERAGE_PROCESS_CONFIG'
-        }
-        values.update(effective_env)
-        original_argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
-        if harness.inline_helpers and original_argv[:3] == ['python3', '-I', '-c']:
-            argv = original_argv = [sys.executable, *original_argv[1:]]
-        else:
-            argv = local_python_command(original_argv)
-        # The shipped helpers receive absolute file paths or an explicit command
-        # directory. Launch their local copies from the repository so CI's relative
-        # coverage include patterns still find them; user commands keep their cwd.
-        helper_cwd = Path(__file__).resolve().parents[3] if argv != original_argv else working_dir
+            if harness.isolated_filesystems and working_dir == str(harness.root):
+                # The backend sends its configured `working_dir`; in isolation mode that names the sandbox root.
+                working_dir = str(harness.sandbox_roots[sandbox_id])
+        argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
+        helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
+        if helper and not harness.inline_helpers:
+            return _run_file_helper(harness, argv[4:])
+        if helper:
+            argv = [sys.executable, *argv[1:]]
+        values = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+        values.update(harness.create_calls[sandbox_id].env)
+        values.update(env)
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
-                cwd=helper_cwd,
+                cwd=working_dir,
                 env=values,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
@@ -295,7 +259,9 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
                 stdout, stderr = await process.communicate()
         except BaseException:
             process.kill()
-            await process.wait()
+            # Draining after the kill closes the pipe transports, so none is left for the garbage collector.
+            with anyio.CancelScope(shield=True):
+                await process.communicate()
             raise
         assert process.returncode is not None
         if harness.sandboxes[sandbox_id].status != 'running':
@@ -326,18 +292,12 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
         argv = config['argv']
         invocation = argv[2] if argv[:2] == ['/bin/sh', '-c'] else argv
         result = await harness.execute(
-            harness.client,
-            identifier,
-            invocation,
-            working_dir=config['cwd'],
-            env=config['env'],
-            timeout=config['timeout'],
-            max_output_bytes=config['limit'],
+            identifier, invocation, working_dir=config['cwd'], env=config['env'], timeout=config['timeout']
         )
-        for stream, value in [('stdout', result.stdout), ('stderr', result.stderr)]:
+        for name, value in [('stdout', result.stdout), ('stderr', result.stderr)]:
             for start in range(0, len(value), 16384):
                 yield frame(
-                    'output', stream=stream, data=base64.b64encode(value[start : start + 16384].encode()).decode()
+                    'output', stream=name, data=base64.b64encode(value[start : start + 16384].encode()).decode()
                 )
         yield frame('exit', code=result.exit_code)
         yield SandboxExecExit(0)

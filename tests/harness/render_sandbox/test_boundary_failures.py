@@ -61,12 +61,10 @@ class ScriptedSDK:
     client: RenderAsync
     status: str = 'running'
     creates: int = 0
-    terminations: int = 0
     reads: int = 0
     operations: list[str] = field(default_factory=list[str])
     scenario: str = 'valid'
     stop_scenario: str = 'valid'
-    state_after_terminate: str = 'terminated'
     status_script: list[str | Exception] = field(default_factory=list[str | Exception])
     transport_error: Exception | None = None
     readiness_output: str = '/workspace\n'
@@ -91,11 +89,6 @@ class ScriptedSDK:
         if isinstance(item, Exception):
             raise item
         return self.sandbox(item)
-
-    async def terminate(self, identifier: str) -> None:
-        assert identifier == 'sbx-scripted'
-        self.terminations += 1
-        self.status = self.state_after_terminate
 
     async def exec(self, identifier: str, launch: str) -> AsyncGenerator[SandboxExecEvent]:
         assert identifier == 'sbx-scripted'
@@ -193,7 +186,6 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     public_api = sdk.client.experimental.sandboxes
     monkeypatch.setattr(public_api, 'create', sdk.create)
     monkeypatch.setattr(public_api, 'from_id', sdk.from_id)
-    monkeypatch.setattr(public_api, 'terminate', sdk.terminate)
     monkeypatch.setattr(public_api, 'exec', sdk.exec)
     return sdk
 
@@ -232,7 +224,6 @@ async def test_unusable_command_stream_never_becomes_success_or_replays(boundary
         await backend.run(['side-effect'])
     assert boundary.operations == ['run', 'stop']
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
-    assert boundary.terminations == 0
 
     boundary.scenario = 'valid'
     assert (await backend.run(['next-explicit-command'])).stdout == 'usable'
@@ -257,7 +248,6 @@ async def test_stop_failure_preserves_original_stream_error_and_recovery_referen
     assert any('stop was not confirmed' in note for note in original.__notes__)
     assert boundary.operations == ['run', 'stop']
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
-    assert boundary.terminations == 0
 
 
 async def test_readiness_deadline_retains_id_and_does_not_create_again(
@@ -271,7 +261,6 @@ async def test_readiness_deadline_retains_id_and_does_not_create_again(
     assert boundary.operations == []
     assert boundary.creates == 1
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
-    assert boundary.terminations == 0
 
     # A later, explicit call can use the same provider resource once it is ready.
     boundary.status = 'running'
@@ -320,7 +309,6 @@ async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: 
         if stop_fails:
             assert any('stop also failed' in note for note in caught.value.__notes__)
         assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
-        assert boundary.terminations == 0
     finally:
         boundary.stop_gate.set()
         await asyncio.gather(pending, return_exceptions=True)
@@ -337,10 +325,10 @@ async def test_readiness_provider_error_retains_reference(boundary: ScriptedSDK,
     assert boundary.creates == 1
 
 
-@pytest.mark.parametrize('failure', [ClientError('denied'), SandboxNotFoundError('gone')])
-async def test_failed_command_status_audit_preserves_provider_error(boundary: ScriptedSDK, failure: Exception) -> None:
+async def test_missing_sandbox_in_status_audit_is_unavailable(boundary: ScriptedSDK) -> None:
     backend = boundary.backend()
     await backend.working_dir()
+    failure = SandboxNotFoundError('gone')
     boundary.status_script = [failure]
     boundary.transport_error = ConnectionError('stream interrupted')
     with pytest.raises(WorkspaceUnavailableError) as caught:
@@ -356,7 +344,6 @@ async def test_remote_timeout_is_reported_as_command_timeout(boundary: ScriptedS
     with pytest.raises(WorkspaceTimeoutError):
         await backend.run(['side-effect'])
     assert backend.ref is not None
-    assert boundary.terminations == 0
 
 
 async def test_blank_wire_lines_are_ignored(boundary: ScriptedSDK) -> None:
@@ -390,7 +377,6 @@ async def test_wire_output_limit_preserves_partial_output(
         await backend.run(['side-effect'])
     assert caught.value.stdout == 'x' * 512
     assert caught.value.limit == 512
-    assert boundary.terminations == 0
 
 
 async def test_sdk_iterator_without_generator_methods_is_supported(

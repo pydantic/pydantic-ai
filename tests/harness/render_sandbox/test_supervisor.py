@@ -14,6 +14,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 
 import anyio
@@ -26,13 +27,22 @@ with try_import() as imports_successful:
 
     from pydantic_ai.workspaces import WorkspaceError, WorkspaceOutputLimitError, WorkspaceTimeoutError
 
-    from .workspace_helpers import WorkspaceHarness, local_python_command
+    from .workspace_helpers import WorkspaceHarness
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='render not installed'),
     pytest.mark.skipif(sys.platform == 'win32', reason='supervisor requires POSIX process groups'),
     pytest.mark.subprocess(reason='Verify real supervisor signal ownership and process-group cleanup'),
 ]
+
+
+_SUPERVISOR = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py')
+
+
+def _local_supervisor(argv: list[str]) -> list[str]:
+    # Run the received source from its package file, so child coverage has a source path.
+    assert argv[:4] == ['python3', '-I', '-c', _SUPERVISOR.read_text()]
+    return [sys.executable, str(_SUPERVISOR), *argv[4:]]
 
 
 @dataclass
@@ -68,7 +78,7 @@ class LocalExec:
             await asyncio.gather(*(process.wait() for process in self.processes))
         process = await asyncio.create_subprocess_exec(
             # Inline mode runs the launch exactly as Render receives it, in the given directory.
-            *([sys.executable, *argv[1:]] if self.inline_cwd else local_python_command(argv)),
+            *([sys.executable, *argv[1:]] if self.inline_cwd else _local_supervisor(argv)),
             cwd=self.inline_cwd,
             # Keep host credentials out; subprocess coverage adds only its bookkeeping.
             env={
@@ -173,13 +183,14 @@ async def test_supervisor_stops_the_real_foreground_process(
 
 
 async def test_supervisor_returns_after_direct_exit_with_inherited_pipe(
-    workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 0.05)
     backend = workspace_harness.backend()
     background_pid = tmp_path / 'background.pid'
     try:
-        # The background process deliberately retains stdout and stderr. The
-        # supervisor must observe the direct shell's exit without waiting for EOF.
+        # The background process deliberately retains stdout and stderr. The supervisor
+        # must return after the direct shell's exit and the drain grace, without waiting for EOF.
         result = await asyncio.wait_for(
             backend.run(['sh', '-c', 'sleep 60 & echo $! > "$1"; printf done', 'sh', str(background_pid)]),
             timeout=10,
@@ -341,8 +352,18 @@ async def test_output_limit_after_direct_exit_stops_the_background_writer(
                     os.kill(pid, 0)
                 except ProcessLookupError:
                     break
-                await anyio.sleep(0.05)
+                await anyio.sleep(0.05)  # pragma: lax no cover - the writer is often gone by the first check
     finally:
         if writer_pid.exists():  # pragma: no branch - absent only if command startup regresses
             with suppress(ProcessLookupError):
                 os.kill(int(writer_pid.read_text()), signal.SIGKILL)
+
+
+async def test_background_output_within_the_drain_grace_is_captured(
+    workspace_harness: WorkspaceHarness, local_exec: LocalExec
+) -> None:
+    # The background child writes only once the direct shell is gone; the drain grace still captures it.
+    backend = workspace_harness.backend()
+    script = 'echo a; (while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo b) &'
+    result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=10)
+    assert result.stdout == 'a\nb\n'

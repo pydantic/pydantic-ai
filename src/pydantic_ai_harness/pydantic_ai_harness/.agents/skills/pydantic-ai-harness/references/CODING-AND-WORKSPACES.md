@@ -220,11 +220,11 @@ Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `s
 
 | | `ModalSandbox` | `E2BSandbox` | `RenderSandbox` | `SpritesSandbox` |
 | --- | --- | --- | --- | --- |
-| Extra | `[modal]` | `[e2b]` | `[render-sandbox]` | `[sprites]` |
+| Extra | `[modal]` | `[e2b]` | `[render]` | `[sprites]` |
 | Credentials | `modal token new`, or `MODAL_TOKEN_ID` + `MODAL_TOKEN_SECRET` | `E2B_API_KEY` | `RENDER_API_KEY` + `RENDER_WORKSPACE_ID` | `SPRITE_TOKEN` |
 | Lifetime | `sandbox_timeout=86_400` (10 to 86,400), optional `idle_timeout`; then terminated | `sandbox_timeout=3_600` (Pro: up to 86,400); then **paused**, resumed on attach | `sandbox_timeout=3_600` (up to 86,400); then terminated | Unlimited: sleeps when idle, persists until deleted |
 | Default cwd / user | `/root`, `root` | `/home/user`, `user` | `/workspace` (created) | `/home/sprite`, `sprite` |
-| `rg` preinstalled | Yes | No | Unverified | No |
+| `rg` preinstalled | Yes | No | Not documented | No |
 | New-sandbox options | `image`, `app_name`, `create_app_if_missing` | `template`, `allow_internet_access` | `allow_internet_access` (default `False`), `client` | `runtime`, `client` |
 
 All take `working_dir` (absolute; created on a new sandbox, must exist on an attached one) and `env`

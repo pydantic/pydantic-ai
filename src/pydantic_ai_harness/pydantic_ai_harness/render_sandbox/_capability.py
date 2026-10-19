@@ -11,9 +11,15 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import check_working_dir
 
-from ._backend import DEFAULT_SANDBOX_TIMEOUT, DEFAULT_WORKING_DIR, RenderSandboxBackend, terminate_sandbox
+from ._backend import (
+    DEFAULT_SANDBOX_TIMEOUT,
+    DEFAULT_WORKING_DIR,
+    RenderSandboxBackend,
+    check_sandbox_timeout,
+    terminate_sandbox,
+)
 
 
 @dataclass(kw_only=True)
@@ -56,9 +62,7 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
                 '`RenderSandbox` does not support `defer_loading=True`: '
                 'the workspace is selected before deferred capabilities load.'
             )
-        check_integer('sandbox_timeout', self.sandbox_timeout)
-        if self.sandbox_timeout > 86_400:
-            raise UserError(f'sandbox_timeout must be at most 86400 seconds, got {self.sandbox_timeout!r}.')
+        check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
 
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
@@ -66,7 +70,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         return RenderSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
-        """Terminate a sandbox by ID without attaching; one that no longer exists is already gone."""
+        """Terminate a sandbox by ID without attaching; one already terminated or unknown returns quietly.
+
+        Rejected credentials raise `WorkspaceUnavailableError`.
+        """
         if ref.provider != 'render':
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'render'")
         await terminate_sandbox(self.client, ref.id)
