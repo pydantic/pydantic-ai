@@ -1041,3 +1041,10 @@ async def test_a_reconnect_asks_again_for_a_request_a_provider_response_overtook
     events = await stream.rest()
     assert ResponseStarted(response_id='resp_vad', user_turn_id='item_u') in events
     assert [request['event_id'] for request in requests_sent(replacement)] == ['pydantic_ai.response.0']
+
+
+def test_giving_up_on_a_request_already_settled_refuses_nothing() -> None:
+    lifecycle = OpenAILifecycle()
+    lifecycle.requests_dropped([0])
+    lifecycle.requests_refused([0])
+    assert lifecycle.take_pending() == snapshot([InputLost(input_ids=(0,))])

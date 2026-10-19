@@ -1690,15 +1690,14 @@ async def test_text_sent_as_server_vad_starts_a_reply_gets_one_of_its_own(
     agent = Agent(instructions='Reply in one short sentence.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes() + bytes(48_000)
 
-    errors: list[RealtimeSessionErrorEvent] = []
+    events: list[Any] = []
     speech_ended = anyio.Event()
 
     async def watch(session: RealtimeSession) -> None:
         async for event in session:  # pragma: no branch
+            events.append(event)
             if isinstance(event, RealtimeInputSpeechEndEvent):
                 speech_ended.set()
-            elif isinstance(event, RealtimeSessionErrorEvent):
-                errors.append(event)
 
     async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
         tasks.start_soon(watch, session)
@@ -1710,7 +1709,7 @@ async def test_text_sent_as_server_vad_starts_a_reply_gets_one_of_its_own(
             await session.wait_for_reply()
         tasks.cancel_scope.cancel()
 
-    assert errors == []
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
     requests = [
         frame for frame in sent_frames_containing(cassette, 'response.create') if frame['type'] == 'response.create'
     ]

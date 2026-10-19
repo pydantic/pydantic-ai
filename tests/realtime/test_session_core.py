@@ -498,6 +498,11 @@ def test_a_response_under_way_can_claim_an_input_sent_during_it() -> None:
     )
     wait = session_core.wait_tokens()
     before = session_core.all_messages()
+    # Claiming an input already settled, or releasing one the response doesn't answer, changes nothing.
+    feed(session_core, AnswersRevised(response_id='r1', claimed=(0,), released=(1,)))
+    assert session_core.still_owed(wait) == snapshot(
+        frozenset({Owed(kind='input', key='1', epoch=0), Owed(kind='response', key='r1', epoch=0)})
+    )
     feed(session_core, AnswersRevised(response_id='r1', claimed=(1,)), said('r1', '... and two plus two is four.'))
     assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='response', key='r1', epoch=0)}))
     assert frame(session_core, ended('r1'), InputAdded(input_id=1)) == [ExchangeOver(interrupted=False)]

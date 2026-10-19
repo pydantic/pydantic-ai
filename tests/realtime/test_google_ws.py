@@ -1069,6 +1069,7 @@ async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the
 
     messages: list[ModelMessage] = []
     result_sent = anyio.Event()
+    turn_complete = anyio.Event()
     turns: list[str] = []
     """What the session says, in order: the model's words, and each turn it reports complete."""
 
@@ -1080,6 +1081,7 @@ async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the
                 turns.append(event.delta.transcript_delta or '')
             elif isinstance(event, RealtimeTurnCompleteEvent):
                 turns.append('<turn complete>')
+                turn_complete.set()
 
     async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
         tasks.start_soon(watch, session)
@@ -1088,8 +1090,7 @@ async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the
             await result_sent.wait()
             await session.send('Also, what is 2 plus 2? Answer with the number.')
             await session.wait_for_reply()
-            while '<turn complete>' not in turns:
-                await anyio.sleep(0)
+            await turn_complete.wait()
         messages = session.all_messages()
         tasks.cancel_scope.cancel()
 
@@ -1126,6 +1127,7 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
         return f'Order {order} has shipped and arrives on Friday.'
 
     said: list[str] = []
+    turn_complete = anyio.Event()
 
     async def watch(session: Any) -> None:
         async for event in session:  # pragma: no branch
@@ -1133,6 +1135,7 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
                 said.append(event.delta.transcript_delta or '')
             elif isinstance(event, RealtimeTurnCompleteEvent):
                 said.append('<turn complete>')
+                turn_complete.set()
 
     async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
         tasks.start_soon(watch, session)
@@ -1143,8 +1146,7 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
         with anyio.fail_after(45):
             await session.wait_for_reply()
             said.append('<wait over>')
-            while '<turn complete>' not in said:
-                await anyio.sleep(0)
+            await turn_complete.wait()
         tasks.cancel_scope.cancel()
 
     # The wait is over only once the reply to both requests is.
