@@ -200,8 +200,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'FileUnderstanding': Combines(
         'an agent describes files one way',
         lambda: (
-            FileUnderstanding(fallback_model='openai:gpt-5.6-sol'),
-            FileUnderstanding(fallback_model='openai:gpt-5.6-sol', instructions='One sentence.'),
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol'),
+            FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol', instructions='One sentence.'),
         ),
         _check_file_understanding,
     ),

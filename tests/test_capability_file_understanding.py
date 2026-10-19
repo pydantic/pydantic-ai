@@ -63,7 +63,7 @@ async def test_unsupported_files_are_described():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run(
         [
             'Compare these:',
@@ -114,7 +114,9 @@ async def test_supported_files_are_sent_as_they_are():
     image = ImageUrl('https://example.com/cat.png')
     document = DocumentUrl('https://example.com/cat.pdf')
     # Images and documents are accepted by default, video is not.
-    agent = Agent(FunctionModel(capture), capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(
+        FunctionModel(capture), capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))]
+    )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(['Two', 'texts'])]),
         ModelResponse(parts=[TextPart('ok')]),
@@ -138,7 +140,7 @@ async def test_video_is_sent_when_the_profile_accepts_it():
     describer = Describer()
     video = VideoUrl('https://example.com/cat.mp4')
     model = FunctionModel(capture, profile=ModelProfile(supports_video_input=True))
-    agent = Agent(model, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run([video])
 
     assert last_prompt(seen) == [video]
@@ -155,7 +157,7 @@ async def test_custom_instructions_reach_the_describer():
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(
         text_only,
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(capture), instructions='One sentence.')],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(capture), instructions='One sentence.')],
     )
     await agent.run([ImageUrl('https://example.com/cat.png')])
     request = seen[0][0]
@@ -173,7 +175,7 @@ async def test_fallback_model_is_left_alone():
 
     describer = Describer()
     model = FallbackModel(FunctionModel(capture, profile=ModelProfile(supports_image_input=False)))
-    agent = Agent(model, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run([ImageUrl('https://example.com/cat.png')])
     assert describer.calls == 0
     assert isinstance(last_prompt(seen)[0], ImageUrl)
@@ -189,7 +191,7 @@ async def test_text_like_documents_are_inlined_not_described():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
         download.return_value = {'data': 'Buy milk.', 'data_type': 'text/plain'}
         await agent.run(
@@ -226,7 +228,7 @@ async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(file_understanding, '_MAX_DESCRIPTIONS', 2)
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     for name in ['first', 'second', 'third']:
         await agent.run([_png(name)])
@@ -246,7 +248,7 @@ async def test_a_url_description_is_not_reused_by_another_conversation():
     """
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     signed = ImageUrl('https://example.com/receipt.png?signature=abc')
     await agent.run([signed])
@@ -269,7 +271,7 @@ async def test_the_same_bytes_under_two_media_types_are_two_files():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     data = b'a,b\n1,2'
     await agent.run([BinaryContent(data, media_type='image/png', identifier='as-image')])
@@ -293,7 +295,7 @@ async def test_a_url_is_not_described_twice_within_a_run():
     """Within one run the description is reused, so a history carrying the same file costs one description."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     url = ImageUrl('https://example.com/cat.png')
     await agent.run([url, 'and again:', url])
@@ -306,7 +308,7 @@ async def test_a_url_is_described_every_time_without_a_conversation_id():
     An agent run always has a conversation id, so this calls the hook directly with a bare `RunContext`.
     """
     describer = Describer()
-    capability: FileUnderstanding[None] = FileUnderstanding(fallback_model=FunctionModel(describer))
+    capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
     item = ImageUrl('https://example.com/cat.png')
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     request_context = ModelRequestContext(
@@ -326,7 +328,7 @@ async def test_describing_counts_toward_the_runs_usage_and_limits():
     """The describing requests are the agent run's own spend: they show in its usage and its limits bound them."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     result = await agent.run([_png('first'), _png('second')], usage_limits=UsageLimits(request_limit=3))
     assert describer.calls == 2
@@ -358,7 +360,7 @@ async def test_distinct_files_are_described_concurrently():
         return ModelResponse(parts=[TextPart(f'A description of {item.identifier}.')])
 
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))])
     await agent.run([_png('first'), _png('second'), 'and the first again:', _png('first')])
 
     assert sorted(described) == ['first', 'second']
@@ -368,7 +370,7 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     """Each turn of a chat is a run of its own, but continues the conversation, so the URL is described once."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_document_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     first = await agent.run([DocumentUrl('https://example.com/report.pdf'), 'What is this?'])
     second = await agent.run('And who wrote it?', message_history=first.all_messages())

@@ -2300,7 +2300,7 @@ async def test_file_understanding_describes_through_the_engine() -> None:
     agent = Agent(
         text_only,
         name='file_understanding_run',
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe)), RecordingDurability()],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
     )
 
     result = await agent.run([DocumentUrl('https://example.com/guide.pdf')])

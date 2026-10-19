@@ -10,7 +10,7 @@ agent = Agent(
     'typesafe:jev-latest',
     output_type=bool,
     instructions='Is this document about animals?',
-    capabilities=[FileUnderstanding(fallback_model='{{ openai:medium }}')],
+    capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output)
@@ -33,16 +33,16 @@ model = OpenAIChatModel(
     provider=VLLMProvider(base_url='http://localhost:8000/v1'),
     profile=ModelProfile(supports_image_input=False, supports_document_input=False),
 )
-agent = Agent(model, capabilities=[FileUnderstanding(fallback_model='{{ openai:medium }}')])
+agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')])
 ```
 
-`fallback_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
+`fallback_subagent_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
 
 ```python {title="file_understanding_instructions.py"}
 from pydantic_ai.capabilities import FileUnderstanding
 
 FileUnderstanding(
-    fallback_model='{{ anthropic:medium }}',
+    fallback_subagent_model='{{ anthropic:medium }}',
     instructions='Transcribe the text in this file. Keep headings and tables.',
 )
 ```

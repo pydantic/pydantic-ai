@@ -45,7 +45,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     Before each request, every image, document or video in a user prompt that the model's
     [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a text
-    description of it, written by `fallback_model`. The agent's model sees the description in the file's
+    description of it, written by `fallback_subagent_model`. The agent's model sees the description in the file's
     place; files it accepts are sent as they are.
 
     ```python
@@ -56,7 +56,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         'typesafe:jev-latest',
         output_type=bool,
         instructions='Is this document about animals?',
-        capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+        capabilities=[FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol')],
     )
     result = agent.run_sync([DocumentUrl('https://example.com/whatever.pdf')])
     ```
@@ -82,8 +82,12 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     is about realtime speech history and is not set per model, so it cannot say which models read audio files.
     """
 
-    fallback_model: Model | KnownModelName | str
-    """The model that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`."""
+    fallback_subagent_model: Model | KnownModelName | str
+    """The model of the subagent that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`.
+
+    Named like `ImageGeneration` and `XSearch`'s `fallback_subagent_model`: a separate agent run, not a
+    replacement for the agent's model.
+    """
 
     _: KW_ONLY
 
@@ -154,7 +158,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     async def _describe(self, item: _File) -> tuple[str, RunUsage]:
         """The file as text, with the usage it cost.
 
-        A text-like document is its own content, at no cost; anything else is described by `fallback_model`. The
+        A text-like document is its own content, at no cost; anything else is described by `fallback_subagent_model`. The
         usage is returned rather than added to the run's here, so it reaches the run whether this runs in place or
         under a durable engine, and the caller adds it.
         """
@@ -166,7 +170,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
-            self.fallback_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
+            self.fallback_subagent_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
         )
         result = await agent.run([item])
         return result.output, result.usage

@@ -199,7 +199,7 @@ class DocumentSubject(StrEnum):
 agent = Agent(
     'typesafe:jev-latest',
     output_type=DocumentSubject,
-    capabilities=[FileUnderstanding(fallback_model='{{ openai:medium }}')],
+    capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output.value)
