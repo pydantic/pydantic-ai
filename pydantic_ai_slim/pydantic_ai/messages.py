@@ -3796,6 +3796,8 @@ def sanitize_messages(
         else:
             assert_never(message)
 
+    # This must stay the last step that drops or merges messages, here and in every caller: it can only
+    # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
 
     if stripped_system_prompt:
