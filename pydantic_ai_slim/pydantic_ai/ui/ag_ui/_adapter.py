@@ -749,15 +749,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             nonlocal user_content, structured_payloads
             if not user_content:
                 return
-            # Simplify to plain string if only a single text item.
-            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent):
-                content: str | list[Any] = user_content[0].text
-            else:
-                content = user_content
             result.append(
                 UserMessage(
                     id=_new_message_id(),
-                    content=content,
+                    # Simplify to plain string if only a single text item.
+                    content=user_content[0].text
+                    if len(user_content) == 1 and isinstance(user_content[0], TextInputContent)
+                    else user_content,
                     **structured_content_encrypted_value_kwargs(structured_payloads),
                 )
             )
