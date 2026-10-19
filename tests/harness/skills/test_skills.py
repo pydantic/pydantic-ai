@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.skills import Skills
+from pydantic_ai_harness.skills import Skills, SkippedSkill
+from tests.harness.conftest import IsStr
 
 
 def _write_skill(
@@ -78,6 +79,14 @@ async def _run(skills: Skills[Any], workspace: Path, *, load: str | None = None)
     return run
 
 
+def _loaded(library: Path, name: str, body: str = 'Follow these directions.') -> str:
+    """What `load_capability` returns for the skill `name` in `library`."""
+    heading = (
+        f'# Skill: {name}\n\nSkill directory: `{library / name}`. Relative paths in this skill resolve against it.'
+    )
+    return f'{heading}\n\n{body}' if body else heading
+
+
 def _catalog(*entries: str) -> str:
     return (
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
@@ -87,10 +96,21 @@ def _catalog(*entries: str) -> str:
 
 class TestSkills:
     def test_public_constructor_only_exposes_skill_library_configuration(self) -> None:
-        assert tuple(inspect.signature(Skills).parameters) == ('directories', 'include', 'exclude', 'workspace')
+        assert tuple(inspect.signature(Skills).parameters) == (
+            'directories',
+            'include',
+            'exclude',
+            'missing_directories',
+            'duplicate_names',
+            'unknown_names',
+            'workspace',
+        )
 
     def test_repr_only_exposes_skill_library_configuration(self) -> None:
-        assert repr(Skills('skills')) == "Skills(directories=('skills',), include=None, exclude=frozenset())"
+        assert repr(Skills('skills')) == (
+            "Skills(directories=('skills',), include=None, exclude=frozenset(), "
+            "missing_directories='error', duplicate_names='error', unknown_names='error')"
+        )
 
     def test_construction_reads_nothing(self, tmp_path: Path) -> None:
         # Libraries live in the run's workspace, so a missing host path is not an error here.
@@ -125,7 +145,7 @@ class TestSkills:
 
         await agent.run('go')
 
-        assert run.loaded == '# Skill: alpha\n\nAlpha directions.'
+        assert run.loaded == _loaded(tmp_path.resolve() / 'skills', 'alpha', 'Alpha directions.')
 
     async def test_no_workspace_fails_the_run(self) -> None:
         agent: Agent[None, str] = Agent(_model(_Run(), None), capabilities=[Skills('skills')])
@@ -142,6 +162,7 @@ class TestSkills:
 
         await agent.run('go')
 
+        # `/app` is not where the model's file tools work, so the skill's directory is not named.
         assert run.loaded == '# Skill: alpha\n\nAlpha directions.'
 
     def test_own_workspace_must_be_a_backend(self, tmp_path: Path) -> None:
@@ -182,7 +203,7 @@ class TestSkills:
 
         assert run.instructions == _catalog('- alpha: Alpha help.', '- beta: Beta help.')
         assert run.tools == ['load_capability']
-        assert run.loaded == '# Skill: beta\n\nFollow these directions.'
+        assert run.loaded == _loaded(tmp_path.resolve() / 'second', 'beta')
 
     async def test_run_level_skills_combine_with_the_agents(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'first', 'alpha')
@@ -197,8 +218,8 @@ class TestSkills:
         assert run.instructions == _catalog('- alpha: Help with the task.', '- beta: Help with the task.')
 
     async def test_two_libraries_sharing_a_skill_name_collide(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path / 'first', 'shared')
-        _write_skill(tmp_path / 'second', 'shared')
+        _write_skill(tmp_path / 'first', 'shared', description='First.')
+        _write_skill(tmp_path / 'second', 'shared', description='Second.')
 
         with pytest.raises(ValueError, match="Duplicate skill name 'shared'"):
             await _run(_combined(Skills('first'), Skills('second')), tmp_path)
@@ -222,22 +243,23 @@ class TestSkills:
     @pytest.mark.parametrize(
         ('body', 'loaded'),
         [
-            ('Answer from this embedded guidance.', '# Skill: knowledge\n\nAnswer from this embedded guidance.'),
-            ('', '# Skill: knowledge'),
-            ('    print("hello")', '# Skill: knowledge\n\n    print("hello")'),
-            ('Do the task.\n\n', '# Skill: knowledge\n\nDo the task.'),
-            ('Read ${CLAUDE_SKILL_DIR}/guide.md.', '# Skill: knowledge\n\nRead ${CLAUDE_SKILL_DIR}/guide.md.'),
+            ('Answer from this embedded guidance.', 'Answer from this embedded guidance.'),
+            ('', ''),
+            ('    print("hello")', '    print("hello")'),
+            ('Do the task.\n\n', 'Do the task.'),
+            ('Read ${CLAUDE_SKILL_DIR}/guide.md.', 'Read ${CLAUDE_SKILL_DIR}/guide.md.'),
+            ('Review $ARGUMENTS.', 'Review $ARGUMENTS.'),
         ],
-        ids=['body', 'empty', 'indentation', 'trailing-blank-lines', 'placeholder-unresolved'],
+        ids=['body', 'empty', 'indentation', 'trailing-blank-lines', 'placeholder-unresolved', 'arguments-unresolved'],
     )
-    async def test_loaded_instructions_contain_only_heading_and_body(
+    async def test_loaded_instructions_contain_heading_directory_and_body(
         self, tmp_path: Path, body: str, loaded: str
     ) -> None:
         _write_skill(tmp_path / 'skills', 'knowledge', body=body)
 
         run = await _run(Skills('skills'), tmp_path, load='knowledge')
 
-        assert run.loaded == loaded
+        assert run.loaded == _loaded(tmp_path.resolve() / 'skills', 'knowledge', loaded)
 
     async def test_bundled_files_do_not_change_loaded_instructions(self, tmp_path: Path) -> None:
         _write_skill(
@@ -249,7 +271,8 @@ class TestSkills:
 
         run = await _run(Skills('skills'), tmp_path, load='portable')
 
-        assert run.loaded == '# Skill: portable\n\nFollow the portable workflow.'
+        # The directory tells the model where `references/guide.md` is; reading it is up to the model's tools.
+        assert run.loaded == _loaded(tmp_path.resolve() / 'skills', 'portable', 'Follow the portable workflow.')
 
     @pytest.mark.parametrize(
         ('suffix', 'spec_text'),
@@ -315,6 +338,25 @@ class TestSkillValidation:
 
         with pytest.raises(ValueError, match=rf'Unknown skill in {selector}: missing.*Available skills: available'):
             await _run(skills, tmp_path)
+
+    async def test_unknown_names_can_be_skipped(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'alpha')
+        _write_skill(tmp_path / 'skills', 'beta')
+
+        included = Skills('skills', include=['beta', 'missing'], unknown_names='skip')
+        excluded = Skills('skills', exclude=['beta', 'missing'], unknown_names='skip')
+
+        assert await _names(included, tmp_path) == ['beta']
+        assert await _names(excluded, tmp_path) == ['alpha']
+
+    async def test_combined_configurations_keep_their_own_unknown_names(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'first', 'alpha')
+        _write_skill(tmp_path / 'second', 'beta')
+        tolerant = Skills('first', exclude=['missing'], unknown_names='skip')
+
+        assert await _names(_combined(tolerant, Skills('second')), tmp_path) == ['alpha', 'beta']
+        with pytest.raises(ValueError, match='Unknown skill in exclude: missing'):
+            await _run(_combined(tolerant, Skills('second', exclude=['missing'])), tmp_path)
 
     @pytest.mark.parametrize('selector', ['include', 'exclude'])
     def test_selector_must_not_be_a_string(self, selector: str) -> None:
@@ -435,8 +477,8 @@ class TestSkillValidation:
         assert listed == f'- verbose: {description}'
 
     async def test_duplicate_names_across_roots_are_rejected(self, tmp_path: Path) -> None:
-        _write_skill(tmp_path / 'first', 'duplicate')
-        _write_skill(tmp_path / 'second', 'duplicate')
+        _write_skill(tmp_path / 'first', 'duplicate', description='First.')
+        _write_skill(tmp_path / 'second', 'duplicate', description='Second.')
 
         with pytest.raises(ValueError, match="Duplicate skill name 'duplicate'"):
             await _run(Skills(['first', 'second']), tmp_path)
@@ -483,14 +525,65 @@ class TestSkillValidation:
     async def test_behavioral_fields_are_ignored_with_one_warning(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'
         _write_skill(library, 'first', frontmatter='description: First\nallowed-tools: Read\nmodel: sonnet')
-        _write_skill(library, 'second', frontmatter='description: Second\ndisable-model-invocation: true')
+        _write_skill(library, 'second', frontmatter='description: Second\ncontext: fork')
 
         with pytest.warns(UserWarning) as caught:
             await _run(Skills('skills'), tmp_path)
 
         assert [str(warning.message) for warning in caught] == [
             'Ignoring unsupported Agent Skill behavioral frontmatter fields: '
-            'first: allowed-tools, model; second: disable-model-invocation'
+            'first: allowed-tools, model; second: context'
+        ]
+
+    async def test_disable_model_invocation_leaves_the_skill_out_of_the_models_catalog(self, tmp_path: Path) -> None:
+        library = tmp_path / 'skills'
+        _write_skill(library, 'deploy', frontmatter='description: Deploy.\ndisable-model-invocation: true')
+        _write_skill(library, 'review', frontmatter='description: Review.\ndisable-model-invocation: false')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            run = await _run(Skills('skills'), tmp_path)
+            catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
+
+        assert run.instructions == _catalog('- review: Review.')
+        # A host still gets it, to let a person invoke it.
+        assert [(skill.name, skill.model_invocable) for skill in catalog.skills] == [
+            ('deploy', False),
+            ('review', True),
+        ]
+
+    async def test_only_model_disabled_skills_offer_no_tool(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'deploy', frontmatter='description: Deploy.\ndisable-model-invocation: TRUE')
+
+        run = await _run(Skills('skills'), tmp_path)
+
+        assert (run.instructions, run.tools) == (None, [])
+
+    async def test_user_invocable_is_exposed_for_hosts(self, tmp_path: Path) -> None:
+        library = tmp_path / 'skills'
+        _write_skill(library, 'background', frontmatter='description: Background.\nuser-invocable: false')
+        _write_skill(library, 'review', frontmatter='description: Review.')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            run = await _run(Skills('skills'), tmp_path)
+            catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
+
+        assert run.instructions == _catalog('- background: Background.\n- review: Review.')
+        assert [(skill.name, skill.user_invocable) for skill in catalog.skills] == [
+            ('background', False),
+            ('review', True),
+        ]
+
+    @pytest.mark.parametrize('field', ['disable-model-invocation', 'user-invocable'])
+    async def test_an_invocation_field_that_is_not_a_boolean_skips_the_skill(self, tmp_path: Path, field: str) -> None:
+        _write_skill(tmp_path / 'skills', 'deploy', frontmatter=f'description: Deploy.\n{field}: yes')
+
+        catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
+
+        assert catalog.skills == ()
+        assert [(entry.reason, entry.message) for entry in catalog.skipped] == [
+            ('invalid', IsStr(regex=rf"(?s).*deploy/SKILL.md.*{field}.*must be `true` or `false`, not 'yes'.*"))
         ]
 
     async def test_standard_non_behavioral_fields_are_accepted(self, tmp_path: Path) -> None:
@@ -503,3 +596,261 @@ class TestSkillValidation:
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             await _run(Skills('skills'), tmp_path)
+
+
+class TestSkillLibraryLayering:
+    """Conventional libraries layered the way coding agents use them: project over personal, `.agents` over `.claude`."""
+
+    async def test_symlinked_library_counts_each_skill_once(self, tmp_path: Path) -> None:
+        # This repository's layout: `.agents/skills` links into `.claude/skills`.
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        (tmp_path / '.agents').mkdir()
+        (tmp_path / '.agents' / 'skills').symlink_to(tmp_path / '.claude' / 'skills')
+
+        run = await _run(Skills(['.agents/skills', '.claude/skills']), tmp_path, load='review')
+
+        assert run.instructions == _catalog('- review: Help with the task.')
+        assert run.loaded == _loaded(tmp_path.resolve() / '.agents' / 'skills', 'review')
+
+    async def test_symlinked_skill_directory_counts_once(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        (tmp_path / '.agents' / 'skills').mkdir(parents=True)
+        (tmp_path / '.agents' / 'skills' / 'review').symlink_to(tmp_path / '.claude' / 'skills' / 'review')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            names = await _names(Skills(['.agents/skills', '.claude/skills']), tmp_path)
+
+        assert names == ['review']
+
+    async def test_identical_copies_count_once(self, tmp_path: Path) -> None:
+        # Repositories that keep a copy of each skill in both `.agents/skills` and `.claude/skills`.
+        _write_skill(tmp_path / '.agents' / 'skills', 'review', description='Review.')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review', description='Review.')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            names = await _names(Skills(['.agents/skills', '.claude/skills']), tmp_path)
+
+        assert names == ['review']
+
+    async def test_identical_skill_from_two_own_workspaces_counts_once(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'app' / 'skills', 'review')
+        first: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'app'))
+        second: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'app'))
+
+        assert await _names(_combined(first, second), tmp_path) == ['review']
+
+    async def test_different_skills_from_two_own_workspaces_still_clash(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'a' / 'skills', 'review', description='First.')
+        _write_skill(tmp_path / 'b' / 'skills', 'review', description='Second.')
+        first: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'a'))
+        second: Skills[Any] = Skills('skills', workspace=LocalWorkspaceBackend(tmp_path / 'b'))
+
+        with pytest.raises(ValueError, match="Duplicate skill name 'review'"):
+            await _run(_combined(first, second), tmp_path)
+
+    @pytest.mark.parametrize(
+        ('option', 'value', 'allowed'),
+        [
+            ('missing_directories', 'skips', "'error' or 'skip'"),
+            ('duplicate_names', 'keep_frist', "'error' or 'keep_first'"),
+            ('unknown_names', 'ignore', "'error' or 'skip'"),
+        ],
+    )
+    def test_options_are_validated_for_specs_and_untyped_callers(self, option: str, value: str, allowed: str) -> None:
+        with pytest.raises(ValueError, match=f'{option} must be {allowed}, not {value!r}'):
+            Skills.from_spec('skills', **{option: value})
+
+    async def test_symlinked_skill_selected_by_two_configurations_counts_once(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'real', 'review')
+        (tmp_path / 'linked').mkdir()
+        (tmp_path / 'linked' / 'review').symlink_to(tmp_path / 'real' / 'review')
+
+        assert await _names(_combined(Skills('linked'), Skills('real')), tmp_path) == ['review']
+
+    async def test_keep_first_prefers_the_earlier_directory_and_warns(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'project', 'review', description='Project review.')
+        _write_skill(tmp_path / 'project', 'only-project', description='Project only.')
+        _write_skill(tmp_path / 'personal', 'review', description='Personal review.')
+        _write_skill(tmp_path / 'personal', 'only-personal', description='Personal only.')
+
+        with pytest.warns(UserWarning) as caught:
+            listed = await _descriptions(Skills(['project', 'personal'], duplicate_names='keep_first'), tmp_path)
+
+        assert listed == '\n'.join(
+            ['- only-project: Project only.', '- review: Project review.', '- only-personal: Personal only.']
+        )
+        workspace = tmp_path.resolve()
+        assert [str(warning.message) for warning in caught] == [
+            f'Skipping {workspace}/personal/review/SKILL.md: skill name '
+            f"'review' is already taken by {workspace}/project/review/SKILL.md."
+        ]
+
+    async def test_keep_first_applies_across_combined_configurations(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'first', 'shared', description='First.')
+        _write_skill(tmp_path / 'second', 'shared', description='Second.')
+
+        with pytest.warns(UserWarning, match="skill name 'shared' is already taken"):
+            listed = await _descriptions(
+                _combined(Skills('first'), Skills('second', duplicate_names='keep_first')), tmp_path
+            )
+
+        assert listed == '- shared: First.'
+
+    async def test_missing_directories_can_be_skipped(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+
+        names = await _names(
+            Skills(['.agents/skills', '.claude/skills', 'missing'], missing_directories='skip'), tmp_path
+        )
+
+        assert names == ['review']
+
+    async def test_skipping_missing_directories_also_skips_a_file_with_a_warning(self, tmp_path: Path) -> None:
+        (tmp_path / '.agents').mkdir()
+        (tmp_path / '.agents' / 'skills').write_text('not a directory', encoding='utf-8')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+
+        with pytest.warns(UserWarning) as caught:
+            names = await _names(Skills(['.agents/skills', '.claude/skills'], missing_directories='skip'), tmp_path)
+
+        assert names == ['review']
+        assert [str(warning.message) for warning in caught] == [
+            f'Skipping {tmp_path.resolve()}/.agents/skills: it is not a directory.'
+        ]
+
+    async def test_skipping_missing_directories_also_skips_a_skill_package(self, tmp_path: Path) -> None:
+        # What a model asked to "write a skill" may create mid-session.
+        _write_skill(tmp_path / '.agents', 'skills')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        skills: Skills[Any] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
+
+        with pytest.warns(UserWarning) as caught:
+            names = await _names(skills, tmp_path)
+        catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+
+        assert names == ['review']
+        library = f'{tmp_path.resolve()}/.agents/skills'
+        message = f'Skipping {library}: it is a skill package, not a library.'
+        assert [str(warning.message) for warning in caught] == [message]
+        assert catalog.skipped == (SkippedSkill(path=library, reason='skill_package', message=message),)
+
+    async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
+        broken = tmp_path / 'project' / 'review'
+        broken.mkdir(parents=True)
+        (broken / 'SKILL.md').write_text('no frontmatter', encoding='utf-8')
+        _write_skill(tmp_path / 'personal', 'review', description='Personal review.')
+
+        with pytest.warns(UserWarning, match='project/review/SKILL.md must start with YAML frontmatter'):
+            listed = await _descriptions(Skills(['project', 'personal'], duplicate_names='keep_first'), tmp_path)
+
+        assert listed == '- review: Personal review.'
+
+    async def test_no_skills_add_no_instructions_or_tools(self, tmp_path: Path) -> None:
+        run = await _run(Skills(['.agents/skills', '.claude/skills'], missing_directories='skip'), tmp_path)
+
+        assert (run.instructions, run.tools) == (None, [])
+
+    async def test_home_directory_is_not_expanded(self, tmp_path: Path) -> None:
+        # The run's workspace may be a sandbox, whose home is not this process's.
+        with pytest.raises(UserError, match='Workspace paths do not expand `~`'):
+            await _run(Skills('~/.agents/skills', missing_directories='skip'), tmp_path)
+
+
+class TestSkillsLoad:
+    async def test_load_returns_the_catalog_and_what_it_skipped_without_warning(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'project', 'review', body='Review $ARGUMENTS.')
+        _write_skill(tmp_path / 'personal', 'review')
+        _write_skill(tmp_path / 'personal', 'tooled', frontmatter='description: Tooled.\nallowed-tools: Read')
+        _write_skill(tmp_path / 'personal', 'broken', frontmatter='not: [valid')
+        skills: Skills[Any] = Skills(
+            ['project', 'personal', 'missing'], duplicate_names='keep_first', missing_directories='skip'
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+
+        workspace = tmp_path.resolve()
+        # Unsupported frontmatter is advice for a run's developer, not a skipped skill.
+        assert [skill.name for skill in catalog.skills] == ['review', 'tooled']
+        assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
+        assert catalog.skills[0].directory == f'{workspace}/project/review'
+        assert catalog.skipped == (
+            SkippedSkill(
+                path=f'{workspace}/personal/broken/SKILL.md',
+                reason='invalid',
+                message=IsStr(regex=rf'(?s)Skipping {workspace}/personal/broken/SKILL.md: Invalid YAML frontmatter.*'),
+            ),
+            SkippedSkill(
+                path=f'{workspace}/personal/review/SKILL.md',
+                reason='duplicate_name',
+                message=f"Skipping {workspace}/personal/review/SKILL.md: skill name 'review' is already taken by "
+                f'{workspace}/project/review/SKILL.md.',
+            ),
+        )
+        # Printing an entry prints its message, as when `skipped` held only messages.
+        assert str(catalog.skipped[1]) == catalog.skipped[1].message
+
+    async def test_load_reads_a_configuration_with_its_own_workspace(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'review')
+
+        catalog = await Skills('skills', workspace=LocalWorkspaceBackend(tmp_path)).load()
+
+        assert [skill.name for skill in catalog.skills] == ['review']
+        # As `load_capability` does, `render` leaves out a directory the model's tools cannot reach.
+        assert catalog.skills[0].in_run_workspace is False
+        assert catalog.skills[0].render('app.py') == '# Skill: review\n\nFollow these directions.\n\nARGUMENTS: app.py'
+
+    async def test_load_needs_a_workspace_for_the_runs_libraries(self) -> None:
+        with pytest.raises(UserError, match=r'`Skills.load\(\)` needs the workspace the libraries are in'):
+            await Skills('skills').load()
+
+    async def test_load_takes_a_backend_not_a_capability(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError, match=r'`Skills.load\(workspace=...\)` takes a workspace backend'):
+            await Skills('skills').load(LocalWorkspace(tmp_path))  # pyright: ignore[reportArgumentType]
+
+    async def test_load_raises_what_a_run_would(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'first', 'shared', description='First.')
+        _write_skill(tmp_path / 'second', 'shared', description='Second.')
+
+        with pytest.raises(ValueError, match="Duplicate skill name 'shared'"):
+            await Skills(['first', 'second']).load(LocalWorkspaceBackend(tmp_path))
+
+    @pytest.mark.parametrize(
+        ('body', 'arguments', 'rendered'),
+        [
+            ('Review $ARGUMENTS for $ARGUMENTS.', 'app.py', 'Review app.py for app.py.'),
+            ('Review $ARGUMENTS.', '', 'Review .'),
+            ('Review the change.', 'app.py', 'Review the change.\n\nARGUMENTS: app.py'),
+            ('Review the change.', '', 'Review the change.'),
+            ('', 'app.py', 'ARGUMENTS: app.py'),
+            ('Review $ARGUMENTS.', None, 'Review $ARGUMENTS.'),
+            (
+                'Compare $ARGUMENTS[0] with $0 and $ARGUMENTS_LIST, then $ARGUMENTS.',
+                'a.py b.py',
+                'Compare $ARGUMENTS[0] with $0 and $ARGUMENTS_LIST, then a.py b.py.',
+            ),
+            ('Compare $ARGUMENTS[0].', 'a.py', 'Compare $ARGUMENTS[0].\n\nARGUMENTS: a.py'),
+            ('Open $ARGUMENTS.', r'C:\1\g<0>', r'Open C:\1\g<0>.'),
+        ],
+        ids=[
+            'substituted',
+            'empty-substituted',
+            'appended',
+            'none-given',
+            'empty-body',
+            'model-loaded',
+            'indexed-forms-unchanged',
+            'only-indexed-forms-appends',
+            'backslashes-literal',
+        ],
+    )
+    async def test_render_substitutes_arguments_like_claude_code(
+        self, tmp_path: Path, body: str, arguments: str | None, rendered: str
+    ) -> None:
+        _write_skill(tmp_path / 'skills', 'review', body=body)
+        catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
+
+        assert catalog.skills[0].render(arguments) == _loaded(tmp_path.resolve() / 'skills', 'review', rendered)

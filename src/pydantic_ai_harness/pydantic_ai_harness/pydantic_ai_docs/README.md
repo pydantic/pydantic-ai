@@ -13,10 +13,10 @@ the agent rarely needs in full and pins a snapshot that drifts from `main`.
 ## The solution
 
 `PydanticAIDocs` exposes one tool, `read_pyai_docs(topic)`, that locates the requested page and
-returns it verbatim -- nothing is bundled into context up front. Each call resolves the
-topic from a configured local checkout first, then falls back to fetching the page from
-`pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout (the
-remote fallback needs network access).
+returns it in full, with its model aliases resolved -- nothing is bundled into context up front.
+Each call resolves the topic from a configured local checkout first, then falls back to fetching
+the page from `pydantic/pydantic-ai:main`, so it works whether or not you have a local checkout
+(the remote fallback needs network access).
 
 Topics: `capabilities`, `hooks`, `tools`, `tools-advanced`, `toolsets`, `agent`.
 
@@ -43,10 +43,18 @@ A configured local checkout is read through the run's [workspace](https://pydant
 Each call resolves in this order:
 
 1. **Workspace checkout** -- when `local_docs_path` (or the `PYDANTIC_AI_HARNESS_DOCS_PATH`
-   environment variable) is set and `{path}/{topic}.md` exists inside the run workspace, that file is read and returned.
-2. **Remote fetch** -- otherwise the page is fetched from
-   `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`.
+   environment variable) is set and the topic's page exists under it inside the run workspace
+   (`{path}/{topic}.md`, or `{path}/capabilities/overview.md` for `capabilities`), that file is
+   read and returned.
+2. **Remote fetch** -- otherwise the page is fetched from the same path under
+   `https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/`.
 3. **Neither resolves** -- a descriptive error naming the local path tried and the URL.
+
+Docs pages name models through aliases, which the docs site replaces with current models. Before
+returning a page that uses one, the tool reads the alias file, `model_aliases/aliases.json`, in the
+same order and replaces each alias with the model it names. An alias the file does not define is
+left as written, and so is every alias when neither source can provide the file. A page without
+aliases reads nothing else, so a checkout from before the alias file existed keeps working.
 
 The capability never runs git. Keep the local checkout current yourself; the remote path
 always reads `main`, so it is the fresh fallback.

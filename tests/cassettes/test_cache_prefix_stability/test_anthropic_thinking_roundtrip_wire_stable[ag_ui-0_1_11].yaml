@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,87 +11,183 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '236'
+      - "218"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Briefly: what is 17 * 23? Think first.'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1389'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-dc8f52d114d90a217652497fda8e5b78-744ef3948c9aa560-01
+      - 00-1ed653a9afb01e595d7e45aaea718629-3a60ea79133ff3ef-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
-        thinking: |-
-          Let me calculate 17 * 23.
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pZrDcvRcgd67wVaiE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":51,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
 
-          I can break this down:
-          17 * 23 = 17 * 20 + 17 * 3
-          = 340 + 51
-          = 391
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
 
-          Let me verify:
-          17 * 20 = 340 ✓
-          17 * 3 = 51 ✓
-          340 + 51 = 391 ✓
-        type: thinking
-      - text: |-
-          17 * 23 = 391
+        event: ping
+        data: {"type": "ping"}
 
-          (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
-        type: text
-      id: msg_011CcmZtr3JDBGubCX9bN3RW
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 51
-        output_tokens: 161
-        output_tokens_details:
-          thinking_tokens: 104
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me calculate 17 * 23"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nI"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" can"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" break"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" this down:\n17 * "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"23 = 17 * "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"20 + 17 * "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3\n= 340 + "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"51\n= 391\n\nOr"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I could do"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n17 * 23 ="}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ("}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"20 -"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 3) * 23 ="}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 20 * 23 -"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 3 * 23 ="} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 460 - 69 ="}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 391\n\nLet"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me verify: 391"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE="}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Thinking"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" through"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n-"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 ×"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 23"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- ="}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 × 20 +"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 × 3\n-"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 340 + 51"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- = **"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"391**"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":51,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":166,"output_tokens_details":{"thinking_tokens":116}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:30:52.533301+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -97,98 +196,127 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1228'
+      - "1284"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Briefly: what is 17 * 23? Think first.'
-          type: text
-        role: user
-      - content:
-        - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
-          thinking: |-
-            Let me calculate 17 * 23.
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              Let me calculate 17 * 23.
 
-            I can break this down:
-            17 * 23 = 17 * 20 + 17 * 3
-            = 340 + 51
-            = 391
+              I can break this down:
+              17 * 23 = 17 * 20 + 17 * 3
+              = 340 + 51
+              = 391
 
-            Let me verify:
-            17 * 20 = 340 ✓
-            17 * 3 = 51 ✓
-            340 + 51 = 391 ✓
-          type: thinking
-        - text: |-
-            17 * 23 = 391
+              Or I could do:
+              17 * 23 = (20 - 3) * 23 = 20 * 23 - 3 * 23 = 460 - 69 = 391
 
-            (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
-          type: text
-        role: assistant
-      - content:
-        - text: 'Reply with exactly: OK'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
+              Let me verify: 391
+            signature: >-
+              ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE=
+            type: thinking
+          - text: |-
+              Thinking through it:
+              - 17 × 23
+              - = 17 × 20 + 17 × 3
+              - = 340 + 51
+              - = **391**
+            type: text
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1084'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5247452424b7624675b88d04473ec423-7eda2fbb62c83a14-01
+      - 00-4b2ab70e63c0c7f42b3434375afb8f9d-20bb46eb113df80d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - signature: EqQCCm4IDxgCKkBMhZEor71OLq2/zwCli63tL9BB6BYQzK6jM+MIN7WeO9gJbvXVSuzzjV7Q87d8fGKPVUbBE5Bp9hPNGr1U0PdsMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIM8P4dYbqhyCcJFGtTGgz/eteOdrMOaFmn348iMPRVdz4W1yPYtM6knVOydSoBogotVK1oZsd1wl3LjFHogug3wnUK1BqntjbJKt3AzCpkB4/ymeSMF4rM6aOUiPs9OB2zTToIp6JWZqu2Cd51u2FGrgnFoKqReHin1vzVBX8i9MlaTjLlUm2mucznw3bj5IYRRf36H8wwFmofWPlSf6BYQGay8FttMNkt8B2NEnuxUNJBphgB
-        thinking: The user is asking me to reply with exactly "OK". This is a straightforward request.
-        type: thinking
-      - text: OK
-        type: text
-      id: msg_011CcmZu7L4Do8m7xDdn9Hme
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 115
-        output_tokens: 31
-        output_tokens_details:
-          thinking_tokens: 24
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pou4gRRsHZhkqCEkc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" asking me to reply with exactly"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \"OK\"."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is a simple,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" straight"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"forward request."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtoCCpsBCBIYAipAIXqlVa7R4ErBzHIJ+u5rInxjNLmMO9pBTUAPTO2+pZpZHfm7hshEk2vT2D/Kb0+jYpQC/2iaxpzcrerB/LnoKzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBvc/v1QYSDGq5TSTtB94A/0OLoBoMxHgfdzW92XMBfO/gIjBHZ3AOZqqpvwrUD19FT3UWZ6SJbUmbDQrokrIf5xJeDYubobsiGmGuD1DdVn2I9BkqbLnIYRN8iMLrbdO9df6i52wNciHkFM/fn4oV5gjEBppCFNApYHh5JOZ2ElXmzIAvFb6z1x1RaZsNxymqo0/2x3X7MGx7uFafaBHmACNKphgS6arrT7IRmGluNZ/c9B5I+uIAbvU+oAsfVXEgQBgB"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":33,"output_tokens_details":{"thinking_tokens":26}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T16:30:54.003949+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -197,95 +325,124 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1228'
+      - "1284"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Briefly: what is 17 * 23? Think first.'
-          type: text
-        role: user
-      - content:
-        - signature: EvMCCm4IDxgCKkBE0p/gSfslgYoMmoemAD063lJAiMvcShO/u6pOvrM5dH3v7Jfy2W3Syx4XNK5Rhd9ABAinRBQp7gij6gKq4y3vMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMhk8ISPbHO9FAncaiGgwZgE///ai4loOb5yAiMJAUGp7hT2NaezGj+6Lnq7F5nKCk5ghMiBNyohpFF+cUAz1Z0a5VqIw5sIW62i3jKiqyAYE2frpB4m/Oy3/V9H5JLMCeDsrmgXJR5Y010N24gC+xCToWD/DSUv8NG07LLPxzOXQyl9JqP09OrBVRbow0lgOfkU0UXUYOeKkhZwcCOwg/0kynAW7dFnfDr9jI18TIdveXndYwUJZ6mqZs1xWYcXlD+Vne4Qm8nKgYfmBEGboS0y94cNodPLFGdgLZJ4eGNccPht6DeSSyS/9DpKpxxwzsyVFlhFLfsQuWEFbp4hXBRfgYAQ==
-          thinking: |-
-            Let me calculate 17 * 23.
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              Let me calculate 17 * 23.
 
-            I can break this down:
-            17 * 23 = 17 * 20 + 17 * 3
-            = 340 + 51
-            = 391
+              I can break this down:
+              17 * 23 = 17 * 20 + 17 * 3
+              = 340 + 51
+              = 391
 
-            Let me verify:
-            17 * 20 = 340 ✓
-            17 * 3 = 51 ✓
-            340 + 51 = 391 ✓
-          type: thinking
-        - text: |-
-            17 * 23 = 391
+              Or I could do:
+              17 * 23 = (20 - 3) * 23 = 20 * 23 - 3 * 23 = 460 - 69 = 391
 
-            (I broke it down as: 17 × 20 = 340, plus 17 × 3 = 51, giving 340 + 51 = 391)
-          type: text
-        role: assistant
-      - content:
-        - text: 'Reply with exactly: OK'
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      thinking:
-        budget_tokens: 1024
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
+              Let me verify: 391
+            signature: >-
+              ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE=
+            type: thinking
+          - text: |-
+              Thinking through it:
+              - 17 × 23
+              - = 17 × 20 + 17 × 3
+              - = 340 + 51
+              - = **391**
+            type: text
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1091'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-44956b106843941fa93ef0e9d7c74c29-876d536bd09e2ed3-01
+      - 00-d6dcb4f28f02ce8ddce3a8f5660908f1-651d04066d3e8faf-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - signature: EqcCCm4IDxgCKkDs/1lQMBQX9T6RQkD48yE5LIWRUwm6jO1rjkKgx4ELtbaEG8P9QelptyiGq35HFjsUV2OZvoobXZ4U9fmA0+4TMhpjbGF1ZGUtc29ubmV0LTQtNS0yMDI1MDkyOTgAQgh0aGlua2luZxIMifHVOFsQIJsH8IayGgxv17Ktz/krvAq41o4iMBqt/VEfCTzM245nZw/iytTELnKH6e0cLvWcjx1Fh43o/uh0WZkblHFjLhzp3iejCCpnncYy6PNKKa7MDqReRZ9FWJ1OjSPMF0GXNnrFIGkhamMmelzO79GzhVdzDCIReLEBCM+kLU5IIi6XQov+XdHIWjVuvbSlKYQy1sKWxMfquFFlNngIlTNm+pRZB5R0hCK2XTfalrYUZBgB
-        thinking: The user is asking me to reply with exactly "OK". This is a simple, direct instruction.
-        type: thinking
-      - text: OK
-        type: text
-      id: msg_011CcmZuEEHaLyjcedLAh6HP
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 115
-        output_tokens: 32
-        output_tokens_details:
-          thinking_tokens: 25
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pv7d1WLPdWzFZkiZx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" asking me to reply"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with exactly \"OK\"."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is a simple, direct"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" instruction"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtUCCpsBCBIYAipA7P9ZUDAUF/U+kUJA+PMhOSyFkVMJuozta45CoMeBC7W2hBvD/UHpabcohqt+RxY7FFdjmb6KG12eFPX5gNPuEzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBv8/v1QYSDEiH1pa/0ViJumh1bBoM3UgAVe5OwkVEb2StIjAy+A2N71Ik/HYkm9EaG9oTLVW3i3mIqHyOJpsMm7FGpSuDW7I4lA7xx/yWBxcM5z4qZ5XNU2MNzoBRogHhVuHPOA/uUg1UDitq/ceq0q10EHKe5GMEmGVPjG3j4ikttHGMk7AFPZKHcFfxT+k3ALL6MdZPdl9DBaCiEQ8Se7Dvlfn7DuGcTOCG9eynz9ti8QTeUuwMoEHFZSAYAQ=="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":32,"output_tokens_details":{"thinking_tokens":25}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-29T16:30:55.659900+00:00

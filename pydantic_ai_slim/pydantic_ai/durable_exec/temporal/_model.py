@@ -12,10 +12,10 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
-from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import repair_messages
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     Model,
@@ -25,6 +25,7 @@ from pydantic_ai.models import (
     parse_model_id,
 )
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -185,6 +186,12 @@ class TemporalModel(WrapperModel):
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
         return [self.request_activity, self.request_stream_activity, self.cancel_suspended_response_activity]
+
+    def _refresh_http_client(self) -> None:
+        """Leave the wrapped models' HTTP clients alone.
+
+        Activities send the requests from the worker's event loop, not the workflow's.
+        """
 
     async def request(
         self,
@@ -430,6 +437,18 @@ class TemporalModel(WrapperModel):
             return None
         return current.base_url
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Report the native tool settings the currently active model can't apply.
+
+        A raw model string has no model class to ask, so this reports none, like `profile` reports the
+        string's inferred profile without intersecting it with the class's `supported_native_tools()`. The
+        activity resolves the concrete model, whose own `prepare_request` then rejects or swaps the tool.
+        """
+        current = self._current_model()
+        if isinstance(current, str):
+            return frozenset()
+        return current.unsupported_native_tool_settings(native_tool)
+
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()
         if isinstance(current, str):
@@ -495,7 +514,7 @@ class TemporalModel(WrapperModel):
         prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
         if prepared is params.messages:
             return prepared
-        return _clean_message_history(prepared, repair_last_response=True)
+        return repair_messages(prepared, repair_last_response=True)
 
     def _resolve_model_id(self, model_id: str | None, run_context: RunContext[Any] | None = None) -> Model:
         """Resolve a model ID to a Model instance.

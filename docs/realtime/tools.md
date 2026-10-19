@@ -32,11 +32,9 @@ of the return value — plus, where the provider supports it, multimodal content
 [`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content` — while local history keeps the full
 structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `return_value`,
 `content`, and `metadata`. Attached content is delivered for real or refused loudly — never
-silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message;
-Gemini Live's tool results are JSON-only, so text is folded into the result and any binary
-attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
-([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media Pydantic AI can't deliver yet
-(audio and documents everywhere; images also on xAI, which has no image input) likewise raises
+silently degraded: OpenAI and Azure OpenAI deliver it as a follow-up user message (GPT-Live to its
+delegated backend, which also takes documents), and Gemini Live inside the tool result, as a standard
+Gemini 3 request does. Media the model can't carry raises [`UserError`][pydantic_ai.exceptions.UserError]
 before anything is sent.
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
@@ -100,7 +98,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 
 agent = Agent(instructions='Look up orders with the tool, and keep the caller company while it runs.')
 realtime = agent.realtime(
-    'google:gemini-3.8-live', model_settings=RealtimeModelSettings(async_tool_calls=True)
+    '{{ google:realtime }}', model_settings=RealtimeModelSettings(async_tool_calls=True)
 )
 ```
 
@@ -128,7 +126,7 @@ agent = Agent(instructions='Answer questions, searching the web when useful.')
 
 async def main():
     async with agent.realtime(
-        'google:gemini-2.5-flash-native-audio-latest',
+        '{{ google:realtime }}',
         capabilities=[WebSearch()],
     ).session() as session:
         await session.send("What's the latest Pydantic AI release?")
@@ -186,7 +184,7 @@ async def refund_policy(
 
 async def main():
     async with agent.realtime(
-        'openai:gpt-realtime',
+        '{{ openai:realtime }}',
         capabilities=[HandleDeferredToolCalls(handler=refund_policy)],
     ).session():
         ...
@@ -250,7 +248,7 @@ agent = Agent()
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         session.enqueue(
             SystemPromptPart(content='A watchdog detected elevated latency. Mention this briefly.'),
             priority='when_idle',
@@ -285,7 +283,7 @@ standard-run semantics; multimodal content isn't routed yet
 
 ## Ending the session from a tool
 
-To hang up from a tool, call [`close()`][pydantic_ai.realtime.RealtimeSession.close] through
+To hang up from a tool, call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] through
 [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session]:
 
 ```python
@@ -297,11 +295,15 @@ agent = Agent(instructions='When the caller says goodbye, call `hang_up`.')
 @agent.tool
 async def hang_up(ctx: RunContext) -> None:
     assert ctx.realtime_session is not None
-    await ctx.realtime_session.close()
+    await ctx.realtime_session.hang_up()
 ```
 
+`hang_up()` closes the session, like [`close()`][pydantic_ai.realtime.RealtimeSession.close]. On a
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband) it also ends the browser's call,
+which `close()` would leave up; on every other session the two are the same.
+
 The session closes cleanly, and `session.result` and its history are settled before the context
-exits. The tool does not resume after `close()`: there is no provider left to receive its result, so
+exits. The tool does not resume after `hang_up()` or `close()`: there is no provider left to receive its result, so
 the call is recorded locally with an interrupted result. The code that owns the `session()` context
 does not receive an exception. A concurrent `send_audio()` call consuming a microphone or other
 async iterable returns cleanly at the next chunk after the tool closes the session, without sending
@@ -330,7 +332,7 @@ class Answer(BaseModel):
     confidence: float
 
 
-supervisor = Agent('openai:gpt-5', output_type=Answer)
+supervisor = Agent('{{ openai:medium }}', output_type=Answer)
 voice = Agent(instructions='Answer using the `consult` tool, then read the summary aloud.')
 
 
@@ -341,7 +343,7 @@ async def consult(question: str) -> str:
 
 
 async def main():
-    async with voice.realtime('openai:gpt-realtime').session() as session:
+    async with voice.realtime('{{ openai:realtime }}').session() as session:
         await session.send(
             'Which of our three shipping options is cheapest for a 4 kg parcel to Berlin?'
         )

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
@@ -595,7 +595,7 @@ class TestWaitRetryAfter:
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
         # Create a future date (30 seconds from now)
-        future_time = datetime.now(timezone.utc).timestamp() + 30
+        future_time = datetime.now(UTC).timestamp() + 30
         http_date = formatdate(future_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -617,7 +617,7 @@ class TestWaitRetryAfter:
 
     def test_retry_after_asctime_date_format(self):
         """Asctime `Retry-After` dates are parsed locally without a provider request."""
-        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=timezone.utc)
+        retry_time = datetime(2095, 11, 6, 8, 49, 37, tzinfo=UTC)
         request = httpx2.Request('GET', 'https://example.com')
         response = httpx2.Response(
             429,
@@ -631,9 +631,9 @@ class TestWaitRetryAfter:
 
         wait_func = wait_retry_after(fallback_strategy=wait_fixed(1), max_wait=float('inf'))
 
-        before = datetime.now(timezone.utc)
+        before = datetime.now(UTC)
         wait_seconds = wait_func(retry_state)
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert (retry_time - after).total_seconds() <= wait_seconds <= (retry_time - before).total_seconds()
 
@@ -643,7 +643,7 @@ class TestWaitRetryAfter:
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
         # Create a past date
-        past_time = datetime.now(timezone.utc).timestamp() - 30
+        past_time = datetime.now(UTC).timestamp() - 30
         http_date = formatdate(past_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -668,7 +668,7 @@ class TestWaitRetryAfter:
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=60)
 
         # Create a future date (120 seconds from now, > max_wait)
-        future_time = datetime.now(timezone.utc).timestamp() + 120
+        future_time = datetime.now(UTC).timestamp() + 120
         http_date = formatdate(future_time, usegmt=True)
 
         # Create HTTP status error with Retry-After in HTTP date format
@@ -687,7 +687,7 @@ class TestWaitRetryAfter:
         assert result == 60.0  # Capped at max_wait
         fallback.assert_not_called()
 
-    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1'])
+    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
     def test_invalid_retry_after_uses_fallback(self, retry_after: str):
         """Invalid `Retry-After` values fall back locally without a provider request."""
         fallback = Mock(return_value=4.0)

@@ -29,7 +29,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -54,7 +54,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 ### Cancellation
 
-When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint, or a [`timeout=`](../timeouts.md#bounding-a-whole-run) running out — the adapter emits a Vercel `abort` chunk, whose `reason` says whether the run was cancelled or timed out. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
 
 !!! note "Client disconnects are external cancellation"
     Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
@@ -76,7 +76,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -135,7 +135,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -191,7 +191,7 @@ Unlike emitted events, these are part of the message and survive a message-histo
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.ui.vercel_ai.response_types import DataChunk, SourceUrlChunk
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.tool_plain
@@ -217,7 +217,7 @@ async def search_docs(query: str) -> ToolReturn:
 
 ### Files from client-side tools
 
-Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a shape in its output that matches one of Pydantic AI's [multimodal content types](../input.md); Pydantic AI deserializes it into that type (via the same `ToolReturnContent` union used for round-tripping) before the run continues. Use the type's snake_case field names — these are validated as Pydantic AI models, not Vercel-cased payloads, so `media_type` deserializes but `mediaType` stays an opaque dict. A URL shape may carry `media_type`; when it doesn't, the adapter infers one from the URL, and a URL it can't infer a media type from reaches the agent as an ordinary mapping instead of as a file. An output that does spell out one of the shapes below *is* that file, and the keys the type doesn't declare are dropped with the mapping — so keep `kind` off any output you want handed back verbatim. Three shapes are supported:
+Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool-usage#client-side-tools) run in the browser and submit their result back to the server, where Pydantic AI resolves them as [external tool calls](../deferred-tools.md#external-tool-execution). Such a tool can return a file by putting a shape in its output that matches one of Pydantic AI's [multimodal content types](../input.md); Pydantic AI deserializes it into that type (via the same `ToolReturnContent` union used for round-tripping) before the run continues. Use the type's snake_case field names — these are validated as Pydantic AI models, not Vercel-cased payloads, so `media_type` deserializes but `mediaType` stays an opaque dict. A URL shape may carry `media_type`; when it's absent, `null` or empty, the adapter infers one from the URL. A URL it can't infer a media type from reaches the agent as an ordinary mapping instead of as a file, unless `media_type` is `null`, which is how Pydantic AI itself dumps such a URL: then it's a file with no media type. An output that does spell out one of the shapes below *is* that file, and the keys the type doesn't declare are dropped with the mapping — so keep `kind` off any output you want handed back verbatim. Three shapes are supported:
 
 - **Inline bytes** — a [`BinaryContent`][pydantic_ai.messages.BinaryContent] shape, `{ kind: 'binary', media_type: 'image/png', data: <bytes> }` (image media types become [`BinaryImage`][pydantic_ai.messages.BinaryImage]). The `data` field accepts a base64 string, or the raw byte shapes a JavaScript frontend produces when it forwards a `Uint8Array` or Node `Buffer` through `JSON.stringify` without encoding it first (`{ "0": 137, "1": 80, ... }` or `{ "type": "Buffer", "data": [137, 80, ...] }`) — all normalized to bytes at the wire boundary, so a client-side tool can return binary data without base64-encoding it by hand.
 - **A file URL** — a [`FileUrl`][pydantic_ai.messages.FileUrl] shape such as `{ kind: 'image-url', url: 'https://example.com/chart.png' }` or `{ kind: 'document-url', url: 'https://example.com/report.pdf' }`. This is often more efficient than inlining the bytes, since only the reference crosses the wire and the provider fetches the file directly — a good fit when the file already lives at a URL the frontend trusts. The URL is honored only if its scheme passes the adapter's [`allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes] allowlist (`http`/`https` by default); see the [trust model](#trust-model).
@@ -228,6 +228,8 @@ Vercel AI SDK [client-side tools](https://ai-sdk.dev/docs/ai-sdk-ui/chatbot-tool
 [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] writes application keys from [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata] into Vercel AI [`UIMessage.metadata`](https://ai-sdk.dev/docs/ai-sdk-ui/message-metadata), and stores the message `timestamp` under a reserved `pydantic_ai` key so it survives the round-trip. [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores those application keys and the timestamp on the way back. The framework-reserved `__pydantic_ai__` namespace is excluded in both directions.
 
 `load_messages` also keeps the `UIMessage.id` in that reserved namespace, and `dump_messages` uses it as the id again, so a history the browser sent comes back with the ids the browser assigned. Each `ModelRequest` or `ModelResponse` holds one id, so when consecutive `UIMessage`s merge into one message, such as a system message followed by a user message, only the last id is kept. Pass `generate_message_id` to `dump_messages` to choose ids yourself instead.
+
+If you serialize `dump_messages` output yourself, use `model_dump_json(by_alias=True)` or `model_dump(mode='json', by_alias=True)` so unset fields are omitted, as the AI SDK requires.
 
 When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` chunk after the final step, so frontends using AI SDK UI can persist it with the assistant message. Request-side messages have no analogous chunk — frontends rebuilding history purely from streamed chunks see timestamps only on assistant responses, whereas `dump_messages` populates both sides.
 
@@ -240,6 +242,42 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 ## Compaction
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when a frontend such as `useChat` holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
+
+## Enqueued messages
+
+Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as a `data-enqueued-messages` [data chunk](#data-chunks) with `id` set to the enqueue ID. Its `data.messages` holds the delivered messages in the shape [`VercelAIAdapter.dump_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.dump_messages] gives them. The AI SDK keeps the data part on the assistant message, and the chat doesn't show it unless your frontend renders that type. A frontend that holds the history sends it back on the next request, and [`VercelAIAdapter.load_messages`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.load_messages] restores the messages at the position they were delivered in.
+
+An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text.
+
+## MCP Apps
+
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
+
+To show the page with AI SDK UI's `experimental_MCPAppRenderer`, give it the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk. The tool part's own `output` is what the model saw, without the `structuredContent` and `_meta` the page needs:
+
+```tsx
+import { experimental_MCPAppRenderer as MCPAppRenderer } from '@ai-sdk/react';
+
+type Message = UIMessage<unknown, { 'mcp-apps': { resourceUri: string; result: Record<string, unknown> } }>;
+
+const app = message.parts.find(p => p.type === 'data-mcp-apps' && p.id === part.toolCallId);
+const handlers = { allowedTools: ['select_day'], callTool, readResource };
+
+return app?.type === 'data-mcp-apps' && part.state === 'output-available' ? (
+  <MCPAppRenderer
+    part={{
+      ...part,
+      toolMetadata: { app: { resourceUri: app.data.resourceUri, mimeType: 'text/html;profile=mcp-app' } },
+      output: app.data.result,
+    }}
+    loadResource={loadResource}
+    handlers={handlers}
+    sandbox={sandbox}
+  />
+) : null;
+```
+
+`loadResource` returns `{ uri, mimeType, html, meta }` built from the first item of [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]: its `uri`, `mimeType`, `text` and `_meta.ui`, which holds the CSP and permissions the renderer applies to the iframe. `callTool` and `readResource` post to your endpoint for [`call_tool_for_app`][pydantic_ai.mcp.MCPToolset.call_tool_for_app] and [`read_resource_for_app`][pydantic_ai.mcp.MCPToolset.read_resource_for_app]. The renderer refuses tools not in `allowedTools`.
 
 ## Tool Approval
 
@@ -278,6 +316,8 @@ Tool approval responses are trusted from the request by design, matching the pro
 
 When validation fails, the adapter emits `tool-input-error` instead of `tool-input-available`. The chunk carries the same `tool_call_id`, `tool_name`, and `input` (the raw arguments) plus an `error_text` field rendered from the message that will be sent back to the model. When the validation failure is retryable, the agent retries the call (subject to the tool's `retries` setting) and emits a new `tool-input-(available|error)` for each attempt; when a custom validator raises [`ToolFailed`](../tools-advanced.md#tool-failed), the failure is terminal and no retry follows.
 
+A call that isn't executed because a final result was already processed (see [`end_strategy`](../output.md#parallel-output-tool-calls)) isn't validated either. It gets `tool-input-available` with its raw arguments, followed by `tool-output-available` carrying the "not executed" return recorded in message history.
+
 ## System prompts and instructions
 
 Pydantic AI supports two ways to provide guidance to the model: [`system_prompt`](../agent.md#system-prompts) (stored in the message history as [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s) and [`instructions`](../agent.md#instructions) (injected fresh on every request, never persisted). When you control the server side, `instructions` is the recommended default.
@@ -297,7 +337,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 

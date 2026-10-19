@@ -16,7 +16,7 @@ team that standardises how frontend applications communicate with AI agents, wit
 The only dependencies are:
 
 - [ag-ui-protocol](https://docs.ag-ui.com/introduction): to provide the AG-UI types and encoder.
-- [starlette](https://www.starlette.io): to handle [ASGI](https://asgi.readthedocs.io/en/latest/) requests from a framework like FastAPI.
+- [starlette](https://starlette.dev/): to handle [ASGI](https://asgi.readthedocs.io/en/latest/) requests from a framework like FastAPI.
 
 You can install Pydantic AI with the `ag-ui` extra to ensure you have all the
 required AG-UI dependencies:
@@ -39,9 +39,9 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 
 1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
 2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
-3. Build a stand-alone [`Starlette`](https://www.starlette.io/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
+3. Build a stand-alone [`Starlette`](https://starlette.dev/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
 
-When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()`, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter closes any open text or tool events and emits a bare `RUN_FINISHED`. AG-UI currently has no cancelled outcome, so cancellation is not reported as `RUN_ERROR`. Pass an `on_cancel` callback (see the `run_stream()` example below) to persist the resumable message history from [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()`, `AgentRun.cancel()`, a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint, or a [`timeout=`](../timeouts.md#bounding-a-whole-run) running out — the adapter closes any open text or tool events and emits a bare `RUN_FINISHED`. AG-UI currently has no cancelled outcome, so cancellation is not reported as `RUN_ERROR`. Pass an `on_cancel` callback (see the `run_stream()` example below) to persist the resumable message history from [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
 
 !!! note "Client disconnects are external cancellation"
     A client that disconnects (or aborts its request) is seen by the server as an external `asyncio.CancelledError` rather than a first-party cancellation (see [the two kinds of cancellation](../agent.md#cancelling-a-run)), so the bare `RUN_FINISHED` and `on_cancel` do not fire on a disconnect. To observe a stop gesture this way, keep the stream connected and cancel the run first-party via a [`CancellationToken`][pydantic_ai.CancellationToken] triggered from a separate cancel endpoint.
@@ -64,7 +64,7 @@ from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -117,7 +117,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 app = FastAPI()
 
@@ -139,7 +139,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://www.starlette.io/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
+When you don't already have a Starlette/FastAPI app to mount the route on, build a minimal [`Starlette`](https://starlette.dev/applications/) app whose single `/` route calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
 
 ```py {title="ag_ui_app.py"}
 from starlette.applications import Starlette
@@ -150,7 +150,7 @@ from starlette.routing import Route
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', instructions='Be fun!')
+agent = Agent('{{ openai:medium }}', instructions='Be fun!')
 
 
 async def run_agent(request: Request) -> Response:
@@ -228,7 +228,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -280,7 +280,7 @@ class ChannelDeps:
     context: list[Context]  # (2)!
 
 
-agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+agent = Agent('{{ openai:medium }}', deps_type=ChannelDeps)
 app = FastAPI()
 
 
@@ -348,7 +348,7 @@ from pydantic_ai import Agent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+agent = Agent('{{ openai:medium }}', output_type=[str, DeferredToolRequests])
 
 
 @agent.tool_plain(requires_approval=True)
@@ -380,7 +380,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, CustomEvent, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @dataclass(kw_only=True)
@@ -450,7 +450,7 @@ class DocumentState(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     instructions='Be fun!',
     deps_type=StateDeps[DocumentState],
 )
@@ -520,6 +520,18 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 [`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through AG-UI activity messages (`pydantic_ai_compaction`), so [compacted](../capabilities/compaction.md) conversations keep working when the frontend holds the message history. A compaction item submitted by the frontend is honored — the conversation stays compacted — with two caveats. First, it is never trusted to stand in for the system prompt: whichever prompt applies per [System prompts and instructions](#system-prompts-and-instructions) still reaches the model on every request. Second, if the run also receives server-side `message_history` (the [server-side persistence pattern](./overview.md#trust-model-for-client-submitted-messages)), frontend compaction items are ignored — everything before a compaction item is hidden from the model, so honoring one from the frontend would let it hide the server's stored history. See [Client-held history](../capabilities/compaction.md#client-held-history) for the trade-offs and the recommended server-side pattern.
 
+### Enqueued messages
+
+Messages [injected mid-run](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue], such as a background task's result, are streamed as an `ACTIVITY_SNAPSHOT` with `activityType: "pydantic_ai_enqueued_messages"` and `messageId` set to the enqueue ID (`ag-ui-protocol` 0.1.19 or later). Its `content.messages` holds the delivered messages in the shape [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] gives them. The client keeps the activity in its message list, and a UI only shows activity types it has a renderer for. A frontend that holds the history sends it back on the next run, and [`AGUIAdapter.load_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.load_messages] restores the messages at the position they were delivered in.
+
+An enqueued system prompt, such as a capability's announcement, is only sent when the frontend [owns the system prompt](#system-prompts-and-instructions). Otherwise it would be stripped on the way back in, like any other system prompt the client sends, so it stays on the server. The other messages get the same handling as the rest of the submitted history. They round-trip as `dump_messages` output does, so [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] is dropped and the text comes back as plain user text.
+
+### MCP Apps
+
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries an `ACTIVITY_SNAPSHOT` with `activityType: "mcp-apps"` (`ag-ui-protocol` 0.1.19 or later). Its `content`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). This is the shape the AG-UI [MCP Apps middleware](https://www.npmjs.com/package/@ag-ui/mcp-apps-middleware) emits, so renderers built for it can show it; they load the page through your route, as below. Dumped history keeps it as an `ActivityMessage`; loading ignores it.
+
+CopilotKit's MCP Apps renderer loads the page and relays its requests by posting a run with `forwardedProps.__proxiedMCPRequest` (`serverId`, `method`, `params`) to your AG-UI endpoint, and reads the answer from `RUN_FINISHED.result`. `AGUIAdapter` runs the agent for these, so answer them in your route before calling `dispatch_request`: get the result from the [MCP Apps relay](../mcp/client.md#mcp-apps), and send it as `RUN_STARTED` followed by `RUN_FINISHED` with that `result`.
+
 ### Assistant message identity
 
 Every streamed tool call carries a `parentMessageId` naming the assistant message that owns it, and that message is always announced by a [`TEXT_MESSAGE_START`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L170-L187) first — including when the model's response is nothing but tool calls, in which case the message carries no content and is closed immediately. A frontend that rebuilds the conversation from the event stream alone therefore never has to infer that a message exists.
@@ -562,7 +574,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 

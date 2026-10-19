@@ -15,13 +15,16 @@ by both [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel]
 
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from collections.abc import Generator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
+from .. import _utils
 from .._http import AsyncHTTPClient
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
@@ -29,6 +32,26 @@ from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 if TYPE_CHECKING:
     import httpx
     import httpx2
+
+
+#: A hangup runs from a session's shielded teardown, so it must not hang there: a call that doesn't end
+#: quickly is reported, not waited on.
+HANG_UP_TIMEOUT = 10.0
+HANG_UP_MAX_RETRIES = 1
+
+
+@contextmanager
+def ignore_ended_call(ended_code: str) -> Generator[None]:
+    """Treat a hangup of a call the provider no longer knows as done; raise any other failure.
+
+    `ended_code` is the error code the provider's 404 carries for an unknown call: one that has already
+    ended, or, indistinguishably, one negotiated with a different API key or project.
+    """
+    try:
+        yield
+    except ModelHTTPError as e:
+        if not (e.status_code == 404 and _utils.is_str_dict(e.body) and e.body.get('code') == ended_code):
+            raise
 
 
 class _ClientSecretResponse(BaseModel):
@@ -104,7 +127,7 @@ async def mint_client_secret(
         raise UnexpectedModelBehavior('Realtime client-secret response did not include a numeric `expires_at`.') from e
     provider_details = data.model_dump(exclude={'value'})
     try:
-        expires_at = datetime.fromtimestamp(data.expires_at, tz=timezone.utc)
+        expires_at = datetime.fromtimestamp(data.expires_at, tz=UTC)
     except (OverflowError, OSError, ValueError) as e:
         # A numeric-but-unrepresentable `expires_at` (e.g. `10**100`) passes validation but overflows the
         # platform's timestamp range; surface it as unexpected output rather than a raw OverflowError/OSError.

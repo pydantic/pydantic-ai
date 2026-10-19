@@ -1,7 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Literal
-
-from typing_extensions import assert_type
+from typing import Any, Literal, assert_type
 
 from pydantic_ai import Agent, RunContext, Tool, ToolDefinition
 

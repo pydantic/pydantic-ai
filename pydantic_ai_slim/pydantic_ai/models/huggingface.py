@@ -3,12 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Literal, cast, overload
+from datetime import UTC, datetime
+from typing import Any, Literal, assert_never, cast, overload
 
-from typing_extensions import assert_never
-
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -54,7 +52,9 @@ from . import (
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
+from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from huggingface_hub import (
@@ -71,13 +71,17 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
         'Please install `huggingface_hub` to use Hugging Face Inference Providers, '
         'you can use the `huggingface` optional group — `pip install "pydantic-ai-slim[huggingface]"`'
     ) from _import_error
+
+# Below the guard on purpose: `huggingface_hub` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 @contextmanager
@@ -91,6 +95,13 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             body=e.response.content,
             headers=dict(e.response.headers),
         ) from e
+    except TextGenerationError as e:
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
+        # status code to report.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (httpx.TransportError, InferenceTimeoutError) as e:
+        # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 __all__ = (
@@ -146,6 +157,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset(
+        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+    )
 
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
@@ -262,7 +277,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
@@ -301,7 +316,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         raw_finish_reason = choice.finish_reason
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
-            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=timezone.utc)
+            provider_details['timestamp'] = datetime.fromtimestamp(response.created, tz=UTC)
         finish_reason = _FINISH_REASON_MAP.get(cast(HuggingFaceFinishReason, raw_finish_reason), None)
 
         return ModelResponse(
@@ -322,7 +337,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         peekable_response: _utils.PeekableAsyncStream[
             ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -339,7 +354,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
             _response=peekable_response,
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
-            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_timestamp=datetime.fromtimestamp(first_chunk.created, tz=UTC),
         )
 
     @staticmethod
@@ -559,7 +574,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
-            async for chunk in self._response:
+            async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                 self._usage += _map_usage(chunk)
 
                 if chunk.id:  # pragma: no branch

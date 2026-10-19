@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import re
 import warnings
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,8 @@ from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
     InMemoryStepStore,
+    PostgresConnection,
+    PostgresStepStore,
     RunRecord,
     SqliteStepStore,
     StepPersistence,
@@ -232,11 +235,11 @@ class TestSnapshotHistorySource:
         # so those fields are cleared before hashing; distinct parts still hash
         # differently.
         request = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call-1')])
-        stamped_request = replace(request, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        stamped_request = replace(request, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(request) == message_hash(stamped_request)
 
         reply = _reply('done')
-        stamped_reply = replace(reply, timestamp=datetime.now(timezone.utc), run_id='r1', conversation_id='c1')
+        stamped_reply = replace(reply, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(reply) == message_hash(stamped_reply)
         assert message_hash(request) != message_hash(_reply('done'))
 
@@ -293,6 +296,12 @@ class TestSnapshotHistorySource:
         assert isinstance(InMemoryStepStore(), SnapshotStore)
         assert isinstance(FileStepStore(tmp_path / 'runs'), SnapshotStore)
         assert isinstance(SqliteStepStore(database=tmp_path / 'runs.db'), SnapshotStore)
+
+        class _UnusedPool:
+            def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+                raise AssertionError('the pool is not queried')  # pragma: no cover
+
+        assert isinstance(PostgresStepStore(_UnusedPool()), SnapshotStore)
 
     def test_rejects_store_without_snapshot_seam(self) -> None:
         # A store that lists runs but has not implemented `list_snapshots` (for
@@ -694,6 +703,7 @@ class TestSearchScope:
         message = str(record[0].message)
         assert "scope='all'" in message
         assert "scope='conversation'" in message
+        assert 'warning will be removed in the next breaking release' in message
 
     def test_unset_scope_warns_once_per_instance(self) -> None:
         """Per instance, not per search: warning on every tool invocation would be noise."""

@@ -127,7 +127,7 @@ class ToolSearchTool(AbstractNativeTool):
     Supported by:
 
     * Anthropic (bm25, regex, custom callable) — Sonnet 4.5+, Opus 4.5+, Haiku 4.5+
-    * OpenAI Responses (server default, custom callable via `execution='client'`) — GPT-5.4+
+    * OpenAI Responses (server default, custom callable via `execution='client'`) — GPT-5.4+ except GPT-5.4 nano
       (named strategies `'bm25'`/`'regex'` are not supported).
     """
 

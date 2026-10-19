@@ -35,7 +35,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import LocalStack
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[LocalStack()],
 )
 
@@ -146,6 +146,25 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md), each AWS CLI command and health check
+against an external LocalStack instance is recorded, so a recovered run reuses
+its output instead of running the command again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the command runs as its own step.
+
+A managed container (`manage_container=True`) starts empty in the process that
+recovers a run, so on DBOS `LocalStack` does not record its commands: recovery
+runs them again, which rebuilds the container's state. Temporal and Prefect
+record every tool call, so there recovery replays the recorded output and the
+new container lacks the resources the earlier commands created. Point
+`endpoint_url` at an external LocalStack instance for durable runs on those
+engines.
+
+The records are named after the capability's `id`, which defaults to
+`localstack`, so durable execution needs no configuration.
+
 ## Configuration
 
 ```python
@@ -186,7 +205,7 @@ you supply your own.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - LocalStack:
       endpoint_url: http://localhost.localstack.cloud:4566

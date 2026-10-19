@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -25,7 +24,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai_harness import ToolGuardrail
+from pydantic_ai_harness import HarnessDeprecationWarning, ToolGuardrail
 from pydantic_ai_harness.guardrails import GuardrailResult
 from pydantic_ai_harness.subagents import (
     MAX_EVENT_TEXT_CHARS,
@@ -116,10 +115,9 @@ class TestDelegationEvents:
         assert end.tool_call_id == start.tool_call_id
 
     async def test_inherits_tools_and_menu_key_are_reported(self) -> None:
-        listener, _ = await _run(
-            _delegate_once(model='fast'),
-            SubAgents(agents=[SubAgent(_worker())], models={'fast': TestModel()}, inherit_tools=True),
-        )
+        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+            capability = SubAgents(agents=[SubAgent(_worker())], models={'fast': TestModel()}, inherit_tools=True)
+        listener, _ = await _run(_delegate_once(model='fast'), capability)
 
         start, _ = _pair(listener)
         assert start.model == 'fast'
@@ -200,10 +198,6 @@ class TestDelegationEvents:
         assert (start.tool_name, end.tool_name) == ('hand_off', 'hand_off')
         assert start.capability_id == end.capability_id == 'sub_agents'
 
-    @pytest.mark.skipif(
-        sys.version_info < (3, 11),
-        reason='Core leaves the tool call running past `run()`: https://github.com/pydantic/pydantic-ai/pull/8822',
-    )
     async def test_listener_that_raises_aborts_the_parent_run(self) -> None:
         @dataclass
         class Boom(AbstractCapability[object]):
