@@ -4879,6 +4879,40 @@ recent
             if isinstance(part, SystemPromptPart)
         ] == ['Be terse.']
 
+    def test_the_newest_of_several_summaries_is_the_anchor(self):
+        msgs: list[ModelMessage] = [
+            ModelResponse(parts=[CompactionPart(content='OLDER')]),
+            _user('a'),
+            ModelResponse(parts=[CompactionPart(content='NEWER')]),
+            _user('b'),
+        ]
+        assert _extract_previous_summary(msgs) == 'NEWER'
+
+    async def test_an_earlier_summary_left_in_the_tail_is_superseded(self):
+        """When the cutoff keeps an earlier summary, the new one anchors on it and replaces it."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts, output='NEW'), max_messages=3, keep_messages=4
+        )
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart(content='Be terse.')]),
+            ModelResponse(parts=[CompactionPart(content='OLD')]),
+            _user('a'),
+            _assistant('b'),
+            _user('c'),
+        ]
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        assert '<previous-summary>\nOLD\n</previous-summary>' in prompts[0]
+        summaries = [
+            part.content
+            for message in result
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, CompactionPart)
+        ]
+        assert summaries == ['NEW']
+
     async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
         """A history with the old system-prompt summary keeps loading, and its summary is replaced."""
         prompts: list[str] = []

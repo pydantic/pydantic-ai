@@ -2575,7 +2575,8 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
     return new_messages
 
 
-_CONVERSATION_SUMMARY_CLOSING_TAG = re.compile(r'</(conversation_summary)\s*>', re.IGNORECASE)
+_CONVERSATION_SUMMARY_CLOSING_TAG_OPENER = re.compile(r'<(?=\s*/\s*conversation_summary(?:[\s/>]|$))', re.IGNORECASE)
+"""The `<` of a closing `conversation_summary` tag in any case or spacing, as `_framing` matches closing tags."""
 
 
 def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFunction]
@@ -2624,7 +2625,7 @@ def _is_unattributed_summary(part: ModelResponsePart) -> TypeIs[CompactionPart]:
 def _conversation_summary_text(content: str) -> str:
     """*content* framed as a summary of the conversation it replaced."""
     # TODO(#10547): switch to `_framing.wrap()` once it lands.
-    body = _CONVERSATION_SUMMARY_CLOSING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+    body = _CONVERSATION_SUMMARY_CLOSING_TAG_OPENER.sub('&lt;', content)
     return f'<conversation_summary>\n{body}\n</conversation_summary>'
 
 

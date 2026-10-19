@@ -22,6 +22,7 @@ import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
+    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -148,6 +149,30 @@ class TestSnapshotHistorySource:
 
         history = await SnapshotHistorySource(store).run_history(run_id='r1')
         assert history == [original, reply, follow_up]
+
+    async def test_a_compaction_part_summary_is_skipped(self) -> None:
+        store = InMemoryStepStore()
+        original = _user('the ZEBRA passphrase is 42')
+        reply = _reply('noted')
+        summary = ModelResponse(parts=[CompactionPart(content='older context')])
+        follow_up = _user('what was it again?')
+        await _seed_run(store, 'r1', [original, reply], [summary, reply, follow_up])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [original, reply, follow_up]
+
+    async def test_only_the_summary_part_of_a_mixed_response_is_skipped(self) -> None:
+        store = InMemoryStepStore()
+        prompt = _user('go on')
+        mixed = ModelResponse(parts=[CompactionPart(content='older context'), TextPart('the PELICAN continuation')])
+        await _seed_run(store, 'r1', [prompt, mixed])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert history == [
+            prompt,
+            ModelResponse(parts=[TextPart('the PELICAN continuation')], timestamp=mixed.timestamp),
+        ]
+        assert 'PELICAN' in await _search(SnapshotHistorySource(store), 'PELICAN')
 
     async def test_repeated_identical_messages_keep_distinct_positions(self) -> None:
         store = InMemoryStepStore()

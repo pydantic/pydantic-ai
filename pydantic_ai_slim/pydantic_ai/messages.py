@@ -2673,8 +2673,11 @@ class CompactionPart:
     For OpenAI, `content` is `None` and the encrypted data is stored in `provider_details`.
 
     A part without `provider_name` holds a summary written by the application or a capability, such
-    as Pydantic AI Harness's `SummarizingCompaction`. No provider has a native block for it, so every
-    request-response model receives its `content` as assistant text inside `<conversation_summary>`.
+    as Pydantic AI Harness's `SummarizingCompaction`. No provider has a native block for it, so each
+    provider model (OpenAI, Anthropic, Google, Bedrock, Groq, Mistral, Cohere, Hugging Face and xAI)
+    sends its `content` as assistant text inside `<conversation_summary>`. A `FunctionModel` receives
+    the part itself, a `DecisionModel` passes it on as a summary entry, and realtime sessions don't
+    send it.
     """
 
     content: str | None = None

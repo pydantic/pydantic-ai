@@ -54,7 +54,7 @@ from pydantic_ai_harness.compaction._shared import (
     tool_return_text,
     validate_token_trigger,
 )
-from pydantic_ai_harness.compaction._summary import is_summary_part
+from pydantic_ai_harness.compaction._summary import is_summary_part, without_summaries
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, UserContent
@@ -323,14 +323,17 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
-    A summary is a `CompactionPart` that no provider produced, or, in a history saved by an earlier
-    release, a `SystemPromptPart` opening with `_SUMMARY_PREFIX`. Each pass puts its summary at the
-    start of the history, so the first one found is the most recent.
+    A summary is a `CompactionPart` that no provider produced; the last one in the history is the
+    newest. Failing that, a history saved by an earlier release holds its summary as a
+    `SystemPromptPart` opening with `_SUMMARY_PREFIX`, and each pass put its own ahead of the older
+    ones, so there the first one is the newest.
     """
-    for msg in messages:
-        for part in msg.parts:
+    for msg in reversed(messages):
+        for part in reversed(msg.parts):
             if is_summary_part(part) and part.content:
                 return _without_bridge_prefix(part.content)
+    for msg in messages:
+        for part in msg.parts:
             if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
                 return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
     return None
@@ -637,6 +640,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary_message = ModelResponse(parts=[CompactionPart(content=summary)])
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
+        # The new summary supersedes any earlier one the cutoff kept: it was the anchor for this one.
+        preserved = without_summaries(preserved)
         result: list[ModelMessage] = [*standing, summary_message, *extra, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
         if self.receipts:

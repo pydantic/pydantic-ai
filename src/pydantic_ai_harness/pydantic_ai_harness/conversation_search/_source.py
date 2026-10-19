@@ -21,6 +21,7 @@ search layer.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
@@ -28,10 +29,9 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelResponse,
     SystemPromptPart,
 )
-from pydantic_ai_harness.compaction._summary import is_summary_part
+from pydantic_ai_harness.compaction._summary import without_summaries
 from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord
 
 SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
@@ -136,15 +136,23 @@ def _overlap_length(history: list[str], snapshot: list[str]) -> int:
     return 0
 
 
-def is_summary_artifact(message: ModelMessage) -> bool:
-    """Return whether a message is a compaction summary artifact (never indexed).
+def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without compaction summary artifacts, which are never indexed.
 
-    That is a response holding a `CompactionPart` no provider produced, or, in a history saved before
-    `SummarizingCompaction` wrote one, a request carrying its prefixed summary system prompt.
+    A summary is a `CompactionPart` no provider produced: only that part is removed, so the rest of a
+    response holding one is still searched. In a history saved before `SummarizingCompaction` wrote
+    one, the summary is a request carrying its prefixed system prompt, which is removed whole.
     """
-    if isinstance(message, ModelResponse):
-        return any(is_summary_part(part) for part in message.parts)
-    return any(isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts)
+    return [
+        message
+        for message in without_summaries(messages)
+        if not (
+            isinstance(message, ModelRequest)
+            and any(
+                isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts
+            )
+        )
+    ]
 
 
 class SnapshotHistorySource:
@@ -186,7 +194,7 @@ class SnapshotHistorySource:
         history: list[ModelMessage] = []
         history_hashes: list[str] = []
         for snapshot in await self._store.list_snapshots(run_id=run_id):
-            messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
+            messages = without_summary_artifacts(snapshot.messages)
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
             history.extend(messages[overlap:])
