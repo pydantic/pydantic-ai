@@ -586,8 +586,9 @@ at or above `media_threshold_bytes` (64 KiB by default) are externalized like st
 store:
 
 - `SqliteConversationStore(database= or connection=)` -- tables `conversation_records`, `conversation_entries`,
-  and `conversation_messages`. A save writes its new entries and the record in one transaction, and deleting a
-  conversation also deletes the entries and messages no other conversation uses.
+  and `conversation_messages`. A save writes its new entries and the record in one transaction. Deleting a
+  conversation, or saving it with a rewritten or truncated history, also deletes the entries and messages no other
+  conversation uses.
 - `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
   `{table}_conv_entries`, and `{table}_conv_messages`, which don't clash with `PostgresStepStore`'s, so the two
   can share a prefix. Saves and deletes work as for SQLite. Foreign keys keep a concurrent save from

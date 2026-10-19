@@ -82,8 +82,9 @@ class SqliteConversationStore(ConversationStore):
     database, as the step stores do.
 
     A save writes its new entries and the record together, in a transaction on a connection the
-    store opened and in a savepoint on a caller-owned one. Deleting a conversation also deletes the
-    entries and messages no other conversation's history uses; externalized media stays.
+    store opened and in a savepoint on a caller-owned one. Deleting a conversation, or saving it
+    with a rewritten or truncated history, also deletes the entries and messages no other
+    conversation's history uses; externalized media stays.
 
     Tables:
 
@@ -148,7 +149,8 @@ class SqliteConversationStore(ConversationStore):
             for statement in _SCHEMA.split(';'):
                 if statement.strip():
                     conn.execute(statement)
-            self._schema_ready = True
+            # Tables created in a caller's open transaction are gone if it rolls back.
+            self._schema_ready = not conn.in_transaction
 
     async def read_record(self, conversation_id: str) -> ConversationRecord | None:
         return await anyio.to_thread.run_sync(self._sync_read_record, conversation_id)
@@ -200,7 +202,8 @@ class SqliteConversationStore(ConversationStore):
         with self._connected() as conn:
             with _atomically(conn, store_owned=self._connection is None, begin='BEGIN IMMEDIATE'):
                 row = conn.execute(
-                    'SELECT revision FROM conversation_records WHERE conversation_id = ?', (record.conversation_id,)
+                    'SELECT revision, head_id FROM conversation_records WHERE conversation_id = ?',
+                    (record.conversation_id,),
                 ).fetchone()
                 if (row[0] if row is not None else None) != expected_revision:
                     raise ConversationConflict(record.conversation_id)
@@ -214,6 +217,14 @@ class SqliteConversationStore(ConversationStore):
                         for entry, (sha256, _) in zip(entries, messages, strict=True)
                     ],
                 )
+                # A fork points into another conversation's history, which a concurrent delete or
+                # rewrite of that conversation can release before this write.
+                if (
+                    record.head_id is not None
+                    and conn.execute('SELECT 1 FROM conversation_entries WHERE id = ?', (record.head_id,)).fetchone()
+                    is None
+                ):
+                    raise ConversationConflict(record.conversation_id)
                 conn.execute(
                     'INSERT INTO conversation_records (conversation_id, revision, head_id, scope, updated_at, record) '
                     'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET '
@@ -228,6 +239,9 @@ class SqliteConversationStore(ConversationStore):
                         RECORD_ADAPTER.dump_json(record).decode(),
                     ),
                 )
+                # A rewritten or truncated history leaves its old tail behind.
+                if row is not None and row[1] != record.head_id:
+                    _release(conn, row[1])
 
     async def delete_record(self, conversation_id: str) -> None:
         await anyio.to_thread.run_sync(self._sync_delete_record, conversation_id)
@@ -238,25 +252,8 @@ class SqliteConversationStore(ConversationStore):
                 row = conn.execute(
                     'DELETE FROM conversation_records WHERE conversation_id = ? RETURNING head_id', (conversation_id,)
                 ).fetchone()
-                entry_id: str | None = row[0] if row is not None else None
-                # Walk back from the head, deleting each entry until one that another record's
-                # history still reaches: a record's head, or an entry with another child.
-                while entry_id is not None:
-                    deleted = conn.execute(
-                        'DELETE FROM conversation_entries WHERE id = ? '
-                        'AND NOT EXISTS (SELECT 1 FROM conversation_records WHERE head_id = ?) '
-                        'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE parent_id = ?) '
-                        'RETURNING parent_id, sha256',
-                        (entry_id, entry_id, entry_id),
-                    ).fetchone()
-                    if deleted is None:
-                        break
-                    entry_id, sha256 = deleted
-                    conn.execute(
-                        'DELETE FROM conversation_messages WHERE sha256 = ? '
-                        'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE sha256 = ?)',
-                        (sha256, sha256),
-                    )
+                if row is not None:
+                    _release(conn, row[0])
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         row = await anyio.to_thread.run_sync(self._sync_read_entry, entry_id)
@@ -296,3 +293,26 @@ class SqliteConversationStore(ConversationStore):
     def _sync_read_history(self, head_id: str) -> list[tuple[str, str | None, str | None]]:
         with self._connected() as conn:
             return conn.execute(_HISTORY_SQL, (head_id,)).fetchall()
+
+
+def _release(conn: sqlite3.Connection, entry_id: str | None) -> None:
+    """Delete `entry_id` and its ancestors, up to the first one another record's history still reaches.
+
+    That's a record's head, or an entry with another child. A message no remaining entry holds goes too.
+    """
+    while entry_id is not None:
+        deleted = conn.execute(
+            'DELETE FROM conversation_entries WHERE id = ? '
+            'AND NOT EXISTS (SELECT 1 FROM conversation_records WHERE head_id = ?) '
+            'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE parent_id = ?) '
+            'RETURNING parent_id, sha256',
+            (entry_id, entry_id, entry_id),
+        ).fetchone()
+        if deleted is None:
+            break
+        entry_id, sha256 = deleted
+        conn.execute(
+            'DELETE FROM conversation_messages WHERE sha256 = ? '
+            'AND NOT EXISTS (SELECT 1 FROM conversation_entries WHERE sha256 = ?)',
+            (sha256, sha256),
+        )

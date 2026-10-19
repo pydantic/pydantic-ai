@@ -44,9 +44,9 @@ class PostgresConversationStore(ConversationStore):
     `media_store`, by default a `PostgresMediaStore` on the same pool with the table `{table}_media`,
     which the step store shares too: media is keyed by content.
 
-    A save writes its new entries and the record in one transaction. Deleting a conversation also
-    deletes the entries and messages no other conversation's history uses; externalized media
-    stays. Foreign keys keep a concurrent save from pointing at an entry or message a delete is
+    A save writes its new entries and the record in one transaction. Deleting a conversation, or
+    saving it with a rewritten or truncated history, also deletes the entries and messages no other
+    conversation's history uses; externalized media stays. Foreign keys keep a concurrent save from pointing at an entry or message a delete is
     removing: one of the two fails instead.
     """
 
@@ -179,7 +179,15 @@ class PostgresConversationStore(ConversationStore):
                     record.updated_at,
                     text,
                 )
+                previous_head = None
             else:
+                # Read before the update: a revision is never reused, so if the update below matches it, this was
+                # the head it replaces.
+                previous_head = await connection.fetchval(
+                    f'SELECT head_id FROM {self._records} WHERE conversation_id = $1 AND revision = $2',
+                    record.conversation_id,
+                    expected_revision,
+                )
                 written = await connection.fetchval(
                     f'UPDATE {self._records} SET revision = $2, head_id = $3, scope = $4, updated_at = $5, record = $6 '
                     'WHERE conversation_id = $1 AND revision = $7 RETURNING conversation_id',
@@ -194,6 +202,9 @@ class PostgresConversationStore(ConversationStore):
             if written is None:
                 # Raising rolls back the transaction, so the entries above go with it.
                 raise ConversationConflict(record.conversation_id)
+            # A rewritten or truncated history leaves its old tail behind.
+            if previous_head is not None and previous_head != record.head_id:
+                await self._release(connection, str(previous_head))
 
     async def _insert_messages(self, connection: PostgresConnection, messages: dict[str, str]) -> None:
         """Insert the messages `{table}_messages` lacks, in key order so concurrent saves can't deadlock."""
@@ -212,24 +223,31 @@ class PostgresConversationStore(ConversationStore):
             entry_id = await connection.fetchval(
                 f'DELETE FROM {self._records} WHERE conversation_id = $1 RETURNING head_id', conversation_id
             )
-            # Walk back from the head, deleting each entry until one that another record's
-            # history still reaches: a record's head, or an entry with another child.
-            while entry_id is not None:
-                deleted = await connection.fetchrow(
-                    f'DELETE FROM {self._entries} WHERE id = $1 '
-                    f'AND NOT EXISTS (SELECT 1 FROM {self._records} WHERE head_id = $1) '
-                    f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE parent_id = $1) '
-                    'RETURNING parent_id, sha256',
-                    entry_id,
-                )
-                if deleted is None:
-                    break
-                entry_id, sha256 = deleted
-                await connection.execute(
-                    f'DELETE FROM {self._messages} WHERE sha256 = $1 '
-                    f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE sha256 = $1)',
-                    sha256,
-                )
+            if entry_id is not None:
+                await self._release(connection, str(entry_id))
+
+    async def _release(self, connection: PostgresConnection, entry_id: str | None) -> None:
+        """Delete `entry_id` and its ancestors, up to the first one another record's history still reaches.
+
+        That's a record's head, or an entry with another child. A message no remaining entry holds goes too.
+        """
+        while entry_id is not None:
+            deleted = await connection.fetchrow(
+                f'DELETE FROM {self._entries} WHERE id = $1 '
+                f'AND NOT EXISTS (SELECT 1 FROM {self._records} WHERE head_id = $1) '
+                f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE parent_id = $1) '
+                'RETURNING parent_id, sha256',
+                entry_id,
+            )
+            if deleted is None:
+                break
+            parent_id, sha256 = deleted
+            entry_id = None if parent_id is None else str(parent_id)
+            await connection.execute(
+                f'DELETE FROM {self._messages} WHERE sha256 = $1 '
+                f'AND NOT EXISTS (SELECT 1 FROM {self._entries} WHERE sha256 = $1)',
+                sha256,
+            )
 
     async def read_entry(self, entry_id: str) -> ConversationEntry:
         await self._ensure_schema()
