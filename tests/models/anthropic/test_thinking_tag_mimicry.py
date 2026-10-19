@@ -14,9 +14,11 @@ What the cassettes show:
   copies the annotation verbatim — attribute included — onto reasoning it just produced itself
 * the *channel* is what settles it: the identical attributed block moved into a `user` turn stops the
   copying on the model that copies every assistant-turn variant, which is the design this ships
+* inside the user turn the attributes still matter on `claude-opus-4-5`: a `provider` attribute without
+  `model` brings the copying back, which is why the shipped wrapper carries none
 * it isn't a legacy quirk: re-measured on 2026-10-15 with the same history, bare tags in the assistant
   turn leaked `4/4` on `claude-sonnet-5-5`, `claude-haiku-4-5` and `claude-opus-4-5`, and `0/4` on
-  `claude-opus-5-5` and `claude-fable-5-1`; the shipped user-turn wrapper leaked `0/4` on all five
+  `claude-opus-5-5` and `claude-fable-5-1`; the user-turn wrapper (then attributed) leaked `0/4` on all five
 
 Because the behavior is stochastic, each cassette pins one recorded instance of a rate measured over
 repeated live runs. The rates come from a 134-call sweep at 6 prior turns with no system prompt: bare
@@ -142,8 +144,12 @@ class Case:
 _BARE = '<thinking>\n{reasoning}\n</thinking>'
 _NOTED = '<thinking note="carried over from earlier in this conversation">\n{reasoning}\n</thinking>'
 _ATTRIBUTED = '<thinking by="openai">\n{reasoning}\n</thinking>'
-# The shape Pydantic AI ships for this family: the same reasoning, attributed, in a user turn.
-_CARRIED = '<assistant_thinking model="gpt-5.6" provider="openai">\n{reasoning}\n</assistant_thinking>'
+# The attributed block that settled the channel question: the same reasoning, in a user turn.
+_CARRIED_ATTRIBUTED = '<assistant_thinking model="gpt-5.6" provider="openai">\n{reasoning}\n</assistant_thinking>'
+# Only the provider: the attribute that survives a UI round trip, since `model_name` deliberately doesn't.
+_CARRIED_PROVIDER = '<assistant_thinking provider="openai">\n{reasoning}\n</assistant_thinking>'
+# The shape Pydantic AI ships for this family: the same reasoning, unattributed, in a user turn.
+_CARRIED = '<assistant_thinking>\n{reasoning}\n</assistant_thinking>'
 
 
 CASES = [
@@ -201,19 +207,41 @@ CASES = [
         snapshot(4055),
     ),
     Case(
-        # The shipped design, against `opus-attributed-leaks` as its control: same model, same attributed
+        # The channel, against `opus-attributed-leaks` as its control: same model, same attributed
         # wrapper, same reasoning — only the channel differs, and the copying stops. Recorded once here;
         # the rate behind it is 0/16 across the sweep that chose this placement, against 8/8 for the same
         # content in the assistant turn.
         'opus-carried-in-user-turn-clean',
         'claude-opus-4-5',
-        _CARRIED,
+        _CARRIED_ATTRIBUTED,
         'user',
         snapshot([]),
         snapshot(
             {('user', '</assistant_thinking>'), ('user', '<assistant_thinking model="gpt-5.6" provider="openai">')}
         ),
         snapshot(4319),
+    ),
+    Case(
+        # But drop `model` and keep `provider`, and opus copies the wrapper into its answer again: 8/8 and
+        # 6/6 on 2026-10-19, against 0/8 for `model` and `provider` together and 0/14 with no attribute.
+        # `claude-sonnet-5-5` and `claude-haiku-4-5` stayed clean (0/8) with it.
+        'opus-provider-carried-in-user-turn-leaks',
+        'claude-opus-4-5',
+        _CARRIED_PROVIDER,
+        'user',
+        snapshot(['<assistant_thinking>', '</assistant_thinking>']),
+        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking provider="openai">')}),
+        snapshot(4211),
+    ),
+    Case(
+        # The shipped wrapper, with no attribute at all: clean on opus, 0/14 on 2026-10-19.
+        'opus-unattributed-carried-in-user-turn-clean',
+        'claude-opus-4-5',
+        _CARRIED,
+        'user',
+        snapshot([]),
+        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking>')}),
+        snapshot(4091),
     ),
     Case(
         # A current model, not just the older ones above: bare tags in the assistant turn, 4/4 on
@@ -227,16 +255,15 @@ CASES = [
         snapshot(3971),
     ),
     Case(
-        # And the shipped placement on that same current model: 0/4.
+        # And the shipped wrapper on that same current model: 0/4 attributed on 2026-10-15, 0/8 unattributed
+        # on 2026-10-19.
         'sonnet-5-5-carried-in-user-turn-clean',
         'claude-sonnet-5-5',
         _CARRIED,
         'user',
         snapshot([]),
-        snapshot(
-            {('user', '</assistant_thinking>'), ('user', '<assistant_thinking model="gpt-5.6" provider="openai">')}
-        ),
-        snapshot(4319),
+        snapshot({('user', '</assistant_thinking>'), ('user', '<assistant_thinking>')}),
+        snapshot(4091),
     ),
     Case(
         # Control: with no tag anywhere in history opus never emits one, so the copying above is precedent,
