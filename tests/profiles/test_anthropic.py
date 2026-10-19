@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 
 import warnings
 from enum import Enum, IntEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field
@@ -226,6 +226,58 @@ def test_strict_true_described_options():
             },
             'additionalProperties': False,
             'required': ['area', 'priority', 'weight', 'team', 'urgent'],
+        }
+    )
+
+
+def test_strict_true_typed_const():
+    """With strict=True, a typed `const` becomes a one-value `enum`, keeping its declared `type`.
+
+    Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
+    Anthropic's `transform_schema()` moves a `const` into the description, which would leave the model free to
+    return any tag. A unit test: `walk()` runs the SDK's `transform_schema()`, which is where the constraint
+    was lost, and the request a recording would capture doesn't show whether the model was held to it.
+    """
+
+    class Cat(BaseModel):
+        kind: Literal['cat']
+
+    class Dog(BaseModel):
+        kind: Literal['dog']
+
+    class Pet(BaseModel):
+        pet: Annotated[Cat | Dog, Field(discriminator='kind')]
+        legs: Literal[4]
+
+    transformer = AnthropicJsonSchemaTransformer(Pet.model_json_schema(), strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Cat': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['cat']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+                'Dog': {
+                    'type': 'object',
+                    'properties': {'kind': {'type': 'string', 'enum': ['dog']}},
+                    'additionalProperties': False,
+                    'required': ['kind'],
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'pet': {
+                    'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
+                    'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
+                },
+                'legs': {'type': 'integer', 'enum': [4]},
+            },
+            'additionalProperties': False,
+            'required': ['pet', 'legs'],
         }
     )
 
