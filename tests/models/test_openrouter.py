@@ -1288,6 +1288,7 @@ async def test_openrouter_metadata_non_string_value(allow_model_requests: None) 
 
     result = await Agent(model).run('Hello')
     assert result.output == 'hello'
+    assert model._validate_completion(completion).metadata == completion.metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:

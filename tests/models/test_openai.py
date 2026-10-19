@@ -5390,6 +5390,7 @@ async def test_metadata_non_string_value(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == 'hello'
+    assert m._validate_completion(c).metadata == c.metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
