@@ -79,7 +79,6 @@ CASES = [
     # ARN-versioned models, but takes it on the models it serves from the Messages API infrastructure.
     Case('bedrock-sonnet-4-5', 'bedrock', _last_block, model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0'),
     Case('bedrock-opus-4-8', 'bedrock', _automatic, model_name='us.anthropic.claude-opus-4-8'),
-    Case('bedrock-opus-5-5', 'bedrock', _automatic, model_name='global.anthropic.claude-opus-5-5'),
     # An explicit `supports_auto_cache` in either `profile=` form is the override, both ways.
     Case(
         'bedrock-profile-on',
@@ -154,3 +153,35 @@ async def test_automatic_caching_by_client(allow_model_requests: None, case: Cas
     [message] = body['messages']
     breakpoints = (body.get('cache_control'), [block.get('cache_control') for block in message['content']])
     assert breakpoints == case.expected({'type': 'ephemeral', 'ttl': ttl})
+
+
+@pytest.mark.parametrize(
+    'model_name,supports_auto_cache',
+    [
+        # Every documented family, with and without a cross-region geo prefix and point-release suffix.
+        pytest.param('us.anthropic.claude-fable-5', True, id='fable-5'),
+        pytest.param('global.anthropic.claude-fable-5-1', True, id='fable-5-1'),
+        pytest.param('us.anthropic.claude-haiku-5-5', True, id='haiku-5-5'),
+        pytest.param('us.anthropic.claude-opus-4-7', True, id='opus-4-7'),
+        pytest.param('eu.anthropic.claude-opus-4-8', True, id='opus-4-8-eu'),
+        pytest.param('anthropic.claude-opus-4-8', True, id='opus-4-8-no-geo'),
+        pytest.param('us.anthropic.claude-opus-5', True, id='opus-5'),
+        pytest.param('global.anthropic.claude-opus-5-5', True, id='opus-5-5'),
+        pytest.param('us.anthropic.claude-sonnet-5', True, id='sonnet-5'),
+        pytest.param('apac.anthropic.claude-sonnet-5-5', True, id='sonnet-5-5-apac'),
+        # ARN-versioned models, verified live to reject top-level `cache_control` with a 400, plus older ones.
+        pytest.param('us.anthropic.claude-opus-4-6-v1', False, id='opus-4-6'),
+        pytest.param('global.anthropic.claude-opus-4-6-v1', False, id='opus-4-6-global'),
+        pytest.param('us.anthropic.claude-opus-4-5-20251101-v1:0', False, id='opus-4-5'),
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False, id='sonnet-4-5'),
+        pytest.param('anthropic.claude-opus-4-1-20250805-v1:0', False, id='opus-4-1'),
+        # Accepted it live, but undocumented, so deliberately left out.
+        pytest.param('us.anthropic.claude-sonnet-4-6', False, id='sonnet-4-6'),
+        pytest.param('us.anthropic.claude-haiku-4-5-20251001-v1:0', False, id='haiku-4-5'),
+    ],
+)
+def test_legacy_bedrock_automatic_caching_by_model(model_name: str, supports_auto_cache: bool):
+    """On the legacy Bedrock client, `supports_auto_cache` follows the documented model list."""
+    client = AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1')
+    model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+    assert model.profile.get('supports_auto_cache') is supports_auto_cache
