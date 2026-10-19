@@ -2980,7 +2980,8 @@ class ModelResponse:
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
     so a later request continues from this response only while the messages before it are unchanged.
-    Application-only `metadata` fields are left out, so changing them doesn't count as a change.
+    The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
+    the model, so they're left out, and changing them doesn't count as a change.
     Not sent to the model.
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history

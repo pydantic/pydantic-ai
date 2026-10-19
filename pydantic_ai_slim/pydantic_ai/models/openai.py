@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, assert_never, cast, get_args, overload
+from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -47,6 +47,7 @@ from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
+    BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
     CachePoint,
@@ -59,6 +60,7 @@ from ..messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
@@ -2370,21 +2372,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
-# Application-only fields, which are never sent to the model: they can hold values that don't serialize to JSON,
-# and changing them doesn't change what the server holds, so the history digest leaves them out.
-_HISTORY_DIGEST_EXCLUDE = {
-    '__all__': {
-        'metadata': True,
-        'parts': {'__all__': {'metadata': True, 'content': {'metadata': True, '__all__': {'metadata': True}}}},
-    }
-}
-
-
 def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
-    serialized = ModelMessagesTypeAdapter.dump_json(list(history), exclude=_HISTORY_DIGEST_EXCLUDE)
+    serialized = ModelMessagesTypeAdapter.dump_json([_without_application_metadata(message) for message in history])
     if key is None:
         return hashlib.sha256(serialized).hexdigest()
     return hmac.new(key, serialized, hashlib.sha256).hexdigest()
+
+
+def _without_application_metadata(message: ModelMessage) -> ModelMessage:
+    """`message` without the application-only `metadata` fields that are never sent to the model.
+
+    They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
+    They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
+    """
+    if isinstance(message, ModelRequest):
+        return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+    return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+
+
+_PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
+
+
+def _part_without_application_metadata(part: _PartT) -> _PartT:
+    if isinstance(part, BaseToolReturnPart):
+        return replace(part, metadata=None)
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
+        return replace(part, content=content)
+    return part
 
 
 def _with_history_digest(response: ModelResponse, history_digest: str | None) -> ModelResponse:

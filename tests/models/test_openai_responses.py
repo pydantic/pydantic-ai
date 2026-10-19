@@ -128,7 +128,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
-        _HISTORY_DIGEST_EXCLUDE,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
@@ -4862,6 +4861,49 @@ async def test_openai_previous_response_id_auto_ignores_application_only_metadat
     ]
 
 
+async def test_openai_previous_response_id_auto_resends_a_redacted_tool_result_metadata_key(
+    allow_model_requests: None,
+):
+    """A `metadata` key in a tool's return value is sent to the model, so redacting it changes the history."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'}),
+            _text_reply('resp_2', 'two'),
+            _text_reply('resp_3', 'three'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    agent = Agent(model, model_settings=settings)
+
+    @agent.tool_plain
+    def lookup() -> dict[str, str]:
+        return {'metadata': 'secret'}
+
+    first = await agent.run('Hello')
+
+    def redact_tool_results(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[
+                    replace(part, content={'metadata': '[redacted]'}) if isinstance(part, ToolReturnPart) else part
+                    for part in message.parts
+                ],
+            )
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(redact_tool_results)])
+    await redacting.run('What did the tool say?', message_history=first.all_messages())
+
+    third_request = get_mock_responses_kwargs(mock_client)[2]
+    assert 'previous_response_id' not in third_request
+    assert 'secret' not in json.dumps(third_request['input'])
+
+
 async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
     """With a key the digest is an HMAC, and a model with another key resends rather than continuing."""
     mock_client = MockOpenAIResponses.create_mock(
@@ -4876,9 +4918,7 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     assert isinstance(response, ModelResponse)
     assert (
         response.history_digest
-        == hmac.new(
-            b'secret', ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE), hashlib.sha256
-        ).hexdigest()
+        == hmac.new(b'secret', ModelMessagesTypeAdapter.dump_json([request]), hashlib.sha256).hexdigest()
     )
 
     await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
@@ -4951,10 +4991,7 @@ async def test_openai_previous_response_id_records_the_history_on_a_streamed_res
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert (
-        response.history_digest
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE)).hexdigest()
-    )
+    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
 
 
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
@@ -17027,10 +17064,7 @@ async def test_background_response_keeps_its_history_across_the_resume(allow_mod
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert (
-        response.history_digest
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE)).hexdigest()
-    )
+    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
