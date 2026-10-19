@@ -110,7 +110,15 @@ integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 r
 
 .PHONY: integration-kubernetes
 integration-kubernetes: ## Run the harness Kubernetes sandbox tests against real sandboxd (`GOBIN=$$PWD/.bin go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7`, then set SANDBOXD_BIN)
-	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_sandboxd.py
+
+# The cluster's credentials go to their own file, even when KUBECONFIG is set, so the current kubectl context is never touched.
+KUBERNETES_LIVE_KUBECONFIG ?= $(HOME)/.kube/pydantic-ai-live
+
+.PHONY: integration-kubernetes-cluster
+integration-kubernetes-cluster: ## Run the harness Kubernetes sandbox tests on a kind cluster it creates or reuses (needs Docker, kind and kubectl; delete it with `kind delete cluster --name pydantic-ai-live`)
+	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" src/pydantic_ai_harness/integration_tests/kubernetes/cluster/up.sh
+	KUBECONFIG="$(KUBERNETES_LIVE_KUBECONFIG)" uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes/test_live_cluster.py
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples
