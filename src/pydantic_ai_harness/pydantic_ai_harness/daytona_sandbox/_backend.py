@@ -106,6 +106,8 @@ _REQUEST_TIMEOUT = 30
 _LIFECYCLE_TIMEOUT = 60.0
 # Bound cleanup RPCs so teardown cannot wedge the caller.
 _TEARDOWN_TIMEOUT = 30.0
+# Bound the wait for the SDK's event connection to settle before its client is closed.
+_EVENT_CONNECT_GRACE = 6.0
 # Pause between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream, read from the output files.
@@ -166,7 +168,7 @@ async def destroy_sandbox(client: AsyncDaytona | None, sandbox_id: str) -> None:
         if owned is not None:
             # Deleting a sandbox must release the API client even if deletion is cancelled.
             with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True):
-                await owned.close()
+                await _close_sdk_client(owned)
 
 
 async def _delete_session(process: AsyncProcess, session_id: str) -> None:
@@ -405,7 +407,7 @@ async def _close_quietly(client: AsyncDaytona) -> bool:
     """
     with anyio.move_on_after(_TEARDOWN_TIMEOUT, shield=True) as deadline:
         try:
-            await client.close()
+            await _close_sdk_client(client)
         except Exception:
             _logger.warning('Could not close the Daytona API client.', exc_info=True)
             return False
@@ -413,6 +415,35 @@ async def _close_quietly(client: AsyncDaytona) -> bool:
         _logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
         return False
     return True
+
+
+async def _close_sdk_client(client: AsyncDaytona) -> None:
+    """Close an SDK client and its event transport even after a failed socket handshake."""
+    # SDK 0.198.0 cancels its event connect task in close() without joining it.
+    # If it has opened engineio's aiohttp session, disconnect cannot close it yet.
+    # These are private SDK attributes; if a release renames them, fall back to a plain close.
+    dispatcher = getattr(client, '_event_dispatcher', None)
+    if dispatcher is not None and (connecting := getattr(dispatcher, '_connect_task', None)) is not None:
+        with anyio.move_on_after(_EVENT_CONNECT_GRACE, shield=True) as connect_deadline:
+            try:
+                # This is an asyncio-only SDK task; do not cancel it on our grace timeout.
+                await asyncio.shield(connecting)
+            except Exception:
+                pass  # A failed connection still needs the normal SDK close.
+            except asyncio.CancelledError:
+                # A connection the SDK already cancelled still needs the normal SDK close.
+                if not connecting.cancelled():
+                    raise
+        if connect_deadline.cancelled_caught:
+            _logger.warning('Daytona event connection did not settle before client close.')
+    sio = getattr(dispatcher, '_sio', None)
+    try:
+        await client.close()
+    finally:
+        if (eio := getattr(sio, 'eio', None)) is not None:
+            # On a failed socket handshake socketio.disconnect() skips engineio's
+            # aiohttp session; explicitly disconnect the underlying transport.
+            await eio.disconnect()
 
 
 class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsRealpath):
