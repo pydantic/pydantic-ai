@@ -20,6 +20,9 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
+
+from pydantic_ai.messages import ModelResponse, SpeechPart
 
 from ...conftest import try_import
 
@@ -1247,6 +1250,40 @@ def test_baseline_openai_barge_in_and_reconnect() -> None:
         sim.finish()
 
     run_clean(OpenAISimulation(), scenario)
+
+
+def test_baseline_openai_barge_in_after_the_reply_finished_and_reconnect() -> None:
+    """Generation outruns playback: the user cuts off a reply that already finished, which history records as cut
+    off, and a reconnect replays it marked as such rather than as heard in full."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak(chunks=3)
+        sim.finish()
+        sim.settle()
+        sim.play(chunks=2)
+        sim.interrupt(mode='played_bytes')
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        session = sim.session
+        assert session is not None
+        cuts.extend(
+            (message.state, [part.interrupted_at_ms for part in message.parts if isinstance(part, SpeechPart)])
+            for message in session.all_messages()
+            if isinstance(message, ModelResponse)
+        )
+        truncations.extend(sim.truth.truncations)
+
+    cuts: list[tuple[str, list[int | None]]] = []
+    truncations: list[tuple[str, int]] = []
+    run_clean(OpenAISimulation(), scenario)
+    assert truncations == snapshot([('item_msg_2', 100)])
+    assert cuts == snapshot([('interrupted', [100]), ('complete', [None])])
 
 
 def test_baseline_openai_manual_turns() -> None:

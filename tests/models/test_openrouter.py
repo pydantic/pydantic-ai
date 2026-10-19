@@ -1111,7 +1111,6 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                     allowed_domains=['pydantic.dev'],
                     blocked_domains=['example.com'],
                     max_uses=2,
-                    external_web_access=False,
                 )
             )
         ],

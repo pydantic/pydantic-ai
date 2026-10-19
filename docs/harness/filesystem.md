@@ -65,7 +65,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -268,8 +268,15 @@ applies the same rule to absolute symlink targets.
 - **Bounded walks.** `search_files` and `find_files` stop after 10,000
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
-- **Binary detection.** `read_file` returns a placeholder instead of dumping
-  binary bytes into the model context.
+- **Binary detection.** `read_file` does not decode binary bytes into the model
+  context. It returns an image (PNG, JPEG, GIF, WebP) or PDF as `BinaryContent`,
+  recognized by its leading bytes rather than its extension, which Pydantic AI
+  sends [inside the tool result or on the user channel](../tools-advanced.md#tool-return-file-provenance)
+  depending on the model. If the model can't take that kind of file (an image on
+  a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
+  the next request, which ends the run
+  ([input support by model](../input.md)). A file over 5 MB, the strictest
+  mainstream per-image limit, is described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.
@@ -416,7 +423,7 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect. [Durable execution](durable-execution.md) shows an example for each engine and which file events Temporal delivers live.
+`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Further reading
 
