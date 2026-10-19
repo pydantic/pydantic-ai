@@ -344,12 +344,12 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 `docker` CLI (`executable='podman'` works). No extra, no SDK.
 
 - The first operation runs `docker run --detach --init --entrypoint sh <image>`; the image needs a POSIX
-  `sh`. Pulling is not bounded by a command's `timeout`.
+  `sh`. Creating the container (and pulling) is not bounded by a command's `timeout`.
 - The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching runs `docker start`, so a
   stopped container comes back. The container outlives the run: `await DockerSandbox(...).destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
 - Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
-  adds `--network none`. `docker_args` come after the defaults, so a `--network` there wins (`['--memory', '2g']`,
+  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`: `['--memory', '2g']`,
   `['--volume', f'{project}:/workspace']` to work on a host directory).
 - A background child holding stdout/stderr open keeps `run()` waiting (`docker exec` waits for the
   output): redirect it.

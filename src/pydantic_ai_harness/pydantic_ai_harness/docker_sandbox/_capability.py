@@ -62,7 +62,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
     def _backend(self, *, ref: WorkspaceRef | None) -> DockerSandboxBackend:
         return DockerSandboxBackend(
-            None if ref is not None else self.image,
+            image=None if ref is not None else self.image,
             ref=ref,
             working_dir=self.working_dir,
             env=self.env,

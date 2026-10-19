@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-# `missing-image` fails to pull, `flaky-image` fails only its first pull, and `--fake-hang` makes `run` hang so a
-# create can be cancelled.
+# `missing-image` fails to pull, `flaky-image` fails only its first pull, `unstartable-image` creates a container
+# that fails to start, and `--fake-hang` makes the first `run` hang so a create can be cancelled.
 _FAKE_DOCKER = """#!/bin/sh
 bin=$(dirname "$0")
 state="$bin/containers"
@@ -28,7 +28,7 @@ run)
         --workdir) workdir=$2; shift ;;
         --label) label=$2; shift ;;
         --entrypoint | --network | --memory) shift ;;
-        --fake-hang) sleep 30 ;;
+        --fake-hang) [ -e "$bin/hung" ] || { touch "$bin/hung"; sleep 30; } ;;
         esac
         shift
     done
@@ -42,14 +42,22 @@ run)
         echo 'docker: Error response from daemon: pull access denied for missing-image.' >&2
         exit 125
     fi
+    if [ -f "$state/$name" ]; then
+        echo "docker: Error response from daemon: Conflict. The container name \"/$name\" is already in use." >&2
+        exit 125
+    fi
     mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" || exit 1
     [ "$label" != ai.pydantic.workspace=true ] || touch "$state/$name.labeled"
+    if [ "$2" = unstartable-image ]; then
+        echo 'docker: Error response from daemon: port is already allocated.' >&2
+        exit 125
+    fi
     touch "$state/$name.running"
     echo "$name"
     ;;
 inspect)
-    # Always `inspect --type container --format TEMPLATE -- NAME`.
-    name=$6
+    # `inspect --type container [--format TEMPLATE] -- NAME`: the name is the last argument.
+    for name; do :; done
     [ -f "$state/$name" ] || { echo "Error: No such container: $name" >&2; exit 1; }
     [ "$name" != uninspectable ] || { echo 'permission denied while trying to connect to the daemon' >&2; exit 1; }
     if [ -f "$state/$name.labeled" ]; then label=true; else label='<no value>'; fi

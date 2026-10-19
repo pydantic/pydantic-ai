@@ -35,7 +35,7 @@ agent = Agent(
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
-`Coder`'s shell and file tools now run in a fresh container from `python:3.13-slim`, in `/workspace`. For a single run, pass `workspace=DockerSandboxBackend('python:3.13-slim')` (also imported from `pydantic_ai_harness`) to `agent.run` instead.
+`Coder`'s shell and file tools now run in a fresh container from `python:3.13-slim`, in `/workspace`. For a single run, pass `workspace=DockerSandboxBackend(image='python:3.13-slim')` (also imported from `pydantic_ai_harness`) to `agent.run` instead.
 
 ## Working on a project
 
@@ -54,11 +54,11 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine the commands can change. `allow_internet_access=False` runs the container with `--network none`. By default it is on Docker's default bridge, which reaches the internet, but also your local network and services on this machine. A `--network` in `docker_args` replaces either. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
+The mount is the only part of your machine the commands can change. `allow_internet_access=False` runs the container with `--network none`. By default it is on Docker's default bridge, which reaches the internet, but also your local network and services on this machine. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`: Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
 
 ## How commands run
 
-The first operation runs `docker run --detach --init --entrypoint sh <image>` with a keep-alive loop, so the image needs a POSIX `sh` and the usual file utilities. Every command is a `docker exec` into that container, and file operations run as shell commands there. Pulling the image is not bounded by a command's `timeout`. Reading or writing a file takes one `docker exec` per 64 KiB, so mount a directory with `docker_args` for large data.
+The first operation runs `docker run --detach --init --entrypoint sh <image>` with a keep-alive loop, so the image needs a POSIX `sh` and the usual file utilities. Every command is a `docker exec` into that container, and file operations run as shell commands there. Creating or starting the container, including pulling the image, is not bounded by a command's `timeout`. Reading or writing a file takes one `docker exec` per 64 KiB, so mount a directory with `docker_args` for large data.
 
 A container that can't be created or started, or that stops mid-command, raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is one `docker` also uses for its own errors.
 
@@ -83,11 +83,11 @@ async def remove_sandbox(ref: WorkspaceRef) -> None:  # for example `result.work
     await DockerSandbox('python:3.13-slim').destroy(ref)
 ```
 
-Containers the capability created carry the label `ai.pydantic.workspace=true`, so `docker ps --all --filter label=ai.pydantic.workspace=true` finds any you've lost track of. Attaching to a ref and `destroy` both check that label first and refuse any other container, because a ref can come from stored message history and the Docker daemon serves every container on your machine.
+Containers the capability created carry the label `ai.pydantic.workspace=true`, so `docker ps --all --filter label=ai.pydantic.workspace=true` finds any you've lost track of. Attaching to a ref and `destroy` both check that label first and refuse a container without it, because a ref can come from stored message history and the Docker daemon serves every container on your machine.
 
 ## Security
 
-A container shares your machine's kernel, so it is a weaker boundary than a VM such as [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Commands run as the image's user, usually `root` inside the container. Don't mount the Docker socket or directories holding secrets, and add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
+A container shares your machine's kernel, so it is a weaker boundary than a VM such as [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Commands run as the image's user, usually `root` inside the container. Don't mount the Docker socket or directories holding secrets, and add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. Docker creates a missing `working_dir` owned by `root`, so with `--user`, point `working_dir` at a directory that user can write, such as a mount. With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
 
 `env=` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine. `env=` is kept out of the capability's `repr`.
 
@@ -97,7 +97,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | --- | --- |
 | `image` | Image for a new container. It needs a POSIX `sh` and the usual file utilities. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created in a new container if missing. Default: `/workspace`. |
-| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container, and `env` is kept out of the capability's `repr`. |
+| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container, except the proxy settings Docker itself adds to every new container from `~/.docker/config.json`, and `env` is kept out of the capability's `repr`. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`. Default: `'docker'`. |

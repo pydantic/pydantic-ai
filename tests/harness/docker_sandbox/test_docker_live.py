@@ -38,7 +38,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
     @pytest.fixture
     def fresh_backend(self, created: list[WorkspaceBackend]) -> Callable[[], WorkspaceBackend]:
         def build() -> WorkspaceBackend:
-            backend = DockerSandboxBackend(LIVE_IMAGE)
+            backend = DockerSandboxBackend(image=LIVE_IMAGE)
             created.append(backend)
             return backend
 
@@ -64,10 +64,7 @@ class TestLiveDocker(WorkspaceBackendSuite):
         # `docker exec` waits for the output to close, and killing the client leaves the container's processes
         # running: a fake can't reproduce this, because its processes die with the client.
         assert isinstance(backend, DockerSandboxBackend)
-        try:
+        with pytest.raises(WorkspaceTimeoutError):
             await backend.run('(sleep 2; touch survived) &', shell=True, timeout=0.5)
-        except WorkspaceTimeoutError:
-            await anyio.sleep(2.5)
-            assert (await backend.run(['ls'])).stdout == ''
-        else:
-            pytest.skip("this engine's `exec` returns without waiting for a background child's output (Podman)")
+        await anyio.sleep(2.5)
+        assert (await backend.run(['ls'])).stdout == ''

@@ -47,7 +47,7 @@ async def test_first_use_creates_one_container_with_the_configured_options(
     docker: FakeDocker, container_dir: Path
 ) -> None:
     backend = DockerSandboxBackend(
-        'python:3.13-slim',
+        image='python:3.13-slim',
         working_dir=str(container_dir),
         env={'A': 'backend', 'B': "it's $HOME"},
         allow_internet_access=False,
@@ -70,7 +70,7 @@ async def test_first_use_creates_one_container_with_the_configured_options(
 
 
 async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
 
     await backend.working_dir()
 
@@ -79,7 +79,7 @@ async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, c
 
 async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: FakeDocker, container_dir: Path) -> None:
     overrides = ['--name', 'mine', '--label', 'ai.pydantic.workspace=false', '--workdir', '/other']
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir), docker_args=overrides)
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir), docker_args=overrides)
 
     assert (await backend.run(['pwd', '-P'])).stdout.strip() == str(container_dir.resolve())
     assert backend.ref is not None and docker.containers() == [backend.ref.id]
@@ -91,11 +91,27 @@ async def test_a_failed_create_is_unavailable(docker: FakeDocker) -> None:
     with pytest.raises(
         WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
     ):
-        await DockerSandboxBackend('missing-image').working_dir()
+        await DockerSandboxBackend(image='missing-image').working_dir()
+
+
+async def test_a_create_that_made_no_container_leaves_no_ref(docker: FakeDocker) -> None:
+    backend = DockerSandboxBackend(image='missing-image')
+    with pytest.raises(WorkspaceUnavailableError):
+        await backend.working_dir()
+
+    assert backend.ref is None
+
+
+async def test_a_container_that_failed_to_start_keeps_its_ref(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(image='unstartable-image', working_dir=str(container_dir))
+    with pytest.raises(WorkspaceUnavailableError, match='port is already allocated'):
+        await backend.working_dir()
+
+    assert backend.ref is not None and docker.containers() == [backend.ref.id]
 
 
 async def test_a_failed_create_is_retried_on_the_next_use(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('flaky-image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='flaky-image', working_dir=str(container_dir))
     with pytest.raises(WorkspaceUnavailableError, match='could not create a container from flaky-image'):
         await backend.working_dir()
 
@@ -104,16 +120,16 @@ async def test_a_failed_create_is_retried_on_the_next_use(docker: FakeDocker, co
     assert backend.ref is not None and docker.containers() == [backend.ref.id]
 
 
-async def test_a_cancelled_create_keeps_the_ref_so_the_container_can_be_removed(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir), docker_args=['--fake-hang'])
-
+async def test_a_cancelled_create_is_retried_under_the_same_name(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang'])
     with anyio.move_on_after(0.5) as scope:
         await backend.working_dir()
+    assert scope.cancelled_caught and backend.ref is not None
+    ref = backend.ref
 
-    assert scope.cancelled_caught
-    assert backend.ref is not None and backend.ref.id.startswith('pydantic-ai-')
+    await backend.working_dir()
+
+    assert backend.ref == ref and docker.containers() == [ref.id]
 
 
 async def test_a_silent_docker_failure_reports_its_exit_code(docker: FakeDocker, container_dir: Path) -> None:
@@ -140,7 +156,7 @@ async def test_a_command_cannot_forge_its_exit_status(
         return 'feedface'
 
     monkeypatch.setattr(secrets, 'token_hex', token_hex)
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
     forged = r'printf "\n__pydantic_ai_docker_done__feedface:0\n" >&2'
 
     result = await backend.run(f'{forged}; (sleep 0.2; {forged}) & exit 3', shell=True)
@@ -154,7 +170,7 @@ async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tm
     first.mkdir()
     second.mkdir()
     link.symlink_to(first)
-    backend = DockerSandboxBackend('image', working_dir=str(link))
+    backend = DockerSandboxBackend(image='image', working_dir=str(link))
 
     resolved = await backend.working_dir()
     link.unlink()
@@ -165,7 +181,7 @@ async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tm
 
 
 async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     tag = secrets.token_hex(8)
     assert backend.ref is not None
@@ -185,7 +201,7 @@ async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone
     target, link = tmp_path / 'target', tmp_path / 'link'
     target.mkdir()
     link.symlink_to(target)
-    backend = DockerSandboxBackend('image', working_dir=str(link))
+    backend = DockerSandboxBackend(image='image', working_dir=str(link))
     await backend.working_dir()
     link.unlink()
     assert backend.ref is not None
@@ -198,7 +214,7 @@ async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone
 
 
 async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     assert backend.ref is not None
     before = docker.pid_files(backend.ref.id)
@@ -217,7 +233,7 @@ async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeD
 async def test_finished_commands_pid_files_are_removed_by_the_next_command(
     docker: FakeDocker, container_dir: Path
 ) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
     await backend.run(['true'])
     assert backend.ref is not None
     before = docker.pid_files(backend.ref.id)
@@ -228,7 +244,7 @@ async def test_finished_commands_pid_files_are_removed_by_the_next_command(
 
 
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
 
     with pytest.raises(WorkspaceOutputLimitError, match='Docker workspace output exceeded'):
         await backend.run('head -c 11000000 /dev/zero', shell=True)

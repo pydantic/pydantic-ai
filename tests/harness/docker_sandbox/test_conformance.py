@@ -35,11 +35,11 @@ class TestFakeDocker(WorkspaceBackendSuite):
 
     @pytest.fixture
     def backend(self, working_dir: str) -> WorkspaceBackend:
-        return DockerSandboxBackend('fake-image', working_dir=working_dir)
+        return DockerSandboxBackend(image='fake-image', working_dir=working_dir)
 
     @pytest.fixture
     def fresh_backend(self, working_dir: str) -> Callable[[], WorkspaceBackend]:
-        return lambda: DockerSandboxBackend('fake-image', working_dir=working_dir)
+        return lambda: DockerSandboxBackend(image='fake-image', working_dir=working_dir)
 
     @pytest.fixture
     def attach_backend(self, working_dir: str) -> Callable[[WorkspaceRef], WorkspaceBackend]:

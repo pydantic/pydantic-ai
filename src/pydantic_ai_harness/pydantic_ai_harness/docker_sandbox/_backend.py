@@ -104,6 +104,7 @@ _CLIENT_ENV = (
     'DOCKER_CONFIG',
     'DOCKER_CERT_PATH',
     'DOCKER_TLS_VERIFY',
+    'SSH_AUTH_SOCK',
     'CONTAINER_HOST',
     'CONTAINERS_CONF',
     'XDG_RUNTIME_DIR',
@@ -183,15 +184,15 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
-            `['--volume', f'{project}:/workspace']`. They can override defaults like `--network`, but not the
-            container's name, workspace label, working directory or entrypoint, which the backend relies on.
+            `['--volume', f'{project}:/workspace']`. Pass `--network` only with `allow_internet_access=True`. They
+            can't override the container's name, workspace label, working directory or entrypoint, which the backend relies on.
         executable: The container CLI to run, such as `'podman'`.
     """
 
     def __init__(
         self,
-        image: str | None = None,
         *,
+        image: str | None = None,
         ref: WorkspaceRef | None = None,
         working_dir: str = '/workspace',
         env: Mapping[str, str] | None = None,
@@ -219,7 +220,6 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._runner = _runner()
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
-        self._create_failed = False
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -249,7 +249,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _create(self) -> None:
         assert self._image is not None
-        name = f'pydantic-ai-{secrets.token_hex(6)}'
+        if self._ref is None:
+            # Set before `docker run`: the daemon may create the container even if the client is cancelled,
+            # and whoever holds the ref can then remove it.
+            self._ref = WorkspaceRef(provider=PROVIDER, id=f'pydantic-ai-{secrets.token_hex(6)}')
         argv = [
             self._executable,
             'run',
@@ -259,7 +262,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             *self._docker_args,
             # After `docker_args`, whose later values would otherwise win: the backend relies on these.
             '--name',
-            name,
+            self._name,
             '--label',
             f'{_LABEL}=true',
             '--workdir',
@@ -271,24 +274,21 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             '-c',
             _KEEPALIVE,
         ]
-        try:
-            result = await self._runner.run(argv)
-        except BaseException:
-            # The daemon may have created the container before the client was stopped: keep its name so
-            # whoever holds the ref can remove it.
-            self._ref = WorkspaceRef(provider=PROVIDER, id=name)
-            self._create_failed = False
-            raise
-        self._ref = WorkspaceRef(provider=PROVIDER, id=name)
-        self._create_failed = result.exit_code != 0
-        if self._create_failed:
-            raise WorkspaceUnavailableError(f'could not create a container from {self._image}: {result.stderr.strip()}')
+        result = await self._runner.run(argv)
+        if result.exit_code != 0:
+            error = f'could not create a container from {self._image}: {result.stderr.strip()}'
+            # Keep the ref only for a container that exists but didn't start, so it isn't recorded for a later run
+            # that would find nothing: the next use then creates a fresh one.
+            inspected = await self._runner.run([self._executable, 'inspect', '--type', 'container', '--', self._name])
+            if inspected.exit_code != 0:
+                self._ref = None
+            raise WorkspaceUnavailableError(error)
 
     async def _start(self) -> None:
         state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
-        if state == 'missing' and self._create_failed:
-            # The earlier `docker run` finished without creating the container: try again. After a cancelled
-            # one the daemon may still be creating it, so that ref stays as it is.
+        if state == 'missing' and self._image is not None:
+            # This backend's `docker run` was cancelled before the container existed: run it again under the same
+            # name, which Docker refuses if the first one created it after all.
             await self._create()
             return
         if state == 'missing':
