@@ -3,17 +3,18 @@
 `WebClient` makes the page's calls: the state, a prompt or `/command`, an interrupt, a saved session's
 transcript, and answers to questions and dialogs, plus the WebSocket stream of `ServerMessage`s.
 `SessionView` follows that stream as the page does, keeping the transcript's items, whether a turn runs,
-and what is asked, so a caller can wait for a turn to end.
+and what is asked, so a caller can wait for a turn to end. It follows any `SessionClient`: `WebClient`, or
+`local_client.LocalClient` for a session of this CLAI.
 
 The token goes in a header for API calls and in the WebSocket's query, with the server's own address as
 the `Host` and `Origin`, as `app.Guard` requires. Nothing here prints or logs it.
 """
 
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Literal, Self
+from typing import Literal, Protocol, Self
 from urllib.parse import urlsplit
 
 import anyio
@@ -160,6 +161,30 @@ def _answer(answer: AskUserAnswer) -> Answer:
     return Answer(header=answer.header, selected=list(answer.selected))
 
 
+class SessionClient(Protocol):
+    """What `SessionView` drives a session through: the calls a page makes, and the messages it receives."""
+
+    async def send(self, text: str) -> None:
+        """Enter a prompt or `/command`; it queues behind a running turn."""
+        ...
+
+    async def interrupt(self) -> bool:
+        """Cancel the running turn; whether something was running."""
+        ...
+
+    async def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
+        """Answer an open question request, or decline it with `None`."""
+        ...
+
+    async def answer_dialog(self, dialog_id: str, value: str | None) -> None:
+        """Answer an open dialog; `None` backs out."""
+        ...
+
+    def messages(self) -> AbstractAsyncContextManager[AsyncIterator[ServerMessage]]:
+        """The session's messages, a `Snapshot` first; iteration ends when the connection closes."""
+        ...
+
+
 WaitOutcome = Literal['idle', 'asking', 'timeout', 'closed']
 """What `SessionView.wait` stopped for: no turn runs or is queued, a question or dialog waits for an answer,
 the time ran out, or the connection ended."""
@@ -174,7 +199,7 @@ class _Sent:
 
 
 class SessionView:
-    """One CLAI's session as its page follows it, kept current by `follow` from the WebSocket.
+    """One CLAI's session as its page follows it, kept current by `follow` from the client's messages.
 
     Prompts and commands sent through `send` count as queued until their turn starts or the command ends,
     so `wait` right after `send` waits for that turn, not for a session that has not started it yet. The
@@ -182,7 +207,7 @@ class SessionView:
     command sent while another page edits plugins may count as ended early.
     """
 
-    def __init__(self, client: WebClient) -> None:
+    def __init__(self, client: SessionClient) -> None:
         self.client = client
         self.session: SessionInfo | None = None
         self.running = False

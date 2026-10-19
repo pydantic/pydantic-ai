@@ -1,7 +1,8 @@
 """The orchestrator: an agent of its own in the web UI, which runs workspaces for the user.
 
 It has its own conversation and only the tools in `workspace_tools` and `session_tools`, plus
-`ask_user_question`, answered in its own chat. The session's agent gets none of them. Its conversation
+`ask_user_question`, answered in its own chat. The session's agent gets none of them. The sessions it
+starts in workspaces are live sessions of this CLAI, listed in the sidebar like any other. Its conversation
 is one JSON file in CLAI's state directory, so it survives a reload and a restart, and never shows
 among the saved sessions.
 """
@@ -40,10 +41,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     history_items,
     usage_info,
 )
+from pydantic_clai2.builtin_plugins.workspaces import configured
 from pydantic_clai2.config.settings_store import state_dir
-from pydantic_clai2.plugins import PluginHost, TurnOutcome
+from pydantic_clai2.plugins import TurnOutcome
 
 if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.web.service import WebService
     from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
 HISTORY = 'orchestrator.json'
@@ -51,9 +54,9 @@ HISTORY = 'orchestrator.json'
 
 INSTRUCTIONS = """\
 You are CLAI's orchestrator. You manage workspaces: checkouts of a repository on their own branch, each \
-with its own CLAI session that you give tasks to. Create them, give their agents tasks, watch them, steer \
+with a CLAI session of its own that you give tasks to. Create them, give their agents tasks, watch them, steer \
 them, and report back to the user what they did. `workspace_list` shows the workspaces and the kinds you \
-can make; `workspace_create` makes one (it does not start anything); `session_start` starts its CLAI with \
+can make; `workspace_create` makes one (it does not start anything); `session_start` starts its session with \
 a prompt; `session_wait` waits for the turn to end or for a question; `session_read` shows the latest \
 items; `session_send` steers it with another prompt; `session_answer` answers its questions; \
 `session_interrupt` stops a turn. Ask the user with `ask_user_question` when a choice is theirs. Never \
@@ -112,9 +115,10 @@ def write_saved(path: Path, messages: list[ModelMessage], *, revision: str | Non
 class Orchestrator:
     """The orchestrator chat every connected browser shares: one conversation, one turn at a time."""
 
-    def __init__(self, *, host: PluginHost[None], publish: Callable[[ServerMessage], None]) -> None:
-        self.host = host
-        self._publish = publish
+    def __init__(self, *, service: 'WebService') -> None:
+        self.service = service
+        self.host = service.host
+        self._publish: Callable[[ServerMessage], None] = service.hub.publish
         self.answerer = BrowserAnswerer(publish=lambda message, _session: self._send(message), terminal=None)
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
@@ -148,9 +152,6 @@ class Orchestrator:
 
     def enabled(self) -> bool:
         """Whether the `workspaces` plugin is on, which the orchestrator's tools work over."""
-        # Imported here: the `workspaces` plugin imports this package for the token header.
-        from pydantic_clai2.builtin_plugins.workspaces import configured
-
         return configured(self.host.plugins) is not None
 
     async def state(self) -> OrchestratorState:
@@ -183,7 +184,7 @@ class Orchestrator:
             from pydantic_clai2.builtin_plugins.web import session_tools
             from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
-            self._tools = WorkspaceTools(self.host)
+            self._tools = WorkspaceTools(self.service)
             sessions = session_tools.SessionTools(self.host, publish=self._publish)
             self._agent = Agent(
                 name='orchestrator',
@@ -287,7 +288,7 @@ class Orchestrator:
         self._send(await self.state())
 
     async def close(self) -> None:
-        """Stop a running turn and disconnect from the workspaces; their CLAIs keep running."""
+        """Stop a running turn and stop following the workspaces' sessions."""
         task = self._task
         if task is not None and self.interrupt():
             await asyncio.gather(task, return_exceptions=True)

@@ -1,42 +1,55 @@
-"""The sidebar's Workspaces section: the `workspaces` plugin's registry, and opening a workspace's own page.
+"""Workspaces in this CLAI's web UI: the session the orchestrator runs in each, and their checkouts in the sidebar.
 
-Only this page, which has its own token, gets a workspace's token: in the address `open` returns.
+A workspace's session is a live session of this CLAI in its checkout, as one started with New session there
+is, so the sidebar lists it under its repository, by branch. Its conversation is kept in the workspace's
+record, so it opens again after it closed for being idle or CLAI restarted.
 """
 
-from pydantic_clai2.builtin_plugins.web.protocol import WorkspaceOpened, WorkspaceRow, WorkspacesInfo
+from typing import TYPE_CHECKING
+
+from pydantic_clai2.builtin_plugins.web.channel import SessionChannel
+from pydantic_clai2.builtin_plugins.workspaces import Workspaces, configured
 from pydantic_clai2.plugins import PluginCatalog
 
+if TYPE_CHECKING:
+    from pydantic_clai2.builtin_plugins.web.service import WebService
 
-async def listing(plugins: PluginCatalog | None) -> WorkspacesInfo:
-    """Every workspace while the `workspaces` plugin is on, with each one's status checked now."""
-    # Imported here: the `workspaces` plugin imports this package for the token header.
-    from pydantic_clai2.builtin_plugins.workspaces import configured
 
+def enabled(plugins: PluginCatalog | None) -> Workspaces:
+    """The configured workspaces; `RuntimeError` while the `workspaces` plugin is off."""
     workspaces = configured(plugins)
     if workspaces is None:
-        return WorkspacesInfo(enabled=False, workspaces=[])
-    rows = [
-        WorkspaceRow(
-            id=workspace.id,
-            kind=workspace.kind,
-            repo=workspace.repo,
-            branch=workspace.branch,
-            path=str(workspace.path),
-            status=workspace.status,
-            url=workspace.session.url if workspace.status == 'running' and workspace.session else None,
-        )
-        for workspace in await workspaces.listing()
-    ]
-    return WorkspacesInfo(enabled=True, workspaces=rows)
+        raise RuntimeError('The `workspaces` plugin is off. Ask the user to turn it on.')
+    return workspaces
 
 
-async def open_workspace(plugins: PluginCatalog | None, workspace_id: str) -> WorkspaceOpened:
-    """Start the workspace's CLAI unless it runs, and return its page's address with its token."""
-    from pydantic_clai2.builtin_plugins.workspaces import configured
+async def workspace_session(service: 'WebService', workspace_id: str, *, start: bool) -> SessionChannel:
+    """The live session the orchestrator runs in the workspace, opened again if need be.
 
+    With `start`, a workspace without one, or whose session was never saved or is deleted, gets a new one
+    in its checkout; without, that is a `RuntimeError`. `ValueError` when the checkout is gone.
+    """
+    workspaces = enabled(service.host.plugins)
+    workspace = await workspaces.get(workspace_id)
+    if workspace.conversation is not None:
+        try:
+            return service.channel(await service.live.open(workspace.conversation))
+        except LookupError:
+            pass
+    if not start:
+        raise RuntimeError(f'Workspace {workspace_id} has no session yet. Start one with `session_start`.')
+    session = await service.live.new(workspace=workspace.path)
+    await workspaces.attach(workspace_id, session.conversation.conversation_id)
+    return service.channel(session)
+
+
+async def open_workspace(service: 'WebService', workspace_id: str) -> str:
+    """Make the workspace's session live, starting one if it has none, for the page to show; its conversation ID."""
+    channel = await workspace_session(service, workspace_id, start=True)
+    return service.choose(channel.session)
+
+
+async def checkouts(plugins: PluginCatalog | None) -> list[str]:
+    """The folders of the workspaces, which the sidebar lists under their repository before any session runs there."""
     workspaces = configured(plugins)
-    if workspaces is None:
-        raise LookupError('The `workspaces` plugin is off.')
-    workspace = await workspaces.start(workspace_id)
-    assert workspace.session is not None, 'a started workspace has a session'
-    return WorkspaceOpened(url=f'{workspace.session.url}?token={await workspaces.token(workspace_id)}')
+    return [] if workspaces is None else [str(workspace.path) for workspace in await workspaces.listing()]

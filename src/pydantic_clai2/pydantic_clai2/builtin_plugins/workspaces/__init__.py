@@ -1,14 +1,14 @@
-"""Workspaces: checkouts of a repository, each with its own CLAI, made, opened, and destroyed with /workspaces.
+"""Workspaces: checkouts of a repository on their own branch, made, listed, and destroyed with /workspaces.
 
 The built-in `workspaces` plugin, off by default. Its settings are the kinds of workspace there are: named
 profiles of a backend with its options. This release has one backend, `local-worktree`, a Git worktree on
-this machine whose CLAI runs as you with your own settings and sign-ins, so nothing is copied into it.
+this machine. A workspace's sessions run in the CLAI that opens them, in its checkout, as any other session
+does, so the web UI's sidebar lists them under their repository, by branch.
 
-The live workspaces are kept in a registry in CLAI's state directory, so every CLAI lists the same ones;
+The workspaces are kept in a registry in CLAI's state directory, so every CLAI lists the same ones;
 see `registry`. `Workspaces` in `manager` is what `/workspaces` and the web UI's orchestrator call.
 """
 
-import html
 from collections.abc import Iterable, Sequence
 
 from anyio import to_thread
@@ -21,23 +21,15 @@ from pydantic_clai2.builtin_plugins.workspaces.kinds import (
     WorktreeKind,
 )
 from pydantic_clai2.builtin_plugins.workspaces.manager import Workspaces
-from pydantic_clai2.builtin_plugins.workspaces.registry import (
-    SessionProcess,
-    Workspace,
-    WorkspaceStatus,
-    write_private,
-)
+from pydantic_clai2.builtin_plugins.workspaces.registry import Workspace
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import Plugin, PluginCatalog, PluginHost
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
-from pydantic_clai2.ui.browser import open_browser
 
 __all__ = (
     'KindName',
-    'SessionProcess',
     'Teardown',
     'Workspace',
-    'WorkspaceStatus',
     'Workspaces',
     'WorkspacesPlugin',
     'WorkspacesSettings',
@@ -48,8 +40,8 @@ __all__ = (
 
 NAME = 'workspaces'
 """The plugin's id, as `/plugins` lists it."""
-USAGE = 'Usage: /workspaces [list | create KIND [REPO [REF]] | open ID | stop ID | destroy ID]'
-_SUBCOMMANDS = ('list', 'create', 'open', 'stop', 'destroy')
+USAGE = 'Usage: /workspaces [list | create KIND [REPO [REF]] | destroy ID]'
+_SUBCOMMANDS = ('list', 'create', 'destroy')
 
 
 def configured(plugins: PluginCatalog | None) -> Workspaces | None:
@@ -63,17 +55,15 @@ def configured(plugins: PluginCatalog | None) -> Workspaces | None:
 
 
 def describe(workspace: Workspace) -> str:
-    """One line for a workspace: its ID, status and address, kind, branch, and folder. Never its token."""
-    session = workspace.session
-    status = f'running at {session.url}' if workspace.status == 'running' and session else workspace.status
-    return f'{workspace.id}  {status}  {workspace.kind}  {workspace.branch}  {workspace.path}'
+    """One line for a workspace: its ID, kind, branch, and folder."""
+    return f'{workspace.id}  {workspace.kind}  {workspace.branch}  {workspace.path}'
 
 
 class WorkspacesPlugin(Plugin[WorkspacesSettings]):
-    """Checkouts of a repository, each with its own CLAI: /workspaces makes, opens, stops, and destroys them."""
+    """Checkouts of a repository on their own branch: /workspaces makes, lists, and destroys them."""
 
     scope = 'process'
-    """One lock over the shared registry; `host.workspace` follows the session that runs `/workspaces`."""
+    """One registry for the process; `host.workspace` follows the session that runs `/workspaces`."""
 
     def __init__(self, host: PluginHost[None], settings: WorkspacesSettings) -> None:
         super().__init__(host, settings)
@@ -83,7 +73,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
         return (
             Command(
                 name='workspaces',
-                description='List workspaces; create KIND [REPO [REF]], open ID, stop ID, or destroy ID',
+                description='List workspaces; create KIND [REPO [REF]] or destroy ID',
                 handler=self.command,
                 complete=self.complete,
                 live=True,
@@ -99,7 +89,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
             return _SUBCOMMANDS
         if len(args) == 2 and args[0] == 'create':
             return sorted(self.settings.kinds)
-        if len(args) == 2 and args[0] in ('open', 'stop', 'destroy'):
+        if len(args) == 2 and args[0] == 'destroy':
             return [workspace.id for workspace in self.workspaces.registry.all()]
         return ()
 
@@ -115,31 +105,14 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
                 workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
                 return (
                     f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}. '
-                    f'Start its CLAI with /workspaces open {workspace.id}.'
+                    "Start a session there with the web UI's New session, or run CLAI in it."
                 )
-            case ['open', workspace_id]:
-                return await self.open(workspace_id)
-            case ['stop', workspace_id]:
-                workspace = await self.workspaces.stop(workspace_id)
-                return f'Workspace {workspace.id}: {workspace.status}.'
             case ['destroy', workspace_id]:
-                workspace = await self.workspaces.destroy(workspace_id)
+                workspace = await self.workspaces.destroy(workspace_id, live=self.host.live)
                 kept = 'removed' if workspace.teardown == 'remove' else 'kept'
                 return f'Destroyed workspace {workspace.id}; its checkout at {workspace.path} was {kept}.'
             case _:
                 raise ValueError(USAGE)
-
-    async def open(self, workspace_id: str) -> str:
-        """Start the workspace's CLAI if needed and open its page through a file only you can read."""
-        workspace = await self.workspaces.start(workspace_id)
-        assert workspace.session is not None, 'a started workspace has a session'
-        url = f'{workspace.session.url}?token={await self.workspaces.token(workspace_id)}'
-        page = self.workspaces.registry.folder(workspace_id) / 'open.html'
-        content = f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
-        await to_thread.run_sync(write_private, page, content)
-        opened = await to_thread.run_sync(open_browser, page.as_uri())
-        where = 'opened in your browser' if opened else f'open {page} in your browser'
-        return f'Workspace {workspace.id} runs at {workspace.session.url}; {where}.'
 
 
 _FIELDS: dict[str, str] = {
@@ -148,7 +121,6 @@ _FIELDS: dict[str, str] = {
     'root': 'Checkouts folder',
     'branch_prefix': 'Branch prefix',
     'teardown': 'On destroy',
-    'model': 'Model',
 }
 _TEARDOWN_LABELS = {'remove': 'Remove the checkout', 'keep': 'Keep the checkout'}
 

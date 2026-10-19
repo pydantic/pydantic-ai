@@ -524,6 +524,7 @@ export function App() {
             model={orchestration.model ?? 'no model'}
             connected={connection === 'open'}
             onShowSidebar={sidebar ? null : () => setSidebar(true)}
+            onOpenSession={show}
             onError={showError}
           />
         ) : (

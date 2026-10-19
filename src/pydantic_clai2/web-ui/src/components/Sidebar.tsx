@@ -4,7 +4,6 @@ import { MOD } from '../platform'
 import { Logo } from './Logo'
 import type { LiveEntry, Project, SessionEntry, TaskEntry, ThemeInfo, Worktree } from '../protocol'
 import { WorkersTree } from './WorkersTree'
-import { WorkspacesSection } from './WorkspacesSection'
 import {
   ArchiveIcon,
   BranchIcon,
@@ -380,7 +379,6 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         <kbd>{MOD}K</kbd>
       </label>
       <nav className="projects">
-        <WorkspacesSection version={version} onError={onError} />
         {!listed && workers}
         {projects.length === 0 && (
           <div className="empty-list">
