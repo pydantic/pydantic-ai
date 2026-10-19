@@ -2975,7 +2975,10 @@ def test_set_tool_metadata_capability():
 
 @pytest.mark.parametrize('set_metadata_first', [True, False])
 def test_set_tool_metadata_is_visible_to_other_prepare_tools_hooks(set_metadata_first: bool):
-    """Another capability's `prepare_tools` sees the metadata, whatever the list order."""
+    """Another capability's `prepare_tools` sees the metadata, whatever the list order.
+
+    Not a VCR test: the order capabilities prepare tools in never reaches a provider request.
+    """
     from pydantic_ai.capabilities import SetToolMetadata
 
     seen: list[dict[str, Any] | None] = []
