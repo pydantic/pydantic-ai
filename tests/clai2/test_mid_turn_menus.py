@@ -23,7 +23,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
 from pydantic_clai2.builtin_plugins.grain import GrainPlugin
 from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
@@ -34,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker

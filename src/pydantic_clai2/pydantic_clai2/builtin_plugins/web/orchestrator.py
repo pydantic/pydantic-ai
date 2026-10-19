@@ -115,7 +115,7 @@ class Orchestrator:
     def __init__(self, *, host: PluginHost[None], publish: Callable[[ServerMessage], None]) -> None:
         self.host = host
         self._publish = publish
-        self.answerer = BrowserAnswerer(publish=self._send, terminal=None)
+        self.answerer = BrowserAnswerer(publish=lambda message, _session: self._send(message), terminal=None)
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
@@ -154,14 +154,19 @@ class Orchestrator:
         return configured(self.host.plugins) is not None
 
     async def state(self) -> OrchestratorState:
-        return self._state((await self.load()).messages)
+        saved = await self.load()
+        return self._state(saved.messages, await self.host.default_model_name())
 
-    def _state(self, messages: Sequence[ModelMessage]) -> OrchestratorState:
+    def _state(self, messages: Sequence[ModelMessage], model: str | None) -> OrchestratorState:
         items = history_items(messages)
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
+            enabled=self.enabled(),
+            running=self.running,
+            model=model,
+            items=items,
+            questions=self.answerer.questions,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -212,15 +217,16 @@ class Orchestrator:
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
         # The history this turn starts from, which another CLAI may have changed since the page loaded.
-        self._send(self._state(saved.messages))
+        self._send(self._state(saved.messages, await self.host.default_model_name()))
         messages = saved.messages
         outcome: TurnOutcome = 'failed'
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model()
+            # The saved default, as a new session starts with, never one session's own choice.
+            model = await self.host.default_model()
             if model is None:
-                raise RuntimeError('Choose a model for this session first.')
+                raise RuntimeError('Choose a model with /model first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
                 try:
                     async for node in run:

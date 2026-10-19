@@ -4,7 +4,7 @@ description: "Use your ChatGPT or Codex subscription with Pydantic AI instead of
 
 # OpenAI Codex
 
-Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with Pydantic AI instead of a pay-per-token API key. The `openai-codex` provider logs in with the same OAuth flow as the official [Codex CLI](https://developers.openai.com/codex/cli/); for API keys, use the [`openai` provider](openai.md) instead. Your use of the Codex backend is governed by your agreement with OpenAI; check the applicable [usage policies](https://openai.com/policies/) for your subscription.
+Use your [ChatGPT/Codex subscription](https://chatgpt.com/codex) with Pydantic AI instead of a pay-per-token API key. The `openai-codex` provider logs in with the same OAuth flow as the official [Codex CLI](https://developers.openai.com/codex/cli/); for API keys, use the [`openai` provider](openai.md) instead, and to let the users of your app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md). Your use of the Codex backend is governed by your agreement with OpenAI; check the applicable [usage policies](https://openai.com/policies/) for your subscription.
 
 ## Install
 
