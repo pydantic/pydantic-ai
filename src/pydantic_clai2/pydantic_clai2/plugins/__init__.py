@@ -116,7 +116,10 @@ class SessionCatalog(Protocol):
         ...
 
     async def saved(self, conversation_id: str) -> SavedConversation:
-        """A saved conversation and its history, without switching to it; raises `LookupError` for an unknown ID."""
+        """A saved conversation and its history, without switching to it; raises `LookupError` for an unknown ID.
+
+        The history of a turn still running reaches the last step it saved, as `/resume` reads it.
+        """
         ...
 
     async def rename(self, conversation_id: str, title: str) -> None:

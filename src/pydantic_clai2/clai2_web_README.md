@@ -33,6 +33,8 @@ and searches them, each with **Unarchive** in its menu. The open session and run
 be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
 directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
 terminal, a session saved in another directory, since the terminal works where it started.
+A session marked with a blue dot is running a turn in another CLAI: clicking it lets you watch it
+read-only as it saves, with **Continue in a copy** to fork it, and **Continue here** once that turn ends.
 Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts, Cmd/Ctrl+K searches sessions,
 Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 

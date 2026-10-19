@@ -65,6 +65,9 @@ export function ago(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** What a session's dot says when another CLAI is running a turn in it. */
+const ELSEWHERE = 'Running in another CLAI'
+
 /** Whether a turn runs in one of these sessions, so a collapsed group still shows it. */
 function live(worktrees: Worktree[]): boolean {
   return worktrees.some((worktree) => worktree.sessions.some((s) => s.state === 'running' || s.state === 'busy'))
@@ -198,7 +201,11 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
         />
       ) : (
         <button className="session-main" onClick={() => onView(session)} title={session.workspace}>
-          <span className={`state ${session.state}`} />
+          {session.state === 'busy' ? (
+            <span className="state busy" role="img" title={ELSEWHERE} aria-label={ELSEWHERE} />
+          ) : (
+            <span className={`state ${session.state}`} />
+          )}
           <span className="session-title">{session.title}</span>
           {session.archived && <span className="worktree-tag">archived</span>}
           {opening === session.id && <span className="spinner" aria-label="Opening" />}

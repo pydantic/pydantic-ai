@@ -7,6 +7,7 @@ Claude Code and Codex sessions.
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
+from dataclasses import replace
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -194,8 +195,14 @@ class Sessions(Generic[DepsT, OutputT]):
         return entries
 
     async def saved(self, conversation_id: str) -> SavedConversation:
-        """A saved conversation and its history, without switching to it."""
-        return await self.store.get(conversation_id=conversation_id)
+        """A saved conversation and its history, without switching to it, up to the last step a running turn saved."""
+        saved = await self.store.get(conversation_id=conversation_id)
+        steps, run_id = self.session.step_store, saved.summary.run_id
+        if saved.summary.outcome != 'running' or run_id is None or steps is None:
+            return saved
+        # A turn saves the conversation only when it ends; its steps go to the step store meanwhile, as `/resume` reads them.
+        snapshot = await steps.latest_snapshot(run_id=run_id, include_interrupted=True)
+        return saved if snapshot is None else replace(saved, messages=snapshot.messages)
 
     async def rename(self, conversation_id: str, title: str) -> None:
         """Retitle a saved conversation as a rename in `/resume` does, telling plugins when it is the current one."""
