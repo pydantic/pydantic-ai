@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Annotated
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import httpx2
 import pytest
+from cassetter import RawRequest
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl, NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
+    DocumentUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -42,9 +47,39 @@ from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
+from .. import cassette_hooks
+
 # MockTransport fixtures verify the wire contract; these are not HTTP recordings.
 pytestmark = pytest.mark.usefixtures('allow_model_requests')
 ACCOUNT_URL = 'https://api.cloudflare.com/client/v4/accounts/test-account'
+
+
+def normalize_clairic_uri(uri: str) -> str:
+    uri = cassette_hooks.normalize_uri(uri)
+    return re.sub(r'(?<=/accounts/)[^/]+', 'test-account', uri)
+
+
+def scrub_clairic_request(request: RawRequest) -> RawRequest:
+    request = cassette_hooks.before_record_request(request)
+    request.uri = normalize_clairic_uri(request.uri)
+    return request
+
+
+@pytest.fixture(scope='module')
+def vcr_config(vcr_config: dict[str, object]) -> dict[str, object]:
+    return {
+        **vcr_config,
+        'before_record_request': scrub_clairic_request,
+        'uri_normalizer': normalize_clairic_uri,
+    }
+
+
+def live_model() -> CloudflareClairicModel:
+    provider = CloudflareProvider(
+        api_key=os.getenv('CLOUDFLARE_API_TOKEN', 'mock-token'),
+        account_id=os.getenv('CLOUDFLARE_ACCOUNT_ID', 'test-account'),
+    )
+    return CloudflareClairicModel(provider=provider)
 
 
 class Extraction(BaseModel):
@@ -237,6 +272,34 @@ async def test_unsupported_fields_rejected_before_http(schema: dict[str, JsonVal
     assert captured.requests == []
 
 
+async def test_non_dict_field_schema_rejected_before_http():
+    captured = mock_model({})
+    with pytest.raises(UserError, match="Unsupported Cloudflare Clairic schema for field 'field'"):
+        await captured.model.request(
+            [ModelRequest.user_text_prompt('state')],
+            None,
+            params({'type': 'object', 'properties': {'field': True}}),
+        )
+    assert captured.requests == []
+
+
+async def test_root_schema_description_is_in_field_instructions():
+    captured = mock_model({'x': {'type': 'text', 'value': 'present'}})
+    await captured.model.request(
+        [ModelRequest.user_text_prompt('state')],
+        None,
+        params(
+            {
+                'type': 'object',
+                'description': 'Extract only values supported by the source.',
+                'properties': {'x': {'type': 'string'}},
+            }
+        ),
+    )
+    field_instructions = json.loads(captured.requests[0].content)['fields']['x']['instructions']
+    assert 'Extract only values supported by the source.' in field_instructions
+
+
 @pytest.mark.parametrize(
     'schema',
     [
@@ -336,7 +399,7 @@ async def test_images_inline_and_url_download():
             ['Read the invoice.', BinaryContent(data=b'image', media_type='image/jpeg'), image_url]
         )
     assert result.output.text == 'Invoice'
-    download.assert_awaited_once_with(image_url, data_format='bytes')
+    download.assert_awaited_once_with(image_url, data_format='bytes', max_bytes=4 * 1024 * 1024)
     body = json.loads(captured.requests[0].content)
     assert body['images'] == ['data:image/jpeg;base64,aW1hZ2U=', 'data:image/png;base64,aW1hZ2U=']
     assert json.loads(body['state'])[-1] == {'role': 'user', 'content': '<image 2>'}
@@ -346,15 +409,247 @@ async def test_images_inline_and_url_download():
     'prompt',
     [
         '',
+        ' \t\n',
+        ['', '   '],
         [BinaryContent(data=b'image', media_type='image/gif')],
         [BinaryContent(data=b'image', media_type='image/png')] * 5,
     ],
 )
-async def test_invalid_input(prompt: str | list[BinaryContent]):
+async def test_invalid_input(prompt: str | list[str | BinaryContent]):
     captured = mock_model({})
     with pytest.raises(UserError, match='Cloudflare Clairic'):
         await captured.model.request(
             [ModelRequest(parts=[UserPromptPart(prompt)])],
+            None,
+            params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+        )
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    'content',
+    [AudioUrl('https://example.com/audio.mp3'), DocumentUrl('https://example.com/report.pdf')],
+    ids=['audio-url', 'document-url'],
+)
+async def test_unsupported_prompt_content_rejected_before_http(content: AudioUrl | DocumentUrl):
+    captured = mock_model({})
+    with pytest.raises(UserError, match='does not support prompt content'):
+        await captured.model.request(
+            [ModelRequest(parts=[UserPromptPart([content])])],
+            None,
+            params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+        )
+    assert captured.requests == []
+
+
+async def test_native_request_requires_output_object():
+    captured = mock_model({})
+    with pytest.raises(UserError, match='requires one native structured output'):
+        await captured.model.request(
+            [ModelRequest.user_text_prompt('state')],
+            None,
+            ModelRequestParameters(output_mode='native', allow_text_output=False),
+        )
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        [ModelRequest(parts=[SystemPromptPart(' \t ')])],
+        [ModelResponse(parts=[TextPart('\n   ')])],
+    ],
+    ids=['blank-system-prompt', 'blank-assistant-text'],
+)
+async def test_blank_system_or_assistant_history_rejected(history: list[ModelMessage]):
+    captured = mock_model({})
+    with pytest.raises(UserError, match='requires non-empty input text or images'):
+        await captured.model.request(
+            history,
+            None,
+            params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+        )
+    assert captured.requests == []
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        [ModelRequest(parts=[UserPromptPart([ImageUrl(f'https://example.com/{index}.png') for index in range(5)])])],
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [BinaryContent(data=b'image', media_type='image/png')]
+                        + [ImageUrl(f'https://example.com/{index}.png') for index in range(4)]
+                    )
+                ]
+            )
+        ],
+        [
+            ModelRequest(
+                parts=[UserPromptPart([ImageUrl('https://example.com/0.png'), ImageUrl('https://example.com/1.png')])]
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            ImageUrl('https://example.com/2.png'),
+                            ImageUrl('https://example.com/3.png'),
+                            ImageUrl('https://example.com/4.png'),
+                        ]
+                    )
+                ]
+            ),
+        ],
+    ],
+    ids=['url-only', 'mixed-content', 'split-history'],
+)
+async def test_image_limit_rejected_before_download(history: list[ModelMessage]):
+    captured = mock_model({})
+    with patch(
+        'pydantic_ai.models._cloudflare_clairic.download_item',
+        new_callable=AsyncMock,
+        return_value={'data': b'image', 'data_type': 'image/png'},
+    ) as download:
+        with pytest.raises(UserError, match='at most four images'):
+            await captured.model.request(
+                history,
+                None,
+                params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+            )
+    download.assert_not_awaited()
+    assert captured.requests == []
+
+
+async def test_image_size_limits_accept_boundaries(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_TOTAL_IMAGE_BYTES', 8)
+    captured = mock_model({'x': {'type': 'text', 'value': 'ok'}})
+    await captured.model.request(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            BinaryContent(data=b'abcd', media_type='image/png'),
+                            BinaryContent(data=b'efgh', media_type='image/jpeg'),
+                        ]
+                    )
+                ]
+            )
+        ],
+        None,
+        params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+    )
+    body = json.loads(captured.requests[0].content)
+    assert len(body['images']) == 2
+
+
+@pytest.mark.parametrize(
+    ('image_data', 'message'),
+    [
+        ([b'12345'], '4 bytes each'),
+        ([b'abcd', b'efgh', b'i'], '8 bytes total'),
+    ],
+    ids=['single-image', 'aggregate'],
+)
+async def test_oversized_binary_images_fail_before_encoding(
+    image_data: list[bytes], message: str, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_TOTAL_IMAGE_BYTES', 8)
+    captured = mock_model({})
+    prompt = [BinaryContent(data=data, media_type='image/png') for data in image_data]
+    with patch('pydantic_ai.messages.BinaryContent.data_uri', new_callable=PropertyMock) as data_uri:
+        with pytest.raises(UserError, match=message):
+            await captured.model.request(
+                [ModelRequest(parts=[UserPromptPart(prompt)])],
+                None,
+                params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+            )
+    data_uri.assert_not_called()
+    assert captured.requests == []
+
+
+async def test_url_image_download_uses_remaining_total_limit(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_IMAGE_BYTES', 8)
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_TOTAL_IMAGE_BYTES', 10)
+    captured = mock_model({'x': {'type': 'text', 'value': 'ok'}})
+    image_url = ImageUrl('https://example.com/image.png')
+    with patch(
+        'pydantic_ai.models._cloudflare_clairic.download_item',
+        new_callable=AsyncMock,
+        return_value={'data': b'1234', 'data_type': 'image/png'},
+    ) as download:
+        await captured.model.request(
+            [ModelRequest(parts=[UserPromptPart([BinaryContent(data=b'123456', media_type='image/png'), image_url])])],
+            None,
+            params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+        )
+    download.assert_awaited_once_with(image_url, data_format='bytes', max_bytes=4)
+    assert len(captured.requests) == 1
+
+
+async def test_url_image_budget_exhaustion_precedes_next_download(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_TOTAL_IMAGE_BYTES', 8)
+    captured = mock_model({})
+    first = ImageUrl('https://example.com/first.png')
+    second = ImageUrl('https://example.com/second.png')
+    with (
+        patch('pydantic_ai.messages.BinaryContent.data_uri', new_callable=PropertyMock) as data_uri,
+        patch(
+            'pydantic_ai.models._cloudflare_clairic.download_item',
+            new_callable=AsyncMock,
+            return_value={'data': b'1234', 'data_type': 'image/png'},
+        ) as download,
+    ):
+        with pytest.raises(UserError, match='8 bytes total'):
+            await captured.model.request(
+                [
+                    ModelRequest(
+                        parts=[UserPromptPart([BinaryContent(data=b'abcd', media_type='image/png'), first, second])]
+                    )
+                ],
+                None,
+                params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+            )
+    download.assert_awaited_once_with(first, data_format='bytes', max_bytes=4)
+    data_uri.assert_not_called()
+    assert captured.requests == []
+
+
+async def test_downloaded_image_limit_checked_before_encoding(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr('pydantic_ai.models._cloudflare_clairic._MAX_TOTAL_IMAGE_BYTES', 8)
+    captured = mock_model({})
+    image_url = ImageUrl('https://example.com/large.png')
+    with (
+        patch('pydantic_ai.messages.BinaryContent.data_uri', new_callable=PropertyMock) as data_uri,
+        patch(
+            'pydantic_ai.models._cloudflare_clairic.download_item',
+            new_callable=AsyncMock,
+            return_value={'data': b'12345', 'data_type': 'image/png'},
+        ) as download,
+    ):
+        with pytest.raises(UserError, match='4 bytes each'):
+            await captured.model.request(
+                [ModelRequest(parts=[UserPromptPart([image_url])])],
+                None,
+                params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
+            )
+    download.assert_awaited_once_with(image_url, data_format='bytes', max_bytes=4)
+    data_uri.assert_not_called()
+    assert captured.requests == []
+
+
+async def test_request_body_limit_rejects_before_http(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.models.cloudflare_clairic._MAX_REQUEST_BODY_BYTES', 128)
+    captured = mock_model({})
+    with pytest.raises(UserError, match='request body must not exceed 128 bytes'):
+        await captured.model.request(
+            [ModelRequest.user_text_prompt('state ' * 100)],
             None,
             params({'type': 'object', 'properties': {'x': {'type': 'string'}}}),
         )
@@ -478,7 +773,18 @@ async def test_inference_preserves_clef(monkeypatch: pytest.MonkeyPatch):
         )
     with pytest.raises(NotImplementedError, match='Streamed requests not supported'):
         async with model.request_stream([], None, ModelRequestParameters()):
-            pytest.fail('Clairic has no streaming API')
+            pass
+
+
+def test_default_model_uses_cloudflare_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('CLOUDFLARE_API_TOKEN', 'token')
+    monkeypatch.setenv('CLOUDFLARE_ACCOUNT_ID', 'test-account')
+    model = CloudflareClairicModel()
+    provider = model.provider
+    assert isinstance(provider, CloudflareProvider)
+    assert model.model_name == '@cf/cloudflare/clairic'
+    assert model.base_url == ACCOUNT_URL
+    assert provider.api_key == 'token'
 
 
 @pytest.mark.parametrize('extra_body', [[], {1: 'not a string key'}, {'unsupported': object()}])
@@ -898,3 +1204,29 @@ async def test_nullable_list_items_are_rejected():
     with pytest.raises(UserError, match='list items'):
         await Agent(captured.model, output_type=Invalid).run('state')
     assert captured.requests == []
+
+
+@pytest.mark.vcr()
+async def test_live_scalar_extraction():
+    class Invoice(BaseModel):
+        vendor: str
+        total: float
+
+    result = await Agent(live_model(), output_type=Invoice).run(
+        'Extract the vendor and total from this invoice: Acme Supplies, total $42.75.'
+    )
+    assert result.output.vendor
+    assert result.output.total == pytest.approx(42.75, abs=0.01)
+
+
+@pytest.mark.vcr()
+async def test_live_native_distribution_output():
+    class Estimate(BaseModel):
+        amount: Annotated[ClairicNumberEstimate, ClairicField(min=0, max=100)]
+
+    result = await Agent(live_model(), output_type=Estimate).run(
+        'Estimate the typical invoice amount from these records: $40, $42, $44, $41, $43.'
+    )
+    assert isinstance(result.output.amount, ClairicNumberEstimate)
+    assert 0 <= result.output.amount.value <= 100
+    assert 0 <= result.output.amount.p10 <= result.output.amount.p90 <= 100

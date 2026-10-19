@@ -2,10 +2,10 @@
 
 from collections.abc import Callable, Collection
 
-from pydantic_ai.models import known_model_names
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
+from pydantic_clai2.models.model_catalog import known_chat_model_names
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -41,7 +41,7 @@ class SettingsSource:
             elif key == 'display.spinner':
                 choices = tuple(BUILTIN_SPINNERS)
             elif key == 'model':
-                choices = tuple(known_model_names())
+                choices = known_chat_model_names()
             elif key == 'display.tool_calls':
                 choices = TOOL_CALL_DISPLAYS
                 preview = tool_calls_preview

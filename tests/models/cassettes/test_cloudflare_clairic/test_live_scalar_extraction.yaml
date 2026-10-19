@@ -1,0 +1,81 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/test-account/ai/run/@cf/cloudflare/clairic
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "292"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: clairic
+        state: "Extract the vendor and total from this invoice: Acme Supplies, total $42.75."
+        fields:
+          vendor:
+            type: text
+            instructions: "Field: vendor"
+          total:
+            type: number
+            instructions: "Field: total"
+        options:
+          return_state_text: true
+          include_quantiles: false
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        result:
+          model: clairic
+          answers:
+            vendor:
+              type: text
+              p_null: 0.0010225381702184675
+              span:
+              - 48
+              - 61
+              guess: Acme Supplies
+              confidence: 0.9999234676361084
+              value: Acme Supplies
+            total:
+              type: number
+              p_null: 6.0064894569222815e-6
+              guess: 42.75
+              confidence: 0.999953748574065
+              value: 42.75
+          truncated: false
+          usage:
+            state_tokens: 21
+            image_tokens: 0
+            schema_tokens: 232
+            input_tokens: 274
+            output_tokens: 0
+            passes: 2
+          state_text: "Extract the vendor and total from this invoice: Acme Supplies, total $42.75."
+        success: true
+        errors: []
+        messages: []
+  recorded_at: 2026-10-19T20:32:59.914841+00:00

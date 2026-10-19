@@ -33,6 +33,15 @@ CODEX_MODELS = tuple(
 EXTRA_PROVIDERS = frozenset({'github-copilot', 'openai-codex'})
 """Provider prefixes core can run but does not list in `known_model_names()`."""
 
+_STRUCTURED_OUTPUT_ONLY_MODELS = frozenset(
+    {
+        'cloudflare:@cf/cloudflare/clairic',
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+    }
+)
+"""Cloudflare models that cannot answer the stock CLAI2 chat agent's text output."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class CatalogModel:
@@ -48,6 +57,11 @@ class CatalogModel:
 def runnable_providers() -> frozenset[str]:
     """Provider prefixes that `infer_model` accepts."""
     return frozenset(name.partition(':')[0] for name in known_model_names()) | EXTRA_PROVIDERS
+
+
+def known_chat_model_names() -> tuple[str, ...]:
+    """Core model names offered in automatic stock-chat suggestions."""
+    return tuple(name for name in known_model_names() if name not in _STRUCTURED_OUTPUT_ONLY_MODELS)
 
 
 def check_installed(name: str) -> None:
@@ -74,7 +88,7 @@ def check_installed(name: str) -> None:
 def genai_prices_models() -> list[CatalogModel]:
     """Current (not deprecated) models from genai-prices, for providers core can run."""
     providers = runnable_providers()
-    known_names = frozenset(known_model_names())
+    known_names = frozenset(known_chat_model_names())
     found: list[CatalogModel] = []
     for provider in get_snapshot().providers:
         if provider.id not in providers:
@@ -110,7 +124,7 @@ def catalog(*, include: Iterable[str] = (), discovered: Iterable[CatalogModel] =
     """Merge sources; authenticated discovery replaces static entries for the providers it contains."""
     models = {model.name: model for model in genai_prices_models()}
     for name in (
-        *known_model_names(),
+        *known_chat_model_names(),
         *CODEX_MODELS,
         *include,
     ):

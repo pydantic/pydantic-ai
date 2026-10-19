@@ -1,8 +1,10 @@
 # Clairic transport fixtures
 
-These JSON results came from authenticated Cloudflare MCP executions on 2026-10-19.
-They are fixtures, not HTTP recordings or VCR cassettes. HTTP headers and public traces
-were unavailable. MockTransport tests use these results to verify adapter behavior.
+The JSON result fixtures came from authenticated Cloudflare MCP executions on 2026-10-19.
+They are not HTTP recordings or VCR cassettes. The `test_live_*` tests in
+`tests/models/test_cloudflare_clairic.py` record the public `Agent.run` path against real
+Cloudflare HTTP requests and responses. Their cassettes are in
+`tests/models/cassettes/test_cloudflare_clairic/`.
 
 - `scalar.json`: native scalar/list values and uncertainty. The text list includes an
   incorrect extra name; the adapter must preserve its value and confidence.

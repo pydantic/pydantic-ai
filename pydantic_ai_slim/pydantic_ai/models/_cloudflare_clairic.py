@@ -26,15 +26,30 @@ from ..messages import (
 from ..output import OutputObjectDefinition
 from . import download_item
 
+_MAX_IMAGE_BYTES = 4 * 1024 * 1024
+_MAX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024
+
 
 async def clairic_state(messages: list[ModelMessage]) -> tuple[str, list[str]]:
+    image_count = sum(
+        isinstance(item, (BinaryContent, ImageUrl))
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for item in ([part.content] if isinstance(part.content, str) else part.content)
+    )
+    if image_count > 4:
+        raise UserError('Cloudflare Clairic accepts at most four images.')
+
     history: list[dict[str, str]] = []
     text_present = False
-    images: list[str] = []
+    image_contents: list[BinaryContent] = []
+    total_image_bytes = 0
     for message in messages:
         for part in message.parts:
             if isinstance(message, ModelRequest) and isinstance(part, SystemPromptPart):
-                text_present = True
+                text_present = text_present or bool(part.content.strip())
                 history.append({'role': 'system', 'content': part.content})
             elif isinstance(message, ModelRequest) and isinstance(part, UserPromptPart):
                 content = [part.content] if isinstance(part.content, str) else part.content
@@ -44,37 +59,58 @@ async def clairic_state(messages: list[ModelMessage]) -> tuple[str, list[str]]:
                         history.append({'role': 'user', 'content': item})
                     elif isinstance(item, (BinaryContent, ImageUrl)):
                         if isinstance(item, ImageUrl):
-                            downloaded = await download_item(item, data_format='bytes')
+                            remaining_bytes = _MAX_TOTAL_IMAGE_BYTES - total_image_bytes
+                            if remaining_bytes <= 0:
+                                raise UserError(
+                                    f'Cloudflare Clairic images must not exceed {_MAX_TOTAL_IMAGE_BYTES} bytes total.'
+                                )
+                            downloaded = await download_item(
+                                item,
+                                data_format='bytes',
+                                max_bytes=min(_MAX_IMAGE_BYTES, remaining_bytes),
+                            )
                             image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
                         else:
                             image = item
-                        if image.media_type not in ('image/png', 'image/jpeg', 'image/webp'):
-                            raise UserError('Cloudflare Clairic supports only PNG, JPEG, and WebP images.')
-                        images.append(image.data_uri)
-                        history.append({'role': 'user', 'content': f'<image {len(images)}>'})
+                        image_bytes = len(image.data)
+                        if (
+                            image.media_type not in ('image/png', 'image/jpeg', 'image/webp')
+                            or image_bytes > _MAX_IMAGE_BYTES
+                            or total_image_bytes + image_bytes > _MAX_TOTAL_IMAGE_BYTES
+                        ):
+                            limit_message = (
+                                'Cloudflare Clairic supports only PNG, JPEG, and WebP images.'
+                                if image.media_type not in ('image/png', 'image/jpeg', 'image/webp')
+                                else f'Cloudflare Clairic images must not exceed {_MAX_IMAGE_BYTES} bytes each.'
+                                if image_bytes > _MAX_IMAGE_BYTES
+                                else f'Cloudflare Clairic images must not exceed {_MAX_TOTAL_IMAGE_BYTES} bytes total.'
+                            )
+                            raise UserError(limit_message)
+                        total_image_bytes += image_bytes
+                        image_contents.append(image)
+                        history.append({'role': 'user', 'content': f'<image {len(image_contents)}>'})
                     else:
                         raise UserError(f'Cloudflare Clairic does not support prompt content {type(item).__name__!r}.')
             elif isinstance(message, ModelRequest) and isinstance(part, RetryPromptPart):
                 text_present = True
                 history.append({'role': 'user', 'content': part.model_response()})
             elif isinstance(message, ModelResponse) and isinstance(part, TextPart):
-                text_present = True
+                text_present = text_present or bool(part.content.strip())
                 history.append({'role': 'assistant', 'content': part.content})
             else:
                 raise UserError(f'Cloudflare Clairic does not support history part {type(part).__name__!r}.')
-    if len(images) > 4:
-        raise UserError('Cloudflare Clairic accepts at most four images.')
-    state = (
-        history[0]['content']
-        if len(history) == 1 and history[0]['role'] == 'user'
-        else json.dumps(history, ensure_ascii=False)
-        if history
-        else ''
-    )
-    if images and not text_present:
-        state = ''
-    if not state.strip() and not images:
+    if not text_present and not image_contents:
         raise UserError('Cloudflare Clairic requires non-empty input text or images.')
+    state = (
+        ''
+        if image_contents and not text_present
+        else (
+            history[0]['content']
+            if len(history) == 1 and history[0]['role'] == 'user'
+            else json.dumps(history, ensure_ascii=False)
+        )
+    )
+    images = [image.data_uri for image in image_contents]
     return state, images
 
 

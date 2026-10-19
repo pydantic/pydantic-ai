@@ -193,6 +193,13 @@ def test_set_autocomplete() -> None:
     assert 'false' in [c.text for c in commands.get_completions(Document('/set display.thinking f'), CompleteEvent())]
     models = list(commands.get_completions(Document('/set model anthropic:'), CompleteEvent()))
     assert models
+    model_names = set(set_completions(['model', '']))
+    assert not model_names & {
+        'cloudflare:@cf/cloudflare/clairic',
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+    }
+    assert any(name.startswith('openai:') for name in model_names)
     codex = list(commands.get_completions(Document('/set model openai-codex'), CompleteEvent()))
     assert {item.text for item in codex} >= {
         'openai-codex:',

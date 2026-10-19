@@ -31,6 +31,12 @@ def test_rows_details_and_validation(tmp_path: Path) -> None:
     assert items[0].label.startswith('model') and 'openai-codex:gpt-6-astra' in items[0].label
     thinking = next(row for row in menu.rows if row.key == 'display.thinking')
     model = menu.rows[0]
+    assert not {
+        'cloudflare:@cf/cloudflare/clairic',
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+    } & set(model.choices)
+    assert any(name.startswith('openai:') for name in model.choices)
     assert thinking.choices == ('true', 'false')
     assert len(model.choices) > 8
     assert 'choices  true, false' in menu.details(items[2])

@@ -30,6 +30,8 @@ __all__ = (
     'ClairicForecast',
 )
 
+_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
 
 @dataclass(frozen=True, kw_only=True)
 class ClairicField:
@@ -295,6 +297,8 @@ class CloudflareClairicModel(Model[httpx2.AsyncClient]):
             )
         except (TypeError, ValueError) as e:
             raise UserError(f'Could not send this request to Cloudflare Workers AI: {e}') from e
+        if len(http_request.content) > _MAX_REQUEST_BODY_BYTES:
+            raise UserError(f'Cloudflare Clairic request body must not exceed {_MAX_REQUEST_BODY_BYTES} bytes.')
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:

@@ -1,5 +1,5 @@
 import re
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
@@ -44,6 +44,19 @@ async def test_download_item_raises_user_error_with_unsupported_protocol(
 async def test_download_item_raises_user_error_with_youtube_url() -> None:
     with pytest.raises(UserError, match=re.escape('Downloading YouTube videos is not supported.')):
         _ = await download_item(VideoUrl(url='https://youtu.be/lCdaVNyHtjU'), data_format='bytes')
+
+
+async def test_download_item_max_bytes_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = ImageUrl(url='https://example.com/image.png', media_type='image/png')
+    safe_download = AsyncMock(
+        return_value=httpx2.Response(200, content=b'x' * 1024, headers={'content-type': 'image/png'})
+    )
+    monkeypatch.setattr('pydantic_ai._ssrf.safe_download', safe_download)
+
+    downloaded_item = await download_item(url, data_format='bytes', max_bytes=2048)
+
+    assert downloaded_item['data'] == b'x' * 1024
+    safe_download.assert_awaited_once_with(url.url, allow_local=False, max_bytes=2048)
 
 
 @pytest.mark.parametrize(

@@ -124,6 +124,7 @@ at most 64 questions and four images per request. Requests over those transport 
 [Clairic](https://developers.cloudflare.com/workers-ai/models/clairic/), Cloudflare's preview model
 for typed extraction, computation, estimation and forecasting. It uses the same authentication and
 [`CloudflareProvider`][pydantic_ai.providers.cloudflare.CloudflareProvider] configuration as Clef.
+Clairic and Clef require structured output, so CLAI2 does not automatically suggest them in its chat picker.
 
 ```python {test="skip" gateway_toggle="skip"}
 from datetime import date
@@ -287,9 +288,11 @@ array of role/content entries, including system prompts, assistant text and vali
 ### Images and request settings
 
 Clairic accepts up to four inline PNG, JPEG or WebP images through `BinaryContent` or `ImageUrl`.
-Image URLs are downloaded before inference. Image-only prompts use empty state; mixed text/history
-includes numbered image markers. Cloudflare's
-[image size limits](https://developers.cloudflare.com/workers-ai/models/clairic/) apply.
+The client checks the documented [Clairic image limits](https://developers.cloudflare.com/workers-ai/models/clairic/):
+each decoded image can be at most 4 MiB and all decoded images together can be at most 8 MiB. Those
+checks run before image encoding. The serialized request body is limited to 16 MiB and checked before
+sending. Image URLs are downloaded with the remaining byte allowance. Image-only prompts use empty
+state; mixed text/history includes numbered image markers.
 
 [`CloudflareClairicModelSettings`][pydantic_ai.models.cloudflare_clairic.CloudflareClairicModelSettings]
 exposes `cloudflare_clairic_reference_date` (Python date or ISO string),
