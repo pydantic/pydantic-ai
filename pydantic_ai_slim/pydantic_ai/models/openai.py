@@ -2389,6 +2389,7 @@ def _without_application_metadata(message: ModelMessage) -> ModelMessage:
     They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
     They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
     """
+    # Split by type so `_part_without_application_metadata` sees a single part type.
     if isinstance(message, ModelRequest):
         return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
     return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
