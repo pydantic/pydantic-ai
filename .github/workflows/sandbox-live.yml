@@ -43,7 +43,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites"]'
+          PRESENT: '["modal", "e2b", "sprites", "docker"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -84,9 +84,12 @@ jobs:
       # `--package` selects that member and `--group dev` adds the root test tooling. Each
       # provider's guide has a Temporal worker example, which the docs-example test runs;
       # `code-mode` and `coder` are what the provider test modules import at collection.
-      - run: >-
-          uv sync --locked --package pydantic-ai-harness --group dev
-          --extra "$PROVIDER" --extra temporal --extra code-mode --extra coder
+      # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
+      - run: |
+          provider_extra=(--extra "$PROVIDER")
+          [ "$PROVIDER" != docker ] || provider_extra=()
+          uv sync --locked --package pydantic-ai-harness --group dev \
+            "${provider_extra[@]}" --extra temporal --extra code-mode --extra coder
         env:
           PROVIDER: ${{ matrix.provider }}
 

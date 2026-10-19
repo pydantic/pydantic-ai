@@ -23,7 +23,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import check_timeout, command_argv
+from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
 
@@ -175,12 +175,13 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
     Args:
-        image: The image for a new container; ignored when attaching to `ref`.
+        image: The image for a new container. Pass it or `ref`, not both.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created if the image doesn't have it.
         env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
-        network: Whether a new container can reach the network; `False` runs it with `--network none`.
+        allow_internet_access: Whether a new container gets outbound network access, including this machine's
+            local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
             `['--volume', f'{project}:/workspace']`. They can override defaults like `--network`, but not the
             container's name, workspace label, working directory or entrypoint, which the backend relies on.
@@ -194,7 +195,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         ref: WorkspaceRef | None = None,
         working_dir: str = '/workspace',
         env: Mapping[str, str] | None = None,
-        network: bool = True,
+        allow_internet_access: bool = False,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
     ):
@@ -212,7 +213,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._ref = ref
         self._working_dir = posixpath.normpath(working_dir)
         self._env = _checked_env(env or {})
-        self._network = network
+        self._allow_internet_access = allow_internet_access
         self._docker_args = tuple(docker_args)
         self._executable = executable
         self._runner = _runner()
@@ -253,7 +254,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             'run',
             '--detach',
             '--init',
-            *([] if self._network else ['--network', 'none']),
+            *([] if self._allow_internet_access else ['--network', 'none']),
             *self._docker_args,
             # After `docker_args`, whose later values would otherwise win: the backend relies on these.
             '--name',
@@ -282,6 +283,10 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _start(self) -> None:
         state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
+        if state == 'missing' and self._image is not None:
+            # An earlier create failed or was cancelled before the container existed: try again.
+            await self._create()
+            return
         if state == 'missing':
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: no such container')
         if state == 'running':
@@ -352,11 +357,5 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _stop(self, tag: str) -> None:
         # Killing the local `docker exec` client leaves the command running in the container, so a second
         # exec stops it. Best effort: a daemon that stalls now has nothing to report.
-        with anyio.CancelScope(shield=True):
-            try:
-                await self._runner.run(
-                    [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag],
-                    timeout=_STOP_TIMEOUT,
-                )
-            except WorkspaceError:
-                pass
+        argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
+        await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)

@@ -42,8 +42,8 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
 
-    network: bool = True
-    """Whether a new container can reach the network; `False` runs it with `--network none`."""
+    allow_internet_access: bool = False
+    """Whether a new container gets outbound network access, through Docker's default bridge: the internet, but also this machine's local network and services. `False` runs it with `--network none`."""
 
     docker_args: Sequence[str] = ()
     """Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or a `--volume` mount."""
@@ -66,7 +66,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
             ref=ref,
             working_dir=self.working_dir,
             env=self.env,
-            network=self.network,
+            allow_internet_access=self.allow_internet_access,
             docker_args=self.docker_args,
             executable=self.executable,
         )

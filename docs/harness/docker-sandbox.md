@@ -26,7 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Coder, DockerSandbox
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[DockerSandbox('python:3.13-slim', env={'PIP_NO_CACHE_DIR': '1'}), Coder()],
 )
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
@@ -36,7 +36,7 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 ## Working on a project
 
-The container starts empty. To let the agent work on a directory on your machine, mount it with `docker_args`, extra `docker run` arguments that can override defaults like `--network`:
+The container starts empty. To let the agent work on a directory on your machine, mount it with `docker_args`, extra `docker run` arguments:
 
 ```python {test="skip"}
 from pathlib import Path
@@ -47,11 +47,10 @@ project = Path('.').resolve()
 sandbox = DockerSandbox(
     'python:3.13-slim',
     docker_args=['--volume', f'{project}:/workspace', '--memory', '2g', '--cpus', '2'],
-    network=False,
 )
 ```
 
-The mount is the only part of your machine the commands can change. `network=False` runs the container with `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
+The mount is the only part of your machine the commands can change. The container has no network unless you pass `allow_internet_access=True`, which uses Docker's default bridge: the internet, but also your local network and services on this machine. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
 
 ## How commands run
 
@@ -87,6 +86,17 @@ Containers the capability created carry the label `ai.pydantic.workspace=true`, 
 A container shares your machine's kernel, so it is a weaker boundary than a VM such as [E2B](e2b-sandbox.md) or [Modal](modal-sandbox.md). Commands run as the image's user, usually `root` inside the container. Don't mount the Docker socket or directories holding secrets, and add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
 
 `env=` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine. `env=` is kept out of the capability's `repr`.
+
+## Configuration
+
+| Option | What it does |
+| --- | --- |
+| `image` | Image for a new container. It needs a POSIX `sh` and the usual file utilities. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created in a new container if missing. Default: `/workspace`. |
+| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container, and `env` is kept out of the capability's `repr`. |
+| `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `False`, which runs it with `--network none`. |
+| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. Default: `()`. |
+| `executable` | The container CLI to run, such as `'podman'`. Default: `'docker'`. |
 
 ## Platforms
 

@@ -50,7 +50,6 @@ async def test_first_use_creates_one_container_with_the_configured_options(
         'python:3.13-slim',
         working_dir=str(container_dir),
         env={'A': 'backend', 'B': "it's $HOME"},
-        network=False,
         docker_args=['--memory', '2g'],
     )
     assert backend.ref is None
@@ -69,6 +68,14 @@ async def test_first_use_creates_one_container_with_the_configured_options(
     )
 
 
+async def test_allow_internet_access_keeps_the_default_network(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir), allow_internet_access=True)
+
+    await backend.working_dir()
+
+    assert '--network' not in docker.calls[0]
+
+
 async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: FakeDocker, container_dir: Path) -> None:
     overrides = ['--name', 'mine', '--label', 'ai.pydantic.workspace=false', '--workdir', '/other']
     backend = DockerSandboxBackend('image', working_dir=str(container_dir), docker_args=overrides)
@@ -79,14 +86,16 @@ async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: Fa
     assert docker.containers() == []
 
 
-async def test_a_failed_create_is_unavailable_but_keeps_the_ref(docker: FakeDocker) -> None:
+async def test_a_failed_create_is_unavailable_and_retried_on_the_next_use(docker: FakeDocker) -> None:
     backend = DockerSandboxBackend('missing-image')
 
-    with pytest.raises(
-        WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
-    ):
-        await backend.working_dir()
-    assert backend.ref is not None
+    for _ in range(2):
+        with pytest.raises(
+            WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
+        ):
+            await backend.working_dir()
+
+    assert sum(call.startswith('run ') for call in docker.calls) == 2
 
 
 async def test_a_cancelled_create_keeps_the_ref_so_the_container_can_be_removed(

@@ -1,11 +1,11 @@
 """Pydantic AI's workspace backend conformance suite, run against real containers.
 
-Opt in with `PYDANTIC_AI_HARNESS_DOCKER_LIVE=1` on a machine with a Docker daemon.
+Opt in with `PYDANTIC_AI_HARNESS_DOCKER_LIVE=1` on a machine with a Docker daemon:
+`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 uv run pytest -m docker_live tests/harness/docker_sandbox`
 """
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import anyio
@@ -18,10 +18,7 @@ from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBacke
 LIVE_IMAGE = 'python:3.13-slim'
 
 
-@pytest.mark.skipif(
-    os.name != 'posix' or os.getenv('PYDANTIC_AI_HARNESS_DOCKER_LIVE') != '1',
-    reason='set PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 on a POSIX machine to use Docker',
-)
+@pytest.mark.docker_live
 class TestLiveDocker(WorkspaceBackendSuite):
     """Runs against real containers; each test's containers are removed afterwards."""
 
