@@ -4,7 +4,7 @@ import functools
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ConfigDict, with_config
@@ -17,6 +17,7 @@ from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -37,7 +38,22 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
-    telemetry_sensitive_ids: set[str] = field(default_factory=set[str])
+    telemetry_sensitive_ids: set[str] | None = None
+
+
+def restore_telemetry_sensitive_ids(params: _RequestParams) -> None:
+    """Restore request-only provenance, including activity payloads recorded before the sidecar existed."""
+    sensitive_ids = params.telemetry_sensitive_ids
+    if sensitive_ids is None:
+        parameters = params.model_request_parameters
+        sensitive_ids = {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
+        for tool in (*parameters.function_tools, *parameters.output_tools):
+            if tool.capability_id:
+                sensitive_ids.add(tool.capability_id)
+            for native_name in (tool.unless_native, tool.with_native):
+                if native_name and native_name.startswith('mcp_server:'):
+                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
+    params.model_request_parameters.telemetry_sensitive_ids = sensitive_ids
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
@@ -84,7 +100,7 @@ class TemporalModel(WrapperModel):
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            params.model_request_parameters.telemetry_sensitive_ids = params.telemetry_sensitive_ids
+            restore_telemetry_sensitive_ids(params)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -102,7 +118,7 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
-            params.model_request_parameters.telemetry_sensitive_ids = params.telemetry_sensitive_ids
+            restore_telemetry_sensitive_ids(params)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )

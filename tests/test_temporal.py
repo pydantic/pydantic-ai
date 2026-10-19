@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import warnings
@@ -12,7 +13,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -52,6 +53,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
@@ -87,7 +89,7 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
-    from temporalio.testing import WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
@@ -4067,6 +4069,48 @@ async def test_request_params_preserve_telemetry_sensitive_ids() -> None:
 
     assert decoded.telemetry_sensitive_ids == sensitive_ids
     assert decoded.model_request_parameters.telemetry_sensitive_ids == sensitive_ids
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    observed_ids: list[set[str]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        parameters = info.model_request_parameters
+        observed_ids.append(parameters.telemetry_sensitive_ids)
+        attributes = model_request_parameters_attributes(parameters)
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert identity not in serialized
+        assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='ping', capability_id=identity)],
+            telemetry_sensitive_ids={identity},
+        ),
+        telemetry_sensitive_ids={identity},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
+    if legacy_payload:
+        wire.pop('telemetry_sensitive_ids')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    await ActivityEnvironment().run(temporal_model.request_activity, decoded, None)
+
+    assert observed_ids == [{identity}]
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:
