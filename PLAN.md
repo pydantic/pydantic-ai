@@ -143,6 +143,7 @@ Use in-process scripted models/tools, an injected monotonic clock, temporary sta
 | Partial coverage with/without accepted HIGH/CRITICAL finding | `REQUEST_CHANGES` with verified blocker, otherwise `COMMENT`; never approval |
 | Complete coverage, bot author, redundant prior review | Existing severity/bot restrictions and coverage-sensitive noop policy preserved |
 | Requests exhausted/provider unavailable during finalization | No new allowance/model; deterministic honest review from retained state |
+| Wrapped provider transport timeout versus supervisor deadline | Preserve provider-timeout classification; only the run deadline is a run-time-limit failure, and external cancellation remains cancellation |
 | Inline-only sink, valid final review, failed/ambiguous host write | Inline-only incomplete; verdict checked against state; failures remain failures, reconcile before retry |
 | Hard cancellation and unrelated callers | Cancellation propagates without publication guarantee; ordinary Agent/other workflows unchanged |
 
