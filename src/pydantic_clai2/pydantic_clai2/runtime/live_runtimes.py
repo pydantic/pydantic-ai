@@ -92,9 +92,9 @@ class LiveRuntimes(JoinedSessions):
         self.idle_after = idle_after
         self.check_every = check_every
         self.build: Builder | None = None
-        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as in the terminal."""
+        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as with `-p`."""
         self.focused: str | None = None
-        """The session the terminal shows, never closed for being idle; `None` under `clai2 --web`."""
+        """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
         """Conversations being opened or resumed, set once that is done."""
@@ -136,6 +136,24 @@ class LiveRuntimes(JoinedSessions):
         live = self._holder(conversation_id)
         return live.runtime.live_session if live is not None else None
 
+    def runtime(self, conversation_id: str) -> Served | None:
+        """The live session holding `conversation_id`, unless it is still opening or already closing."""
+        live = self._holder(conversation_id)
+        return live.runtime if live is not None and live.ready and not live.closing else None
+
+    @contextmanager
+    def driving(self, runtime: Served) -> Generator[None]:
+        """Let `close`, idle closing included, end the loop its own driver runs for `runtime` in the block.
+
+        The terminal runs the session CLAI started with so; it is closed only while the terminal shows another.
+        """
+        live = self._live[runtime.live_session.id]
+        try:
+            with CancelScope() as live.scope:
+                yield
+        finally:
+            live.scope = None
+
     def _holder(self, conversation_id: str) -> _Live | None:
         return next(
             (
@@ -159,19 +177,27 @@ class LiveRuntimes(JoinedSessions):
 
     @asynccontextmanager
     async def serving(self) -> AsyncGenerator[None]:
-        """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all."""
-        async with create_task_group() as group:
-            # Set at once: a browser may open a session as soon as the web UI it serves is up.
-            self._group = group
-            group.start_soon(self._close_idle_ones)
-            try:
-                # A new sessions database switches to WAL on first use, which fails at once when two sessions'
-                # first saves race, so make it before the sessions opened from here run.
-                await self._conversations.listing(limit=1)
-                yield
-            finally:
-                self._group = None
-                group.cancel_scope.cancel()
+        """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all.
+
+        What the block raises propagates as it is, not in an exception group.
+        """
+        try:
+            async with create_task_group() as group:
+                # Set at once: a browser may open a session as soon as the web UI it serves is up.
+                self._group = group
+                group.start_soon(self._close_idle_ones)
+                try:
+                    # A new sessions database switches to WAL on first use, which fails at once when two sessions'
+                    # first saves race, so make it before the sessions opened from here run.
+                    await self._conversations.listing(limit=1)
+                    yield
+                finally:
+                    self._group = None
+                    group.cancel_scope.cancel()
+        except BaseExceptionGroup as errors:
+            if len(errors.exceptions) == 1:
+                raise errors.exceptions[0] from None
+            raise  # pragma: no cover -- the block and idle closing never both raise.
 
     async def open(self, conversation_id: str, /) -> LiveSession:
         while True:
@@ -225,7 +251,7 @@ class LiveRuntimes(JoinedSessions):
         live = self._live.get(live_id)
         if live is None or not live.ready:
             raise LookupError(f'No live session {live_id}')
-        if live.scope is None:
+        if live.scope is None or live_id == self.focused:
             raise ValueError(
                 f'Live session {live_id} runs under its own driver, such as the terminal; it closes there.'
             )

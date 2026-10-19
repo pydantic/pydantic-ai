@@ -582,7 +582,7 @@ def _inputs(monkeypatch: pytest.MonkeyPatch, values: list[str]) -> None:
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 class TestSkillCommands:
