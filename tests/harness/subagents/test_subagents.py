@@ -41,7 +41,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
-from .._deferred_tools import deferring_agent
+from .._deferred_tools import deferring_agent, pending_agent
 
 
 @dataclass
@@ -547,6 +547,22 @@ class TestDelegation:
             ]
         )
         assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
+
+    async def test_pending_model_response_returns_steering(self) -> None:
+        # Like `DeferredToolRequests`: the parent cannot check on the child's request later.
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('background'),
+            capabilities=[SubAgents(agents=[SubAgent(pending_agent('background'))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert _delegate_returns(result) == snapshot(
+            [
+                "Sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a model "
+                'request the provider is still processing, which a delegating agent cannot provide. Do the task '
+                'another way, or without this sub-agent.'
+            ]
+        )
 
     async def test_deferred_tool_calls_resolved_by_the_sub_agent_return_its_output(self) -> None:
         def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:

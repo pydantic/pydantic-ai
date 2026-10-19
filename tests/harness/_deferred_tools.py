@@ -1,8 +1,8 @@
-"""A sub-agent whose run stops on a tool call that needs approval, shared by the delegation tests."""
+"""Sub-agents whose runs end early for their caller to resume, shared by the delegation tests."""
 
 from collections.abc import Sequence
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, PendingModelResponse
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -30,3 +30,19 @@ def deferring_agent(
         return 'done'
 
     return agent
+
+
+class _BackgroundModel(FunctionModel):
+    """A model whose responses the provider keeps working on, checked on every second."""
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        return 1.0
+
+
+def pending_agent(name: str = 'background') -> Agent[object, str | PendingModelResponse]:
+    """A sub-agent whose model request is left waiting on the provider, so its run ends with `PendingModelResponse`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[], provider_response_id='job-1', state='suspended')
+
+    return Agent(_BackgroundModel(model_fn), name=name, output_type=[str, PendingModelResponse])

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from types import UnionType
 from typing import Union, cast, get_args, get_origin
 
-from pydantic_ai import DeferredToolRequests
+from pydantic_ai import DeferredToolRequests, PendingModelResponse
 from pydantic_ai.output import OutputSpec
 
 # Output types that end a run early so its caller can resume it. A top-level caller can do that;
@@ -14,6 +14,7 @@ from pydantic_ai.output import OutputSpec
 # an output. Each maps to the reason shown when a sub-agent run ends with one.
 _RESUMABLE_OUTPUT_REASONS: dict[type, str] = {
     DeferredToolRequests: 'it needs tool approval or deferred tool results',
+    PendingModelResponse: 'it needs the result of a model request the provider is still processing',
 }
 
 
