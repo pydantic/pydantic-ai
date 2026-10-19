@@ -51,7 +51,7 @@ def warn_dropped(message: str) -> None:
     _warned.add(message)
     try:
         warnings.warn(message)
-    except Exception:  # pragma: no cover
+    except Exception:
         # Emitted filter-independently, because every drop this package warns about happens while a
         # managed config is being read or applied, and the contract is that neither can take a run
         # down: `resolve` promises an unreachable Logfire leaves the agent running on its code.
