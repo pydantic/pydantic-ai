@@ -384,8 +384,7 @@ _RETRY = (
 )
 _MODEL_NAME = (
     "UI messages don't carry `ModelResponse.model_name` or `provider_name`, which Anthropic writes on another "
-    "model's thinking (`<assistant_thinking model=... provider=...>`); pending maintainer decision on "
-    '`model_name` exposure (#5174)'
+    "model's thinking (`<assistant_thinking model=... provider=...>`); #10642 drops both from that tag"
 )
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
