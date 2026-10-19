@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, HookTimeoutError, on_event
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -34,6 +34,8 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     SubAgentToolset,
 )
+
+from .._deferred_tools import deferring_agent
 
 
 @dataclass
@@ -295,15 +297,7 @@ class TestOutcomes:
         assert end.output == 'use what you have'
 
     async def test_deferred_tool_requests_is_failed(self) -> None:
-        def call_dangerous(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='d1')])
-
-        worker = Agent(FunctionModel(call_dangerous), name='worker', output_type=[str, DeferredToolRequests])
-
-        @worker.tool_plain(requires_approval=True)
-        def dangerous() -> str:
-            return 'done'  # pragma: no cover - the call is deferred for approval, never run
-
+        worker = deferring_agent('worker')
         listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker)]))
 
         _, end = _pair(listener)

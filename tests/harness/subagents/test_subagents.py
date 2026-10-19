@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,8 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
+
+from .._deferred_tools import deferring_agent
 
 
 @dataclass
@@ -151,30 +153,6 @@ def _delegate_returns(result: Any) -> list[str]:
         for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
     ]
-
-
-def _deferring_agent(
-    name: str, *, capabilities: Sequence[AbstractCapability[object]] = ()
-) -> Agent[object, str | DeferredToolRequests]:
-    """A sub-agent that calls a tool needing approval, then finishes once the tool has returned.
-
-    Without a capability that resolves the call, its run ends with `DeferredToolRequests`.
-    """
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
-            return ModelResponse(parts=[TextPart('approved and done')])
-        return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='d1')])
-
-    agent = Agent(
-        FunctionModel(model_fn), name=name, output_type=[str, DeferredToolRequests], capabilities=list(capabilities)
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def dangerous() -> str:
-        return 'done'
-
-    return agent
 
 
 class TestConstruction:
@@ -557,7 +535,7 @@ class TestDelegation:
         # the marker's repr, without a retry.
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('approver'),
-            capabilities=[SubAgents(agents=[SubAgent(_deferring_agent('approver'))])],
+            capabilities=[SubAgents(agents=[SubAgent(deferring_agent('approver'))])],
         )
         result = await parent.run('go')
         assert result.output == 'all done'
@@ -574,7 +552,7 @@ class TestDelegation:
         def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
             return requests.build_results(approve_all=True)
 
-        approver = _deferring_agent('approver', capabilities=[HandleDeferredToolCalls(handler=approve_all)])
+        approver = deferring_agent('approver', capabilities=[HandleDeferredToolCalls(handler=approve_all)])
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('approver'), capabilities=[SubAgents(agents=[SubAgent(approver)])]
         )
@@ -585,7 +563,7 @@ class TestDelegation:
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('approver'),
             capabilities=[
-                SubAgents(agents=[SubAgent(_deferring_agent('approver'), on_failure='steer: do it yourself')])
+                SubAgents(agents=[SubAgent(deferring_agent('approver'), on_failure='steer: do it yourself')])
             ],
         )
         result = await parent.run('go')

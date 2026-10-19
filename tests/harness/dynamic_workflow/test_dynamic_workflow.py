@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -41,6 +40,8 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
+from .._deferred_tools import deferring_agent
+
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
     return Agent(TestModel(custom_output_text=text), name=name, description=description)
@@ -49,30 +50,6 @@ def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | No
 def _wf_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> WorkflowAgent[object]:
     """Build a `WorkflowAgent` wrapping a trivial `TestModel` sub-agent."""
     return WorkflowAgent(_sub_agent(text, name), description=description)
-
-
-def _deferring_agent(
-    name: str = 'approver', *, capabilities: Sequence[AbstractCapability[object]] = ()
-) -> Agent[object, str | DeferredToolRequests]:
-    """A sub-agent that calls a tool needing approval, then finishes once the tool has returned.
-
-    Without a capability that resolves the call, its run ends with `DeferredToolRequests`.
-    """
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
-            return ModelResponse(parts=[TextPart('approved and done')])
-        return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id='d1')])
-
-    agent = Agent(
-        FunctionModel(model_fn), name=name, output_type=[str, DeferredToolRequests], capabilities=list(capabilities)
-    )
-
-    @agent.tool_plain(requires_approval=True)
-    def dangerous() -> str:
-        return 'done'
-
-    return agent
 
 
 class Review(BaseModel):
@@ -1183,7 +1160,7 @@ async def test_sub_agent_failure_can_be_caught_in_sandbox() -> None:
 
 
 async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=_deferring_agent())])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=deferring_agent())])
     with pytest.raises(ModelRetry) as exc_info:
         await _run_script(ts, "await approver(task='x')")
     assert (
@@ -1194,7 +1171,7 @@ async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> 
 
 
 async def test_sub_agent_ending_with_deferred_tool_requests_can_be_caught_in_sandbox() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=_deferring_agent())])
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=deferring_agent())])
     code = "try:\n    await approver(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
     assert await _run_script(ts, code) == snapshot(
         "sub-agent 'approver' ended with `DeferredToolRequests` because it needs tool approval or deferred tool "
@@ -1206,7 +1183,7 @@ async def test_sub_agent_resolving_its_own_deferred_tool_calls_returns_its_outpu
     def approve_all(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(approve_all=True)
 
-    approver = _deferring_agent(capabilities=[HandleDeferredToolCalls(handler=approve_all)])
+    approver = deferring_agent(capabilities=[HandleDeferredToolCalls(handler=approve_all)])
     ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=approver)])
     assert await _run_script(ts, "await approver(task='x')") == 'approved and done'
 
