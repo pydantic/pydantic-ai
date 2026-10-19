@@ -73,6 +73,7 @@ from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
+    CONVERSATION_ITEM_ADDED_EVENTS,
     CONVERSATION_ITEM_CREATE_EVENT,
     CONVERSATION_ITEM_DELETE_EVENT,
     CONVERSATION_ITEM_TRUNCATE_EVENT,
@@ -111,6 +112,7 @@ from ._openai_protocol import (
     response_request_metadata,
     seed_items,
     tool_choice_config,
+    tool_content_item_id,
     tool_def_to_openai,
     turn_detection_config,
     user_message_item,
@@ -771,7 +773,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if item:
             if (items := self._tool_items.get(content.tool_call_id)) is not None:
                 # Content the tool returned besides its output (an image, say) is pruned with the call it followed.
-                item['id'] = item_id = f'pydantic_ai_content_{input_index}'
+                item['id'] = item_id = tool_content_item_id(input_index)
                 items.content.append(item_id)
             self._lifecycle.message_sent(None)
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
@@ -1022,7 +1024,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
-        if event_type in ('conversation.item.added', 'conversation.item.created'):
+        if event_type in CONVERSATION_ITEM_ADDED_EVENTS:
             # (The beta protocol, which Azure's preview deployments speak, acknowledges items as created.)
             self._track_tool_item(data)
         self._lifecycle.before_frame(event_type, data)
