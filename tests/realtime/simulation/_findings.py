@@ -393,27 +393,6 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
-def _raw_transport_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from websockets.exceptions import WebSocketException
-
-    errors = [operation.error for operation in sim.operations] + [sim.consumer_error]
-    return any(isinstance(error, WebSocketException) for error in errors)
-
-
-LIVE_RAW_CLOSE_ERROR = Finding(
-    id='SIM-8',
-    title=(
-        'an abnormal close of a GPT-Live connection escapes as a raw `websockets.ConnectionClosedError` (from iterating '
-        'the session and from the next send) instead of `RealtimeError`: the connection only handles a clean close'
-    ),
-    tracked_by='an adapter-local fix in `OpenAILiveConnection.__aiter__`; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'api.unexpected_error'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_raw_transport_error,
-)
-
-
 def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
     from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 
@@ -729,7 +708,6 @@ KNOWN_FINDINGS.extend(
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
-        LIVE_RAW_CLOSE_ERROR,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
         CUT_OFF_TURN_COMPLETE,

@@ -1164,12 +1164,17 @@ def test_live_queued_text_answered_together() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-8')
-def test_known_live_drop_raises_a_raw_websocket_error() -> None:
+def test_live_drop_raises_a_realtime_error() -> None:
+    """SIM-8: a dropped GPT-Live connection ends the session with a `RealtimeError`, as on the other providers."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.drop()
 
-    reproduce('SIM-8', LiveSimulation(), scenario)
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    assert repr(sim.consumer_error) == snapshot(
+        "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+    )
 
 
 def test_live_abandoned_calls_owe_nothing() -> None:
