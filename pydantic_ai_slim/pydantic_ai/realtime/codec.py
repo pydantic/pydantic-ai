@@ -66,6 +66,12 @@ class ToolResult:
     """The tool's output, rendered as a string."""
     content: Sequence[UserContent] | None = None
     """Additional user content to send after the tool output when the provider supports it."""
+    failed: bool = False
+    """Whether the call failed: the tool failed, or the model is asked to retry it.
+
+    `output` already says so, so it reaches every provider; one whose protocol also flags a failed call
+    (ElevenLabs' `is_error`) sets the flag too, as a standard run does on a model that has one.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

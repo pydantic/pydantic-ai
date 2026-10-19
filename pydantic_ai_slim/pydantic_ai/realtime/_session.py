@@ -477,6 +477,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         tool_name=call.tool_name,
         content=content,
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -2216,6 +2217,7 @@ class RealtimeSession:
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
+                tool_kind=call_part.tool_kind,
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
@@ -2411,11 +2413,16 @@ class RealtimeSession:
             return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
-        await self._send_tool_result(call_part, output, wire_content)
+        failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
+        await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
-    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+    async def _send_tool_result(
+        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, failed: bool = False
+    ) -> None:
+        result = ToolResult(
+            tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
+        )
         await self._send_frame(result)
 
     # --- streaming --------------------------------------------------------------------------------
