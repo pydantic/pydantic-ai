@@ -24,6 +24,63 @@
 
 set -euo pipefail
 
+# The partition mode is also used by local regression tests. It accepts the same
+# GitHub files JSON consumed by the full context gatherer and makes no API calls.
+if [ "${1:-}" = "--partition-files" ]; then
+  FILES_JSON="${2:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  ORDERINGS_DIR="${3:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  mkdir -p "$ORDERINGS_DIR"
+
+  # Keep the historical ordering files for consumers that use them. Resolve
+  # equal-size ties by path so assignments do not depend on GitHub API order.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | reverse | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
+
+  PARTITIONS=$(jq '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
+    | ($files | length) as $file_count
+    | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
+    | (if $file_count <= 3 and $diff_lines <= 200 then 0
+       elif $file_count > 10 or $diff_lines > 1000 then 3
+       else 2 end) as $requested
+    | ([ $requested, $file_count ] | min) as $delegate_count
+    | (reduce range(0; $delegate_count) as $i
+         ({bins: [], loads: []}; .bins += [[]] | .loads += [0])) as $empty
+    | reduce $files[] as $file ($empty;
+        . as $state
+        | (reduce range(1; $delegate_count) as $i
+             (0; . as $best
+              | if $state.loads[$i] < $state.loads[$best]
+                   or ($state.loads[$i] == $state.loads[$best]
+                       and ($state.bins[$i] | length) < ($state.bins[$best] | length))
+                then $i else $best end)) as $best
+        | .bins[$best] += [$file.filename]
+        | .loads[$best] += (($file.additions // 0) + ($file.deletions // 0)))
+    | {delegate_count: $delegate_count, bins: .bins}
+  ' "$FILES_JSON")
+
+  printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count' > "$ORDERINGS_DIR/delegate-count.txt"
+  DELEGATE_COUNT=$(printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count')
+  for ((index = 0; index < DELEGATE_COUNT; index++)); do
+    jq -r ".bins[$index][]" <<<"$PARTITIONS" > "$ORDERINGS_DIR/delegate-$((index + 1)).txt"
+  done
+  # Existing largest.txt remains the ordered source used for first-pass
+  # assignments. Assign each next-largest file to the least-loaded delegate.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
+    | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
+  exit 0
+fi
+
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
 CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
@@ -341,24 +398,12 @@ jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/";
     fi
   done > "$CTX/changed-files.txt"
 
-# File orderings for sub-agent fan-out. Each ordering primes one sub-agent to
-# spend its early attention on a different slice of the PR; the parent merges
-# findings. Generated files (uv.lock, cassettes) are excluded — they don't
-# get reviewed. Each file contains one path per line.
-echo "  - File orderings (az / za / largest)"
+# File orderings and disjoint first-pass assignments. The historical ordering
+# files remain available to other consumers; assignments use largest-first
+# greedy balancing and exclude generated files.
+echo "  - File orderings and delegate assignments"
 mkdir -p "$CTX/file-orderings"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/az.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | reverse | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/za.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(-((.additions // 0) + (.deletions // 0))) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/largest.txt"
+"$0" --partition-files "$FILES_JSON" "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
@@ -423,8 +468,12 @@ Determine severity AFTER investigating the finding, not before.
   on small helpers, narrow refactor opportunities.
 - 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
 
-**Verdict mapping:** any HIGH or CRITICAL → `REQUEST_CHANGES`. MEDIUM-only
-or below → `APPROVE` (post the comments anyway). No findings → `APPROVE`.
+**Verdict mapping:** any verified HIGH or CRITICAL finding requires
+`REQUEST_CHANGES`, even when review coverage is incomplete. Otherwise, incomplete
+coverage requires `COMMENT`; complete coverage with MEDIUM-only or lower findings
+requires `APPROVE` (post comments anyway). Name every unreviewed file in the
+review body for either verdict.
+Complete coverage with no findings → `APPROVE`.
 
 **Cap inline comments at 30 per run.** If more findings survive, keep the
 highest-severity 30 inline and list the rest briefly in the review body.

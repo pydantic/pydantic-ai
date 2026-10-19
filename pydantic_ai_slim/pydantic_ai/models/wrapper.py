@@ -11,6 +11,7 @@ from typing import Any, Self
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import ModelMessage, ModelResponse
+from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile
 from ..providers import Provider
 from ..settings import ModelSettings
@@ -116,6 +117,9 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters | None = None,
     ) -> list[ModelMessage]:
         return self.wrapped.prepare_messages(messages, model_request_parameters)
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return self.wrapped.unsupported_native_tool_settings(native_tool)
 
     @property
     def provider(self) -> Provider[Any] | None:
