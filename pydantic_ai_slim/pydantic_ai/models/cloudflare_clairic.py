@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 import httpx2
@@ -85,7 +85,7 @@ class CloudflareClairicModelSettings(ModelSettings, total=False):
     """Request-wide Clairic options, merged with ordinary model settings."""
 
     cloudflare_clairic_reference_date: date | str
-    """ISO date anchoring dates written without a year."""
+    """ISO date anchoring dates written without a year; a datetime uses its date component."""
     cloudflare_clairic_include_quantiles: bool
     """Request 99 percentiles on estimates and each forecast step. Defaults to false."""
     cloudflare_clairic_return_state_text: bool
@@ -272,7 +272,12 @@ class CloudflareClairicModel(Model[httpx2.AsyncClient]):
         if images:
             body['images'] = images
         if (reference_date := settings.get('cloudflare_clairic_reference_date')) is not None:
-            body['reference_date'] = reference_date.isoformat() if isinstance(reference_date, date) else reference_date
+            if isinstance(reference_date, datetime):
+                body['reference_date'] = reference_date.date().isoformat()
+            elif isinstance(reference_date, date):
+                body['reference_date'] = reference_date.isoformat()
+            else:
+                body['reference_date'] = reference_date
         if (extra_body := settings.get('extra_body')) is not None:
             try:
                 overrides = _extra_body_adapter.validate_python(extra_body)

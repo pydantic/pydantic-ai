@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Annotated
 from unittest.mock import AsyncMock, PropertyMock, patch
@@ -1149,7 +1149,11 @@ async def test_duplicate_field_markers():
     assert captured.requests == []
 
 
-async def test_request_settings_override_model_defaults():
+@pytest.mark.parametrize(
+    'reference_date',
+    [date(2026, 10, 19), datetime(2026, 10, 19, 12), datetime(2026, 10, 19, 12, tzinfo=UTC), '2026-10-19'],
+)
+async def test_request_settings_override_model_defaults(reference_date: date | str):
     class Output(BaseModel):
         x: str
 
@@ -1163,7 +1167,7 @@ async def test_request_settings_override_model_defaults():
     )
     captured.model = CloudflareClairicModel(provider=provider, settings=defaults)
     overrides = CloudflareClairicModelSettings(
-        cloudflare_clairic_reference_date='2026-10-19',
+        cloudflare_clairic_reference_date=reference_date,
         cloudflare_clairic_include_quantiles=False,
         cloudflare_clairic_return_state_text=False,
     )
