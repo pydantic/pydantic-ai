@@ -35,6 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers._oauth_provider import post_token_request
     from pydantic_ai.providers.openai_chatgpt import (
+        CredentialsPersistenceError,
         CredentialsRefreshError,
         OpenAIChatGPTCredentials,
         OpenAIChatGPTOAuthFlow,
@@ -521,6 +522,39 @@ async def test_provider_stops_using_credentials_that_lost_plan_usage():
 
     assert len(token_posts) == 1
     assert api_requests == []
+
+
+async def test_provider_keeps_an_unsaved_rotation_over_the_set_it_spent():
+    """A refresh whose save failed keeps its replacement over the stored set that refresh spent."""
+    grants: list[str] = []
+    rotations = iter(['2', '3'])
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == 'auth.openai.com':
+            grants.append(dict(parse_qsl(request.content.decode()))['refresh_token'])
+            n = next(rotations)
+            return httpx2.Response(200, json={'access_token': f'access-{n}', 'refresh_token': f'refresh-{n}'})
+        return httpx2.Response(200 if request.headers['authorization'] == 'Bearer access-3' else 401)
+
+    class FlakySource(CredentialSource):
+        failing = True
+
+        async def save(self, credentials: OpenAIChatGPTCredentials) -> None:
+            if self.failing:
+                raise OSError('disk full')
+            await super().save(credentials)
+
+    source = FlakySource(make_credentials(access_token=make_jwt({'exp': time.time() - 3600})))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        provider = OpenAIChatGPTProvider(credential_source=source, http_client=client)
+        with pytest.raises(CredentialsPersistenceError):
+            await client.get('https://api.openai.com/v1/models')
+        # Storage recovers while it still holds the spent `refresh-1`; the next 401 refreshes `refresh-2`.
+        source.failing = False
+        assert (await client.get('https://api.openai.com/v1/models')).status_code == 200
+
+    assert grants == ['refresh-1', 'refresh-2']
+    assert provider.credentials.refresh_token == source.credentials.refresh_token == 'refresh-3'
 
 
 async def test_provider_sends_credentials_only_to_the_openai_api():

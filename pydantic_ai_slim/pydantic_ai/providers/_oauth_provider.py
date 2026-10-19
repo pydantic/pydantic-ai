@@ -297,6 +297,9 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
         self._revision = 0
         self._refresh_failures = 0
         self._last_refresh_error: tuple[int, Exception] | None = None
+        # What the credential source still held when saving a refresh failed: the set that refresh
+        # spent, which must not be adopted back over the unsaved replacement in memory.
+        self._unsaved_predecessor: CredentialsT | None = None
         self._auth = OAuthCredentialsAuth(self)
         if http_client is None:
             http_client = create_async_httpx2_client()
@@ -427,11 +430,14 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
         # The caller must hold `_refresh_lock`.
         assert self._refresh_lock.locked()
         rejected = self.credentials
+        stored: CredentialsT | None = None
         if (source := self._credential_source) is not None:
             # Refresh tokens are single-use, so spending ours when another process already refreshed
             # would invalidate theirs. Re-read storage first and adopt a newer set if one is there.
-            if (stored := await source.load()) != rejected:
+            stored = await source.load()
+            if stored != rejected and stored != self._unsaved_predecessor:
                 self._replace(stored)
+                self._unsaved_predecessor = None
                 return
         # The provider's own client, so custom transports and proxies apply to refreshes too;
         # the auth flow ignores other hosts, so this cannot recurse or leak the bearer.
@@ -440,10 +446,12 @@ class OAuthCredentialsProvider(OpenAICompatibleProvider, ABC, Generic[Credential
             try:
                 await source.save(self.credentials)
             except Exception as e:
+                self._unsaved_predecessor = stored
                 raise CredentialsPersistenceError(
                     'Credentials were refreshed in memory but saving them to the credential source raised.',
                     self.name,
                 ) from e
+            self._unsaved_predecessor = None
 
     def _replace(self, credentials: CredentialsT) -> None:
         # Atomic replace of the complete set, then bump the revision so concurrent 401s observe it.
