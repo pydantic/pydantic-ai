@@ -17,13 +17,13 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
 from pydantic_clai2.ui.menus.model_picker import (
@@ -159,7 +159,7 @@ def test_settings_shortcut_does_not_consume_search(tmp_path: Path, monkeypatch: 
         next(keys)
 
 
-def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
+async def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     menu = ModelMenu(context)
     assert menu.current == 'openai-codex:gpt-6-astra'
@@ -176,17 +176,22 @@ def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value='nope')) == ''
     assert menu.build() is not None
     marker = menu.settings_marker(object(), priced)
+    # `Ctrl+S` closes the list for the model's settings menu, then the list opens again on that model.
     script = Script(
         lists=[pick('anthropic'), marker, pick('max_tokens'), MenuResult(cancelled=True), pick(priced.value)],
         choices=[],
         texts=[typed('42')],
     )
-    messages = run_model_flow(menu, script.runners)
-    assert messages == [
-        f'Saved max_tokens for {priced.value}. Applies when this model is selected.',
-        'Saved model. Applied.',
-    ]
+    assert await open_add_model_menu(context, runners=script.runners) == '\n'.join(
+        [f'Saved max_tokens for {priced.value}. Applies when this model is selected.', 'Saved model. Applied.']
+    )
+    assert script.opened == ['list', 'list', 'list', 'text', 'list', 'list']
     assert context.settings.model == priced.value
+    # Again from the reopened list, and backing out of it returns to the providers.
+    closed = MenuResult(cancelled=True)
+    script = Script(lists=[pick('anthropic'), marker, closed, marker, closed, closed, closed], choices=[], texts=[])
+    assert await open_add_model_menu(context, runners=script.runners) == 'No changes.'
+    assert script.opened == ['list'] * 7
     assert applied == ['model']
     assert 'settings  max_tokens=42' in menu.details(priced)
     assert run_model_flow(menu, Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners) == []

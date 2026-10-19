@@ -19,6 +19,8 @@ from pydantic_ai_harness.skills._loader import (
     MissingDirectories,
     SkillCatalog,
     SkillDefinition,
+    SkippedSkill,
+    UnknownNames,
     load_skill_libraries,
     same_skill,
     skip_duplicate_name,
@@ -36,6 +38,7 @@ class _SkillSource:
     exclude: frozenset[str]
     missing_directories: MissingDirectories
     duplicate_names: DuplicateNames
+    unknown_names: UnknownNames
     workspace: Workspace | None
     """The `workspace=` the libraries are read from, or `None` for the run's workspace."""
 
@@ -70,7 +73,8 @@ class Skills(AbstractCapability[AgentDepsT]):
     the skill: the model sees its name and description, and loads its Markdown body, with the
     skill's directory in the run's workspace, with `load_capability`. Bundled files are not loaded
     or executed. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
-    A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once.
+    A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once. A skill
+    whose frontmatter has `disable-model-invocation: true` is left out of the model's catalog.
 
     `load` reads the same skills outside a run, for a host that lets a person invoke a skill
     itself; render one with `SkillDefinition.render`.
@@ -88,10 +92,14 @@ class Skills(AbstractCapability[AgentDepsT]):
     """Exact skill names to omit from the catalog."""
 
     missing_directories: MissingDirectories
-    """`'error'` fails the run on a library directory that does not exist; `'skip'` leaves it out."""
+    """`'error'` fails the run on a library path that is not a library; `'skip'` leaves it out, with a warning
+    unless it does not exist."""
 
     duplicate_names: DuplicateNames
     """`'error'` fails the run when two different `SKILL.md` files share a name; `'keep_first'` keeps the first."""
+
+    unknown_names: UnknownNames
+    """`'error'` fails the run on an `include` or `exclude` name no library has; `'skip'` ignores that name."""
 
     workspace: WorkspaceBackend | None
     """Where the libraries live, when not in the run's workspace; see `__init__`."""
@@ -111,6 +119,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None: ...
 
@@ -123,6 +132,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: Collection[str] | None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None: ...
 
@@ -134,6 +144,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         exclude: Collection[str] | None = None,
         missing_directories: MissingDirectories = 'error',
         duplicate_names: DuplicateNames = 'error',
+        unknown_names: UnknownNames = 'error',
         workspace: WorkspaceBackend | None = None,
     ) -> None:
         """Configure the skill libraries to read at the start of each run.
@@ -143,12 +154,16 @@ class Skills(AbstractCapability[AgentDepsT]):
                 order. `~` is not expanded: the workspace may be a sandbox with a home of its own.
             include: Exact names to expose. Omit to expose all discovered skills.
             exclude: Exact names to omit. Cannot be combined with `include`.
-            missing_directories: `'error'` (the default) fails the run when a library directory does
-                not exist. `'skip'` leaves it out, for conventional locations such as `.agents/skills`
-                that a project may not have.
+            missing_directories: `'error'` (the default) fails the run when a library path does not
+                exist, is not a directory, or is itself a skill package. `'skip'` leaves such a path out,
+                for conventional locations such as `.agents/skills` that a project may not have: one
+                that does not exist quietly, any other with a warning.
             duplicate_names: `'error'` (the default) fails the run when two different `SKILL.md` files
                 share a name. `'keep_first'` keeps the one from the earlier directory and skips the
                 other with a warning, the way coding agents layer project skills over personal ones.
+            unknown_names: `'error'` (the default) fails the run when an `include` or `exclude` name
+                matches no skill. `'skip'` ignores that name, for a selection shared by projects that
+                do not all have every skill it names.
             workspace: A workspace backend to read the libraries from instead of the run's, such as
                 `LocalWorkspaceBackend('/app')` for skills shipped with the code while the agent
                 works in a sandbox. It is read in-process only in this release: a durable engine
@@ -161,16 +176,21 @@ class Skills(AbstractCapability[AgentDepsT]):
             raise ValueError(f"missing_directories must be 'error' or 'skip', not {missing_directories!r}.")
         if duplicate_names not in get_args(DuplicateNames):
             raise ValueError(f"duplicate_names must be 'error' or 'keep_first', not {duplicate_names!r}.")
+        if unknown_names not in get_args(UnknownNames):
+            raise ValueError(f"unknown_names must be 'error' or 'skip', not {unknown_names!r}.")
 
         self.directories = self._normalize_directories(directories)
         self.include = self._normalize_selection('include', include) if include is not None else None
         self.exclude = self._normalize_selection('exclude', exclude) if exclude is not None else frozenset()
         self.missing_directories = missing_directories
         self.duplicate_names = duplicate_names
+        self.unknown_names = unknown_names
         self.workspace = workspace
         own = secondary_workspace(workspace, 'Skills')
         self._sources = (
-            _SkillSource(self.directories, self.include, self.exclude, missing_directories, duplicate_names, own),
+            _SkillSource(
+                self.directories, self.include, self.exclude, missing_directories, duplicate_names, unknown_names, own
+            ),
         )
 
     def __repr__(self) -> str:
@@ -178,7 +198,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         return (
             f'{type(self).__name__}('
             f'directories={self.directories!r}, include={self.include!r}, exclude={self.exclude!r}, '
-            f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r})'
+            f'missing_directories={self.missing_directories!r}, duplicate_names={self.duplicate_names!r}, '
+            f'unknown_names={self.unknown_names!r})'
         )
 
     @staticmethod
@@ -224,24 +245,26 @@ class Skills(AbstractCapability[AgentDepsT]):
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
-        Returns one deferred capability per skill, or, without skills, this capability, which adds
-        no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md`, an overlong
-        description, or unsupported frontmatter. Raises `UserError` when a configuration without
+        Returns one deferred capability per skill the model may load, or, without any, this capability,
+        which adds no instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or
+        library path, an overlong description, or unsupported frontmatter. Raises `UserError` when a configuration without
         `workspace=` meets a run without a workspace.
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         catalog = await self._load(ctx.workspace)
-        for message in (*catalog.skipped, *self._advice(catalog.skills)):
+        for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
-        return CombinedCapability([_Skill[AgentDepsT](skill) for skill in catalog.skills]) if catalog.skills else self
+        offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]
+        return CombinedCapability(offered) if offered else self
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:
         """Read the selected skills now, as a run does at its start, without emitting warnings.
 
         For a host that offers skills to a person as well as to the model, such as a `/code-review`
-        command that sends `skill.render(arguments)` as a prompt. The catalog's `skipped` messages
-        say which `SKILL.md` files were left out, for the host to show.
+        command that sends `skill.render(arguments)` as a prompt. The catalog includes skills the model
+        may not load (`model_invocable`), and its `skipped` entries say which `SKILL.md` files and
+        library paths were left out, for the host to show.
 
         Args:
             workspace: Where libraries without their own `workspace=` live, as the run's workspace
@@ -249,8 +272,9 @@ class Skills(AbstractCapability[AgentDepsT]):
 
         Raises:
             UserError: A configuration without `workspace=` needs `workspace`, and none was passed.
-            ValueError: A configuration problem that would also fail a run, such as an unknown
-                `include` name or, with `duplicate_names='error'`, two skills with one name.
+            ValueError: A configuration problem that would also fail a run, such as, with
+                `unknown_names='error'`, an unknown `include` name or, with `duplicate_names='error'`,
+                two skills with one name.
         """
         run_workspace = secondary_workspace(workspace, 'Skills.load')
         if run_workspace is None and any(source.workspace is None for source in self._sources):
@@ -261,7 +285,7 @@ class Skills(AbstractCapability[AgentDepsT]):
 
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
         by_name: dict[str, tuple[Workspace, SkillDefinition]] = {}
-        messages: list[str] = []
+        messages: list[SkippedSkill] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
             assert workspace is not None, 'a configuration without `workspace=` is only loaded with a run workspace'
@@ -272,6 +296,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 exclude=source.exclude,
                 missing_directories=source.missing_directories,
                 duplicate_names=source.duplicate_names,
+                unknown_names=source.unknown_names,
             )
             messages.extend(skipped)
             for skill in skills:

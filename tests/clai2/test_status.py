@@ -30,10 +30,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
@@ -129,6 +129,13 @@ async def test_retained_cost_lower_bound_survives_measured_turn_and_resets(
     ]
 
 
+def test_an_estimated_context_figure_is_marked() -> None:
+    status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
+    assert 'context: ~13k/1m tokens' in status.text()
+    assert status.toolbar()[1] == (MUTED, '~13k/1m')
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
 def test_workspace_follows_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, 'home', lambda: Path('/home/me'))
     status = Status(model='m', workspace='/home/me/code/app')
@@ -187,6 +194,7 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
 def test_clearing_the_conversation_resets_its_figures() -> None:
     status = Status(
         context_tokens=90,
+        context_estimated=True,
         context_window=100,
         context_alert=True,
         output_tokens=5,

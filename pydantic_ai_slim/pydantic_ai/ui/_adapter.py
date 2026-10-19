@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -31,6 +31,8 @@ from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
     ModelMessage,
+    ModelRequest,
+    SystemPromptPart,
     ToolAvailabilityDeltaPart,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
@@ -179,6 +181,33 @@ def resolve_allow_uploaded_files(
 
 
 _COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def enqueued_messages_for_client(
+    messages: Sequence[ModelMessage], *, manage_system_prompt: Literal['server', 'client']
+) -> list[ModelMessage]:
+    """The enqueued messages to stream to the frontend.
+
+    When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
+    frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
+    Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
+    current request only, and loaded back they'd become lasting system prompts.
+    """
+    kept: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, SystemPromptPart)
+                or (manage_system_prompt == 'client' and part.scope != 'request')
+            ]
+            if not parts:
+                continue
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+        kept.append(message)
+    return kept
 
 
 def compaction_payload(part: CompactionPart) -> dict[str, Any]:

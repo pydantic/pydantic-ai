@@ -6,7 +6,7 @@ OpenTelemetry
 Stale
 UI adapters
 a2a
-agentic-workflows
+agentic-workflows	about our own gh aw's -> internal/chore — about our engine -> external/feature/bug
 alibaba
 anthropic
 area:ui-adapters
@@ -26,6 +26,7 @@ capability-internals	Shared capability APIs and mechanics: lifecycle, loading, s
 capability-solveable	Addressable as a userland capability or via hooks — no core change required
 cerebras	Cerebras provider
 chore
+ci-review-failed
 ci:fast	Use Depot 4-core runners for bottleneck CI jobs
 ci:slow	Force standard GitHub runners (bypass Depot)
 citations
@@ -48,6 +49,7 @@ docs	Improvements or additions to documentation
 docs-drift
 documentation
 douwebot	reviews the PR that gets labeled and removes the label at the end
+douwebot:review-agent-config	One-head, one-run maintainer request to review protected agent-config changes.
 duplicate	This issue or pull request already exists
 durable exec
 embeddings
@@ -58,8 +60,9 @@ feedback wanted
 fix
 gateway
 genai-prices
+gh-aw	GitHub Agentic Workflows integration and engine, including its runner, recorder, and parser.
+github-actions	Pull requests that update GitHub Actions code
 github-copilot	GitHub Copilot provider integration, authentication, and model support.
-github_actions	Pull requests that update GitHub Actions code
 google-cloud
 google-gemini
 groq
@@ -121,6 +124,7 @@ pydanty:bot	Managed by pydanty dogfooding automation
 pydanty:brief-generated	An issue_brief artifact version landed
 pydanty:bug	Managed by pydanty dogfooding automation
 pydanty:cancel	Kill switch: pydanty never starts a run on this issue or PR while present; nothing auto-removes it.
+pydanty:failed	Pydanty could not complete issue triage
 pydanty:feature	Managed by pydanty dogfooding automation
 pydanty:fix-attempted	issue-fix-tdd workflow ran
 pydanty:fix-cannot-reproduce	Fix workflow couldn't reproduce the bug
@@ -173,8 +177,9 @@ tools
 tracking	waiting for something that needs to happen to take the next step
 triage:legitimate
 trigger:ci-duration-report	Trigger a CI duration report comment.
-trigger:docs	Trigger a documentation preview.
+trigger:docs-preview	Trigger a documentation preview.
 typesafe	TypeSafe/Jev provider integration, configuration, and model support.
+ui-security-review-failed
 unplanned	This will not be worked on
 usage
 v2

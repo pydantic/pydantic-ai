@@ -5,11 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import PendingMessage, PendingMessageQueue
-from pydantic_ai._utils import fill_run_metadata
+from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, ModelRequest
+from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
 from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
@@ -17,35 +16,6 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
-
-
-def _queue(ctx: RunContext[Any]) -> PendingMessageQueue:
-    # Graph runs always carry the thread-safe queue. Other `RunContext` producers (durable-exec
-    # guards, synthetic contexts) never reach this drain.
-    queue = ctx.pending_messages
-    assert isinstance(queue, PendingMessageQueue)
-    return queue
-
-
-def _stamped_messages(
-    pending: PendingMessage,
-    *,
-    fallback_run_id: str | None,
-    fallback_conversation_id: str | None,
-) -> list[ModelMessage]:
-    """Stamp a pending message's messages' `timestamp` / `run_id` / `conversation_id` where unset.
-
-    Each [`PendingMessage`][pydantic_ai._enqueue.PendingMessage] carries one or more built
-    [`ModelMessage`][pydantic_ai.messages.ModelMessage]s (assembled at enqueue time by
-    [`PendingMessage.from_content`][pydantic_ai._enqueue.PendingMessage.from_content]); this only
-    fills in framework-tracked metadata that the producer left unset, so producer-supplied values
-    are preserved.
-    """
-    messages: list[ModelMessage] = []
-    for message in pending.messages:
-        fill_run_metadata(message, run_id=fallback_run_id, conversation_id=fallback_conversation_id)
-        messages.append(message)
-    return messages
 
 
 class PendingMessageDrainCapability(AbstractCapability[Any]):
@@ -90,15 +60,7 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
         messages exactly as delivered here.
         """
-        drained = _queue(ctx).pop_priority('asap')
-        for pending in drained:
-            messages = _stamped_messages(
-                pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-            )
-            request_context.messages = [*request_context.messages, *messages]
-            ctx.messages.extend(messages)
-            ctx._emit_event(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(messages)))  # pyright: ignore[reportPrivateUsage]
-        return request_context
+        return deliver_asap_messages(ctx, request_context)
 
 
 def drain_pending_messages_at_end(
@@ -127,7 +89,7 @@ def drain_pending_messages_at_end(
     # final step (e.g. a background task completing while the model produced
     # its final response) gets delivered before `'when_idle'` messages, and the
     # agent gets another turn rather than terminating with the message lost.
-    leftover_asap, when_idle = _queue(ctx).drain_at_end()
+    leftover_asap, when_idle = run_queue(ctx).drain_at_end()
     if not leftover_asap and not when_idle:
         return result
 
@@ -135,13 +97,13 @@ def drain_pending_messages_at_end(
     stamped = [
         (
             pending,
-            _stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
+            stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id),
         )
         for pending in drained
     ]
     messages = [message for _, pending_messages in stamped for message in pending_messages]
     # `final` becomes the redirect node's request; `ModelRequestNode._prepare_request`
-    # will re-stamp it during the graph lifecycle. `_stamped_messages` already
+    # will re-stamp it during the graph lifecycle. `stamped_messages` already
     # stamped it, which is harmless (the lifecycle stamp overwrites). `from_content`
     # guarantees each `PendingMessage` ends in a `ModelRequest`, but a producer can
     # construct `PendingMessage` (or mutate `RunContext.pending_messages`) directly, so

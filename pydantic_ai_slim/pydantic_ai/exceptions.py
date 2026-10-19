@@ -32,12 +32,14 @@ __all__ = (
     'UndrainedPendingMessagesError',
     'AgentRunError',
     'RunCancelled',
+    'RunTimedOut',
     'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -266,7 +268,8 @@ class RunCancelled(AgentRunError):
     """Raised when the agent run was cancelled by the application itself.
 
     Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
-    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
+    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], and as its subclass
+    [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] when a run's `timeout=` expires.
     This is a normal, catchable application-level outcome: the run stopped because your own code
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
@@ -440,6 +443,18 @@ class RunCancelled(AgentRunError):
         return self._conversation_id
 
 
+class RunTimedOut(RunCancelled, TimeoutError):
+    """Raised when an agent run doesn't finish before its deadline.
+
+    The deadline comes from `timeout=` on the agent run methods, or is inherited from the run that
+    started this one from inside a tool (see [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline]).
+    The run is stopped exactly like [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], whose
+    subclass this is, so `except RunCancelled` sees every first-party stop and
+    [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] holds everything the run
+    completed, ready to resume from. It is also a `TimeoutError`, like the error `asyncio.timeout()` raises.
+    """
+
+
 class SuspendedResponseExpired(AgentRunError):
     """Raised when resuming a suspended response whose server-side job is no longer available.
 
@@ -514,6 +529,26 @@ class ModelAPIError(AgentRunError):
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
         return self.__class__, (self.model_name, self.message)
+
+
+class ModelRequestTimeout(ModelAPIError):
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+
+    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
+    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    default `fallback_on` falls back on this error.
+    """
+
+    timeout: float
+    """The `request_timeout` that ran out, in seconds."""
+
+    def __init__(self, model_name: str, timeout: float):
+        self.timeout = timeout
+        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.timeout)
 
 
 class ModelHTTPError(ModelAPIError):

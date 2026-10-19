@@ -2,6 +2,7 @@
 
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,9 +11,11 @@ from anyio import to_thread
 from pydantic_clai2.mcp._form import Editor, edit_form, edit_in_editor, install_form
 from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State, not_owned, sign_in
 from pydantic_clai2.mcp._settings import references, target
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.plugins.sign_in import sign_in_now, sign_out_now
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.menu_worker import full_terminal
 
 _GLYPHS: dict[State, str] = {'running': '+', 'ready': 'o', 'stopped': '-', 'error': '!'}
 SERVER_SUBCOMMANDS = ('start', 'stop', 'restart', 'status', 'logs', 'auth', 'edit', 'remove', 'tools')
@@ -72,24 +75,33 @@ def _no_arguments(usage: str, args: list[str]) -> None:
 
 @dataclass(kw_only=True)
 class MCPCommand:
-    """Parse `/mcp` arguments and dispatch. Menus run through `runners` so tests can script them."""
+    """Parse `/mcp` arguments and dispatch. The terminal's forms run through `runners` so tests can script them."""
 
     servers: MCPServers
     runners: Runners = TERMINAL
     editor: Editor = edit_in_editor
 
     async def __call__(self, args: list[str]) -> str:
-        """Bare `/mcp` shows the dashboard, like Code Puppy."""
+        """Bare `/mcp` shows the dashboard, like Code Puppy; forms and sign-ins open in the terminal."""
+        # A form is several widgets: the live panel stays off the screen between them, as in any settings menu.
+        with full_terminal() if args and args[0].lower() in ('install', 'edit') else nullcontext():
+            return await self.run(args, dialogs=TerminalDialogs(self.runners), editor=self.editor)
+
+    async def run(self, args: list[str], *, dialogs: Dialogs, editor: Editor | None) -> str:
+        """Run `/mcp ARGS`, asking through `dialogs`; `editor` edits a form's JSON, as `run_form` says."""
         await self.servers.sync()
         if not args or (args[0] in ('list', 'status') and len(args) == 1):
             return self.dashboard()
         action, rest = args[0].lower(), args[1:]
         simple: dict[str, Callable[[list[str]], Awaitable[str]]] = {
-            'install': self._install,
             'start-all': self._start_all,
             'stop-all': self._stop_all,
             'trust': self._trust,
         }
+        if action == 'install':
+            if rest:
+                raise ValueError('Usage: /mcp install (opens the add-server form)')
+            return await install_form(self.servers.store, dialogs, editor)
         if action in simple:
             return await simple[action](rest)
         if action == 'help':
@@ -97,7 +109,7 @@ class MCPCommand:
         if action in SERVER_SUBCOMMANDS:
             if not rest:
                 raise ValueError(f'Usage: /mcp {action} NAME')
-            return await self._server_action(action, rest[0], rest[1:])
+            return await self._server_action(action, rest[0], rest[1:], dialogs=dialogs, editor=editor)
         raise ValueError(f'Unknown MCP subcommand: {action}. Type /mcp help for available commands.')
 
     def complete(self, args: list[str]) -> Iterable[str]:
@@ -190,7 +202,9 @@ class MCPCommand:
             return None
         return '\n' + '\n'.join([*notices, 'Review the project MCP files, then /mcp trust accept.'])
 
-    async def _server_action(self, action: str, name: str, extra: list[str]) -> str:
+    async def _server_action(
+        self, action: str, name: str, extra: list[str], *, dialogs: Dialogs, editor: Editor | None
+    ) -> str:
         entry = self.servers.get(name)
         if action not in ('logs', 'auth'):
             _no_arguments(f'{action} NAME', extra)
@@ -199,7 +213,7 @@ class MCPCommand:
         if action == 'logs':
             return await self._logs(name, extra)
         if action == 'auth':
-            return await self._auth(entry, extra)
+            return await self._auth(entry, extra, dialogs)
         if action == 'tools':
             return '\n'.join(await self.servers.list_tools(name)) or f'No tools provided by {name}.'
         if action == 'remove':
@@ -210,7 +224,7 @@ class MCPCommand:
             if reason:
                 raise ValueError(reason)
             running = self.servers.state(entry) == 'running'
-            saved = await run_worker(lambda: edit_form(self.servers.store, name, self.runners, self.editor))
+            saved = await edit_form(self.servers.store, name, dialogs, editor)
             if saved is None:
                 return 'No changes.'
             new_name, message = saved
@@ -219,7 +233,7 @@ class MCPCommand:
         methods = {'start': self.servers.start, 'stop': self.servers.stop, 'restart': self.servers.restart}
         return await methods[action](name)
 
-    async def _auth(self, entry: ServerEntry, extra: list[str]) -> str:
+    async def _auth(self, entry: ServerEntry, extra: list[str], dialogs: Dialogs) -> str:
         """Sign in again behind the waiting screen, then connect; or sign out."""
         name = entry.name
         method = sign_in(name, entry.server)
@@ -231,7 +245,7 @@ class MCPCommand:
         if extra:
             return await sign_out_now(method)
         await to_thread.run_sync(method.sign_out)  # A fresh sign-in, also when the stored one still works.
-        message = await sign_in_now(method, self.runners)
+        message = await sign_in_now(method, dialogs)
         if not await to_thread.run_sync(method.signed_in):
             return message
         return f'{message}\n{await self.servers.start(name)}'
@@ -245,11 +259,6 @@ class MCPCommand:
         if not total:
             return f'No log entries for {name} yet.'
         return '\n'.join([f'{path} (last {len(lines)} of {total} lines)', *lines])
-
-    async def _install(self, args: list[str]) -> str:
-        if args:
-            raise ValueError('Usage: /mcp install (opens the add-server form)')
-        return await run_worker(lambda: install_form(self.servers.store, self.runners, self.editor))
 
     async def _start_all(self, args: list[str]) -> str:
         _no_arguments('start-all', args)

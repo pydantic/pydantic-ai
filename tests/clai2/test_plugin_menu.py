@@ -20,7 +20,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.describe import describe
-from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginEntry, PluginLoader
+from pydantic_clai2.plugins.loader import TURN_NOTICE, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
@@ -103,15 +103,14 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     (tmp_path / 'clai_namespace').mkdir()
     monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
 
-    def text(factory: str, *, project: bool = False, path: Path | None = None) -> str:
-        declaration = PluginSettings(id='x', factory=factory)
-        return describe(PluginEntry[None](declaration=declaration, path=path, project=project))
+    def text(factory: str, *, path: Path | None = None) -> str:
+        return describe(factory, path)
 
     assert text('clai_described:Tool') == 'The tool.'
     assert text('clai_described:Plain') == 'The module.'
     assert text('clai_described:missing') == 'The module.'
-    assert text('clai_described', project=True) == 'The module.'
-    assert text('x', project=True, path=tmp_path / 'clai_described.py') == 'The module.'
+    assert text('clai_described') == 'The module.'
+    assert text('x', path=tmp_path / 'clai_described.py') == 'The module.'
     assert text('clai_broken_source') == ''
     assert text('clai_missing_package.plugin') == ''
     assert text('pydantic_clai2.no_such_module') == ''
@@ -123,7 +122,6 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     (package / '__init__.py').write_text('raise RuntimeError("parent imported")')
     (package / 'tools.py').write_text('class Tool:\n    """A safe description."""\n')
     assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
-    assert text('clai_parent_must_not_run.tools:Tool', project=True) == 'A safe description.'
     assert 'clai_parent_must_not_run' not in sys.modules
     injected = tmp_path / 'injected.py'
     injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')
@@ -202,7 +200,7 @@ def run_keys(
     return menu.build().run(), frames
 
 
-FOOTER = '/ search · space on/off · c configure · r reload · d remove · esc close'
+FOOTER = '/ search - Enter/Space on/off - c configure - r reload - d remove - Esc close'
 EMPTY = '(type to filter)'
 
 
@@ -246,11 +244,9 @@ def test_search_and_navigation(
     query: str,
     name: str | None,
 ) -> None:
-    """Enter ends a search keeping the matches; a second Enter picks the highlighted row."""
+    """Enter ends a search keeping the matches; `q` then closes on the highlighted row."""
     loader = make_loader(tmp_path, 'alpha', 'beta', 'coDer', 'quiet')
-    result, frames = run_keys(
-        PluginMenu(loader, apply=run_now), [*keys, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
-    )
+    result, frames = run_keys(PluginMenu(loader, apply=run_now), [*keys, 'q'], monkeypatch=monkeypatch, capsys=capsys)
     assert result.item is not None
     if name is None:
         assert is_save_and_close(result.item)
@@ -281,6 +277,35 @@ def test_hotkeys_act_on_the_kept_matches(
     assert all(entry.loaded is None for entry in loader.entries())
 
 
+@pytest.mark.parametrize('toggle', [Key.ENTER, ' '])
+def test_enter_toggles_like_space_and_keeps_the_menu_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], toggle: str
+) -> None:
+    """Enter used to select the row and close the menu without toggling anything."""
+    loader = make_loader(tmp_path, 'alpha', 'beta')
+    result, frames = run_keys(
+        PluginMenu(loader, apply=run_now),
+        [toggle, Key.DOWN, toggle, toggle, Key.ESCAPE],
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+    )
+    assert result.cancelled, 'only Esc closed the menu'
+    assert '● alpha' in frames[1] and '○ beta' in frames[1]
+    assert '● beta' in frames[3] and '○ beta' in frames[4]
+    assert [entry.name for entry in loader.entries() if entry.loaded is not None] == ['alpha']
+
+
+def test_enter_on_save_and_close_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    loader = make_loader(tmp_path, 'alpha')
+    result, _ = run_keys(
+        PluginMenu(loader, apply=run_now), [Key.END, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
+    )
+    assert result.item is not None and is_save_and_close(result.item)
+    assert all(entry.loaded is None for entry in loader.entries())
+
+
 @pytest.mark.parametrize('keys', [['/', Key.ENTER], ['/', 'x', Key.BACKSPACE, Key.ENTER]])
 def test_enter_on_an_empty_search_lets_one_esc_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], keys: list[str]
@@ -294,7 +319,7 @@ def test_enter_on_an_empty_search_lets_one_esc_close(
     assert len(frames) == len(keys) + 1
 
 
-@pytest.mark.parametrize('key', [' ', 'c'])
+@pytest.mark.parametrize('key', [Key.ENTER, ' ', 'c'])
 def test_configure_from_search(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], key: str
 ) -> None:

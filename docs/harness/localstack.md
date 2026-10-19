@@ -35,7 +35,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import LocalStack
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[LocalStack()],
 )
 
@@ -148,7 +148,7 @@ asyncio.run(main())
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each AWS CLI command and health check
+Under [durable execution](../durable_execution/overview.md), each AWS CLI command and health check
 against an external LocalStack instance is recorded, so a recovered run reuses
 its output instead of running the command again. Temporal and Prefect record
 each tool call in its own activity or task. DBOS runs function tools in
@@ -205,7 +205,7 @@ you supply your own.
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - LocalStack:
       endpoint_url: http://localhost.localstack.cloud:4566

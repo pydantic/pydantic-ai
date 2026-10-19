@@ -27,7 +27,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')])],
 )
 ```
@@ -82,7 +82,7 @@ SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id
 
 Once a recorded response spends a window, `SpendLimits` refuses the next request.
 
-Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller abandons part-way never reaches the accounting hook, so its tokens are billed by the provider and invisible here. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
+Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller stops part-way is charged for the usage the provider had reported by then, which can fall short of what it bills, since many providers report output tokens only with a stream's last event. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
 
 ## Reading the numbers
 
@@ -94,7 +94,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget, SpendRecordedEvent
 
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'))])
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[limits])
+agent = Agent('{{ anthropic:medium }}', capabilities=[limits])
 
 @agent.on_event(SpendRecordedEvent)
 async def show(ctx, event):
@@ -153,7 +153,7 @@ class ApproveBeforeSpending(AbstractCapability[None]):
         return request_context
 
 
-agent = Agent('openai:gpt-5.4', deps_type=type(None), capabilities=[limits, ApproveBeforeSpending()])
+agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits, ApproveBeforeSpending()])
 ```
 
 The gate reads numbers `SpendLimits` has already accrued, because the previous response was counted inside `wrap_model_request` before this request was prepared. It gates the first request of a run too, which is what carries a threshold crossed by an earlier run into the next one. A capability listed after it can still skip the request with `SkipModelRequest`, so an approval taken here is not proof that a request followed.
@@ -174,7 +174,7 @@ from pydantic_ai_harness import SpendLimits
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded
 
 limits = SpendLimits[None](budgets=[Budget(usd=Decimal('1'), name='daily')])
-agent = Agent('openai:gpt-5.4', deps_type=type(None), capabilities=[limits])
+agent = Agent('{{ openai:medium }}', deps_type=type(None), capabilities=[limits])
 
 
 async def ask(prompt: str, ceiling: Decimal) -> str:
@@ -258,7 +258,7 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 `defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
 
-`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a continuation chain (Anthropic `pause_turn`, OpenAI background mode) into one response, so `on_spend` and `SpendRecordedEvent` report it once with its combined usage. The counters are updated at each segment boundary instead, by what the response merged so far adds over what is already applied, so `price` also sees each of those intermediate responses. One it cannot price adds no USD and the merged response catches up, so pricing errors and `on_unpriced` apply to the merged response alone. Tokens add up to the merged response, and USD to the highest amount any boundary was priced at, so a boundary priced above the merged response is not taken back as a credit. A later boundary that adds nothing, such as an idle background poll, is not written.
+`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a continuation chain (Anthropic `pause_turn`, OpenAI background mode) into one response, so `on_spend` and `SpendRecordedEvent` report it once with its combined usage. The counters are updated at each segment boundary instead, by what the response merged so far adds over what is already applied, so `price` also sees each of those intermediate responses. One it cannot price adds no USD and the merged response catches up, so pricing errors and `on_unpriced` apply to the merged response alone. Tokens add up to the merged response, and USD to the highest amount any boundary was priced at, so a boundary priced above the merged response is not taken back as a credit. A later boundary that adds nothing, such as an idle background poll, is not written. A run that resumes a turn from a message history ending in its `'suspended'` response is charged only for what was billed beyond that response, which the run that left it suspended was already charged for. A `run` window therefore holds what each run billed, and `conversation`, `day`, `month` and `total` windows hold what the provider billed for the turn once.
 
 A response a `FallbackModel` rejected with a `fallback_on` response handler was billed as well. Each one recorded in `ModelResponse.failed_attempts` is accrued as a request of its own, ahead of the response that carries it. When every model fails, the attempts on the `FallbackExceptionGroup` are accrued the same way, also when an error hook recovers from it. An attempt that raised before the provider answered reported no usage and is not charged. `Spent.requests` counts these attempts, where core's `RunUsage.requests` counts only the responses the agent acted on.
 

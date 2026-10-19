@@ -20,6 +20,7 @@ from ..settings import CacheRetention
 __all__ = (
     'BEDROCK_GEO_PREFIXES',
     'bedrock_claude_cache_retentions',
+    'bedrock_lacks_claude_structured_output',
     'remove_bedrock_geo_prefix',
     'split_bedrock_model_id',
 )
@@ -91,3 +92,29 @@ def bedrock_claude_cache_retentions(model_name: str) -> tuple[CacheRetention, ..
     """
     _, name = split_bedrock_model_id(model_name)
     return ('5m', '1h') if name.startswith(_ONE_HOUR_CACHE_CLAUDE_MODEL_PREFIXES) else ('5m',)
+
+
+# The Claude models with structured output (JSON schema output and strict tool use) on the direct Anthropic
+# API that Bedrock Runtime doesn't serve it for, on either Converse or InvokeModel. Bare names, as
+# `split_bedrock_model_id` returns them; a prefix also covers later point releases.
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+# https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
+_STRUCTURED_OUTPUT_UNSUPPORTED_CLAUDE_MODEL_PREFIXES = (
+    'claude-opus-4-1',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5-5',
+    'claude-fable-5',
+)
+
+
+def bedrock_lacks_claude_structured_output(model_name: str) -> bool:
+    """Whether Bedrock Runtime withholds the structured output a Claude model has on the direct Anthropic API.
+
+    Accepts a full Bedrock model ID (e.g. `global.anthropic.claude-sonnet-5`) or a bare model name
+    (e.g. `claude-sonnet-5`).
+    """
+    _, name = split_bedrock_model_id(model_name)
+    return name.startswith(_STRUCTURED_OUTPUT_UNSUPPORTED_CLAUDE_MODEL_PREFIXES)

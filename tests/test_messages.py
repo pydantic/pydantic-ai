@@ -1958,6 +1958,25 @@ def test_message_json_schema_keeps_the_multimodal_definitions_intact():
     assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
 
 
+@pytest.mark.parametrize('mode', ['validation', 'serialization'])
+def test_message_json_schema_discriminator_mappings_are_references(mode: Literal['validation', 'serialization']):
+    """OpenAPI requires every discriminator `mapping` value to be a reference, so FastAPI can publish `ModelMessage`."""
+    mapping = ModelMessagesTypeAdapter.json_schema(mode=mode)['$defs']['ToolReturnContent']['anyOf'][1][
+        'discriminator'
+    ]['mapping']
+
+    assert mapping == snapshot(
+        {
+            'audio-url': '#/$defs/AudioUrl',
+            'binary': '#/$defs/BinaryContent',
+            'document-url': '#/$defs/DocumentUrl',
+            'image-url': '#/$defs/ImageUrl',
+            'uploaded-file': '#/$defs/UploadedFile',
+            'video-url': '#/$defs/VideoUrl',
+        }
+    )
+
+
 # Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
 _GATE_WITHOUT_PYDANTIC_PLUGINS = """
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -2661,10 +2680,15 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-def test_args_as_json_str_valid_json_verbatim():
-    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
-    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
-    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+def test_args_as_json_str_valid_json_canonical():
+    """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
+
+    Key order is preserved and non-ASCII text stays unescaped, so only insignificant whitespace (and
+    number spelling) changes.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": [2, 3.50], "c": "Z\\u00fcrich ☕"}')
+    assert part.args_as_json_str() == snapshot('{"b":1,"a":[2,3.5],"c":"Zürich ☕"}')
+    assert part.args_as_json_str() == ToolCallPart(tool_name='test_tool', args=part.args_as_dict()).args_as_json_str()
 
 
 def test_args_as_json_str_dict_args():
