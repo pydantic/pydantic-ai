@@ -195,7 +195,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         ref: WorkspaceRef | None = None,
         working_dir: str = '/workspace',
         env: Mapping[str, str] | None = None,
-        allow_internet_access: bool = False,
+        allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
     ):

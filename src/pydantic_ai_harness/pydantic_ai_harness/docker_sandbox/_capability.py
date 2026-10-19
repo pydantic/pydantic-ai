@@ -42,7 +42,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
 
-    allow_internet_access: bool = False
+    allow_internet_access: bool = True
     """Whether a new container gets outbound network access, through Docker's default bridge: the internet, but also this machine's local network and services. `False` runs it with `--network none`."""
 
     docker_args: Sequence[str] = ()

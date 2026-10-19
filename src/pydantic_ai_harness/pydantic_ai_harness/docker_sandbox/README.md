@@ -1,6 +1,6 @@
 # Docker Sandbox
 
-Run your agent's commands and file edits in a local [Docker](https://www.docker.com/) or Podman container, created on first use, so they can't touch the rest of your machine.
+Run your agent's commands and file edits in a local [Docker](https://www.docker.com/) or Podman container, created on first use, away from your machine's files and processes.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/docker_sandbox/)
 
@@ -50,10 +50,11 @@ project = Path('.').resolve()
 sandbox = DockerSandbox(
     'python:3.13-slim',
     docker_args=['--volume', f'{project}:/workspace', '--memory', '2g', '--cpus', '2'],
+    allow_internet_access=False,
 )
 ```
 
-The mount is the only part of your machine the commands can change. The container has no network unless you pass `allow_internet_access=True`, which uses Docker's default bridge: the internet, but also your local network and services on this machine. A `--network` in `docker_args` replaces either. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
+The mount is the only part of your machine the commands can change. `allow_internet_access=False` runs the container with `--network none`. By default it is on Docker's default bridge, which reaches the internet, but also your local network and services on this machine. A `--network` in `docker_args` replaces either. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
 
 ## How commands run
 
@@ -97,7 +98,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `image` | Image for a new container. It needs a POSIX `sh` and the usual file utilities. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created in a new container if missing. Default: `/workspace`. |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container, and `env` is kept out of the capability's `repr`. |
-| `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `False`, which runs it with `--network none`. |
+| `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`. Default: `'docker'`. |
 

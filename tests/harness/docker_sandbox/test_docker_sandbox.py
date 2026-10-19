@@ -50,6 +50,7 @@ async def test_first_use_creates_one_container_with_the_configured_options(
         'python:3.13-slim',
         working_dir=str(container_dir),
         env={'A': 'backend', 'B': "it's $HOME"},
+        allow_internet_access=False,
         docker_args=['--memory', '2g'],
     )
     assert backend.ref is None
@@ -68,8 +69,8 @@ async def test_first_use_creates_one_container_with_the_configured_options(
     )
 
 
-async def test_allow_internet_access_keeps_the_default_network(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerSandboxBackend('image', working_dir=str(container_dir), allow_internet_access=True)
+async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
 
     await backend.working_dir()
 
