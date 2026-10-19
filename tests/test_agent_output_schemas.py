@@ -265,6 +265,22 @@ def test_output_json_schema_transitive_collision_preserves_branches(
     assert schema == expected
 
 
+def test_output_json_schema_contains_refs_preserve_branch_types():
+    def use_contains(schema: dict[str, Any]) -> None:
+        schema['contains'] = schema.pop('items')
+
+    first_item = create_model('Item', value=(int, ...))
+    second_item = create_model('Item', value=(str, ...))
+    first = create_model('First', values=(list[first_item], Field(json_schema_extra=use_contains)))
+    second = create_model('Second', values=(list[second_item], Field(json_schema_extra=use_contains)))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    assert schema['anyOf'][0]['properties']['values']['contains'] == {'$ref': '#/$defs/Item'}
+    assert schema['anyOf'][1]['properties']['values']['contains'] == {'$ref': '#/$defs/Second_Item_1'}
+    assert schema['$defs']['Second_Item_1']['properties']['value']['type'] == 'string'
+
+
 async def test_tool_output_json_schema():
     # one output
     agent = Agent(
