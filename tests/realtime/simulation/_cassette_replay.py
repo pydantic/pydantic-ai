@@ -32,6 +32,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 from pydantic_ai.realtime.openai_live import OpenAILiveConnection
 from pydantic_ai.realtime.xai import XaiRealtimeConnection
 
+from ...realtime_connections import lifecycle_events
 from ..ws_cassettes import CassetteClose, RealtimeCassette
 
 Protocol = Literal['openai', 'azure', 'azure-voice-live', 'xai', 'gemini', 'openai-live']
@@ -216,19 +217,24 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
 
 
 async def replay_lifecycle_events(path: Path) -> list[tuple[list[RealtimeCodecEvent | LifecycleEvent], int]]:
-    """The lifecycle stream each recorded socket's provider frames make, per socket, for a version 2 connection.
+    """The lifecycle stream each recorded socket's provider frames make, per socket.
 
     Each comes with how many inputs the recorded client sent by the end of that socket, which its responses
     may answer: the replay doesn't interleave the client's frames, so a response answering an input sent
-    after it started still passes. Empty for a protocol whose connection is still on version 1 of the lifecycle
-    contract.
+    after it started still passes.
     """
     protocol = cassette_protocol(path)
     events: list[tuple[list[RealtimeCodecEvent | LifecycleEvent], int]] = []
     for frames, close, inputs_sent in _segments(RealtimeCassette.load(path)):
         connection = _connection(protocol, frames, close)
-        if connection._lifecycle_version == 2:  # pyright: ignore[reportPrivateUsage]
-            events.append(([event async for event in connection._lifecycle_events()], inputs_sent))  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(connection, OpenAILiveConnection):
+        socket_events: list[RealtimeCodecEvent | LifecycleEvent] = []
+        try:
+            async for event in lifecycle_events(connection):
+                socket_events.append(event)
+        except ConnectionClosedError:
+            # GPT-Live, with no reconnect policy, raises an abnormal close for the session to handle.
+            pass
+        events.append((socket_events, inputs_sent))
+        if isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events

@@ -35,16 +35,12 @@ pydantic-core = false
 pydantic-ai-harness = false
 logfire-api = false
 cassetter = false
-asyncpg = "2026-10-06T20:32:41Z"
 listentome = false
 logfire = false
 pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-10-02T15:05:25Z"
-anthropic = "2026-10-08T03:42:01.588842Z"
-openai = "2026-10-06T21:31:20Z"
 google-genai = "2026-10-13T00:38:20Z"
 
 [manifest]
@@ -6636,6 +6632,7 @@ name = "pydantic-clai2"
 source = { editable = "src/pydantic_clai2" }
 dependencies = [
     { name = "cryptography" },
+    { name = "fastapi" },
     { name = "genai-prices" },
     { name = "keyring" },
     { name = "logfire", extra = ["httpx"] },
@@ -6650,6 +6647,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "termflow-md" },
+    { name = "uvicorn" },
     { name = "websockets" },
 ]
 
@@ -6661,6 +6659,7 @@ typesafe = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=42" },
+    { name = "fastapi", specifier = ">=0.115.0" },
     { name = "genai-prices", specifier = ">=0.1.7" },
     { name = "keyring", specifier = ">=25.6" },
     { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
@@ -6676,7 +6675,8 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=14" },
     { name = "termflow-md", specifier = ">=1.0.0,<2" },
-    { name = "websockets", specifier = ">=13.0" },
+    { name = "uvicorn", specifier = ">=0.38.0" },
+    { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["typesafe"]
 
