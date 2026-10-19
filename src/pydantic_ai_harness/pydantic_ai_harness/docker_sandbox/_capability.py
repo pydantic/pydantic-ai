@@ -17,9 +17,6 @@ from pydantic_ai_harness.docker_sandbox._backend import (
     resolve_executable,
 )
 
-_ANY_REF = WorkspaceRef(provider=PROVIDER, id='pydantic-ai-0')
-"""Stands in for a ref when validating a capability without an image, which only attaches."""
-
 
 @dataclass(kw_only=True)
 class DockerSandbox(AbstractCapability[AgentDepsT]):
@@ -72,23 +69,12 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
             )
         check_working_dir(self.working_dir)
         self._executable_path = resolve_executable(self.executable)
-        # Surface an invalid image, `env`, `docker_args` or platform where the capability is written, not on the first run.
-        self._backend(ref=None if self.image is not None else _ANY_REF)
-
-    def _backend(self, *, ref: WorkspaceRef | None) -> DockerSandboxBackend:
-        return DockerSandboxBackend(
-            image=None if ref is not None else self.image,
-            ref=ref,
-            working_dir=self.working_dir,
-            env=self.env,
-            allow_internet_access=self.allow_internet_access,
-            docker_args=self.docker_args,
-            executable=self._executable_path,
-        )
 
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
-        return self._backend(ref=ref)
+        return DockerSandboxBackend(
+            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Remove a container and its anonymous volumes, whether it is running or not."""
@@ -99,8 +85,15 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
         del ctx
-        if ref is not None and ref.provider != PROVIDER:
+        if ref is not None:
+            return self.backend(ref) if ref.provider == PROVIDER else None
+        if self.image is None:
             return None
-        if ref is None and self.image is None:
-            return None
-        return self._backend(ref=ref)
+        return DockerSandboxBackend(
+            image=self.image,
+            working_dir=self.working_dir,
+            env=self.env,
+            allow_internet_access=self.allow_internet_access,
+            docker_args=self.docker_args,
+            executable=self._executable_path,
+        )

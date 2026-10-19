@@ -473,15 +473,12 @@ async def test_a_failed_removal_raises(docker: FakeDocker, container_dir: Path) 
 
 
 @pytest.mark.parametrize(
-    ('kwargs', 'error', 'match'),
+    ('kwargs', 'match'),
     [
-        ({'image': 'x', 'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
-        ({'image': 'x', 'defer_loading': True}, UserError, 'does not support `defer_loading=True`'),
-        ({'env': {'NOT-A-NAME': 'x'}}, ValueError, 'invalid environment variable name'),
+        ({'working_dir': 'relative'}, 'working_dir must be an absolute POSIX path'),
+        ({'defer_loading': True}, 'does not support `defer_loading=True`'),
     ],
 )
-def test_invalid_capability_configuration_is_rejected_at_construction(
-    kwargs: dict[str, object], error: type[Exception], match: str
-) -> None:
-    with pytest.raises(error, match=match):
+def test_invalid_capability_configuration_is_rejected_at_construction(kwargs: dict[str, object], match: str) -> None:
+    with pytest.raises(UserError, match=match):
         DockerSandbox(**kwargs)  # pyright: ignore[reportArgumentType]

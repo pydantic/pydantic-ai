@@ -208,7 +208,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 ## Platforms
 
-The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#platforms). On Windows, constructing `DockerSandbox` or `DockerSandboxBackend` raises `NotImplementedError`.
+The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorkspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#platforms). On Windows, `DockerSandboxBackend` raises `NotImplementedError` when it is constructed, so a run with `DockerSandbox` does too.
 
 ## Telemetry
 
