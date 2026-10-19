@@ -1,13 +1,14 @@
 """Pydantic AI's workspace backend conformance suite, run against `RenderSandboxBackend`.
 
-The fake Render SDK in `workspace_helpers.py` runs commands as local subprocesses under a temporary
-host directory, and the shipped file helper in-process. The same rules run against a real sandbox in
-`test_workspace_live.py`.
+`TestFakeRenderSandboxBackend` runs everywhere: the fake Render SDK in `workspace_helpers.py` runs
+commands as local subprocesses under a temporary host directory, and the shipped file helper in-process.
+`TestLiveRenderSandboxBackend` runs the same rules against a real sandbox, gated in `conftest.py`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Iterator
 
 import pytest
 
@@ -54,3 +55,39 @@ class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):
         # The fake runs commands without the remote supervisor, so it waits for pipe EOF;
         # `test_supervisor.py` covers the supervisor returning on the direct child's exit.
         return False
+
+
+async def _destroy(backend: WorkspaceBackend) -> None:  # pragma: no cover - live tier only
+    assert backend.ref is not None
+    await RenderSandbox().destroy(backend.ref)
+
+
+def _attach(ref: WorkspaceRef) -> WorkspaceBackend:  # pragma: no cover - live tier only
+    return RenderSandboxBackend(ref=ref)
+
+
+# The live tier runs without coverage; in CI only its gate runs, to skip it.
+@pytest.mark.render_live
+class TestLiveRenderSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
+    # Class-scoped so the rules share one sandbox. Each operation opens its own client, so the backend
+    # outlives each test's event loop, and the teardown runs `destroy` on a loop of its own.
+    @pytest.fixture(scope='class')
+    @classmethod
+    def backend(cls) -> Iterator[RenderSandboxBackend]:
+        backend = RenderSandboxBackend(sandbox_timeout=600)
+        yield backend
+        if backend.ref is not None:
+            asyncio.run(_destroy(backend))
+
+    @pytest.fixture
+    def destructive_backend(self) -> Callable[[], WorkspaceBackend]:
+        # Destructive rules need their own sandbox, not the shared class-scoped one.
+        return lambda: RenderSandboxBackend(sandbox_timeout=600)
+
+    @pytest.fixture
+    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
+        return _attach
+
+    @pytest.fixture
+    def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
+        return _destroy

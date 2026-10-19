@@ -1,4 +1,4 @@
-"""Native content transfers with Pydantic's public shell metadata implementation."""
+"""File contents through Render's native `copy_to`/`copy_from`, staged by a small in-sandbox helper."""
 
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoun
 
 from pydantic_ai.workspaces import (
     CommandResult,
-    FileEntry,
     SupportsCommands,
-    Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceError,
@@ -35,8 +33,8 @@ class _Commands(WorkspaceBackend, SupportsCommands, Protocol):
     pass
 
 
-class _CommandView:
-    """Hide SupportsFilesystem so public Workspace metadata cannot recurse into us."""
+class CommandView:
+    """The backend's commands without its file methods, so a `Workspace` over it uses the shell for files."""
 
     def __init__(self, backend: _Commands) -> None:
         self.backend = backend
@@ -61,8 +59,7 @@ class _CommandView:
 
 class NativeFilesystem:
     def __init__(self, backend: _Commands, timeout: float) -> None:
-        self.commands = _CommandView(backend)
-        self.metadata = Workspace(self.commands)
+        self.commands = CommandView(backend)
         self.timeout = timeout
 
     async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:
@@ -135,18 +132,3 @@ class NativeFilesystem:
 
     async def write_bytes(self, client: RenderAsync, path: str, data: bytes) -> None:
         await self._transfer(client, path, data)
-
-    async def stat(self, path: str) -> FileEntry:
-        return await self.metadata.stat(path)
-
-    async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        return tuple(await self.metadata.list_dir(path))
-
-    async def make_dir(self, path: str) -> None:
-        await self.metadata.make_dir(path)
-
-    async def remove(self, path: str) -> None:
-        await self.metadata.remove(path)
-
-    async def exists(self, path: str) -> bool:
-        return await self.metadata.exists(path)

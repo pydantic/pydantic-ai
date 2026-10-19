@@ -17,10 +17,10 @@ from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from importlib.resources import files
-from typing import TypeGuard, TypeVar
+from typing import TypeGuard
 
-import anyio
 from render import RenderAsync
+from render.client.errors import ClientError
 from render.experimental.sandbox import SandboxExecExit, SandboxExecOutput
 
 from pydantic_ai.workspaces import (
@@ -30,8 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-
-_T = TypeVar('_T')
+from pydantic_ai_harness._workspace_provider import stop_shielded
 
 _CLAIM_ROOT = '/tmp'
 _MAX_FRAME_CHARS = 131_072
@@ -40,6 +39,8 @@ _MAX_LAUNCH_BYTES = 126_000
 # After the direct child exits its bytes are already in the pipes; a background child still writing to
 # an inherited pipe gets this long before the result returns, as core's local backend allows.
 _DRAIN_GRACE = 2.0
+_MAX_OUTPUT_BYTES = 1_048_576
+_STOP_TIMEOUT = 12.0
 
 
 def _launch(source: str, operation: str, config: Mapping[str, object]) -> str:
@@ -79,7 +80,7 @@ class _Capture:
     def overflow(self) -> WorkspaceOutputLimitError:
         stdout, stderr = self.text()
         return WorkspaceOutputLimitError(
-            'Command output exceeded max_output_bytes; redirect output to a file',
+            'Command output exceeded 1 MiB; redirect output to a file',
             limit=self.limit,
             stdout=stdout,
             stderr=stderr,
@@ -159,37 +160,11 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
         raise WorkspaceError('Command supervisor stream ended without a complete result')
 
 
-async def wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
-    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
-    cancelled: asyncio.CancelledError | None = None
-    with anyio.CancelScope(shield=True):
-        while not task.done():
-            try:
-                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
-                await asyncio.wait((task,))
-            except asyncio.CancelledError as error:
-                cancelled = error
-    try:
-        result = task.result()
-    except BaseException as error:
-        if cancelled is not None:
-            raise cancelled from error
-        raise
-    if cancelled is not None:
-        raise cancelled
-    return result
-
-
-async def _stop_shielded(client: RenderAsync, sandbox_id: str, launch: str, nonce: str, stop_timeout: float) -> None:
-    async def stop() -> None:
-        async with asyncio.timeout(stop_timeout):
-            capture = _Capture(nonce, 4096)
-            await _consume(client, sandbox_id, launch, capture)
-            if capture.terminal != 'stopped':
-                raise WorkspaceError('Command stop did not acknowledge its fence')
-
-    # The child task owns the timeout, so no cancellation can abandon an already-dispatched stop.
-    await wait_despite_cancellation(asyncio.create_task(stop()))
+async def _stop(client: RenderAsync, sandbox_id: str, command: PreparedCommand) -> None:
+    capture = _Capture(command.nonce, 4096)
+    await _consume(client, sandbox_id, command.stop, capture)
+    if capture.terminal != 'stopped':
+        raise WorkspaceError('Command stop did not acknowledge its fence')
 
 
 _SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
@@ -202,7 +177,6 @@ class PreparedCommand:
     nonce: str
     launch: str
     stop: str
-    max_output_bytes: int
 
 
 def prepare_command(
@@ -211,7 +185,6 @@ def prepare_command(
     working_dir: str,
     env: Mapping[str, str] | None = None,
     timeout: float | None = None,
-    max_output_bytes: int = 1_048_576,
 ) -> PreparedCommand:
     """Build the supervisor requests, raising `ValueError` if they exceed the exec argument limit.
 
@@ -226,65 +199,44 @@ def prepare_command(
         'cwd': working_dir,
         'env': dict(env or {}),
         'timeout': timeout,
-        'limit': max_output_bytes,
+        'limit': _MAX_OUTPUT_BYTES,
         'drain': _DRAIN_GRACE,
     }
     return PreparedCommand(
         nonce=nonce,
         launch=_launch(_SOURCE, 'run', config),
         stop=_launch(_SOURCE, 'stop', {'claim': claim, 'nonce': nonce}),
-        max_output_bytes=max_output_bytes,
     )
 
 
 async def run_command(
-    client: RenderAsync,
-    sandbox_id: str,
-    command: PreparedCommand,
-    *,
-    timeout: float | None = None,
-    stop_timeout: float = 12.0,
+    client: RenderAsync, sandbox_id: str, command: PreparedCommand, *, timeout: float | None
 ) -> CommandResult:
-    """Run once, preserving the sandbox on timeout, cancellation or stream failure.
+    """Run once, stopping the command if it may still be running after a timeout, cancellation or stream failure.
 
-    The remote supervisor independently checks its received payload. Exceptions from
-    Render propagate unchanged, including after an uncertain start. No command
-    is replayed. Stop failures remain explicit in exception notes and causes.
+    Exceptions from Render propagate unchanged, and no command is replayed.
     """
-    nonce, launch, stop, max_output_bytes = command.nonce, command.launch, command.stop, command.max_output_bytes
-    capture = _Capture(nonce, max_output_bytes)
+    capture = _Capture(command.nonce, _MAX_OUTPUT_BYTES)
+    deadline = asyncio.timeout(timeout)
     try:
-        deadline = asyncio.timeout(timeout)
-        try:
-            async with deadline:
-                await _consume(client, sandbox_id, launch, capture)
-        except TimeoutError as exc:
-            if not deadline.expired():
-                raise  # A provider TimeoutError retains its original identity.
+        async with deadline:
+            await _consume(client, sandbox_id, command.launch, capture)
+    except BaseException as error:
+        # No stop once the supervisor reported the end, or when Render refused the exec outright.
+        refused = isinstance(error, ClientError) and error.__cause__ is None
+        if capture.terminal is None and not refused:
+            await stop_shielded(lambda: _stop(client, sandbox_id, command), grace=_STOP_TIMEOUT)
+        if isinstance(error, TimeoutError) and deadline.expired():
             stdout, stderr = capture.text()
-            raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr) from exc
-        stdout, stderr = capture.text()
-        if capture.terminal == 'limit':
-            raise capture.overflow()
-        if capture.terminal == 'cwd':
-            raise WorkspaceUnavailableError('The working directory no longer exists or is not usable in the sandbox')
-        if capture.terminal == 'timeout':
-            raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr)
-        if capture.terminal != 'exit' or capture.exit_code is None:
-            raise WorkspaceError('Command was fenced before it could start')
-        return CommandResult(exit_code=capture.exit_code, stdout=stdout, stderr=stderr)
-    except BaseException as original:
-        try:
-            await _stop_shielded(client, sandbox_id, stop, nonce, stop_timeout)
-        except asyncio.CancelledError as cancelled:
-            # A cancellation that arrives during the stop takes priority.
-            raise cancelled from original
-        except BaseException as stop_error:
-            original.add_note(
-                f'Command stop was not confirmed in sandbox {sandbox_id}; '
-                'retain its reference for inspection or explicit disposal'
-            )
-            # Preserve cancellation and provider exception identity. Frameworks
-            # may overwrite implicit __context__, so make cleanup evidence explicit.
-            raise original from stop_error
+            raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr) from error
         raise
+    stdout, stderr = capture.text()
+    if capture.terminal == 'limit':
+        raise capture.overflow()
+    if capture.terminal == 'cwd':
+        raise WorkspaceUnavailableError('The working directory no longer exists or is not usable in the sandbox')
+    if capture.terminal == 'timeout':
+        raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr)
+    if capture.terminal != 'exit' or capture.exit_code is None:
+        raise WorkspaceError('Command was fenced before it could start')
+    return CommandResult(exit_code=capture.exit_code, stdout=stdout, stderr=stderr)

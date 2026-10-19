@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import shlex
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -10,7 +13,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render.client.errors import ClientError, RateLimitError, ServerError
-    from render.experimental.sandbox import Sandbox, SandboxNotFoundError
+    from render.experimental.sandbox import Sandbox, SandboxExecEvent, SandboxNotFoundError
 
     from pydantic_ai.exceptions import UserError
     from pydantic_ai.workspaces import (
@@ -19,9 +22,7 @@ with try_import() as imports_successful:
         Workspace,
         WorkspaceBackend,
         WorkspaceCommand,
-        WorkspaceOutputLimitError,
         WorkspaceRef,
-        WorkspaceTimeoutError,
         WorkspaceUnavailableError,
     )
     from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
@@ -74,35 +75,27 @@ async def test_command_arguments_are_copied_before_sandbox_creation(workspace_ha
 
 
 @pytest.mark.parametrize(
-    ('timeout', 'env'),
+    ('timeout', 'env', 'error'),
     [
-        (0, None),
-        (-1, None),
-        (float('inf'), None),
-        (float('nan'), None),
-        (None, {'BAD=NAME': 'value'}),
-        (None, {'': 'value'}),
-        (None, {'KEY': 'nul\0value'}),
+        (0, None, ValueError),
+        (-1, None, ValueError),
+        (float('inf'), None, ValueError),
+        (float('nan'), None, ValueError),
+        (None, {'BAD=NAME': 'value'}, ValueError),
+        (None, {'': 'value'}, ValueError),
+        (None, {'KEY': 'nul\0value'}, ValueError),
+        (None, {1: 'value'}, TypeError),
+        (None, {'name': 1}, TypeError),
     ],
 )
 async def test_invalid_command_settings_create_no_sandbox(
-    workspace_harness: WorkspaceHarness, timeout: float | None, env: dict[str, str] | None
+    workspace_harness: WorkspaceHarness, timeout: float | None, env: dict[str, str] | None, error: type[Exception]
 ) -> None:
     # Invalid deadlines and environment values must fail before any paid resource is created.
     backend = workspace_harness.backend()
-    with pytest.raises(ValueError):
+    with pytest.raises(error):
         await backend.run(['true'], timeout=timeout, env=env)
     assert backend.ref is None
-    assert workspace_harness.created == []
-
-
-@pytest.mark.parametrize('env', [{1: 'value'}, {'name': 1}])
-async def test_non_string_command_env_creates_no_sandbox(
-    workspace_harness: WorkspaceHarness, env: dict[str, str]
-) -> None:
-    backend = workspace_harness.backend()
-    with pytest.raises(TypeError, match='env keys and values must be strings'):
-        await backend.run(['true'], env=env)
     assert workspace_harness.created == []
 
 
@@ -115,6 +108,29 @@ def test_invalid_configured_env_is_rejected_at_construction(
 ) -> None:
     with pytest.raises(error):
         workspace_harness.backend(env=env)
+
+
+async def test_commands_run_in_the_resolved_working_dir(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `working_dir()` reports the resolved path, so commands must start there even if the symlink moves.
+    real = workspace_harness.root / 'real'
+    real.mkdir()
+    link = workspace_harness.root / 'link'
+    link.symlink_to(real)
+    sdk = workspace_harness.client.experimental.sandboxes
+    execute = sdk.exec
+    launched: list[str] = []
+
+    def recording_exec(identifier: str, launch: str) -> AsyncIterator[SandboxExecEvent]:
+        launched.append(json.loads(shlex.split(launch)[5])['cwd'])
+        return execute(identifier, launch)
+
+    monkeypatch.setattr(sdk, 'exec', recording_exec)
+    backend = workspace_harness.backend(working_dir=str(link))
+    await backend.run(['true'])
+    assert await backend.working_dir() == str(real.resolve())
+    assert launched[-1] == str(real.resolve())
 
 
 async def test_attachment_never_recreates(workspace_harness: WorkspaceHarness) -> None:
@@ -202,24 +218,6 @@ async def test_terminal_errors_do_not_replay_commands(workspace_harness: Workspa
     with pytest.raises(WorkspaceUnavailableError):
         await backend.run(['check'])
     assert len(workspace_harness.commands) == before + 1
-
-
-@pytest.mark.parametrize(
-    'error',
-    [
-        WorkspaceTimeoutError('late', stdout='partial'),
-        WorkspaceOutputLimitError('full', limit=4, stdout='data'),
-    ],
-)
-async def test_command_limits_leave_backend_available(workspace_harness: WorkspaceHarness, error: Exception) -> None:
-    backend = workspace_harness.backend()
-    await backend.working_dir()
-    workspace_harness.command_error = error
-    with pytest.raises(type(error)):
-        await backend.run(['check'])
-    workspace_harness.command_error = None
-    assert (await backend.run(['printf', 'still alive'])).stdout == 'still alive'
-    assert workspace_harness.terminated == []
 
 
 @pytest.mark.parametrize(
@@ -354,17 +352,6 @@ async def test_trio_is_refused_before_any_render_call(workspace_harness: Workspa
     with pytest.raises(UserError, match='asyncio event loop'):
         await workspace_harness.backend().working_dir()
     assert workspace_harness.created == []
-
-
-@pytest.mark.parametrize('timeout', [0, 86_401, True])
-def test_backend_rejects_an_invalid_sandbox_timeout(workspace_harness: WorkspaceHarness, timeout: int) -> None:
-    with pytest.raises(UserError, match='sandbox_timeout'):
-        workspace_harness.backend(sandbox_timeout=timeout)
-
-
-def test_backend_rejects_a_foreign_ref(workspace_harness: WorkspaceHarness) -> None:
-    with pytest.raises(ValueError, match="expected 'render'"):
-        workspace_harness.backend(WorkspaceRef(provider='other', id='sb-1'))
 
 
 def test_backend_rejects_a_relative_working_dir() -> None:

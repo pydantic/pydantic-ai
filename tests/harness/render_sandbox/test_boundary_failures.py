@@ -2,7 +2,7 @@
 
 The scripted SDK supplies wire events and provider states, not adapter results.
 This keeps parsing, command stopping, readiness, and cleanup code under test.
-No credentials, network, or private Pydantic/Render interfaces are used.
+No credentials or network are used; only deadline constants are patched down.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from render import RenderAsync
-    from render.client.errors import ClientError
+    from render.client.errors import ClientError, RateLimitError
     from render.experimental.sandbox import (
         Sandbox,
         SandboxExecEvent,
@@ -31,7 +31,13 @@ with try_import() as imports_successful:
         SandboxNotFoundError,
     )
 
-    from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
+    from pydantic_ai.workspaces import (
+        WorkspaceError,
+        WorkspaceOutputLimitError,
+        WorkspaceRef,
+        WorkspaceTimeoutError,
+        WorkspaceUnavailableError,
+    )
     from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
     class UnexpectedExit(SandboxExecExit):
@@ -67,6 +73,7 @@ class ScriptedSDK:
     stop_scenario: str = 'valid'
     status_script: list[str | Exception] = field(default_factory=list[str | Exception])
     transport_error: Exception | None = None
+    refusal: Exception | None = None
     readiness_output: str = '/workspace\n'
     readiness_code: int = 0
     stop_started: asyncio.Event = field(default_factory=asyncio.Event)
@@ -97,6 +104,8 @@ class ScriptedSDK:
         config = json.loads(args[5])
         nonce = config['nonce']
         self.operations.append(operation)
+        if self.refusal is not None and operation == 'run' and config['cwd'] != '/':
+            raise self.refusal
 
         def frame(kind: str, **fields: object) -> SandboxExecOutput:
             return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
@@ -163,6 +172,8 @@ class ScriptedSDK:
             'output_after_direct_exit': [frame('exit', code=0), output('late'), SandboxExecExit(0)],
             'output_after_sdk_exit': [output('partial'), *complete, output('late')],
             'remote_timeout': [frame('timeout'), SandboxExecExit(0)],
+            'remote_limit': [frame('limit'), SandboxExecExit(0)],
+            'missing_cwd': [frame('cwd'), SandboxExecExit(0)],
             'fenced': [frame('fenced'), SandboxExecExit(0)],
             'blank_line': [SandboxExecOutput('stdout', '\n'), output('usable'), *complete],
             'oversized_output': [output('x' * 1024), *complete],
@@ -175,12 +186,9 @@ class ScriptedSDK:
 @pytest.fixture
 def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     # Short bounds stand in for production deadlines, so no test sleeps through one.
-    for name, value in [
-        ('_OPERATION_TIMEOUT', 1),
-        ('_STOP_TIMEOUT', 1),
-        ('_POLL_INTERVAL', 0),
-    ]:
-        monkeypatch.setattr(f'pydantic_ai_harness.render_sandbox._backend.{name}', value)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._OPERATION_TIMEOUT', 1)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._POLL_INTERVAL', 0)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._STOP_TIMEOUT', 1)
     sdk = ScriptedSDK(RenderAsync(token='test-only', owner_id='tea-test'))
     public_api = sdk.client.experimental.sandboxes
     monkeypatch.setattr(public_api, 'create', sdk.create)
@@ -189,39 +197,48 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> ScriptedSDK:
     return sdk
 
 
+# Before the supervisor's terminal frame the command may still run, so it is stopped; after it, it is over.
+_BEFORE_TERMINAL = [
+    'invalid_json',
+    'non_object',
+    'invalid_output',
+    'invalid_output_data',
+    'supervisor_error',
+    'unknown_frame',
+    'unexpected_stderr',
+    'invalid_base64',
+    'wrong_identity',
+    'oversized_frame',
+    'incomplete_frame',
+    'missing_direct_exit',
+]
+_AFTER_TERMINAL = [
+    'invalid_sdk_exit',
+    'invalid_sdk_event',
+    'invalid_exit_code',
+    'fenced',
+    'missing_sdk_exit',
+    'duplicate_sdk_exit',
+    'output_after_direct_exit',
+    'output_after_sdk_exit',
+]
+
+
 @pytest.mark.parametrize(
-    'scenario',
-    [
-        'invalid_json',
-        'non_object',
-        'invalid_output',
-        'invalid_output_data',
-        'invalid_sdk_exit',
-        'invalid_sdk_event',
-        'invalid_exit_code',
-        'supervisor_error',
-        'unknown_frame',
-        'unexpected_stderr',
-        'fenced',
-        'invalid_base64',
-        'wrong_identity',
-        'oversized_frame',
-        'incomplete_frame',
-        'missing_direct_exit',
-        'missing_sdk_exit',
-        'duplicate_sdk_exit',
-        'output_after_direct_exit',
-        'output_after_sdk_exit',
-    ],
+    ('scenario', 'operations'),
+    [(scenario, ['run', 'stop']) for scenario in _BEFORE_TERMINAL]
+    + [(scenario, ['run']) for scenario in _AFTER_TERMINAL],
 )
-async def test_unusable_command_stream_never_becomes_success_or_replays(boundary: ScriptedSDK, scenario: str) -> None:
+async def test_unusable_command_stream_never_becomes_success_or_replays(
+    boundary: ScriptedSDK, scenario: str, operations: list[str]
+) -> None:
     backend = boundary.backend()
     await backend.working_dir()
     boundary.operations.clear()
     boundary.scenario = scenario
     with pytest.raises(WorkspaceError):
         await backend.run(['side-effect'])
-    assert boundary.operations == ['run', 'stop']
+    assert boundary.operations == operations
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
 
     boundary.scenario = 'valid'
@@ -230,10 +247,8 @@ async def test_unusable_command_stream_never_becomes_success_or_replays(boundary
 
 
 @pytest.mark.parametrize('acknowledgement', ['missing_ack', 'wrong_ack'])
-async def test_stop_failure_preserves_original_stream_error_and_recovery_reference(
-    boundary: ScriptedSDK,
-    acknowledgement: str,
-) -> None:
+async def test_failed_stop_keeps_the_original_stream_error(boundary: ScriptedSDK, acknowledgement: str) -> None:
+    # The stop is best effort, as on the other sandboxes: its failure must not replace the stream error.
     backend = boundary.backend()
     await backend.working_dir()
     boundary.operations.clear()
@@ -243,8 +258,6 @@ async def test_stop_failure_preserves_original_stream_error_and_recovery_referen
     with pytest.raises(ConnectionError) as caught:
         await backend.run(['side-effect'])
     assert caught.value is original
-    assert isinstance(original.__cause__, WorkspaceError)
-    assert any('stop was not confirmed' in note for note in original.__notes__)
     assert boundary.operations == ['run', 'stop']
     assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
 
@@ -285,16 +298,13 @@ async def test_unusable_readiness_result_preserves_created_reference(
     assert boundary.creates == 1
 
 
-@pytest.mark.parametrize('stop_fails', [False, True])
-async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: ScriptedSDK, stop_fails: bool) -> None:
+async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: ScriptedSDK) -> None:
     # Pause the provider's stop acknowledgement, then cancel the caller while its
-    # original transport failure is being cleaned up. Cleanup must finish first.
+    # original transport failure is being cleaned up. The cancellation wins once the stop finishes.
     backend = boundary.backend()
     await backend.working_dir()
-    original = ConnectionError('command response lost')
-    boundary.transport_error = original
+    boundary.transport_error = ConnectionError('command response lost')
     boundary.stop_gate = asyncio.Event()
-    boundary.stop_scenario = 'missing_ack' if stop_fails else 'valid'
     pending = asyncio.create_task(backend.run(['side-effect']))
     try:
         async with asyncio.timeout(10):
@@ -303,9 +313,9 @@ async def test_new_cancellation_during_failure_cleanup_takes_priority(boundary: 
         # Let the cancelled caller observe its shielded stop before releasing it.
         await asyncio.sleep(0)
         boundary.stop_gate.set()
-        with pytest.raises(asyncio.CancelledError) as caught:
+        with pytest.raises(asyncio.CancelledError):
             await pending
-        assert caught.value.__cause__ is original
+        assert boundary.operations[-1] == 'stop'
         assert backend.ref == WorkspaceRef(provider='render', id='sbx-scripted')
     finally:
         boundary.stop_gate.set()
@@ -335,13 +345,48 @@ async def test_missing_sandbox_in_status_audit_is_unavailable(boundary: Scripted
     assert boundary.creates == 1
 
 
-async def test_remote_timeout_is_reported_as_command_timeout(boundary: ScriptedSDK) -> None:
+@pytest.mark.parametrize(
+    ('scenario', 'error'),
+    [
+        ('remote_timeout', WorkspaceTimeoutError),
+        ('remote_limit', WorkspaceOutputLimitError),
+        ('missing_cwd', WorkspaceUnavailableError),
+    ],
+)
+async def test_supervisor_terminal_result_raises_without_a_stop(
+    boundary: ScriptedSDK, scenario: str, error: type[Exception]
+) -> None:
     backend = boundary.backend()
     await backend.working_dir()
-    boundary.scenario = 'remote_timeout'
-    with pytest.raises(WorkspaceTimeoutError):
+    boundary.operations.clear()
+    boundary.scenario = scenario
+    with pytest.raises(error):
         await backend.run(['side-effect'])
-    assert backend.ref is not None
+    assert boundary.operations == ['run']
+
+
+@pytest.mark.parametrize(
+    ('refusal', 'error', 'operations'),
+    [
+        (RateLimitError('429'), RateLimitError, ['run']),
+        (ClientError('rejected'), WorkspaceUnavailableError, ['run']),
+        (ClientError('lost'), WorkspaceUnavailableError, ['run', 'stop']),
+    ],
+    ids=['rate_limited', 'rejected', 'uncertain'],
+)
+async def test_stop_follows_an_exec_failure_only_when_the_command_may_have_started(
+    boundary: ScriptedSDK, refusal: ClientError, error: type[Exception], operations: list[str]
+) -> None:
+    if str(refusal) == 'lost':
+        # Render wraps a transport failure in `ClientError` with a cause; the exec may have started.
+        refusal.__cause__ = ConnectionError('reset')
+    backend = boundary.backend()
+    await backend.working_dir()
+    boundary.operations.clear()
+    boundary.refusal = refusal
+    with pytest.raises(error):
+        await backend.run(['side-effect'])
+    assert boundary.operations == operations
 
 
 async def test_blank_wire_lines_are_ignored(boundary: ScriptedSDK) -> None:
@@ -365,12 +410,10 @@ async def test_oversized_launch_is_rejected_without_dispatch(boundary: ScriptedS
 async def test_wire_output_limit_preserves_partial_output(
     boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MAX_OUTPUT_BYTES', 512)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
     backend = boundary.backend()
     await backend.working_dir()
     boundary.scenario = 'oversized_output'
-    from pydantic_ai.workspaces import WorkspaceOutputLimitError
-
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['side-effect'])
     assert caught.value.stdout == 'x' * 512

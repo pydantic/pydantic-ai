@@ -169,7 +169,7 @@ To check or download results before the sandbox goes, read them through `ctx.wor
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/workspace`. Created on a new sandbox; an attached sandbox must already have it. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
 
-Commands run on the asyncio event loop only.
+Every operation, including `destroy`, needs the asyncio event loop; on Trio it raises `UserError`.
 
 ## Render Workflows
 

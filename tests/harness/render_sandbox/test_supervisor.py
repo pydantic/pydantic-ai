@@ -247,7 +247,7 @@ async def test_supervisor_reports_executable_startup_failure(
 async def test_supervisor_output_bound_preserves_captured_prefix(
     workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MAX_OUTPUT_BYTES', 512)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
     backend = workspace_harness.backend()
     with pytest.raises(WorkspaceOutputLimitError) as caught:
         await backend.run(['sh', '-c', 'printf "%05000d" 0'])
@@ -337,7 +337,7 @@ async def test_background_writer_on_inherited_pipe_does_not_hold_up_exit(
 async def test_output_limit_after_direct_exit_stops_the_background_writer(
     workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._backend._MAX_OUTPUT_BYTES', 512)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._MAX_OUTPUT_BYTES', 512)
     writer_pid = tmp_path / 'writer.pid'
     # The writer stays in the command's process group and starts flooding only once the direct shell is gone.
     script = (

@@ -16,6 +16,7 @@ import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
@@ -25,6 +26,7 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
+    Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceOutputLimitError,
@@ -47,17 +49,17 @@ try:
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
-from ._commands import prepare_command, run_command, wait_despite_cancellation
+from ._commands import prepare_command, run_command
 from ._filesystem import NativeFilesystem
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar('_T')
 
 DEFAULT_SANDBOX_TIMEOUT = 3_600
 DEFAULT_WORKING_DIR = '/workspace'
 _READINESS_TIMEOUT = 60.0
 _OPERATION_TIMEOUT = 30.0
-_STOP_TIMEOUT = 12.0
-_MAX_OUTPUT_BYTES = 1_048_576
 # Render allows 100 API requests a minute; readiness polling stays well under that.
 _POLL_INTERVAL = 1.0
 _MISSING_CREDENTIALS = 'Set RENDER_API_KEY and RENDER_WORKSPACE_ID in the environment, or pass a configured `client=`.'
@@ -97,6 +99,27 @@ def _open_client() -> RenderAsync:
 async def _close_client(client: RenderAsync) -> None:
     # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
     await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
+
+
+async def _wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
+    """Wait for `task` to finish even if the caller is cancelled, then re-raise the cancellation."""
+    cancelled: asyncio.CancelledError | None = None
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                # Wait without forwarding cancellation or installing shield's Python 3.14+ detached-error logger.
+                await asyncio.wait((task,))
+            except asyncio.CancelledError as error:
+                cancelled = error
+    try:
+        result = task.result()
+    except BaseException as error:
+        if cancelled is not None:
+            raise cancelled from error
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
 
 
 class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -142,6 +165,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._sandbox_timeout = sandbox_timeout
         self._working_dir = absolute_path('working_dir', working_dir) or DEFAULT_WORKING_DIR
         self._filesystem = NativeFilesystem(self, _OPERATION_TIMEOUT)
+        # Metadata operations use `Workspace`'s shell implementation over this backend's commands.
+        self._shell = Workspace(self._filesystem.commands)
         self._lock = anyio.Lock()
         self._create_task: asyncio.Task[None] | None = None
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
@@ -212,7 +237,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     self._create_task = asyncio.create_task(self._create(client))
                 # Wait for the create to record its ref even if this caller is cancelled. The lock keeps
                 # concurrent first operations from creating twice, and this operation's client stays open.
-                await wait_despite_cancellation(self._create_task)
+                await _wait_despite_cancellation(self._create_task)
             assert self._ref is not None
             try:
                 async with asyncio.timeout(_READINESS_TIMEOUT):
@@ -228,14 +253,11 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                 resolve = prepare_command(
                     command_argv(f'{prepare}cd -- {path} && pwd -P', shell=True),
                     working_dir='/',
-                    max_output_bytes=_MAX_OUTPUT_BYTES,
                 )
-                result = await run_command(
-                    client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT, stop_timeout=_STOP_TIMEOUT
-                )
+                result = await run_command(client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT)
             except RateLimitError:
                 raise
-            except (ClientError, SandboxNotFoundError) as error:
+            except ClientError as error:
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
             except TimeoutError as error:
                 raise WorkspaceUnavailableError('Render sandbox readiness exceeded its deadline') from error
@@ -261,25 +283,20 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         """Run once with stdin at EOF; a timeout or cancellation stops only this command."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
-        # Built before acquisition, so a command too large to send creates no sandbox. The configured
-        # `working_dir` names the same directory `working_dir()` resolves.
-        prepared = prepare_command(
-            argv,
-            working_dir=self._working_dir,
-            env={**self._env, **_check_env(env)},
-            timeout=timeout,
-            max_output_bytes=_MAX_OUTPUT_BYTES,
-        )
+        values = {**self._env, **_check_env(env)}
+        # Checked against the configured directory first, so a command too large to send creates no sandbox.
+        prepare_command(argv, working_dir=self._working_dir, env=values, timeout=timeout)
         async with self._operation() as client:
-            await self._ensure_ready(client)
+            cwd = await self._ensure_ready(client)
             assert self._ref is not None
+            prepared = prepare_command(argv, working_dir=cwd, env=values, timeout=timeout)
             try:
-                return await run_command(client, self._ref.id, prepared, timeout=timeout, stop_timeout=_STOP_TIMEOUT)
+                return await run_command(client, self._ref.id, prepared, timeout=timeout)
             except RateLimitError:
                 raise
-            except (ClientError, SandboxNotFoundError) as error:
+            except ClientError as error:
                 raise WorkspaceUnavailableError('Render sandbox is missing or access was rejected') from error
-            except (WorkspaceTimeoutError, WorkspaceOutputLimitError, asyncio.CancelledError):
+            except (WorkspaceTimeoutError, WorkspaceOutputLimitError, WorkspaceUnavailableError):
                 raise
             except Exception as error:
                 # After an uncertain stream, report a dead sandbox as unavailable. If the status check itself
@@ -304,24 +321,19 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             await self._filesystem.write_bytes(client, path, data)
 
     async def stat(self, path: str) -> FileEntry:
-        async with self._operation():
-            return await self._filesystem.stat(path)
+        return await self._shell.stat(path)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        async with self._operation():
-            return await self._filesystem.list_dir(path)
+        return tuple(await self._shell.list_dir(path))
 
     async def make_dir(self, path: str) -> None:
-        async with self._operation():
-            await self._filesystem.make_dir(path)
+        await self._shell.make_dir(path)
 
     async def remove(self, path: str) -> None:
-        async with self._operation():
-            await self._filesystem.remove(path)
+        await self._shell.remove(path)
 
     async def exists(self, path: str) -> bool:
-        async with self._operation():
-            return await self._filesystem.exists(path)
+        return await self._shell.exists(path)
 
 
 async def terminate_sandbox(client: RenderAsync | None, sandbox_id: str) -> None:

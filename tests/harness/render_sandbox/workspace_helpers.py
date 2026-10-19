@@ -68,9 +68,9 @@ class WorkspaceHarness:
     create_error: Exception | None = None
     command_error: Exception | None = None
     terminate_error: Exception | None = None
+    create_status: str = 'running'
     create_gate: asyncio.Event | None = None
     create_started: asyncio.Event = field(default_factory=asyncio.Event)
-    create_status: str = 'running'
     inline_helpers: bool = False
     # Called inside an in-process file helper run with a scoped monkeypatch and the helper's action.
     helper_fault: Callable[[pytest.MonkeyPatch, str], None] | None = None
@@ -88,7 +88,7 @@ def make_workspace_harness(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, isolated_filesystems: bool = False
 ) -> WorkspaceHarness:
     # Short bounds keep a regressed stop or readiness wait from stalling the test; no test waits them out.
-    monkeypatch.setattr(f'{_BACKEND_MODULE}._STOP_TIMEOUT', 1)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._STOP_TIMEOUT', 1)
     monkeypatch.setattr(f'{_BACKEND_MODULE}._POLL_INTERVAL', 0)
     harness = WorkspaceHarness(
         RenderAsync(token='test-only', owner_id='tea-test'),
@@ -227,12 +227,8 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
                 root = harness.sandbox_roots[sandbox_id]
                 root.mkdir(parents=True, exist_ok=True)
                 return CommandResult(exit_code=0, stdout=str(root) + '\n', stderr='')
-        else:
-            if harness.command_error is not None:
-                raise harness.command_error
-            if harness.isolated_filesystems and working_dir == str(harness.root):
-                # The backend sends its configured `working_dir`; in isolation mode that names the sandbox root.
-                working_dir = str(harness.sandbox_roots[sandbox_id])
+        elif harness.command_error is not None:
+            raise harness.command_error
         argv = ['/bin/sh', '-c', command] if isinstance(command, str) else list(command)
         helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
         if helper and not harness.inline_helpers:

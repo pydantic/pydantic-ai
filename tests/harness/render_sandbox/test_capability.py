@@ -12,7 +12,10 @@ with try_import() as imports_successful:
     from render.client.errors import ClientError, RateLimitError, ServerError
     from render.experimental.sandbox import SandboxNotFoundError
 
+    from pydantic_ai import Agent
     from pydantic_ai.exceptions import UserError
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.test import TestModel
     from pydantic_ai.tools import RunContext
     from pydantic_ai.usage import RunUsage
@@ -56,6 +59,7 @@ def test_env_is_not_shown_in_repr() -> None:
         ({'working_dir': 'repo'}, "working_dir must be an absolute POSIX path or None, got 'repo'"),
         ({'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1, got 0'),
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
+        ({'sandbox_timeout': True}, 'sandbox_timeout must be an integer of at least 1, got True'),
         ({'sandbox_timeout': 86_401}, 'sandbox_timeout must be at most 86400 seconds, got 86401'),
         (
             {'defer_loading': True, 'id': 'render'},
@@ -183,3 +187,31 @@ async def test_agent_run_works_in_the_sandbox_and_leaves_it_running(workspace_ha
     assert (workspace_harness.root / 'answer.txt').read_text() == '42'
     assert workspace_harness.created == ['sb-1']
     assert workspace_harness.terminated == []
+
+
+async def test_later_runs_reattach_to_the_same_sandbox(workspace_harness: WorkspaceHarness) -> None:
+    # Continuing from message history, or passing the stored ref, must reach the first run's sandbox.
+    call = ToolCallPart('write_file', {'path': 'note.txt', 'content': 'kept'})
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = messages[-1]
+        if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[call])
+
+    capability = RenderSandbox(client=workspace_harness.client, working_dir=str(workspace_harness.root))
+    agent = Agent(FunctionModel(respond), capabilities=[capability, FileSystem()])
+    first = await agent.run('write')
+    call = ToolCallPart('read_file', {'path': 'note.txt'})
+    from_history = await agent.run('read', message_history=first.all_messages())
+    from_ref = await agent.run('read', workspace=first.workspace.ref)
+
+    assert workspace_harness.created == ['sb-1']
+    assert first.workspace.ref == from_history.workspace.ref == from_ref.workspace.ref
+    returns = [
+        part.content
+        for message in from_ref.new_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert 'kept' in str(returns)

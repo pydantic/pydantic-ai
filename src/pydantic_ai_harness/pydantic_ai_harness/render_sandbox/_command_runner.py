@@ -22,30 +22,33 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
 
-if TYPE_CHECKING:  # Only for annotations: the sandbox's Python may predate `typing.TypeGuard`.
-    from typing import TypeGuard
+# The sandbox has only the standard library, so not `typing_extensions`.
+from typing import IO, TypedDict  # noqa: TID251
 
 _CHUNK_SIZE = 16_384
 
 
-def _json_object(value: object) -> TypeGuard[dict[str, object]]:
-    # Callers obtain objects from json.loads, which produces string dictionary keys.
-    return isinstance(value, dict)
+# The host builds these with `json.dumps` and the supervisor writes the state itself, so neither is re-validated.
+class _StopConfig(TypedDict):
+    claim: str
+    nonce: str
 
 
-def _mapping(value: object) -> dict[str, object]:
-    if not _json_object(value):  # pragma: no cover - only host-generated JSON objects and owned state reach here
-        raise TypeError('Expected an object')
-    # These objects come from JSON decoding, which already guarantees text keys.
-    return value
+class _RunConfig(_StopConfig):
+    argv: list[str]
+    cwd: str
+    env: dict[str, str]
+    timeout: float | None
+    limit: int
+    drain: float
 
 
-def _text(value: object) -> str:
-    if not isinstance(value, str):  # pragma: no cover - the host validates all text fields before dispatch
-        raise TypeError('Expected text')
-    return value
+class _State(TypedDict, total=False):
+    pid: int
+    birth: str
+    done: bool
+    draining_group: int
 
 
 def _frame(kind: str, nonce: str, **fields: object) -> None:
@@ -87,12 +90,12 @@ def _state(claim: Path, **fields: object) -> None:
 def _signal_owned(claim: Path) -> None:
     """Call under the registration/reaping lock, preventing a PID reuse race."""
     try:
-        record = _mapping(json.loads((claim / 'state.json').read_text(encoding='utf-8')))
+        record: _State = json.loads((claim / 'state.json').read_text(encoding='utf-8'))
     except FileNotFoundError:
         return  # The stop fence prevents a not-yet-registered launcher from starting.
-    if record.get('done') is True:
+    if record.get('done'):
         group = record.get('draining_group')
-        if isinstance(group, int):
+        if group is not None:
             # The leader is reaped but output is still draining: a group member holding the pipe keeps the
             # group ID in use, so it cannot name an unrelated process.
             try:
@@ -101,8 +104,7 @@ def _signal_owned(claim: Path) -> None:
                 pass
         return  # Otherwise the drain is over; background jobs may continue.
     pid, birth = record.get('pid'), record.get('birth')
-    if not isinstance(pid, int) or not isinstance(birth, str):  # pragma: no cover - private registration corruption
-        raise TypeError('Invalid process registration')
+    assert pid is not None and birth is not None  # A state that is not done always records both.
     current = _identity(pid)
     if current is None:  # pragma: no cover - the registered child is still owned and unreaped
         return
@@ -118,9 +120,9 @@ def _signal_owned(claim: Path) -> None:
         return
 
 
-def _stop(config: dict[str, object]) -> None:
-    claim = Path(_text(config['claim']))
-    nonce = _text(config['nonce'])
+def _stop(config: _StopConfig) -> None:
+    claim = Path(config['claim'])
+    nonce = config['nonce']
     try:
         claim.mkdir(mode=0o700)
     except FileExistsError:
@@ -131,25 +133,11 @@ def _stop(config: dict[str, object]) -> None:
     _frame('stopped', nonce)
 
 
-def _json_array(value: object) -> TypeGuard[list[object]]:
-    return isinstance(value, list)
-
-
-def _argv(config: dict[str, object]) -> list[str]:
-    values = config['argv']
-    if not _json_array(values):  # pragma: no cover - the host always supplies its validated argument list
-        raise TypeError('argv must be a list')
-    arguments: list[object] = values
-    return [_text(value) for value in arguments]
-
-
-def _spawn(config: dict[str, object], argv: list[str]) -> subprocess.Popen[bytes]:
-    supplied = _mapping(config['env'])
-    env = {key: _text(value) for key, value in supplied.items()}
+def _spawn(config: _RunConfig) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
-        argv,
-        cwd=_text(config['cwd']),
-        env={**os.environ, **env},
+        config['argv'],
+        cwd=config['cwd'],
+        env={**os.environ, **config['env']},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -157,15 +145,10 @@ def _spawn(config: dict[str, object], argv: list[str]) -> subprocess.Popen[bytes
     )
 
 
-def _run(config: dict[str, object]) -> None:
-    claim = Path(_text(config['claim']))
-    nonce = _text(config['nonce'])
-    limit = config['limit']
-    if not isinstance(limit, int) or limit < 1:  # pragma: no cover - public config rejects invalid limits
-        raise ValueError('Invalid output limit')
-    timeout = config.get('timeout')
-    if timeout is not None and not isinstance(timeout, (float, int)):  # pragma: no cover - host validated timeout
-        raise ValueError('Invalid timeout')
+def _run(config: _RunConfig) -> None:
+    claim = Path(config['claim'])
+    nonce = config['nonce']
+    argv = config['argv']
     try:
         claim.mkdir(mode=0o700)
     except FileExistsError:
@@ -179,9 +162,8 @@ def _run(config: dict[str, object]) -> None:
             if (claim / 'stopped').exists():  # pragma: lax no cover - the stop fence can win mkdir or registration
                 _frame('fenced', nonce)
                 return
-            argv = _argv(config)
             try:
-                process = _spawn(config, argv)
+                process = _spawn(config)
             except (FileNotFoundError, PermissionError) as error:
                 _state(claim, done=True)
                 if error.filename != argv[0]:
@@ -199,10 +181,7 @@ def _run(config: dict[str, object]) -> None:
             _state(claim, pid=process.pid, birth=birth, done=False)
         _frame('started', nonce)
         assert process.stdout is not None and process.stderr is not None
-        drain = config['drain']
-        if not isinstance(drain, (float, int)):  # pragma: no cover - the host always supplies a number
-            raise ValueError('Invalid drain grace')
-        _capture(process, claim, nonce, limit, timeout, drain)
+        _capture(process, claim, nonce, config['limit'], config['timeout'], config['drain'])
     finally:
         if process is not None:
             with _locked(claim):
@@ -295,17 +274,13 @@ def _capture(
 
 
 def main() -> None:
-    config = _mapping(json.loads(sys.argv[2]))
-    nonce = _text(config['nonce'])
+    config: _RunConfig = json.loads(sys.argv[2])
+    nonce = config['nonce']
     try:
         if sys.argv[1] == 'stop':
             _stop(config)
-        elif sys.argv[1] == 'run':
-            _run(config)
         else:
-            raise ValueError(
-                'Invalid supervisor operation'
-            )  # pragma: no cover - private dispatch uses only run and stop
+            _run(config)
     except Exception as error:
         # Never echo argv, env, or file contents into control-plane diagnostics.
         _frame('error', nonce, category=type(error).__name__)
