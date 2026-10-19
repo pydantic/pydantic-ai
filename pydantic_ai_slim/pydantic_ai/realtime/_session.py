@@ -1742,7 +1742,10 @@ class RealtimeSession:
         Each access builds a new conversation, carrying the
         [`revision`][pydantic_ai.conversation.Conversation.revision] of the one before it, so a
         [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can save
-        `session.conversation` again as the session goes on.
+        `session.conversation` again as the session goes on. Take the next one after the previous
+        save has finished: one taken while a save is still in flight carries the revision from
+        before it, so saving it, or any taken after it, raises
+        [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict].
         """
         if self._conversation_id is None:
             self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
