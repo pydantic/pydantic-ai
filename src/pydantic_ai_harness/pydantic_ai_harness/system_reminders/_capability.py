@@ -12,7 +12,6 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
 
 from pydantic_ai import Agent
-from pydantic_ai._utils import UNSET, Unset, is_set
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
     ModelMessage,
@@ -32,6 +31,21 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 logger = logging.getLogger(__name__)
+
+
+class _Unset:
+    """The default of an option whose default changed, so leaving it unset can warn."""
+
+    def __repr__(self) -> str:
+        return 'None'
+
+
+# Type checkers see the effective default, `None`; at runtime the sentinel tells an omitted option from an
+# explicit `None`, so the public field types stay what callers can pass.
+if TYPE_CHECKING:
+    _UNSET: None = None
+else:
+    _UNSET = _Unset()
 
 _WARNED_RUNS_KEPT = 256
 """How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
@@ -59,7 +73,7 @@ class Reminder(Generic[AgentDepsT]):
     max_fires: int | None = None
     """Maximum number of times this reminder may fire within a run. `None` means no limit."""
 
-    tag: str | None | Unset = UNSET
+    tag: str | None = _UNSET
     r"""When set, wrap the content in an XML tag: `<tag>\ncontent\n</tag>`.
 
     `None` sends the raw content, which is what a reminder needs: it's already a system prompt, which
@@ -74,7 +88,7 @@ class Reminder(Generic[AgentDepsT]):
             raise ValueError(f'first_after must be >= 1, got {self.first_after}')
         if self.max_fires is not None and self.max_fires < 1:
             raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
-        if not is_set(self.tag):
+        if self.tag is _UNSET:
             warn_default_changed(
                 owner='Reminder',
                 option='tag',
@@ -124,6 +138,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         capabilities=[
             SystemReminders(
                 reminders=[Reminder('Stay focused on the original request.', interval=5, tag=None)],
+                cache_ttl=None,
             )
         ],
     )
@@ -136,12 +151,13 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     dynamic_reminders: Sequence[DynamicReminder[AgentDepsT] | AsyncDynamicReminder[AgentDepsT]] = ()
     """Callables evaluated every model request; return text to inject or `None` to skip."""
 
-    cache_ttl: Literal['5m', '1h'] | None = None
-    """Deprecated, and has no effect.
+    cache_ttl: Literal['5m', '1h'] | None = _UNSET
+    """Deprecated, and has no effect; pass `None` or configure caching on the model instead.
 
-    Reminders used to bring a cache breakpoint of their own. They're request-scoped system prompts now,
-    and the breakpoints the model's caching settings place (such as `anthropic_cache`) land before
-    them, so configure caching on the model instead.
+    Reminders used to bring a cache breakpoint of their own, with a `'5m'` TTL by default. They're
+    request-scoped system prompts now, and the breakpoints the model's caching settings place (such as
+    `anthropic_cache`) land before them. Left unset, this warns that the default breakpoint is gone; set
+    to `'5m'` or `'1h'`, it warns that it's ignored.
     """
 
     on_fire: Callable[[str], None] | None = None
@@ -165,7 +181,17 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # Dynamic configuration is a sequence, not a live queue. Freeze caller-owned lists so
         # callbacks cannot change the operation index used to recover an LLM reminder.
         self.dynamic_reminders = tuple(self.dynamic_reminders)
-        if self.cache_ttl is not None:
+        if self.cache_ttl is _UNSET:
+            # Not `warn_default_changed`: its advice to pass the old value would restore nothing here.
+            warnings.warn(
+                '`SystemReminders` no longer places a cache breakpoint before its reminders; it used to place one by '
+                "default (`cache_ttl='5m'`). Turn on caching on the model instead (such as `anthropic_cache`): its "
+                'breakpoint lands before the reminder. Pass `cache_ttl=None` to silence this warning.',
+                HarnessDeprecationWarning,
+                stacklevel=3,
+            )
+            self.cache_ttl = None
+        elif self.cache_ttl is not None:
             warn_argument_ignored(
                 'SystemReminders',
                 'cache_ttl',
@@ -448,8 +474,7 @@ def _should_fire(reminder: Reminder[AgentDepsT], count: int) -> bool:
 
 def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     """Return `reminder`'s content, XML-wrapped when its `tag` is set."""
-    # `__post_init__` resolves an unset `tag` to `None`.
-    if isinstance(reminder.tag, str):
+    if reminder.tag is not None:
         return f'<{reminder.tag}>\n{reminder.content}\n</{reminder.tag}>'
     return reminder.content
 

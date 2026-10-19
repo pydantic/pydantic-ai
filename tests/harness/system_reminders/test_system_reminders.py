@@ -438,7 +438,19 @@ class TestInjectionMechanics:
             HarnessDeprecationWarning,
             match=r'`SystemReminders\(cache_ttl=\.\.\.\)` is deprecated and ignored: configure caching on the model',
         ):
-            SystemReminders[None](reminders=[Reminder('r')], cache_ttl='1h')
+            SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl='1h')
+
+    def test_unset_cache_ttl_warns_that_the_breakpoint_is_gone(self) -> None:
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r"no longer places a cache breakpoint .* \(`cache_ttl='5m'`\).* Pass `cache_ttl=None`",
+        ):
+            cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
+        assert cap.cache_ttl is None
+
+    @pytest.mark.filterwarnings('error::pydantic_ai_harness.HarnessDeprecationWarning')
+    def test_explicit_none_cache_ttl_does_not_warn(self) -> None:
+        assert SystemReminders[None](reminders=[Reminder('r', tag=None)], cache_ttl=None).cache_ttl is None
 
 
 # --- on_fire callback ---

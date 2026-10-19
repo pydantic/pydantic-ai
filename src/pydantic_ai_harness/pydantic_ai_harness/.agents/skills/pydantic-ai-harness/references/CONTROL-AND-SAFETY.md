@@ -487,6 +487,7 @@ agent = Agent(
                 GoalReanchor(),
                 lambda ctx: 'Wrap up soon.' if ctx.run_step > 20 else None,
             ],
+            cache_ttl=None,
         )
     ],
 )
@@ -507,7 +508,8 @@ agent = Agent(
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
   `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
-- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored.
+- Observe with `ReminderFiredEvent` (`on_fire` is deprecated). `cache_ttl` is deprecated and ignored:
+  pass `cache_ttl=None`, since leaving it unset warns that the default breakpoint is gone.
 - `SystemReminders` adds no cache breakpoint; `Planning` adds one for its plan reminder, and
   Anthropic allows 4.
 - Not spec-serializable.

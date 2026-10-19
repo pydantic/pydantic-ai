@@ -244,8 +244,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'SystemReminders': Combines(
         'reminders are additive, so both sides keep firing',
         lambda: (
-            SystemReminders[Any](reminders=[Reminder('first', tag=None)]),
-            SystemReminders[Any](reminders=[Reminder('second', tag=None)]),
+            SystemReminders[Any](reminders=[Reminder('first', tag=None)], cache_ttl=None),
+            SystemReminders[Any](reminders=[Reminder('second', tag=None)], cache_ttl=None),
         ),
         _check_system_reminders,
     ),
