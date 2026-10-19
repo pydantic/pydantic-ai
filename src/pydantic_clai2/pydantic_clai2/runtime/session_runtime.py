@@ -1086,9 +1086,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
-            )
+            self.images.retain(self.editor.drafts if self.editor is not None else ())
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace

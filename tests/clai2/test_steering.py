@@ -578,6 +578,18 @@ async def test_esc_on_a_cleared_queued_prompt_removes_it() -> None:
         assert (live.buffer.text, live.queued_messages) == ('a', ())
 
 
+async def test_a_draft_set_aside_to_edit_a_queued_prompt_keeps_its_images() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'queued')
+        marker = live.images.attach([BinaryContent(data=b'image', media_type='image/png')])
+        live.buffer.replace(f'look {marker}')
+        live.feed('up')
+        # Pasting while the draft is set aside releases the images nothing holds any more.
+        live.feed('paste', ' more')
+        live.feed('escape')
+        assert live.images.resolve(live.buffer.text) == ('look', [BinaryContent(data=b'image', media_type='image/png')])
+
+
 @pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
 async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
     async with editor() as (live, _, _):

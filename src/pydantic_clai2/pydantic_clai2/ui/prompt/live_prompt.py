@@ -147,6 +147,15 @@ class LivePrompt:
         """Pending text, excluding control signals, including the queued prompt being edited."""
         return tuple(item.text for item in self._pending())
 
+    @property
+    def drafts(self) -> tuple[str, ...]:
+        """Every text the editor may still send, whose image attachments must stay.
+
+        That is the draft, the one Esc restores while a queued prompt is edited, and the queued prompts.
+        """
+        shelved = (self._shelved_draft,) if self._editing is not None else ()
+        return (self.buffer.text, *shelved, *self.queued_messages)
+
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
 
@@ -236,7 +245,7 @@ class LivePrompt:
 
     def paste(self, text: str | None) -> None:
         """Attach clipboard/path images, or insert a literal bracketed paste."""
-        self.images.retain([self.buffer.text, *self.queued_messages])
+        self.images.retain(self.drafts)
         self.images.notice = ''
         try:
             paths = pasted_paths(text) if text is not None else []
