@@ -53,6 +53,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason, without_resumable_outputs
 
 # Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
 # be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -208,9 +209,13 @@ _NO_CONFLICTING_TYPE_NAMES: frozenset[str] = frozenset()
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
-    """The sub-agent's output JSON schema, or `None` when it cannot be derived."""
+    """The sub-agent's output JSON schema, or `None` when it cannot be derived.
+
+    Output types that only the run's own caller can resume from (like `DeferredToolRequests`) are
+    left out: the script cannot act on them, and a run that ends with one fails the call instead.
+    """
     try:
-        return agent.output_json_schema()
+        return agent.output_json_schema(output_type=without_resumable_outputs(agent.output_type))
     except Exception:
         return None
 
@@ -707,7 +712,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=self.sub_agent_usage_limits,
             )
-            return to_jsonable_python(result.output)
+            reason = resumable_output_reason(result.output)
+            if reason is None:
+                return to_jsonable_python(result.output)
         except Exception as exc:
             # Don't leak host internals (file paths, deps/agent reprs) to the model;
             # surface the failing agent and error type by default.
@@ -715,6 +722,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
                 message = f'{message}: {exc}'
             raise RuntimeError(message) from exc
+        raise RuntimeError(
+            f'sub-agent {agent_name!r} {reason}; a workflow script cannot resume it, '
+            'so do the task another way, or without this sub-agent'
+        )
 
     def _build_type_check_stubs(self) -> str:
         """Render sub-agent signatures as stubs for Monty's static type checker.
