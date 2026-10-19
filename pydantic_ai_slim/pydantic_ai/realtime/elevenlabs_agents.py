@@ -33,6 +33,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+import re
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
@@ -175,6 +176,60 @@ class _AudioTail:
     provider_details: dict[str, Any] | None = None
 
 
+_TAG_LETTER = r'[^\W\d_]'
+_AUDIO_TAG = re.compile(rf"\[({_TAG_LETTER}(?:{_TAG_LETTER}|[ '\u2019-]){{1,49}})\](?!\()")
+"""An expressive audio tag such as `[laughs]` or `[strong French accent]`: words in square brackets.
+
+Tags are lowercase by convention, so a bracketed phrase starting with a capital (`[Your Name]`) is kept, as are
+citations (`[1]`), checkboxes (`[x]`), and Markdown links (`[text](url)`).
+"""
+_AUDIO_TAG_START = re.compile(rf"\[(?:{_TAG_LETTER}(?:{_TAG_LETTER}|[ '\u2019-]){{0,49}}\]?)?")
+"""What the rest of an audio tag could still follow: an opening bracket, part of a tag, or a whole one (which a `(`
+could yet turn into a Markdown link)."""
+
+
+def _strip_audio_tags(text: str, *, started: bool = False) -> tuple[str, list[str]]:
+    """Remove the audio tags from `text`, returning what is left and the tags removed (without brackets).
+
+    A tag goes with the whitespace before it, or after it at the start of the text (unless the text continues
+    output that has already `started`), so `Hi [laughs] there` becomes `Hi there` and `[laughs] Hi` becomes `Hi`.
+    """
+    tags: list[str] = []
+    result = ''
+    position = 0
+    for match in _AUDIO_TAG.finditer(text):
+        if match[1][0].isupper():
+            continue
+        result = (result + text[position : match.start()]).rstrip()
+        tags.append(match[1])
+        position = match.end()
+    result += text[position:]
+    return (result if started else result.lstrip()), tags
+
+
+@dataclass
+class _AudioTagStripper:
+    """Strips audio tags from streamed text so that the pieces add up to the whole text stripped at once.
+
+    A tag can be split across pieces, so text from an opening bracket that may yet start one is held back until
+    it is known, as is trailing whitespace, which a tag that follows would remove.
+    """
+
+    held: str = ''
+    started: bool = False
+
+    def feed(self, text: str) -> str:
+        buffer = self.held + text
+        end = buffer.rfind('[')
+        if end == -1 or not _AUDIO_TAG_START.fullmatch(buffer, end):
+            end = len(buffer)
+        head = buffer[:end].rstrip()
+        self.held = buffer[len(head) :]
+        stripped, _ = _strip_audio_tags(head, started=self.started)
+        self.started = self.started or bool(stripped)
+        return stripped
+
+
 class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
     """Per-conversation TTS overrides, each gated by its own override toggle on the agent."""
 
@@ -235,6 +290,15 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     - `'off'`: skip the check and trust the agent's configuration (e.g. for read-scoped API keys).
       A call to a tool the session does not define reaches the tool manager like any other call and
       is answered with the standard unknown-tool error, which lands in the session's history.
+    """
+    elevenlabs_agents_strip_audio_tags: bool
+    """Whether to remove expressive audio tags such as `[laughs]` from the agent's transcripts. Defaults to `False`.
+
+    With an expressive TTS model such as `eleven_v3_conversational`, the agent's LLM writes tags into its reply to
+    direct the delivery, and they are part of the transcript ElevenLabs sends. With this on, they are removed from
+    the transcript, streamed and in history alike, and the tags a response's transcript held are kept, in order
+    and without brackets, in its `provider_details['audio_tags']`. Only lowercase words in square brackets count
+    as tags, so citations (`[1]`), Markdown links, and placeholders like `[Your Name]` are kept.
     """
     elevenlabs_agents_config_override: dict[str, Any]
     """Raw values deep-merged last into `conversation_config_override`, the escape hatch mirroring
@@ -1427,6 +1491,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 ws,
                 conversation_id=metadata.conversation_id,
                 text_output=settings.get('output_modality', 'audio') == 'text',
+                strip_audio_tags=settings.get('elevenlabs_agents_strip_audio_tags', False),
             )
         finally:
             if ws is not None:
@@ -1457,11 +1522,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         *,
         conversation_id: str | None = None,
         text_output: bool = False,
+        strip_audio_tags: bool = False,
     ) -> None:
         self._ws = ws
         self._conversation_id = conversation_id
         self._context_limit_tokens: int | None = None
         self._text_output = text_output
+        # The streamed text of the response under way, with its audio tags removed (see `_AudioTagStripper`).
+        self._tag_stripper = _AudioTagStripper() if strip_audio_tags else None
         # Calls the agent fired without expecting a result (`expects_response=false`): the session
         # still settles them locally, but their `ToolResult` must never go back on the wire.
         self._fire_and_forget_tool_call_ids: set[str] = set()
@@ -1882,7 +1950,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             part = _AgentChatResponsePartEvent.model_validate(data).text_response_part
             if part.type == 'delta' and part.text:
                 self._response_open = True
-                return [OutputTranscript(text=part.text, is_final=False, output_text=self._text_output)]
+                text = part.text if self._tag_stripper is None else self._tag_stripper.feed(part.text)
+                if text:
+                    return [OutputTranscript(text=text, is_final=False, output_text=self._text_output)]
             return []
         if event_type == 'agent_response':
             # The whole response text, once per reply, after any tool loop. In text mode it follows the streamed
@@ -1893,15 +1963,25 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # and `is_final` is never set on audio, both verified live.)
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
             self._response_open = True
-            transcript = OutputTranscript(text=payload.agent_response, is_final=True, output_text=self._text_output)
+            text, details = payload.agent_response, None
+            if self._tag_stripper is not None:
+                # The whole text, stripped at once, which is what the stripped pieces streamed before it add up to.
+                self._tag_stripper = _AudioTagStripper()
+                text, tags = _strip_audio_tags(text)
+                details = {'audio_tags': tags} if tags else None
+            transcript = OutputTranscript(text=text, is_final=True, output_text=self._text_output)
             if self._text_output or self._turn_interrupted:
                 return [
                     transcript,
                     *self._finalize_response(
-                        interrupted=self._turn_interrupted, provider_response_id=payload.response_id
+                        interrupted=self._turn_interrupted,
+                        provider_response_id=payload.response_id,
+                        provider_details=details,
                     ),
                 ]
-            self._tail = _AudioTail(event_id=payload.event_id, response_id=payload.response_id)
+            self._tail = _AudioTail(
+                event_id=payload.event_id, response_id=payload.response_id, provider_details=details
+            )
             return [transcript]
         if event_type == 'agent_response_correction':
             # After an interruption the server truncates the stored transcript to what was actually
@@ -1912,11 +1992,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # (the common audio-mode case: synthesis outruns playback), there is nothing left to finalize
             # and the correction is dropped.
             correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
-            details = {'corrected_agent_response': correction.corrected_agent_response}
+            corrected = correction.corrected_agent_response
+            if self._tag_stripper is not None:
+                corrected, _ = _strip_audio_tags(corrected)
+            details = {'corrected_agent_response': corrected}
             if (tail := self._tail) is not None:
                 # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
                 tail.interrupted = True
-                tail.provider_details = details
+                tail.provider_details = {**(tail.provider_details or {}), **details}
                 return self._end_tail()
             return self._finalize_response(interrupted=True, provider_details=details)
         if event_type == 'agent_response_complete':

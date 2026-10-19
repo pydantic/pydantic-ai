@@ -34,10 +34,14 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartEndEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     TextContent,
+    TextPart,
+    TextPartDelta,
     ToolCallPart,
 )
 from pydantic_ai.models import ModelRequestParameters, get_user_agent
@@ -1951,6 +1955,121 @@ async def test_text_output_mode_streams_chat_parts_then_finalizes() -> None:
         OutputTranscript(text='Hello!', is_final=True, output_text=True),
         ResponseDone(),
     ]
+
+
+@pytest.mark.parametrize(
+    ('text', 'stripped', 'tags'),
+    [
+        ('[laughs] Hi there! [whispers] Come closer.', 'Hi there! Come closer.', ['laughs', 'whispers']),
+        ("[freundlich] Hallo! Wie geht's? [lacht]", "Hallo! Wie geht's?", ['freundlich', 'lacht']),
+        ('Oh [strong French accent] bonjour.', 'Oh bonjour.', ['strong French accent']),
+        ('Well [sighs], fine.', 'Well, fine.', ['sighs']),
+        ('[笑う] こんにちは', 'こんにちは', ['笑う']),
+        # Bracketed text that isn't a tag is kept: citations, checkboxes, Markdown links, and placeholders.
+        ('See [1] and [the docs](https://example.com).', 'See [1] and [the docs](https://example.com).', []),
+        ('- [x] done, signed [Your Name]', '- [x] done, signed [Your Name]', []),
+        ('An unclosed [laughs and more', 'An unclosed [laughs and more', []),
+        ('No tags at all.', 'No tags at all.', []),
+    ],
+)
+def test_strip_audio_tags(text: str, stripped: str, tags: list[str]) -> None:
+    assert rt_elevenlabs._strip_audio_tags(text) == (stripped, tags)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        '[laughs] Hi there! [whispers] Come closer.',
+        'Hi [laughs]   \n  next [sighs]',
+        'See [1] and [the docs](https://example.com) [Your Name] [excited] ok.',
+        '  [laughs]  [sighs]  hi [x] [ab](',
+    ],
+)
+def test_streamed_tag_stripping_adds_up_to_the_whole_text_stripped(text: str) -> None:
+    # However the text is split into pieces, a tag split across them included, the stripped pieces are the
+    # start of the whole text stripped at once, and only held-back text (at most a tag's length) is missing.
+    whole, _ = rt_elevenlabs._strip_audio_tags(text)  # pyright: ignore[reportPrivateUsage]
+    for first in range(1, len(text)):
+        for second in range(first, len(text)):
+            stripper = rt_elevenlabs._AudioTagStripper()  # pyright: ignore[reportPrivateUsage]
+            streamed = ''.join(stripper.feed(piece) for piece in (text[:first], text[first:second], text[second:]))
+            assert whole.startswith(streamed)
+            assert len(whole) - len(streamed) <= 52
+
+
+async def test_audio_tags_are_kept_by_default() -> None:
+    events, _ = await _events([{'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi!'}}])
+    assert events == [OutputTranscript(text='[laughs] Hi!', is_final=True)]
+
+
+async def test_stripped_audio_tags_ride_on_the_response() -> None:
+    # Audio mode: the whole text arrives at once, and the correction of a reply cut off is stripped as well.
+    ws = FakeWebSocket(
+        [
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': '[laughs] Hi! [whispers] Listen.'}},
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {
+                'type': 'agent_response_correction',
+                'agent_response_correction_event': {'corrected_agent_response': '[laughs] Hi! [whispers] Li'},
+            },
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'No tags.'}},
+            _VOICED,
+        ]
+    )
+    connection = ElevenLabsAgentsRealtimeConnection(ws, strip_audio_tags=True)  # type: ignore[arg-type]
+    events = await collect_codec_events(connection)
+    assert events == [
+        OutputTranscript(text='Hi! Listen.', is_final=True),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(
+            interrupted=True,
+            provider_details={'audio_tags': ['laughs', 'whispers'], 'corrected_agent_response': 'Hi! Li'},
+        ),
+        OutputTranscript(text='No tags.', is_final=True),
+        ResponseDone(),
+        _VOICED_USAGE,
+    ]
+
+
+async def test_streamed_text_and_history_agree_on_stripped_audio_tags() -> None:
+    # Text-only mode streams the reply in pieces, here with a tag split across two of them: the deltas a
+    # consumer renders and the text recorded in history are both stripped, and are the same text.
+    def part(text: str, type: str = 'delta') -> dict[str, Any]:
+        return {'type': 'agent_chat_response_part', 'text_response_part': {'text': text, 'type': type}}
+
+    ws = FakeWebSocket(
+        [
+            HANDSHAKE_FRAME,
+            part('', 'start'),
+            part('[lau'),
+            part('ghs] Hi there'),
+            part(' [whis'),
+            part('pers] see [1].'),
+            part('', 'stop'),
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': '[laughs] Hi there [whispers] see [1].'},
+            },
+        ]
+    )
+    ws.hold_open = True
+    model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED)))
+    settings = ElevenLabsAgentsRealtimeModelSettings(output_modality='text', elevenlabs_agents_strip_audio_tags=True)
+    agent: Agent[None, str] = Agent()
+    streamed = ''
+    with patched_connect(ws):
+        async with agent.realtime(model, model_settings=settings).session() as session:
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                        streamed += event.delta.content_delta
+                    if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart):
+                        break
+            [response] = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+
+    assert streamed == 'Hi there see [1].'
+    assert response.parts == [TextPart(content='Hi there see [1].')]
+    assert response.provider_details == {'audio_tags': ['laughs', 'whispers'], 'conversation_id': 'conv_1'}
 
 
 async def test_user_transcript_maps_to_final_input_transcript() -> None:
