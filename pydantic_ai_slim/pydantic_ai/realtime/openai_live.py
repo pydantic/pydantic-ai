@@ -353,6 +353,15 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     Takes precedence over the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]
     setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
     that model."""
+    reasoning_summary: Literal['detailed', 'concise', 'auto']
+    """A summary of the backend model's reasoning, as
+    [`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+    requests on a direct Responses request.
+
+    The reasoning recorded ahead of a web search the backend runs then carries the summary, where the
+    backend wrote one, as its [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] content. Check the
+    [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
+    for more details."""
     verbosity: Literal['low', 'medium', 'high']
     """How much detail the backend generates. Does not affect the Live model's spoken delivery."""
     service_tier: Literal['auto', 'default', 'flex', 'priority']
@@ -1848,6 +1857,11 @@ class OpenAILiveModel(RealtimeModel):
         """Web search, which the delegated backend runs: the only native tool Live lets it have."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        # `WebSearchTool` is the only native tool Live supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+
     @property
     def client(self) -> AsyncOpenAI:
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
@@ -1935,8 +1949,13 @@ class OpenAILiveModel(RealtimeModel):
         parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
         if parallel_tool_calls is not None:
             responses['parallel_tool_calls'] = parallel_tool_calls
+        reasoning: dict[str, str] = {}
         if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
-            responses['reasoning'] = {'effort': effort}
+            reasoning['effort'] = effort
+        if (summary := delegation_settings.get('reasoning_summary')) is not None:
+            reasoning['summary'] = summary
+        if reasoning:
+            responses['reasoning'] = reasoning
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 

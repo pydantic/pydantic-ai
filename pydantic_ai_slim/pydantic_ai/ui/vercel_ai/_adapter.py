@@ -63,6 +63,7 @@ from ._event_stream import VercelAIEventStream
 from ._utils import (
     COMPACTION_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    PROVIDER_METADATA_KEY,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -126,6 +127,9 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'video': VideoUrl,
     'audio': AudioUrl,
 }
+
+_USER_PROMPT_START_KEY = 'user_prompt_start'
+"""`provider_metadata` key on the user UI part where a request's second or later `UserPromptPart` begins."""
 
 _KIND_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl]] = {
     ImageUrl.kind: ImageUrl,
@@ -340,8 +344,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported system message part type: {type(part)}')
             elif msg.role == 'user':
-                user_prompt_content: str | list[UserContent] = []
+                user_prompt_content: list[UserContent] = []
                 for part in msg.parts:
+                    if (
+                        isinstance(part, TextUIPart | FileUIPart)
+                        and user_prompt_content
+                        and load_provider_metadata(part.provider_metadata).get(_USER_PROMPT_START_KEY)
+                    ):
+                        # `dump_messages` marks where each of a request's later prompts begins.
+                        builder.add(_user_prompt_part(user_prompt_content))
+                        user_prompt_content = []
+
                     if isinstance(part, TextUIPart):
                         user_prompt_content.append(part.text)
                     elif isinstance(part, FileUIPart):
@@ -408,9 +421,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
                 if user_prompt_content:  # pragma: no branch
-                    if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str):
-                        user_prompt_content = user_prompt_content[0]
-                    builder.add(UserPromptPart(content=user_prompt_content))
+                    builder.add(_user_prompt_part(user_prompt_content))
 
             elif msg.role == 'assistant':
                 # A `ModelResponse` with parallel tool calls is followed by one `ModelRequest` with all
@@ -714,12 +725,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Convert a ModelRequest into a UIMessage."""
         system_ui_parts: list[UIMessagePart] = []
         user_ui_parts: list[UIMessagePart] = []
+        seen_user_prompt = False
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                system_ui_parts.append(TextUIPart(text=part.content, state='done'))
+                # A request-scoped prompt is for the model's current request only; loaded back, it would
+                # come back as a lasting system prompt.
+                if part.scope != 'request':
+                    system_ui_parts.append(TextUIPart(text=part.content, state='done'))
             elif isinstance(part, UserPromptPart):
-                user_ui_parts.extend(_convert_user_prompt_part(part))
+                user_ui_parts.extend(_convert_user_prompt_part(part, starts_new_prompt=seen_user_prompt))
+                seen_user_prompt = True
             elif isinstance(part, ToolReturnPart):
                 # Tool returns are merged into the tool call in the assistant message
                 pass
@@ -1134,9 +1150,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return result
 
 
-def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
-    """Convert a UserPromptPart to a list of UI message parts."""
-    ui_parts: list[UIMessagePart] = []
+def _convert_user_prompt_part(
+    part: UserPromptPart, *, starts_new_prompt: bool = False
+) -> list[TextUIPart | FileUIPart]:
+    """Convert a UserPromptPart to a list of UI message parts.
+
+    All of a request's prompts go into one user `UIMessage`, so with `starts_new_prompt` the first UI part is
+    marked as where this prompt begins, for `load_messages` to rebuild the same `UserPromptPart`s.
+    """
+    ui_parts: list[TextUIPart | FileUIPart] = []
 
     if isinstance(part.content, str):
         ui_parts.append(TextUIPart(text=part.content, state='done'))
@@ -1193,7 +1215,22 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
             else:
                 assert_never(item)
 
+    if starts_new_prompt and ui_parts:
+        first = ui_parts[0]
+        provider_metadata = first.provider_metadata or {}
+        first.provider_metadata = {
+            **provider_metadata,
+            PROVIDER_METADATA_KEY: {**provider_metadata.get(PROVIDER_METADATA_KEY, {}), _USER_PROMPT_START_KEY: True},
+        }
+
     return ui_parts
+
+
+def _user_prompt_part(content: list[UserContent]) -> UserPromptPart:
+    """Build the `UserPromptPart` for the content of a user `UIMessage`, a lone text as a plain string."""
+    if len(content) == 1 and isinstance(content[0], str):
+        return UserPromptPart(content=content[0])
+    return UserPromptPart(content=content)
 
 
 def _denial_reason(part: ToolUIPart | DynamicToolUIPart) -> str:

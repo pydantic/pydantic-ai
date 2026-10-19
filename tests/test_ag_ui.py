@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.metadata
 import inspect
 import json
@@ -43,6 +44,8 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    RunCancelled,
+    RunTimedOut,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -61,9 +64,9 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
@@ -72,6 +75,7 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -8481,6 +8485,46 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     assert 'RUN_ERROR' not in event_types
 
 
+async def test_run_timeout_finishes_like_cancellation() -> None:
+    """A run that outlives `timeout=` ends like a first-party cancellation: a bare `RUN_FINISHED`, and `on_cancel` gets the `RunTimedOut`."""
+
+    async def stream_then_time_out(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+        yield 'partial'
+        ctx = get_current_run_context()
+        assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+        ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_then_time_out))
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='m1', content='hi')))
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream(timeout=60, on_cancel=cancelled.append))
+    ]
+
+    assert [event['type'] for event in events] == snapshot(
+        ['RUN_STARTED', 'TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END', 'RUN_FINISHED']
+    )
+    assert 'outcome' not in events[-1]
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='partial')],
+            usage=RequestUsage(output_tokens=1, input_tokens=50),
+            model_name='function::stream_then_time_out',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
@@ -9126,6 +9170,38 @@ def _enqueuing_agent() -> Agent[object, str]:
         return 'started'
 
     return agent
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `pydantic_ai_enqueued_messages` activity at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    adapter = AGUIAdapter(
+        agent,
+        create_input(UserMessage(id='user-1', content='Go')),
+        ag_ui_version='0.1.19',
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert 'Reminder' not in json.dumps(events)
 
 
 @requires_ag_ui('0.1.19')

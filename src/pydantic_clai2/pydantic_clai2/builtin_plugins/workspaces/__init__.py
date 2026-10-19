@@ -72,6 +72,9 @@ def describe(workspace: Workspace) -> str:
 class WorkspacesPlugin(Plugin[WorkspacesSettings]):
     """Checkouts of a repository, each with its own CLAI: /workspaces makes, opens, stops, and destroys them."""
 
+    scope = 'process'
+    """One lock over the shared registry; `host.workspace` follows the session that runs `/workspaces`."""
+
     def __init__(self, host: PluginHost[None], settings: WorkspacesSettings) -> None:
         super().__init__(host, settings)
         self.workspaces = Workspaces(kinds=settings.kinds)
@@ -109,7 +112,7 @@ class WorkspacesPlugin(Plugin[WorkspacesSettings]):
                 return '\n'.join(describe(workspace) for workspace in listing)
             case ['create', kind, *rest] if len(rest) <= 2:
                 repo, ref = (*rest, '', '')[:2]
-                workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref)
+                workspace = await self.workspaces.create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
                 return (
                     f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}. '
                     f'Start its CLAI with /workspaces open {workspace.id}.'

@@ -26,6 +26,7 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -237,6 +238,7 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
             max_output_tokens=256,
             parallel_tool_calls=False,
             reasoning_effort='low',
+            reasoning_summary='auto',
             verbosity='low',
             service_tier='priority',
         ),
@@ -254,7 +256,7 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
             'max_output_tokens': 256,
             'parallel_tool_calls': False,
             'service_tier': 'priority',
-            'reasoning': {'effort': 'low'},
+            'reasoning': {'effort': 'low', 'summary': 'auto'},
             'text': {'verbosity': 'low'},
         }
     )
@@ -286,6 +288,14 @@ def test_thinking_sets_the_backends_reasoning_effort(
     responses = _config(model, settings=settings)['delegation']['responses']
 
     assert responses.get('reasoning') == ({'effort': expected} if expected is not None else None)
+
+
+def test_a_reasoning_summary_is_requested_without_an_effort(model: OpenAILiveModel) -> None:
+    """A summary needs no effort of its own: the backend reasons at its default and summarizes that."""
+    settings = OpenAILiveModelSettings(openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_summary': 'detailed'})
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses['reasoning'] == {'summary': 'detailed'}
 
 
 def test_delegation_settings_take_precedence_over_shared_ones(model: OpenAILiveModel) -> None:
@@ -1193,6 +1203,14 @@ async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
     agent = Agent(instructions='hi')
     with pytest.raises(UserError):
         async with agent.realtime(model, model_settings={'output_modality': 'text'}).session():
+            pass  # pragma: no cover
+
+
+async def test_agent_rejects_web_search_max_uses(model: OpenAILiveModel) -> None:
+    """The backend's `web_search` tool has no usage limit, so `max_uses` can't be applied and the session doesn't open."""
+    agent = Agent(capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+    with pytest.raises(UserError, match=r'`WebSearchTool.max_uses` not supported by this model'):
+        async with agent.realtime(model).session():
             pass  # pragma: no cover
 
 

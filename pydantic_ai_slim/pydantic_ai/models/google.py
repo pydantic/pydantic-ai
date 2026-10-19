@@ -534,6 +534,8 @@ class GoogleModel(Model[Client]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
 
@@ -644,6 +646,10 @@ class GoogleModel(Model[Client]):
         """Return the set of native tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Gemini's native tools apply none of them."""
+        return native_tool.restricting_settings
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -659,11 +665,16 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
-        # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
-        # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
-        # wire beside output tools. A supported one is sent even when optional.
+        # Count only native tools this model supports, including the settings set on them.
+        # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
+        # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
+        # is sent even when optional.
         supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
-        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        sent_native_tools = [
+            t
+            for t in model_request_parameters.native_tools
+            if isinstance(t, supported_native_tools) and not self.unsupported_native_tool_settings(t)
+        ]
         if (
             sent_native_tools
             and model_request_parameters.output_tools
