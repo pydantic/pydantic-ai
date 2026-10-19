@@ -205,7 +205,7 @@ class FakeSandboxd:
 
 
 class _Process:
-    """A command started with `posix_spawn` in its own session, so its process group can be killed.
+    """A command started with `posix_spawn` in its own process group, as sandboxd starts it, so the group can be killed.
 
     Not `asyncio.create_subprocess_exec`: that forks, and gRPC's fork handlers (this process runs a
     gRPC server) write log lines into the child's stderr before it execs.
@@ -237,7 +237,8 @@ class _Process:
                 (os.POSIX_SPAWN_DUP2, stdout_w, 1),
                 (os.POSIX_SPAWN_DUP2, stderr_w, 2),
             ],
-            setsid=True,
+            # `setpgroup`, not `setsid`: some Linux Python builds lack `posix_spawn` session support.
+            setpgroup=0,
         )
         for fd in (stdin_r, stdout_w, stderr_w):
             os.close(fd)
