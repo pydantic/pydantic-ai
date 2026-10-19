@@ -135,6 +135,44 @@ working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
+### Tool kinds
+
+Each tool declares a [tool kind](../tools-advanced.md#typed-tool-parts) in the `file_system`
+namespace, named after the tool: `read_file` has the kind
+`file_system.read_file`, exported as `READ_FILE_KIND`, and likewise
+`WRITE_FILE_KIND`, `EDIT_FILE_KIND`, `LIST_DIRECTORY_KIND`, `SEARCH_FILES_KIND`,
+`FIND_FILES_KIND`, `CREATE_DIRECTORY_KIND`, `FILE_INFO_KIND`, `LIST_FILES_KIND`,
+and `GREP_KIND`. The kind is part of the tool's definition rather than its name,
+so another capability or a history processor can recognize these tools by kind
+instead of comparing tool names. Each kind declares the shape of its tool's
+arguments (`ReadFileArgs`, `WriteFileArgs`, and so on), and a call whose
+arguments fit it is promoted to a typed part (`ReadFileCallPart`,
+`WriteFileCallPart`, and so on) in a run's messages and in a loaded history,
+with the validated arguments as `typed_args`:
+
+```python
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.filesystem import ReadFileCallPart
+
+
+def paths_read(messages: list[ModelMessage]) -> list[str]:
+    return [
+        args['path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ReadFileCallPart) and (args := part.typed_args) is not None
+    ]
+```
+
+`read_file` also has a typed return part, `ReadFileReturnPart`, for a return
+whose outcome is `'success'`, which includes a `Path not found: <path>` result.
+Its `content` is the text with its header, or `[header, BinaryContent]` for an
+image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+and not a union, so `typed_content` is untyped. The other tools return text
+written for the model rather than a format to parse, so their returns stay plain
+`ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
+carry their outcomes as structured data.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a
