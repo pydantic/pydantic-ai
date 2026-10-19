@@ -536,9 +536,10 @@ engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earli
 is often quicker.
 
 The headless runner streams model responses so their typed events can be recorded in the
-canonical session. The Python recorder sends framed events through descriptor 3, which is
-marked non-inheritable and forwarded to engine stderr. Its public-key header also goes to
-engine stderr. Child stdout and stderr both remain ordinary terminal output on engine stdout.
+canonical session. The Node setup process replaces itself with the Python launcher. Python
+duplicates engine stderr for the recorder, marks that descriptor non-inheritable, and redirects
+ordinary stderr to engine stdout. Signed events and the public-key header go directly to the
+protected stderr stream; CLI diagnostics and child output remain ordinary terminal output.
 The recorder generates a signing key in its process after disabling same-user `/proc`
 inspection on Linux. The key does not enter the environment, stdin, or a file.
 
@@ -553,9 +554,11 @@ truncated, or failed captures. It sets
 `GH_AW_PROTECTED_SESSION_CAPTURE=1` for the engine and parser only when this path is active;
 the engine fails before launch when the marker is absent. AWF's metadata preserves partial
 bytes and the actual exit status across interruption. The AWF container must keep
-`SYS_PTRACE` unavailable to agent processes. A same-user tool process can reopen the engine
-stderr pipe through `/proc` even though the host capture file is protected, so the parser
-verifies Ed25519 signatures and contiguous frame numbers before accepting events.
+`SYS_PTRACE` unavailable to agent processes. Its command wrapper must replace any same-user
+shell with the Node setup process: a surviving same-user parent would let a tool reopen its
+stderr pipe through `/proc` and replace the public-key header. The non-dumpable Python
+recorder must be the only tool-UID process holding the protected pipe while tools run. The
+parser verifies Ed25519 signatures and contiguous frame numbers before accepting events.
 
 The engine emits `session.init`, `user.message`, `assistant.message`, `assistant.reasoning`,
 `tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes

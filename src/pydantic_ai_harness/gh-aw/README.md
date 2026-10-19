@@ -80,18 +80,20 @@ that runs with the gateway's credentials.
 The headless runner streams model responses so it can record assistant messages, reasoning,
 tool calls and results (including native tools), and usage in the canonical session. The
 engine subscribes to typed core events through the public `Agent.on_event` API. The Python
-recorder writes signed JSONL records through descriptor 3, which is marked non-inheritable
-and forwarded to the engine's stderr. Its public-key header also goes to engine stderr. Child
-stdout and stderr both remain ordinary terminal output on engine stdout. The signing key is
+recorder writes signed JSONL records directly to engine stderr through a non-inheritable
+descriptor. The Node setup process replaces itself with Python, which redirects ordinary
+stderr to engine stdout. The public-key header goes to the protected stream; CLI diagnostics
+and child output remain ordinary terminal output. The signing key is
 generated in the recorder process after Linux disables same-user `/proc` inspection; it is
 not written to the environment, stdin, or a file.
 
 The gh-aw runtime asks AWF to capture engine stderr in a host-only directory that AWF has
 validated against the agent's mounts and other writable paths. After the sandbox exits,
 gh-aw parses only that protected stderr capture; the shared terminal log is never an input
-to the session parser. A sandboxed tool process can reopen a same-user pipe through `/proc`
-and append to engine stderr, so the parser also verifies Ed25519 signatures and contiguous
-frame numbers. Such writes cannot forge canonical records, terminal status, or usage. Repository
+to the session parser. The AWF command wrapper must replace any same-user shell before tools
+run, so the non-dumpable Python recorder is the only tool-UID process holding the protected
+pipe. A surviving parent would let a tool replace the public-key header through `/proc`.
+The parser also verifies Ed25519 signatures and contiguous frame numbers. Repository
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
 Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
 the recorder interpreter. Point either setting only at code you trust.

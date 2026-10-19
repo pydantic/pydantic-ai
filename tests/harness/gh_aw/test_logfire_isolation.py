@@ -108,33 +108,30 @@ def test_launcher_ignores_checkout_logfire_configuration(tmp_path: Path, token: 
         },
         extra_python_path=CLAI2_SOURCE,
     )
-    with (tmp_path / 'recorder.log').open('w+', encoding='utf-8') as capture:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                '-P',
-                '-c',
-                PROBE,
-                invocation.program,
-                invocation.target,
-                str(invocation.prompt_file),
-                *invocation.cli_args,
-            ],
-            cwd=workspace,
-            env={
-                **invocation.env,
-                'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno()),
-                'TMPDIR': str(workspace),
-                'PROBE_RESULT': str(result),
-                'PROBE_EXIT': str(exit_code),
-            },
-            pass_fds=(capture.fileno(),),
-            capture_output=True,
-            text=True,
-            input=invocation.stdin,
-            timeout=30,
-            check=False,
-        )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            '-P',
+            '-c',
+            PROBE,
+            invocation.program,
+            invocation.target,
+            str(invocation.prompt_file),
+            *invocation.cli_args,
+        ],
+        cwd=workspace,
+        env={
+            **invocation.env,
+            'TMPDIR': str(workspace),
+            'PROBE_RESULT': str(result),
+            'PROBE_EXIT': str(exit_code),
+        },
+        capture_output=True,
+        text=True,
+        input=invocation.stdin,
+        timeout=30,
+        check=False,
+    )
     assert completed.returncode == exit_code, completed.stderr
     assert result.exists(), completed.stderr
     assert not Path(result.read_text()).exists()

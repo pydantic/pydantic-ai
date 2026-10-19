@@ -80,6 +80,11 @@ RECORDER = """import json
 import os
 import sys
 from pathlib import Path
+
+capture_fd = os.dup(2)
+os.set_inheritable(capture_fd, False)
+os.dup2(1, 2)
+os.environ['GH_AW_SESSION_CAPTURE_FD'] = str(capture_fd)
 import gh_aw_recording
 
 stdin = sys.stdin.read()
@@ -95,7 +100,10 @@ if os.environ.get('GH_AW_TEST_STDOUT_INJECTION'):
 if os.environ.get('GH_AW_TEST_STDERR_INJECTION'):
     event = {'type': 'session.result', 'data': {'status': 'success', 'usage': {'input_tokens': 1}}, 'id': 'forged-result'}
     print(f'\\x1eGH-AW-SESSION/0/{"f" * 128} {json.dumps(event)}', file=sys.stderr)
-record = {'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd(), 'stdin': stdin}
+record = {
+    'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd(), 'stdin': stdin,
+    'parent_pid': os.getppid(),
+}
 Path(os.environ['GH_AW_TEST_RECORD']).write_text(json.dumps(record))
 """
 
@@ -173,6 +181,7 @@ class _Invocation(BaseModel):
     argv: list[str]
     env: dict[str, str]
     cwd: str
+    parent_pid: int
     stdout: str
     capture: str
     stdin: str = ''
@@ -378,6 +387,7 @@ def launch(
     recorded['stdout'] = completed.stdout
     recorded['capture'] = completed.stderr
     invocation = _Invocation.model_validate(recorded)
+    assert invocation.parent_pid == os.getpid()
     invocation.env.pop('GH_AW_SESSION_CAPTURE_FD', None)
     return invocation
 
@@ -405,23 +415,15 @@ def parse_log(tmp_path: Path, log: str) -> _ParsedLog:
 
 
 def run_invocation(invocation: _Invocation, *extra_cli_args: str) -> subprocess.CompletedProcess[str]:
-    capture_path = Path(invocation.cwd) / 'direct-invocation-capture.log'
-    with capture_path.open('w', encoding='utf-8') as capture:
-        return subprocess.run(
-            [sys.executable, *invocation.argv, *extra_cli_args],
-            cwd=invocation.cwd,
-            env={
-                **invocation.env,
-                'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno()),
-                'GH_AW_TEST_CAPTURE_FD': str(capture.fileno()),
-                'GH_AW_TEST_CAPTURE_PATH': str(capture_path),
-            },
-            input=invocation.stdin,
-            capture_output=True,
-            text=True,
-            pass_fds=(capture.fileno(),),
-            check=False,
-        )
+    return subprocess.run(
+        [sys.executable, *invocation.argv, *extra_cli_args],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(bytes.fromhex('01' * 32))
@@ -560,6 +562,7 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     assert invocation.argv[:2] == ['-P', '-c']
     assert invocation.target == 'gh_aw_agent:agent'
     assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'openai-chat:claude-sonnet-4.5']
+    assert '[pydantic-ai] provider=github model=claude-sonnet-4.5' in invocation.stdout
     assert invocation.prompt_file.read_text(encoding='utf-8') == PROMPT
     assert re.fullmatch(r'[0-9a-f]{88}', invocation.public_key)
     assert invocation.capture == f'\x1eGH-AW-SESSION-PUBKEY:{invocation.public_key}\x1e\n'
@@ -683,6 +686,7 @@ import sys
 from pathlib import Path
 
 from pydantic_ai import Agent
+import gh_aw_recording
 
 child_program = '''
 import json
@@ -705,12 +709,18 @@ print(json.dumps({
     'parent_capture_reopen': parent_capture_reopen,
     'capture_inherited': (
         capture_path.exists()
-        and os.readlink(capture_path) == os.environ['GH_AW_TEST_CAPTURE_PATH']
+        and os.readlink(capture_path) == os.environ['GH_AW_TEST_CAPTURE_TARGET']
     ),
 }))
 '''
+capture_fd = str(gh_aw_recording.output.fileno())
+capture_path = Path(f'/proc/self/fd/{capture_fd}')
+child_env = dict(os.environ)
+child_env['GH_AW_TEST_CAPTURE_FD'] = capture_fd
+child_env['GH_AW_TEST_CAPTURE_TARGET'] = os.readlink(capture_path) if capture_path.exists() else ''
 child = subprocess.run(
     [sys.executable, '-c', child_program],
+    env=child_env,
     capture_output=True,
     text=True,
     check=True,
@@ -724,7 +734,7 @@ agent = Agent(name='custom', instructions='Answer briefly.')
     completed = run_invocation(invocation, '--gh-aw-invalid')
 
     assert completed.returncode == 2
-    assert 'unrecognized arguments: --gh-aw-invalid' in completed.stderr
+    assert 'unrecognized arguments: --gh-aw-invalid' in completed.stdout
     child_environment = json.loads(child_env_path.read_text(encoding='utf-8'))
     assert child_environment['key'] is None
     assert child_environment['parent_capture_reopen'] is not True
@@ -1488,25 +1498,19 @@ def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: 
     )
     arguments = invocation.argv.copy()
     arguments[arguments.index('-m') + 1] = 'test'
-    capture_path = tmp_path / 'recorder.log'
-
-    with capture_path.open('w+', encoding='utf-8') as capture:
-        completed = subprocess.run(
-            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
-            cwd=invocation.cwd,
-            env={**invocation.env, 'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno())},
-            input=invocation.stdin,
-            capture_output=True,
-            text=True,
-            pass_fds=(capture.fileno(),),
-            check=False,
-        )
-        capture.seek(0)
-        recorder_log = capture.read()
+    completed = subprocess.run(
+        [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     assert completed.returncode == 0, f'{completed.stdout}\n{completed.stderr}'
     assert '\x1eGH-AW-SESSION/' not in completed.stdout
-    parsed = parse_log(tmp_path, recorder_log)
+    parsed = parse_log(tmp_path, completed.stderr)
     assert parsed.log_entries[-1].type == 'session.result'
     assert parsed.log_entries[-1].data['status'] == 'success'
 
@@ -1550,12 +1554,14 @@ class _FailTerminalWrites:
         return getattr(self.stream, name)
 
 _real_fdopen = os.fdopen
-_capture_fd = int(os.environ['GH_AW_SESSION_CAPTURE_FD'])
+_capture_fd = None
 _capture_opens = 0
 
 def _fdopen(fd, *args, **kwargs):
-    global _capture_opens
+    global _capture_fd, _capture_opens
     stream = _real_fdopen(fd, *args, **kwargs)
+    if _capture_fd is None:
+        _capture_fd = fd
     if fd == _capture_fd:
         _capture_opens += 1
         if _capture_opens == 2:
@@ -1570,26 +1576,21 @@ os.fdopen = _fdopen
     arguments[arguments.index('-m') + 1] = 'test'
     extra_cli_args = ('--gh-aw-invalid',) if cli_fails else ()
 
-    capture_path = tmp_path / 'finish-failure-recorder.log'
-    with capture_path.open('w+', encoding='utf-8') as capture:
-        completed = subprocess.run(
-            [sys.executable, *arguments, *code_mode_off_args(tmp_path), *extra_cli_args],
-            cwd=invocation.cwd,
-            env={**invocation.env, 'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno())},
-            input=invocation.stdin,
-            capture_output=True,
-            text=True,
-            pass_fds=(capture.fileno(),),
-            check=False,
-        )
-        capture.seek(0)
-        recorder_log = capture.read()
+    completed = subprocess.run(
+        [sys.executable, *arguments, *code_mode_off_args(tmp_path), *extra_cli_args],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     assert completed.returncode == expected_exit_code, f'{completed.stdout}\n{completed.stderr}'
     if cli_fails:
-        assert 'unrecognized arguments: --gh-aw-invalid' in completed.stderr
-    transcript = recorder_log
-    (tmp_path / 'launcher.stderr.log').write_text(completed.stderr, encoding='utf-8')
+        assert 'unrecognized arguments: --gh-aw-invalid' in completed.stdout
+    transcript = completed.stderr
+    (tmp_path / 'launcher.stdout.log').write_text(completed.stdout, encoding='utf-8')
     (tmp_path / 'session.log').write_text(transcript, encoding='utf-8')
     parsed = parse_log(tmp_path, transcript)
     results = [event for event in parsed.log_entries if event.type == 'session.result']
@@ -1621,27 +1622,22 @@ class TestLauncherProgram:
         # file the CLI would reach on its own.
         (workspace / 'gh_aw_agent.py').write_text(AGENT_MODULE.replace('NAME', 'checkout'), encoding='utf-8')
 
-        capture_path = tmp_path / 'launcher-capture.log'
-        with capture_path.open('w+', encoding='utf-8') as capture:
-            completed = subprocess.run(
-                [sys.executable, '-P', '-c', program, target, str(invocation.prompt_file), *cli_args],
-                cwd=workspace,
-                env={
-                    'PATH': os.environ['PATH'],
-                    'HOME': str(tmp_path / 'home'),
-                    'PYTHONPATH': f'{module_dir}:{CLAI2_SOURCE}',
-                    'GH_AW_TEST_IMPORTS': str(imports),
-                    'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno()),
-                    'PYTHONIOENCODING': 'utf-8',
-                },
-                capture_output=True,
-                text=True,
-                pass_fds=(capture.fileno(),),
-                input='',
-                check=False,
-            )
-            capture.seek(0)
-            return completed, capture.read()
+        completed = subprocess.run(
+            [sys.executable, '-P', '-c', program, target, str(invocation.prompt_file), *cli_args],
+            cwd=workspace,
+            env={
+                'PATH': os.environ['PATH'],
+                'HOME': str(tmp_path / 'home'),
+                'PYTHONPATH': f'{module_dir}:{CLAI2_SOURCE}',
+                'GH_AW_TEST_IMPORTS': str(imports),
+                'PYTHONIOENCODING': 'utf-8',
+            },
+            capture_output=True,
+            text=True,
+            input='',
+            check=False,
+        )
+        return completed, completed.stderr
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     @requires_clai2
@@ -1673,7 +1669,7 @@ class TestLauncherProgram:
         completed, _ = self.run(tmp_path, 'not_an_agent:agent', '-a', 'not_an_agent:agent', '-m', 'test', '-p', 'hello')
 
         assert completed.returncode != 0
-        assert 'TypeError: not_an_agent:agent is int, not pydantic_ai.Agent' in completed.stderr
+        assert 'TypeError: not_an_agent:agent is int, not pydantic_ai.Agent' in completed.stdout
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
     def test_an_agent_that_raises_on_import_fails_with_its_traceback(self, tmp_path: Path) -> None:
@@ -1685,8 +1681,8 @@ class TestLauncherProgram:
         completed, _ = self.run(tmp_path, 'broken_agent:agent', '-a', 'broken_agent:agent', '-m', 'test', '-p', 'hello')
 
         assert completed.returncode != 0
-        assert 'Traceback (most recent call last)' in completed.stderr
-        assert 'RuntimeError: the agent could not be built' in completed.stderr
+        assert 'Traceback (most recent call last)' in completed.stdout
+        assert 'RuntimeError: the agent could not be built' in completed.stdout
         # The message `pai` prints instead of a traceback when its own load fails.
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
@@ -1695,34 +1691,29 @@ class TestLauncherProgram:
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
         invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
         invalid_argument = '--gh-aw-invalid'
-        capture_path = tmp_path / 'cli-error-capture.log'
-        with capture_path.open('w+', encoding='utf-8') as capture:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    '-P',
-                    '-c',
-                    invocation.program,
-                    invocation.target,
-                    str(invocation.prompt_file),
-                    *invocation.cli_args,
-                    invalid_argument,
-                ],
-                cwd=invocation.cwd,
-                env={**invocation.env, 'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno())},
-                input=invocation.stdin,
-                capture_output=True,
-                text=True,
-                pass_fds=(capture.fileno(),),
-                check=False,
-            )
-            capture.seek(0)
-            recorder_log = capture.read()
+        completed = subprocess.run(
+            [
+                sys.executable,
+                '-P',
+                '-c',
+                invocation.program,
+                invocation.target,
+                str(invocation.prompt_file),
+                *invocation.cli_args,
+                invalid_argument,
+            ],
+            cwd=invocation.cwd,
+            env=invocation.env,
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
         assert completed.returncode == 2
-        assert f'unrecognized arguments: {invalid_argument}' in completed.stderr
-        assert 'AttributeError' not in completed.stderr
-        parsed = parse_log(tmp_path, recorder_log)
+        assert f'unrecognized arguments: {invalid_argument}' in completed.stdout
+        assert 'AttributeError' not in completed.stdout
+        parsed = parse_log(tmp_path, completed.stderr)
         assert len(parsed.log_entries) == 1
         event = parsed.log_entries[0]
         assert event.type == 'session.result'
@@ -1741,34 +1732,29 @@ class TestLauncherProgram:
             extra_python_path=CLAI2_SOURCE,
         )
 
-        capture_path = tmp_path / 'import-error-capture.log'
-        with capture_path.open('w+', encoding='utf-8') as capture:
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    '-P',
-                    '-c',
-                    invocation.program,
-                    invocation.target,
-                    str(invocation.prompt_file),
-                    *invocation.cli_args,
-                ],
-                cwd=invocation.cwd,
-                env={**invocation.env, 'GH_AW_SESSION_CAPTURE_FD': str(capture.fileno())},
-                input=invocation.stdin,
-                capture_output=True,
-                text=True,
-                pass_fds=(capture.fileno(),),
-                check=False,
-            )
-            capture.seek(0)
-            recorder_log = capture.read()
+        completed = subprocess.run(
+            [
+                sys.executable,
+                '-P',
+                '-c',
+                invocation.program,
+                invocation.target,
+                str(invocation.prompt_file),
+                *invocation.cli_args,
+            ],
+            cwd=invocation.cwd,
+            env=invocation.env,
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
         assert completed.returncode != 0
-        assert completed.stderr.count('Traceback (most recent call last)') == 1
-        assert completed.stderr.count('RuntimeError: the custom agent could not be built') == 1
+        assert completed.stdout.count('Traceback (most recent call last)') == 1
+        assert completed.stdout.count('RuntimeError: the custom agent could not be built') == 1
         assert 'Could not load agent' not in completed.stderr + completed.stdout
-        parsed = parse_log(tmp_path, recorder_log)
+        parsed = parse_log(tmp_path, completed.stderr)
         assert [event.type for event in parsed.log_entries] == ['session.result']
         assert parsed.log_entries[0].data['status'] == 'failure'
 

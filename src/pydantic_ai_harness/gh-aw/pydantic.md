@@ -61,8 +61,7 @@ engine:
       provider-env-mode: universal-llm-consumer
       protected-session-capture: true
     harness-script: |
-      const { spawn } = require("child_process");
-      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
+      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync, writeSync } = require("fs");
       const { homedir, tmpdir } = require("os");
       const { join } = require("path");
       const { fetchAWFReflect, resolveProviderEndpointFromReflect, deriveBaseUrlFromModelsURL } = require("./awf_reflect.cjs");
@@ -72,13 +71,14 @@ engine:
       // by the interpreter that owns the install, see LAUNCHER below -- so only the
       // arguments after it are forwarded.
       const commandArgs = process.argv.slice(3);
-      const log = message => process.stdout.write(`[pydantic-ai] ${message}\n`);
+      // execve does not drain Node's buffered stdout writes.
+      const log = message => writeSync(1, `[pydantic-ai] ${message}\n`);
 
-      // AWF protects the captured file on the host, but a tool subprocess can
-      // reopen this process's stderr pipe through /proc while it shares our UID.
-      // The recorder signs each event with a key held in its non-dumpable process.
-      // A tool may append bytes to the pipe, but the parser cannot accept them as
-      // recorder events.
+      // AWF protects the captured file on the host. The Node setup process must
+      // also leave the process tree before agent tools run: a same-UID tool can
+      // reopen a surviving parent's stderr pipe through /proc and replace the
+      // public-key header. The Python recorder writes to stderr directly after
+      // protecting itself against /proc access.
       const RECORDING_MODULE = `import ctypes
       import json
       import os
@@ -409,8 +409,10 @@ engine:
       from datetime import datetime, timezone
       from pathlib import Path
 
-      capture_fd = int(os.environ['GH_AW_SESSION_CAPTURE_FD'])
+      capture_fd = os.dup(2)
       os.set_inheritable(capture_fd, False)
+      os.dup2(1, 2)
+      os.environ['GH_AW_SESSION_CAPTURE_FD'] = str(capture_fd)
       recorder_output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
       import gh_aw_recording
 
@@ -552,7 +554,7 @@ engine:
         chmodSync(recordingModulePath, 0o600);
 
         const env = { ...process.env };
-        env.GH_AW_SESSION_CAPTURE_FD = "3";
+        delete env.GH_AW_SESSION_CAPTURE_FD;
         // `pip install --user` puts `clai2` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
@@ -729,25 +731,11 @@ engine:
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
         // the CLI parses for itself.
-        const child = spawn(python, ["-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], {
-          cwd: workspace,
-          env,
-          stdio: ["ignore", 1, 1, "pipe"],
-        });
-        child.stdio[3].pipe(process.stderr, { end: false });
-        const status = await new Promise((resolve, reject) => {
-          child.once("error", reject);
-          child.once("close", (code, signal) => {
-            if (signal) reject(new Error(`Pydantic AI execution terminated by signal ${signal}`));
-            else resolve(code);
-          });
-        });
-        if (status !== 0) {
-          const error = new Error(`Pydantic AI execution failed with exit code ${status ?? "unknown"}`);
-          // Surface the child's own status so the step fails with the same code.
-          error.exitCode = typeof status === "number" && status !== 0 ? status : 1;
-          throw error;
+        if (typeof process.execve !== "function") {
+          throw new Error("Pydantic AI protected session capture requires a Node runtime with process.execve");
         }
+        process.chdir(workspace);
+        process.execve(python, [python, "-P", "-c", LAUNCHER, agentTarget, promptFile, ...cliArgs], env);
       };
 
       main().catch(error => {
