@@ -399,7 +399,6 @@ jobs:
           OTEL_METRICS_EXPORTER: none
           OTEL_LOGS_EXPORTER: none
           OTEL_SERVICE_NAME: douwebot
-          OTEL_RESOURCE_ATTRIBUTES: service.name=douwebot
           OTEL_EXPORTER_OTLP_PROTOCOL: http/json
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
           OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
