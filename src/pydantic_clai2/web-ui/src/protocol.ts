@@ -93,6 +93,7 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  cost_is_lower_bound: boolean
   /** The turn's output so far, estimated from streamed characters. */
   streamed_tokens: number
   /** The last turn's reported output tokens, once it ends. */
@@ -130,6 +131,7 @@ export interface UsageReport {
   total: TurnUsage
   /** The models without price data, whose responses no cost counts. */
   unpriced: string[]
+  unmeasured_requests: number
 }
 
 export interface Palette {
