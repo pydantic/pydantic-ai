@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
@@ -19,6 +19,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 
 from ...conftest import try_import
+from ..conftest import cache_breakpoints
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -29,7 +30,7 @@ with try_import() as imports_successful:
         AsyncAnthropicVertex,
     )
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
@@ -169,6 +170,22 @@ async def test_automatic_caching_by_client(allow_model_requests: None, case: Cas
         pytest.param('global.anthropic.claude-opus-5-5', True, id='opus-5-5'),
         pytest.param('us.anthropic.claude-sonnet-5', True, id='sonnet-5'),
         pytest.param('apac.anthropic.claude-sonnet-5-5', True, id='sonnet-5-5-apac'),
+        # An inference profile ARN is classified by the profile ID it names.
+        pytest.param(
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8',
+            True,
+            id='opus-4-8-inference-profile-arn',
+        ),
+        pytest.param(
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-4-6-v1',
+            False,
+            id='opus-4-6-inference-profile-arn',
+        ),
+        pytest.param(
+            'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
+            False,
+            id='sonnet-4-5-foundation-model-arn',
+        ),
         # ARN-versioned models, verified live to reject top-level `cache_control` with a 400, plus older ones.
         pytest.param('us.anthropic.claude-opus-4-6-v1', False, id='opus-4-6'),
         pytest.param('global.anthropic.claude-opus-4-6-v1', False, id='opus-4-6-global'),
@@ -185,3 +202,71 @@ def test_legacy_bedrock_automatic_caching_by_model(model_name: str, supports_aut
     client = AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1')
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
     assert model.profile.get('supports_auto_cache') is supports_auto_cache
+
+
+def _without_cache_control(value: Any) -> Any:
+    """`value` with every `cache_control` key removed, which marks a breakpoint but isn't part of the cached prefix."""
+    if isinstance(value, dict):
+        items = cast(dict[str, Any], value).items()
+        return {key: _without_cache_control(item) for key, item in items if key != 'cache_control'}
+    if isinstance(value, list):
+        return [_without_cache_control(item) for item in cast(list[Any], value)]
+    return value
+
+
+def get_weather(city: str) -> str:
+    """Get the weather for a city."""
+    return f'Sunny in {city}'  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'client_name,model_name,expected_second_request',
+    [
+        # Automatic caching: the request-level parameter moves the breakpoint forward by itself.
+        pytest.param('api', 'claude-sonnet-4-5', ({'type': 'ephemeral', 'ttl': '5m'}, list[str]()), id='automatic'),
+        # The per-block fallback moves the breakpoint to the new last block.
+        pytest.param(
+            'bedrock',
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            (None, ['messages[2].content[0]']),
+            id='per-block-fallback',
+        ),
+    ],
+)
+async def test_anthropic_cache_keeps_the_prefix_stable(
+    allow_model_requests: None,
+    client_name: str,
+    model_name: str,
+    expected_second_request: tuple[dict[str, str] | None, list[str]],
+):
+    """The second turn re-sends the first request's cacheable prefix unchanged, so it can read the first turn's cache."""
+    bodies: list[dict[str, Any]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_JSON)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
+        client = (
+            AsyncAnthropic(api_key='x', http_client=http_client)
+            if client_name == 'api'
+            else AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client)
+        )
+        model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            instructions='You are a weather assistant.',
+            tools=[get_weather],
+            model_settings=AnthropicModelSettings(max_tokens=256, anthropic_cache=True),
+        )
+        first = await agent.run('What is the weather like in Paris?')
+        await agent.run('And in London?', message_history=first.all_messages())
+
+    first_body, second_body = bodies
+    for key in ('system', 'tools'):
+        assert _without_cache_control(second_body[key]) == _without_cache_control(first_body[key])
+    first_messages = first_body['messages']
+    assert _without_cache_control(second_body['messages'][: len(first_messages)]) == _without_cache_control(
+        first_messages
+    )
+    assert cache_breakpoints(second_body) == expected_second_request

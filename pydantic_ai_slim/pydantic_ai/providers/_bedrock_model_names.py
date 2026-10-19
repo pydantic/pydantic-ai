@@ -31,6 +31,12 @@ BEDROCK_GEO_PREFIXES: tuple[str, ...] = ('us', 'eu', 'apac', 'jp', 'au', 'ca', '
 
 _VERSION_SUFFIX_RE = re.compile(r'(.+)-v\d+(?::\d+)?$')
 
+# An inference profile or foundation model ARN names the model ID after its resource type, e.g.
+# `arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8`.
+# https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy#api-model-ids
+# https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html#API_runtime_InvokeModel_RequestSyntax
+_MODEL_ARN_RE = re.compile(r'^arn:[^:]+:bedrock:[^:]*:[^:]*:(?:inference-profile|foundation-model)/(.+)$')
+
 
 def remove_bedrock_geo_prefix(model_name: str) -> str:
     """Remove the cross-region inference geographic prefix from a model ID if present.
@@ -51,13 +57,18 @@ def remove_bedrock_geo_prefix(model_name: str) -> str:
 def split_bedrock_model_id(model_id: str) -> tuple[str | None, str]:
     """Split a Bedrock model ID into its `<provider>` segment and the bare model name.
 
-    Strips any cross-region inference geo prefix and `-v<n>(:<m>)?` version suffix.
+    Strips any inference profile or foundation model ARN, cross-region inference geo prefix and
+    `-v<n>(:<m>)?` version suffix.
 
     Example:
         `us.anthropic.claude-haiku-4-5-20251001-v1:0` -> `('anthropic', 'claude-haiku-4-5-20251001')`
+        `arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8`
+            -> `('anthropic', 'claude-opus-4-8')`
         `anthropic.claude-haiku-4-5` -> `('anthropic', 'claude-haiku-4-5')`
         `claude-haiku-4-5` -> `(None, 'claude-haiku-4-5')`
     """
+    if arn_match := _MODEL_ARN_RE.match(model_id):
+        model_id = arn_match.group(1)
     provider, _, name = remove_bedrock_geo_prefix(model_id).partition('.')
     if not name:  # no `<provider>.` segment
         return None, model_id
