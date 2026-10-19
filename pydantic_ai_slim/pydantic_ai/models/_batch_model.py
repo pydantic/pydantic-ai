@@ -127,9 +127,20 @@ class _Queue:
     timer: asyncio.TimerHandle | None = None
 
 
-def _take(queues: dict[str, _Queue], group: str) -> _Queue:
+_QueueKey = tuple[str, str]
+"""The provider and `group` of a queue's requests: groups are only comparable within one provider."""
+
+_BatchKey = tuple[str, str]
+"""The provider and ID of a batch: IDs are only unique within one provider."""
+
+
+def _batch_key(batch: Batch) -> _BatchKey:
+    return batch.provider_name, batch.id
+
+
+def _take(queues: dict[_QueueKey, _Queue], key: _QueueKey) -> _Queue:
     """Take a queue off for submission, so later requests start a new one."""
-    queue = queues.pop(group)
+    queue = queues.pop(key)
     if queue.timer is not None:
         queue.timer.cancel()
     return queue
@@ -182,18 +193,18 @@ class BatchPool:
         self.poll_interval = poll_interval
         self.max_poll_interval = max_poll_interval
         # Queues hold futures, which belong to one event loop, so each loop gets its own.
-        self._queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, _Queue]] = (
+        self._queues: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[_QueueKey, _Queue]] = (
             weakref.WeakKeyDictionary()
         )
         self._submissions: set[asyncio.Task[None]] = set()
         # Every request waiting on a batch checks on it, so concurrent checks and the results are shared between them.
         self._polls: dict[
-            tuple[asyncio.AbstractEventLoop, str], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
+            tuple[asyncio.AbstractEventLoop, _BatchKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
-        self._results: OrderedDict[str, dict[str, BatchResult]] = OrderedDict()
-        self._abandoned: dict[str, set[str]] = {}
+        self._results: OrderedDict[_BatchKey, dict[str, BatchResult]] = OrderedDict()
+        self._abandoned: dict[_BatchKey, set[str]] = {}
         # The batches each request span is already linked to, so a span waiting on several checks links to one once.
-        self._linked: weakref.WeakKeyDictionary[Span, set[str]] = weakref.WeakKeyDictionary()
+        self._linked: weakref.WeakKeyDictionary[Span, set[_BatchKey]] = weakref.WeakKeyDictionary()
 
     def wrap(self, model: Model) -> BatchedModel:
         """Wrap `model` so its requests go through this pool, checking that it has a batch API."""
@@ -204,8 +215,8 @@ class BatchPool:
         """Fail the requests still queued on the running event loop, and cancel its submissions and checks."""
         loop = asyncio.get_running_loop()
         queues = self._queues.pop(loop, {})
-        for group in list(queues):
-            for queued in _take(queues, group).requests:
+        for key in list(queues):
+            for queued in _take(queues, key).requests:
                 queued.future.set_exception(UserError(_EXITED_MESSAGE))
         await cancel_and_drain(
             *(task for task in self._submissions if task.get_loop() is loop),
@@ -216,7 +227,7 @@ class BatchPool:
         """Submit every queued request now instead of waiting for a full batch or `max_wait`."""
         loop = asyncio.get_running_loop()
         queues = self._queues.get(loop, {})
-        if submissions := [self._start_submission(loop, queues, group) for group in list(queues)]:
+        if submissions := [self._start_submission(loop, queues, key) for key in list(queues)]:
             # Waits without cancelling the submissions, so cancelling the caller doesn't fail the queued requests.
             await asyncio.wait(submissions)
 
@@ -229,21 +240,21 @@ class BatchPool:
         if requester is None or not requester.span.is_recording():
             return
         linked = self._linked.setdefault(requester.span, set())
-        if batch.id in linked:
+        if _batch_key(batch) in linked:
             return
-        linked.add(batch.id)
+        linked.add(_batch_key(batch))
         requester.span.set_attribute(BATCH_ID_ATTRIBUTE, batch.id)
         if (span_context := _span_context(trace_context)) is not None:
             requester.span.add_link(span_context)
 
     def _start_submission(
-        self, loop: asyncio.AbstractEventLoop, queues: dict[str, _Queue], group: str
+        self, loop: asyncio.AbstractEventLoop, queues: dict[_QueueKey, _Queue], key: _QueueKey
     ) -> asyncio.Task[None]:
-        """Submit a group's queue in a task of its own, so cancelling whoever triggered it doesn't cancel the others.
+        """Submit a queue in a task of its own, so cancelling whoever triggered it doesn't cancel the others.
 
         The queue is taken off `queues` right away, so a request made before the submission runs starts the next batch.
         """
-        task = loop.create_task(self._submit(_take(queues, group)))
+        task = loop.create_task(self._submit(_take(queues, key)))
         self._submissions.add(task)
         task.add_done_callback(self._submissions.discard)
         return task
@@ -254,9 +265,10 @@ class BatchPool:
         """Queue a request, and return the ID it was given in its batch, the batch, and the batch span's context."""
         loop = asyncio.get_running_loop()
         queues = self._queues.setdefault(loop, {})
-        queue = queues.get(encoded.group)
+        key = (model.system, encoded.group)
+        queue = queues.get(key)
         if queue is None:
-            queue = queues[encoded.group] = _Queue(model, max_requests=batch_size(model, self.max_requests))
+            queue = queues[key] = _Queue(model, max_requests=batch_size(model, self.max_requests))
         # Derived from the request, so a rerun of the same requests gets the same IDs; unique within the batch.
         base_id = custom_id = hashlib.sha256(encoded.body.encode()).hexdigest()[:32]
         taken = {queued.request.custom_id for queued in queue.requests}
@@ -267,7 +279,7 @@ class BatchPool:
         queue.requests.append(queued)
 
         def submit() -> None:
-            self._start_submission(loop, queues, encoded.group)
+            self._start_submission(loop, queues, key)
 
         if len(queue.requests) >= queue.max_requests:
             submit()
@@ -318,13 +330,13 @@ class BatchPool:
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether none still does."""
-        abandoned = self._abandoned.setdefault(batch.id, set())
+        abandoned = self._abandoned.setdefault(_batch_key(batch), set())
         abandoned.add(custom_id)
         # A provider cancels whole batches, so only cancel once no request in it is still waiting. This process only
         # knows about the requests abandoned here; any others keep the batch running.
         if len(abandoned) < batch.request_count:
             return False
-        del self._abandoned[batch.id]
+        del self._abandoned[_batch_key(batch)]
         return True
 
     async def poll(
@@ -332,11 +344,11 @@ class BatchPool:
     ) -> tuple[Batch, dict[str, BatchResult] | None]:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
         batch = ticket['batch']
-        if (results := self._results.get(batch.id)) is not None:
-            self._results.move_to_end(batch.id)
+        if (results := self._results.get(_batch_key(batch))) is not None:
+            self._results.move_to_end(_batch_key(batch))
             return batch, results
         loop = asyncio.get_running_loop()
-        key = (loop, batch.id)
+        key = (loop, _batch_key(batch))
         if (poll := self._polls.get(key)) is None:
             poll = self._polls[key] = loop.create_task(
                 self._fetch(model, batch, ticket.get('trace_context'), requester)
@@ -363,7 +375,7 @@ class BatchPool:
             if batch.status != 'ended':
                 return batch, None
             results = {result.custom_id: result for result in await model.batch_results(batch)}
-        self._results[batch.id] = results
+        self._results[_batch_key(batch)] = results
         while len(self._results) > _RESULTS_CACHE_SIZE:
             self._results.popitem(last=False)
         return batch, results

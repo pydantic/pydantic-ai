@@ -39,7 +39,7 @@ async def main():
 
 Tools, structured output, output validation and retries all work as usual; each model request in a run goes into whichever batch is being collected when it's made. A run that needs several model requests, for example to call tools, takes several batch round trips.
 
-The capability batches whichever model serves each request: the agent's model, one passed to the run as `model=`, or one a [capability](capabilities/select-model.md) or hook selects. That model needs a [batch API](#supported-models). Requests to different models, or to the same model with different credentials, go into separate batches.
+The capability batches whichever model serves each request: the agent's model, one passed to the run as `model=`, or one a [capability](capabilities/select-model.md) or hook selects. That model needs a [batch API](#supported-models). Requests go into separate batches when the provider can't take them in one, for example when they use different credentials, or, with OpenAI and Google, different models.
 
 A batch is submitted when it holds `max_requests` requests (default 100, capped by the provider's limit), or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. With `max_wait=None`, a batch is only submitted when it's full or when you call [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush]. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes).
 
@@ -119,7 +119,7 @@ Without `PendingModelResponse` in the output type, a run waits for its batch, an
 
 ### Tracing
 
-With [instrumentation](logfire.md) enabled, a batch is traced once, in a trace of its own, rather than under whichever run's request happened to start it. Its submission is a `batch <model>` span that links to the `chat` span of every request in the batch, and each check is a `batch check <model>` span within that trace, holding the provider's HTTP requests. Each `chat` span records the batch's ID as `pydantic_ai.batch.id` and links to the `batch` span, including in a later run that resumes waiting from the message history.
+With [instrumentation](logfire.md) enabled, a batch is traced once, in a trace of its own, rather than under whichever run's request happened to start it. Its submission is a `batch <model>` span that links to the `chat` span of every request in the batch, and each check is a `batch check <model>` span within that trace, holding the provider's HTTP requests. Each request's span records the batch's ID as `pydantic_ai.batch.id` and links to the `batch` span, including in a later run that resumes waiting from the message history. That's the `chat` span, or under Temporal, the model activity's span within it.
 
 ### Durable execution
 

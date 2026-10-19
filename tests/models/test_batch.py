@@ -883,3 +883,32 @@ async def test_a_batch_submitted_without_tracing_is_still_recorded_on_a_traced_c
     ]
     assert (chat.attributes or {})['pydantic_ai.batch.id'] == wrapped.created[0].id
     assert list(chat.links) == []
+
+
+async def test_providers_with_the_same_group_and_batch_ids_are_kept_apart() -> None:
+    """Groups and batch IDs are only unique within a provider, and one capability can batch several providers."""
+
+    class SameIdsModel(TestModel):
+        def __init__(self, system: str, text: str) -> None:
+            super().__init__(custom_output_text=text)
+            self._system = system
+
+        async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+            return replace(await super().batch_encode(request), group='shared')
+
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            batch = await super().batch_create(
+                [replace(request, group=self._batch_state.group) for request in requests]
+            )
+            stored = self._batch_state.batches.pop(batch.id)
+            batch = replace(batch, id='batch_1', group='shared')
+            self._batch_state.batches[batch.id] = (batch, stored[1])
+            return batch
+
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    first = Agent(SameIdsModel('first', 'from first'), capabilities=[batching])
+    second = Agent(SameIdsModel('second', 'from second'), capabilities=[batching])
+
+    results = await asyncio.gather(first.run('Hello'), second.run('Hello'))
+
+    assert [result.output for result in results] == ['from first', 'from second']

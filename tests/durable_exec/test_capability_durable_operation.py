@@ -18,6 +18,7 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
+    BatchModelRequests,
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
@@ -44,16 +45,19 @@ from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
     StreamedResponse,
 )
+from pydantic_ai.models._batch_model import BatchedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
@@ -1633,6 +1637,35 @@ async def test_decorated_model_request_hook_round_trips_request_only_mutation() 
     assert isinstance(sent_request, ModelRequest)
     assert isinstance(sent_request.parts[0], UserPromptPart)
     assert sent_request.parts[0].content == 'replaced'
+
+
+class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
+    id = 'record_model'
+
+    def __init__(self) -> None:
+        self.models: list[Model] = []
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.models.append(request_context.model)
+        return request_context
+
+
+async def test_decorated_model_request_hook_sees_the_model_before_capabilities_wrap_it() -> None:
+    """Model wrappers apply after the `before_model_request` hooks, in the durable unit too."""
+    recorder = RecordModelInBeforeModelRequest()
+    batching = BatchModelRequests(**FAST_BATCH_SETTINGS)
+    agent = Agent(
+        TestModel(call_tools=[]), name='record_model', capabilities=[recorder, batching, RecordingDurability()]
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'success (no tool calls)'
+    assert recorder.models
+    assert not any(isinstance(model, BatchedModel) for model in recorder.models)
 
 
 async def test_custom_model_request_operation_round_trips_request_only_projection() -> None:
