@@ -121,9 +121,10 @@ class Command:
 class Commands(Completer):
     """Instance-owned registry, based on Code Puppy's registry/completer pattern."""
 
-    def __init__(self) -> None:
-        """Create an empty registry and filesystem completer."""
+    def __init__(self, *, workspace: Callable[[], Path] = Path.cwd) -> None:
+        """Create an empty registry and filesystem completer; relative `@` paths complete in `workspace()`."""
         self._commands: dict[str, Command] = {}
+        self._workspace = workspace
 
     def register(self, command: Command) -> None:
         """Register one command, rejecting ambiguous duplicate names."""
@@ -238,7 +239,7 @@ class Commands(Completer):
                 directory = path if word.endswith('/') else path.parent
                 prefix = '' if word.endswith('/') else path.name
                 try:
-                    for child in sorted(directory.iterdir()):
+                    for child in sorted((self._workspace() / directory).iterdir()):
                         if prefix in child.name:
                             yield Completion(child.name + ('/' if child.is_dir() else ''), start_position=-len(prefix))
                 except OSError:

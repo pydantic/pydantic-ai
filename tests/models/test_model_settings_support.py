@@ -90,6 +90,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
     from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -528,6 +529,18 @@ def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
+    return OpenAIResponsesModel(
+        'gpt-6.1-sol',
+        provider=OpenAIChatGPTProvider(
+            credentials=OpenAIChatGPTCredentials(
+                client_id='probe', access_token=PROBE_KEY, refresh_token=PROBE_KEY, scope='chatgpt.tokens.use.direct'
+            ),
+            http_client=client,
+        ),
+    )
+
+
 def _openai_codex(client: httpx2.AsyncClient) -> Model:
     return OpenAICodexModel(
         'gpt-5.6-luna',
@@ -635,6 +648,13 @@ CASES = [
         'OpenAICodexModel',
         ('OpenAI Codex',),
         http_probe(_openai_codex),
+        _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
+    ),
+    # ChatGPT plan usage runs on `OpenAIResponsesModel`, so it is probed as its own case.
+    Case(
+        'OpenAIResponsesModel (ChatGPT plan usage)',
+        ('OpenAI ChatGPT',),
+        http_probe(_openai_chatgpt),
         _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
@@ -890,6 +910,9 @@ RETRY_CASES = [
     RetryCase('OpenAIChatModel', ('OpenAI',), _openai_chat, (3, 1, 2), marks=_OPENAI),
     RetryCase('OpenAIResponsesModel', ('OpenAI',), _openai_responses, (3, 1, 2), marks=_OPENAI),
     RetryCase('OpenAICodexModel', ('OpenAI Codex',), _openai_codex, (3, 1, 2), marks=_OPENAI),
+    RetryCase(
+        'OpenAIResponsesModel (ChatGPT plan usage)', ('OpenAI ChatGPT',), _openai_chatgpt, (3, 1, 2), marks=_OPENAI
+    ),
     RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
     RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
     RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
