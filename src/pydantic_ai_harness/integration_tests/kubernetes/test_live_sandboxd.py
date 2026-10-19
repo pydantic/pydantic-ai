@@ -27,6 +27,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -132,7 +133,7 @@ class Client:
         self.k8s_helper = self
 
     async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> Sandbox:
-        claim_name = f'sandbox-claim-{len(self.cluster.claims)}'
+        claim_name = f'sandbox-claim-{uuid.uuid4().hex[:8]}'  # As the SDK names claims.
         daemon = Daemon(self.cluster.base / namespace / claim_name)
         self.cluster.claims[namespace, claim_name] = daemon
         await daemon.ready()

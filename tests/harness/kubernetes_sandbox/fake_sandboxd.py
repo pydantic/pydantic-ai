@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import os
 import signal
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -353,7 +354,7 @@ class FakeClient:
             raise self.cluster.create_error
         if warmpool not in self.cluster.pools:
             raise SandboxWarmPoolNotFoundError(f"SandboxWarmPool '{warmpool}' not found in namespace '{namespace}'")
-        claim_name = f'sandbox-claim-{len(self.cluster.created)}'
+        claim_name = f'sandbox-claim-{uuid.uuid4().hex[:8]}'  # As the SDK names claims.
         root = self.cluster.root(namespace, claim_name)
         root.mkdir(parents=True)
         sandboxd = FakeSandboxd(root)
