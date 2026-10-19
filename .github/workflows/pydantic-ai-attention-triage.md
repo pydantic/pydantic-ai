@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '10 */6 * * *'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
   workflow_call:
     secrets:
       ZAI_API_KEY:
