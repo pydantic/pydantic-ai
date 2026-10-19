@@ -13,6 +13,7 @@ is the ambiguity the backend has to resolve.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import posixpath
 import re
@@ -372,6 +373,14 @@ class _HostProcess(FakeProcess):
         err.close()
 
 
+def _loops(path: Path) -> bool:
+    try:
+        path.stat()
+    except OSError as error:
+        return error.errno == errno.ELOOP
+    return False
+
+
 class _HostFileSystem(FakeFileSystem):
     """Mirrors `sandbox.fs` on the host filesystem, so commands and file calls share one tree.
 
@@ -402,7 +411,7 @@ class _HostFileSystem(FakeFileSystem):
         self._raise_if_needed()
         with _host_errors(path, 'list files'):
             children = sorted(Path(path).iterdir())
-        # An unresolvable symlink is still a directory entry; stat cannot follow its loop.
+        # Like the toolbox (observed live), leave out a symlink that loops; `find` in the backend restores it.
         return [
             SimpleNamespace(
                 name=child.name,
@@ -410,6 +419,7 @@ class _HostFileSystem(FakeFileSystem):
                 size=child.stat().st_size if child.exists() else child.lstat().st_size,
             )
             for child in children
+            if not _loops(child)
         ]
 
     async def create_folder(self, path: str, mode: str, request_timeout: float | None = None) -> None:
@@ -496,7 +506,7 @@ class FakeSandbox:
             # The real control plane stops command sessions when their sandbox is deleted;
             # merely changing the fake state leaves the host subprocess running.
             for process, _, _ in self.process.commands.values():
-                if process.poll() is None:
+                if process.poll() is None:  # pragma: no branch - a finished command's session is deleted before this
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
 
@@ -517,12 +527,6 @@ class FakeClient:
         self._event_dispatcher: object | None = None
         if owner.connect_gate is not None:
             self._event_dispatcher = FakeEventDispatcher(owner)
-
-    async def __aenter__(self) -> FakeClient:
-        return self
-
-    async def __aexit__(self, *args: object) -> None:
-        await self.close()
 
     async def create(self, params: CreateParams, *, timeout: float = 60) -> FakeSandbox:
         if self.owner.create_error is not None:
@@ -560,9 +564,9 @@ class FakeClient:
         if self.owner.connect_gate is not None:
             dispatcher = self._event_dispatcher
             assert isinstance(dispatcher, FakeEventDispatcher)
-            self.owner.leaked_sessions += int(not dispatcher._connect_task.done())  # pyright: ignore[reportPrivateUsage]
+            self.owner.leaked_sessions += int(not dispatcher.task.done())
             self.owner.leaked_sessions += int(self.owner.failed_event_session)
-            dispatcher._connect_task.cancel()  # pyright: ignore[reportPrivateUsage]
+            dispatcher.task.cancel()
         self.closed = True
         self.owner.closed_clients += 1
 
@@ -572,9 +576,18 @@ class FakeEventDispatcher:
         async def connect() -> None:
             assert owner.connect_gate is not None
             await owner.connect_gate.wait()
+            if owner.failed_event_session:
+                raise ConnectionError('event socket handshake failed')
 
-        self._connect_task = asyncio.create_task(connect())
+        self.owner = owner
+        self.task = asyncio.create_task(connect())
         self._sio = FakeSocket(owner)
+
+    @property
+    def _connect_task(self) -> asyncio.Task[None]:
+        # The backend reads this private SDK attribute only to wait for the connection before closing.
+        self.owner.connect_awaited.set()
+        return self.task
 
 
 class FakeSocket:
@@ -605,6 +618,8 @@ class FakeDaytona:
         self.close_errors: Iterator[Exception] = iter(())
         self.close_gate: asyncio.Event | None = None
         self.connect_gate: asyncio.Event | None = None
+        # Set once a client close starts waiting for the SDK's event connection to settle.
+        self.connect_awaited = asyncio.Event()
         self.leaked_sessions = 0
         self.failed_event_session = False
         self.get_gate: asyncio.Event | None = None

@@ -27,13 +27,16 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 
+import anyio
 import daytona
 import pytest
+from pytest_examples import CodeExample
 
 from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
+from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
@@ -80,7 +83,8 @@ async def _owned(client: daytona.AsyncDaytona) -> AsyncGenerator[DaytonaSandboxB
 
 
 async def test_destroy_by_ref_does_not_start_sandbox(client: daytona.AsyncDaytona) -> None:
-    """Validate that SDK get + delete does not resume a stopped sandbox."""
+    """Validates the fake-encoded assumptions that SDK get + delete does not resume a stopped sandbox,
+    and that a sandbox being deleted reports the `destroying` state, so destroying it again returns quietly."""
     async with _owned(client) as backend:
         assert backend.ref is not None
         await DaytonaSandbox(client=client).destroy(backend.ref)
@@ -88,6 +92,7 @@ async def test_destroy_by_ref_does_not_start_sandbox(client: daytona.AsyncDayton
             daytona.SandboxState.DESTROYING,
             daytona.SandboxState.DESTROYED,
         )
+        await DaytonaSandbox(client=client).destroy(backend.ref)
 
 
 async def test_creates_a_fresh_sandbox_and_runs_a_command(client: daytona.AsyncDaytona) -> None:
@@ -164,6 +169,40 @@ async def test_timeout_stops_only_its_command(client: daytona.AsyncDaytona) -> N
         assert not await backend.exists(marker)
 
 
+async def test_a_cancelled_run_stops_the_command(client: daytona.AsyncDaytona) -> None:
+    """Validates the protocol's cancellation contract against real Daytona.
+
+    A cancelled `run()` deletes the command's session; the marker written after the cancellation
+    must never appear.
+    """
+    marker = f'/tmp/{_unique("cancelled")}'
+    pid_file = f'{marker}.pid'
+    async with _owned(client) as backend:
+        with anyio.move_on_after(5):
+            await backend.run(f'echo $$ > {pid_file}; sleep 15; touch {marker}', shell=True, timeout=60)
+
+        with anyio.fail_after(60):
+            while not await backend.exists(pid_file):
+                await anyio.sleep(0.2)
+            pid = (await backend.read_bytes(pid_file)).decode().strip()
+            while (await backend.run(['kill', '-0', pid], timeout=30)).exit_code == 0:
+                await anyio.sleep(0.2)
+        assert await backend.exists(marker) is False
+
+
+async def test_a_new_sandbox_gets_its_working_dir(client: daytona.AsyncDaytona) -> None:
+    """Validates the fake-encoded assumption that `mkdir -p` through `process.exec` makes `working_dir`
+    on a new sandbox as the non-root default user, so the first command can start there."""
+    directory = f'/home/daytona/{_unique("project")}/nested'
+    backend = DaytonaSandboxBackend(client=client, auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, working_dir=directory)
+    try:
+        result = await backend.run(['pwd', '-P'], timeout=60)
+        assert (result.exit_code, result.stdout.strip()) == (0, directory)
+    finally:
+        if backend.ref is not None:
+            await DaytonaSandbox(client=client).destroy(backend.ref)
+
+
 async def test_detached_child_does_not_hold_command_result(client: daytona.AsyncDaytona) -> None:
     """Check whether a real follow websocket remains open with inherited stdout descriptors."""
     async with _owned(client) as backend:
@@ -213,12 +252,36 @@ async def test_coder_tools_run_in_the_sandbox(client: daytona.AsyncDaytona) -> N
 
 
 async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -> None:
-    """Validates the fake-encoded assumption that a command sees the snapshot's `PATH` and `HOME`, and git
-    in the default snapshot, and that a per-call `env` adds to them rather than replacing them."""
+    """Validates the fake-encoded assumption that a command sees the snapshot's `PATH` and `HOME`, and
+    what the docs say the default snapshot has: the non-root `daytona` user in `/home/daytona`, git and
+    Python but no ripgrep. A per-call `env` adds to the environment rather than replacing it."""
     async with _owned(client) as backend:
-        result = await backend.run('echo "$PATH"; echo "$HOME"; git --version', shell=True, timeout=60)
-        path, home, git = result.stdout.splitlines()
-        assert path and home and git.startswith('git version')
+        result = await backend.run(
+            'echo "$PATH"; echo "$HOME"; whoami; pwd -P; git --version; python3 --version; command -v rg || echo no-rg',
+            shell=True,
+            timeout=60,
+        )
+        path, home, user, cwd, git, python, rg = result.stdout.splitlines()
+        assert (home, user, cwd, rg) == ('/home/daytona', 'daytona', '/home/daytona', 'no-rg')
+        assert path and git.startswith('git version') and python.startswith('Python 3')
+        assert await backend.working_dir() == '/home/daytona'
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+# The README's Python blocks are the same as this page's.
+_DOCS_BLOCKS = python_blocks('docs/harness/daytona-sandbox.md')
+
+
+@pytest.mark.parametrize('example', [pytest.param(block, id=f'line {block.start_line}') for block in _DOCS_BLOCKS])
+def test_docs_example(example: CodeExample) -> None:
+    """Every example on the docs page runs as written, and its agent's tools do their work in a real sandbox.
+
+    The fake stands in for Daytona, so only this shows the page's code, its default settings, and its
+    cleanup work against the real service. A follow-up run, from the message history or a stored ref,
+    works in the first run's sandbox.
+    """
+    _, runs = run_block(example, cleanup=documented_cleanup(_DOCS_BLOCKS, 'delete_sandbox'))
+    assert all(run.used_sandbox for run in runs), runs
+    assert len({run.ref for run in runs}) <= 1, runs

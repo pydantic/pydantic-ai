@@ -91,6 +91,32 @@ async def test_foreign_ref_is_declined_and_backend_rejects_it() -> None:
         DaytonaSandboxBackend(ref=WorkspaceRef(provider='other', id='x'))
 
 
+async def test_destroy_rejects_a_foreign_or_blank_ref(fake_daytona: FakeDaytona) -> None:
+    with pytest.raises(ValueError, match=r"^unsupported workspace provider 'other'; expected 'daytona'$"):
+        await DaytonaSandbox().destroy(WorkspaceRef(provider='other', id='x'))
+    with pytest.raises(ValueError, match=r'^Daytona workspace ref id cannot be empty$'):
+        await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=' '))
+    assert fake_daytona.opened_clients == 0
+
+
+async def test_destroy_with_a_supplied_client_leaves_it_open(fake_daytona: FakeDaytona) -> None:
+    sandbox = fake_daytona.sandbox()
+    capability = DaytonaSandbox[None](client=daytona.AsyncDaytona())
+    await capability.destroy(WorkspaceRef(provider='daytona', id=sandbox.id))
+    assert sandbox.state == daytona.SandboxState.DESTROYING
+    assert (fake_daytona.opened_clients, fake_daytona.closed_clients) == (1, 0)
+
+
+async def test_backend_for_a_ref_attaches_with_the_capability_settings(fake_daytona: FakeDaytona) -> None:
+    existing = fake_daytona.sandbox('existing')
+    capability = DaytonaSandbox[None](working_dir='/work', env={'A': 'b'})
+    backend = capability.backend(WorkspaceRef(provider='daytona', id=existing.id))
+    assert await backend.working_dir() == '/work'
+    await backend.run(['true'])
+    assert 'A=b' in existing.process_command
+    assert not fake_daytona.create_params
+
+
 async def test_native_ref_conflict_and_native_identity(fake_daytona: FakeDaytona) -> None:
     seed = DaytonaSandboxBackend()
     native = await seed.get_sandbox()
@@ -218,25 +244,22 @@ async def test_client_close_falls_back_when_sdk_internals_are_missing() -> None:
     assert client.closed
 
 
-async def test_run_waits_for_sdk_event_connection_before_closing_client(fake_daytona: FakeDaytona) -> None:
+@pytest.mark.parametrize('handshake_fails', [False, True])
+async def test_run_waits_for_sdk_event_connection_before_closing_client(
+    fake_daytona: FakeDaytona, handshake_fails: bool
+) -> None:
     fake_daytona.connect_gate = asyncio.Event()
-    fake_daytona.failed_event_session = True
-    tool_done = asyncio.Event()
-
-    async def touch(ctx: RunContext[None]) -> str:
-        result = await _touch(ctx)
-        tool_done.set()
-        return result
-
-    agent = Agent(TestModel(call_tools=['touch']), deps_type=type(None), tools=[touch], capabilities=[DaytonaSandbox()])
+    # A failed handshake still needs the client closed.
+    fake_daytona.failed_event_session = handshake_fails
+    agent = Agent(
+        TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[DaytonaSandbox()]
+    )
     task = asyncio.create_task(agent.run('go'))
     try:
         with anyio.fail_after(10):
-            await tool_done.wait()
-            with anyio.move_on_after(0.2):
-                while not task.done():
-                    await anyio.sleep(0.01)
+            await fake_daytona.connect_awaited.wait()
         assert not task.done()
+        assert fake_daytona.closed_clients == 0
         fake_daytona.connect_gate.set()
         await task
     finally:
@@ -244,6 +267,19 @@ async def test_run_waits_for_sdk_event_connection_before_closing_client(fake_day
     # The SDK's close cancels an in-flight event connection without awaiting it;
     # it may already own an engineio aiohttp session that disconnect cannot close.
     assert fake_daytona.leaked_sessions == 0
+    assert fake_daytona.closed_clients == 1
+
+
+async def test_an_event_connection_that_never_settles_does_not_hold_up_close(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._EVENT_CONNECT_GRACE', 0.05)
+    fake_daytona.connect_gate = asyncio.Event()
+    backend = DaytonaSandboxBackend()
+    await backend.get_sandbox()
+    with anyio.fail_after(5):
+        await backend.aclose()
+    assert caplog.messages == ['Daytona event connection did not settle before client close.']
     assert fake_daytona.closed_clients == 1
 
 

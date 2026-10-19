@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -131,6 +132,23 @@ class TestConformance:
         sandbox.mkdir_exit_code = 0
         assert await backend.get_sandbox() is sandbox
         assert sandbox.exec_commands == ['mkdir -p -- /root/project'] * 2
+
+    async def test_a_sandbox_deleted_before_its_working_dir_is_made_is_unavailable(
+        self, fake_daytona: FakeDaytona
+    ) -> None:
+        fake_daytona.create_gate = gate = asyncio.Event()
+        backend = DaytonaSandboxBackend(working_dir='/root/project')
+        task = asyncio.create_task(backend.get_sandbox())
+        await fake_daytona.create_started.wait()
+        await fake_daytona.sandboxes[0].delete()
+        gate.set()
+        with pytest.raises(
+            WorkspaceUnavailableError,
+            match=r"^The Daytona sandbox 'sb-1' no longer exists \(it was deleted\)\. "
+            r"Pass `workspace='new'` to start a fresh sandbox\.$",
+        ):
+            await task
+        assert backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
 
     async def test_get_sandbox_is_lazy_and_reuses_the_sandbox(self, fake_daytona: FakeDaytona) -> None:
         backend = DaytonaSandboxBackend()
@@ -331,9 +349,11 @@ class TestCommands:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_stdout = ['complete output']
+        # The follow stream delivers both end markers, so the wait reaches the status RPC, which stalls.
+        sandbox.process_follow_open = True
         sandbox.process_status_gate = asyncio.Event()
         with pytest.raises(WorkspaceTimeoutError) as exc_info:
-            await backend.run(['true'], timeout=0.01)
+            await backend.run(['true'], timeout=0.05)
         assert exc_info.value.stdout == 'complete output'
         assert sandbox.process_sessions == set()
 
@@ -433,6 +453,65 @@ class TestCommands:
                 await task
         assert sandbox.process_sessions == set()
         assert backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_a_missing_cwd_is_file_not_found(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
+        fake_daytona.host_root = tmp_path.resolve()
+        missing = f'{tmp_path.resolve()}/missing'
+        with pytest.raises(FileNotFoundError, match=f'^{re.escape(missing)}$'):
+            await DaytonaSandboxBackend().run(['true'], cwd=missing)
+        # An attached sandbox must already have the configured `working_dir`.
+        owner = await started()
+        attached = DaytonaSandboxBackend(ref=owner.ref, working_dir=missing)
+        with pytest.raises(FileNotFoundError, match=f'^{re.escape(missing)}$'):
+            await attached.run(['true'])
+
+    async def test_overlapping_runs_drain_only_when_both_finish(self, fake_daytona: FakeDaytona) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_follow_open = True
+        sandbox.process_status_gate = gate = asyncio.Event()
+        runs = [asyncio.create_task(backend.run(['true'])) for _ in range(2)]
+        with anyio.fail_after(5):
+            while backend._active_runs < 2:  # pyright: ignore[reportPrivateUsage]
+                await asyncio.sleep(0)
+            assert not backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+            gate.set()
+            results = await asyncio.gather(*runs)
+        assert [result.exit_code for result in results] == [0, 0]
+        assert backend._runs_drained.is_set()  # pyright: ignore[reportPrivateUsage]
+
+    async def test_cancellation_as_the_command_is_accepted_kills_it(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Setup finishes in the same step the caller is cancelled, so the parent sees a finished setup.
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        original = sandbox.process.execute_session_command
+
+        async def accept_then_cancel(session_id: str, request: object, timeout: int | None = None) -> Any:
+            response = await original(session_id, request, timeout=timeout)
+            run.cancel()
+            return response
+
+        monkeypatch.setattr(sandbox.process, 'execute_session_command', accept_then_cancel)
+        run = asyncio.create_task(backend.run(['true']))
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        assert _unmarked(sandbox.process_command) == f'{_WRAPPER} true'
+        assert sandbox.process_sessions == set()
+        assert sandbox.process_delete_calls == 1
+
+    async def test_a_stopped_sandbox_that_cannot_be_checked_is_unavailable(self, fake_daytona: FakeDaytona) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.state = daytona.SandboxState.STOPPED
+        sandbox.refresh_error = error = DaytonaConnectionError('control plane down')
+        with pytest.raises(
+            WorkspaceUnavailableError, match=r"^Could not restart stopped Daytona sandbox 'sb-1'\.$"
+        ) as exc_info:
+            await backend.run(['true'])
+        assert exc_info.value.__cause__ is error
+        assert sandbox.start_calls == []
 
     async def test_stopped_sandbox_restarts_for_held_backend(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -565,6 +644,44 @@ class TestErrorsAndFilesystem:
         assert len(fake_daytona.sandboxes) == 1
         assert fake_daytona.create_params[0].name is not None
 
+    async def test_a_retried_creation_finds_the_sandbox_a_lost_reply_left(self, fake_daytona: FakeDaytona) -> None:
+        fake_daytona.create_gate = gate = asyncio.Event()
+        backend = DaytonaSandboxBackend()
+        task = asyncio.create_task(backend.get_sandbox())
+        await fake_daytona.create_started.wait()
+        # The reply is lost, and so is the lookup by name that would recover it.
+        fake_daytona.lose_create_reply = True
+        fake_daytona.get_error = DaytonaConnectionError('offline')
+        gate.set()
+        with pytest.raises(DaytonaConnectionError, match=r'^create response lost$'):
+            await task
+        fake_daytona.get_error = None
+        # The retry looks the sandbox up by the same name instead of creating a second one.
+        sandbox = await backend.get_sandbox()
+        assert fake_daytona.sandboxes == [sandbox]
+        assert len(fake_daytona.create_params) == 1
+        assert backend.ref == WorkspaceRef(provider='daytona', id=sandbox.id)
+
+    @pytest.mark.parametrize(
+        ('error', 'expected'),
+        [
+            (DaytonaConflictError('busy', status_code=409), WorkspaceError),
+            (DaytonaRateLimitError('slow down', status_code=429), None),
+        ],
+    )
+    async def test_attach_errors_are_translated_or_propagate(
+        self, fake_daytona: FakeDaytona, error: Exception, expected: type[Exception] | None
+    ) -> None:
+        fake_daytona.sandbox('sb-existing')
+        fake_daytona.get_error = error
+        with pytest.raises(Exception) as exc_info:
+            await started(ref=WorkspaceRef(provider='daytona', id='sb-existing'))
+        if expected is None:
+            assert exc_info.value is error
+        else:
+            assert type(exc_info.value) is expected
+            assert str(exc_info.value) == "Could not attach to Daytona sandbox 'sb-existing': busy"
+
     async def test_created_sandbox_has_provenance_label(self, fake_daytona: FakeDaytona) -> None:
         await DaytonaSandboxBackend().get_sandbox()
         assert fake_daytona.create_params[0].labels == {'created-by': 'pydantic-ai'}
@@ -657,6 +774,94 @@ class TestErrorsAndFilesystem:
         assert await sandbox.exists('/missing') is False
         await sandbox.remove('/workspace/pkg')
         assert await sandbox.exists('/workspace/pkg/a.py') is False
+
+    async def test_a_failed_realpath_is_a_workspace_error(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+
+        async def failing_realpath(command: str, cwd: str | None = None, timeout: int | None = None) -> Any:
+            assert command.startswith('realpath -m -- ')
+            return SimpleNamespace(result='realpath: boom', exit_code=1)
+
+        monkeypatch.setattr(sandbox.process, 'exec', failing_realpath)
+        with pytest.raises(WorkspaceError, match=r"^Could not resolve '/x': realpath: boom$"):
+            await backend.realpath('/x')
+
+    async def test_a_directory_is_reported_when_its_type_lookup_fails(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.directories.add('/pkg')
+
+        async def failed_lookup(path: str, request_timeout: float | None = None) -> Any:
+            raise DaytonaConnectionError('offline')
+
+        # Without the entry type, the toolbox's own "is a directory" answer still says what happened.
+        monkeypatch.setattr(sandbox.fs, 'get_file_info', failed_lookup)
+        with pytest.raises(IsADirectoryError, match=r"^Is a directory in the Daytona sandbox: '/pkg'$"):
+            await backend.read_bytes('/pkg')
+
+    async def test_a_failed_replace_keeps_the_target(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.files['/note'] = b'original'
+
+        async def lost_upload(data: bytes, path: str, timeout: int = 1800) -> None:
+            pass  # accepted, but the staged file never lands, so the rename fails
+
+        monkeypatch.setattr(sandbox.fs, 'upload_file', lost_upload)
+        with pytest.raises(WorkspaceError, match=r"^Could not replace '/note': missing stage$"):
+            await backend.write_bytes('/note', b'replacement')
+        assert sandbox.files == {'/note': b'original'}
+
+    @pytest.mark.parametrize('find', ['error', 'failure'])
+    async def test_symlink_lookup_failures(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, find: str
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.files['/pkg/a.py'] = b'x'
+        error = DaytonaConnectionError('offline')
+
+        async def failing_find(command: str, cwd: str | None = None, timeout: int | None = None) -> Any:
+            assert command.startswith('find ')
+            if find == 'error':
+                raise error
+            return SimpleNamespace(result="find: '/pkg/locked': Permission denied", exit_code=1)
+
+        monkeypatch.setattr(sandbox.process, 'exec', failing_find)
+        if find == 'error':
+            # A transient failure propagates unchanged rather than hiding symlinks.
+            with pytest.raises(DaytonaConnectionError) as exc_info:
+                await backend.list_dir('/pkg')
+            assert exc_info.value is error
+        else:
+            # A `find` that fails part-way adds nothing; the toolbox listing stands.
+            assert [entry.name for entry in await backend.list_dir('/pkg')] == ['a.py']
+
+    async def test_make_dir_refusals_that_are_not_an_existing_file(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.fs_error = DaytonaValidationError('invalid mode', status_code=400)
+        with pytest.raises(WorkspaceError, match=r"^Could not access '/pkg' in the sandbox: invalid mode$"):
+            await backend.make_dir('/pkg')
+        sandbox.fs_error = None
+        # "not a directory" for a target that is a directory is a parent problem, not `FileExistsError`.
+        sandbox.directories.add('/pkg')
+
+        async def refused(path: str, mode: str, request_timeout: float | None = None) -> None:
+            raise DaytonaValidationError(f'mkdir {path}: not a directory', status_code=400)
+
+        monkeypatch.setattr(sandbox.fs, 'create_folder', refused)
+        with pytest.raises(NotADirectoryError, match=r"^Not a directory in the Daytona sandbox: '/pkg'$"):
+            await backend.make_dir('/pkg')
 
     async def test_interrupted_upload_preserves_target_and_cleans_stage(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -1056,6 +1261,17 @@ async def test_create_timeout_is_transient(fake_daytona: FakeDaytona, monkeypatc
     sandbox = await backend.get_sandbox()
     assert backend.ref == WorkspaceRef(provider='daytona', id=sandbox.id)
     assert fake_daytona.closed_clients == 0
+
+
+async def test_create_timeout_without_the_accepted_sandbox_is_transient(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._CREATE_TIMEOUT', 0.05)
+    fake_daytona.create_gate = asyncio.Event()
+    # The lookup by name after the deadline does not find the sandbox either.
+    fake_daytona.get_error = DaytonaNotFoundError('no sandbox', status_code=404)
+    with pytest.raises(TimeoutError, match=r'^Daytona sandbox creation did not complete within 0\.05s\.$'):
+        await DaytonaSandboxBackend().get_sandbox()
 
 
 async def test_attach_timeout_is_transient(fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -84,7 +84,7 @@ __all__ = ('DaytonaSandboxBackend',)
 
 try:
     import daytona
-except ImportError as error:  # pragma: no cover - exercised by the isolated missing-extra test
+except ImportError as error:  # exercised by the isolated missing-extra test
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
 _AUTH_MESSAGE = (
@@ -101,6 +101,8 @@ _REQUEST_TIMEOUT = 30
 _LIFECYCLE_TIMEOUT = 60.0
 # Bound cleanup RPCs so teardown cannot wedge the caller.
 _TEARDOWN_TIMEOUT = 30.0
+# Bound the wait for the SDK's event connection to settle before its client is closed.
+_EVENT_CONNECT_GRACE = 6.0
 # Pause between attempts to delete a command session.
 _RETRY_DELAY = 1.0
 # Streamed logs are only a timeout preview; finished output comes from stored logs.
@@ -363,7 +365,7 @@ async def _close_sdk_client(client: AsyncDaytona) -> None:
     # These are private SDK attributes; if a release renames them, fall back to a plain close.
     dispatcher = getattr(client, '_event_dispatcher', None)
     if dispatcher is not None and (connecting := getattr(dispatcher, '_connect_task', None)) is not None:
-        with anyio.move_on_after(6, shield=True) as connect_deadline:
+        with anyio.move_on_after(_EVENT_CONNECT_GRACE, shield=True) as connect_deadline:
             try:
                 # This is an asyncio-only SDK task; do not cancel it on our grace timeout.
                 await asyncio.shield(connecting)
@@ -629,18 +631,11 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 if probe.exit_code == 0:
                     raise OSError(f'Cannot read FIFO in the Daytona sandbox: {path!r}')
                 try:
-                    try:
-                        return await sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
-                    except daytona.DaytonaError as error:
-                        if await _entry_is_dir(sandbox, path, error):
-                            raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}') from error
-                        raise
+                    return await sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
                 except daytona.DaytonaError as error:
-                    if isinstance(error, daytona.DaytonaNotFoundError):
-                        raise
                     # The toolbox's answer for reading a directory is not a documented error type; the
                     # entry type tells it apart from other failures.
-                    if (await sandbox.fs.get_file_info(path, request_timeout=_REQUEST_TIMEOUT)).is_dir:
+                    if await _entry_is_dir(sandbox, path, error):
                         raise IsADirectoryError(f'Is a directory in the Daytona sandbox: {path!r}') from error
                     raise
 
@@ -812,7 +807,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             labels={'created-by': 'pydantic-ai'},
         )
         # The create RPC can outlive its acknowledgement; recover by the stable name on timeout.
-        with anyio.move_on_after(_CREATE_TIMEOUT) as deadline:
+        with anyio.move_on_after(_CREATE_TIMEOUT):
             try:
                 return await client.create(params, timeout=_LIFECYCLE_TIMEOUT)
             except Exception as error:
@@ -829,11 +824,11 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     # model turn can fix it, so the run ends instead of handing the model an error.
                     translated = WorkspaceUnavailableError(str(translated))
                 raise translated from error
-        if deadline.cancelled_caught:
-            try:
-                return await client.get(name, request_timeout=_REQUEST_TIMEOUT)
-            except (daytona.DaytonaNotFoundError, daytona.DaytonaConnectionError, daytona.DaytonaTimeoutError):
-                pass
+        # Every path through the block returns or raises, so reaching here means the deadline expired.
+        try:
+            return await client.get(name, request_timeout=_REQUEST_TIMEOUT)
+        except (daytona.DaytonaNotFoundError, daytona.DaytonaConnectionError, daytona.DaytonaTimeoutError):
+            pass
         # A stalled control plane is transient, not a command deadline.
         raise TimeoutError(f'Daytona sandbox creation did not complete within {_CREATE_TIMEOUT}s.')
 
@@ -856,7 +851,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                         f'The Daytona sandbox {sandbox_id!r} was not found (it was deleted, or never existed '
                         "in this Daytona organization). Pass `workspace='new'` to start a fresh sandbox."
                     ) from error
-                _raise_translated(error, f'Could not attach to Daytona sandbox {sandbox_id!r}', sandbox_id=sandbox_id)
+                _raise_translated(error, f'Could not attach to Daytona sandbox {sandbox_id!r}')
             if _in_deleted_state(sandbox):
                 raise WorkspaceUnavailableError(_unavailable_message(sandbox.id))
             return sandbox
@@ -924,8 +919,9 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                             raise
                         process = await self._start(sandbox, argv, shell=False, cwd=checked_cwd, env=env)
                     result = await process.wait()
-                    if checked_cwd is not None and f'{process.marker}-cwd' in result.stderr:
-                        raise FileNotFoundError(checked_cwd)
+                    if f'{process.marker}-cwd' in result.stderr:
+                        # The command never started: the directory it was to start in is missing.
+                        raise FileNotFoundError(checked_cwd or self._working_dir)
                 # Native Task.cancel() pierces AnyIO shields. Keep the bounded stop in a child
                 # and wait for it before reporting runs drained or releasing the HTTP client.
                 await run_to_completion(lambda: stop_shielded(stop))
@@ -1007,7 +1003,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                         await asyncio.shield(task)
                     except asyncio.CancelledError:
                         task.cancel()
-                    except Exception:
+                    except Exception:  # pragma: no cover - only an SDK that reports a cancellation as an error
                         break
                 if not task.cancelled() and task.exception() is None:
                     await stop_shielded(task.result().kill)
@@ -1046,13 +1042,13 @@ def _unavailable_message(sandbox_id: str) -> str:
     )
 
 
-def _translated(error: Exception, context: str, *, sandbox_id: str | None = None, path: str | None = None) -> Exception:
+def _translated(error: Exception, context: str, *, path: str | None = None) -> Exception:
     """Map a Daytona SDK error onto the failures the workspace protocol promises.
 
     Returns `error` itself for what must propagate unchanged: connection failures, SDK timeouts,
     rate limits, server errors, and anything that is not a `DaytonaError`, which durable engines
-    retry as transient. A not-found answer is a missing `path` for a path operation, the sandbox
-    being gone for a call naming `sandbox_id`, and a refused request otherwise.
+    retry as transient. A not-found answer is a missing `path` for a path operation, and a refused
+    request otherwise.
     """
     if path is not None and isinstance(error, daytona.DaytonaError) and error.status_code == 400:
         # Both typed validation errors and upload's plain 400 include POSIX strerror text.
@@ -1069,11 +1065,8 @@ def _translated(error: Exception, context: str, *, sandbox_id: str | None = None
         return PermissionError(f'Permission denied in the Daytona sandbox: {path!r}')
     if isinstance(error, (daytona.DaytonaAuthenticationError, daytona.DaytonaAuthorizationError)):
         return WorkspaceUnavailableError(f'{safe_credential_reason(error)}. {_AUTH_MESSAGE}')
-    if isinstance(error, daytona.DaytonaNotFoundError):
-        if path is not None:
-            return FileNotFoundError(f'No such file or directory in the Daytona sandbox: {path!r}')
-        if sandbox_id is not None:
-            return WorkspaceUnavailableError(_unavailable_message(sandbox_id))
+    if path is not None and isinstance(error, daytona.DaytonaNotFoundError):
+        return FileNotFoundError(f'No such file or directory in the Daytona sandbox: {path!r}')
     if isinstance(error, (daytona.DaytonaNotFoundError, daytona.DaytonaValidationError, daytona.DaytonaConflictError)):
         return WorkspaceError(f'{context}: {error}')
     if (
@@ -1085,10 +1078,8 @@ def _translated(error: Exception, context: str, *, sandbox_id: str | None = None
     return error
 
 
-def _raise_translated(
-    error: Exception, context: str, *, sandbox_id: str | None = None, path: str | None = None
-) -> NoReturn:
-    translated = _translated(error, context, sandbox_id=sandbox_id, path=path)
+def _raise_translated(error: Exception, context: str, *, path: str | None = None) -> NoReturn:
+    translated = _translated(error, context, path=path)
     if translated is error:
         raise error
     raise translated from error
