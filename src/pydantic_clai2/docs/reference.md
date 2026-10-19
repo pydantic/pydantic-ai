@@ -426,12 +426,15 @@ paste of existing image paths creates attachments as described in
 Up/down move through multiline drafts, then recall queued messages and saved
 prompt history. Queued messages come first, newest first, because they are
 your most recent input; Up then continues into history, skipping the copies of
-queued messages that history already holds. Enter on a recalled queued message
-rewrites it in place, keeping its position in the queue, and the queue row
-shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
-message from the queue. If the run takes the message before you press Enter,
-the edit is queued as a new follow-up. With nothing queued, Up/down only walk
-history.
+queued messages that history already holds. A recalled queued message leaves the
+queue while you edit it, so it does not run when the turn ends; the messages around
+it still do. Its queue row shows `(editing)` at the place it keeps, and the input
+box shows `Enter: save | Esc: stop editing | Clear it to remove`. Enter puts the
+edited message back in its place. Esc puts it back unchanged and restores the
+draft you had before pressing Up; it does not interrupt the turn, so a second Esc
+does. To remove the message, clear the draft and press Enter or Esc. If the turn
+ends and nothing else is queued, the message stays in the input as an unsent
+draft. With nothing queued, Up/down only walk history.
 While you walk history, Up/down stay on history even when a recalled slash
 command shows completion suggestions. Press Tab to pick a suggestion; Up/down
 then move through the suggestions. Editing the recalled text ends the walk, so
@@ -1000,11 +1003,12 @@ previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+the number waiting. Press Up to edit one (see Up/down above). Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
-finish. They do not interrupt or steer the active turn. Bare settings menus such as
+finish, unless you interrupt it, which moves them into the input. They do not interrupt or
+steer the active turn. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
@@ -1110,7 +1114,13 @@ still queues the message like Enter, the terminal is sending a plain Enter:
 ### Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
-Tool cleanup finishes before the next queued message starts. Esc does not request
+As in Claude Code and Codex, queued messages and commands do not run after the
+interrupt: they move into the input, one per line and ahead of your draft, so you
+can edit them and press Enter to send them. While you edit a queued message, the
+first Esc stops editing instead of interrupting; Ctrl-C interrupts, keeping your edit in the
+input with the draft you had before pressing Up after it. Turns cancelled from elsewhere, such as
+the web UI or a plugin's `host.interrupt()`, leave the queue to run as before.
+Tool cleanup finishes before the next prompt starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
 than passing it to the agent turn; its behavior depends on that interface.
