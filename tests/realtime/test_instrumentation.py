@@ -38,12 +38,15 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -77,8 +80,9 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
+from pydantic_ai.realtime.lifecycle import RealtimeFrame, ResponseEnded, ResponseStarted
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
@@ -123,8 +127,10 @@ def _span_tree(exporter: InMemorySpanExporter) -> list[dict[str, Any]]:
 class _Connection(InferredConnection):
     """Replays a fixed list of events; records nothing of interest for these tests."""
 
-    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+    def __init__(self, events: list[RealtimeCodecEvent], *, hold_open: bool = False) -> None:
         self._events = events
+        # Whether the connection stays open after its events, rather than ending (which cuts off what's under way).
+        self._hold_open = hold_open
 
     async def send_input(self, content: RealtimeInput) -> None:
         pass
@@ -132,6 +138,8 @@ class _Connection(InferredConnection):
     async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
+        if self._hold_open:
+            await asyncio.Event().wait()
 
 
 class _Model(RealtimeModel):
@@ -212,10 +220,44 @@ async def _ok_runner(name: str, args: dict[str, Any], call_id: str) -> str:
     return 'sunny'
 
 
+async def test_a_limit_tripped_mid_frame_still_ends_the_response_span() -> None:
+    """A usage limit that stops the session partway through a frame doesn't leave the `chat` span open.
+
+    Gemini reports a response's output, usage and end in one message, so the limit can trip after the response
+    ended but before the session streamed that it did.
+    """
+
+    class _OneFrame(_Connection):
+        async def frames(self) -> AsyncIterator[RealtimeFrame]:
+            yield [
+                ResponseStarted(response_id='r1'),
+                SessionUsage(usage=RequestUsage(input_tokens=100), response_scoped=True),
+                OutputTranscript(text='Hi.', is_final=True),
+                ResponseDone(),
+                ResponseEnded(response_id='r1', status='completed'),
+            ]
+
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _OneFrame([]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+        usage_limits=UsageLimits(per_request_input_tokens_limit=50),
+    )
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            _ = [event async for event in session]
+
+    assert [span.name for span in exporter.get_finished_spans() if span.name.startswith('chat')] == [
+        'chat gpt-realtime'
+    ]
+
+
 async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     settings, exporter = _settings()
     session = RealtimeSession(
-        _Connection([OutputTranscript(text='partial')]),
+        _Connection([OutputTranscript(text='partial')], hold_open=True),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -243,7 +285,7 @@ async def test_error_events_honor_include_content(include_content: bool) -> None
     """
     settings, exporter = _settings(include_content=include_content)
     session = RealtimeSession(
-        _Connection([OutputTranscript(text='partial')]),
+        _Connection([OutputTranscript(text='partial')], hold_open=True),
         _ok_runner,
         instrumentation=settings,
         model_name='gpt-realtime',
@@ -289,6 +331,7 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
                 RealtimeOutputSpeechStartEvent(),
                 # A repeat, which some providers send: one utterance is one span, not two.
                 RealtimeOutputSpeechStartEvent(),
+                OutputTranscript(text='Hello.', is_final=True),
                 ResponseDone(),
                 RealtimeOutputSpeechEndEvent(),
             ]
@@ -302,7 +345,11 @@ async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() ->
         events = [event async for event in session]
 
     # The events reach the caller as well, so a UI can drive a 'speaking' indicator from them.
-    assert [type(event).__name__ for event in events] == [
+    assert [
+        type(event).__name__
+        for event in events
+        if not isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent))
+    ] == [
         'RealtimeOutputSpeechStartEvent',
         'RealtimeOutputSpeechStartEvent',
         'RealtimeTurnCompleteEvent',
@@ -628,6 +675,7 @@ async def test_tool_call_otel_metadata_comes_from_definition() -> None:
                         'arguments': '{"python_code":"1 + 1"}',
                     }
                 ],
+                'finish_reason': 'tool_call',
             }
         ]
     )
@@ -942,6 +990,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
                 {'type': 'text', 'content': 'let me check'},
                 {'type': 'tool_call', 'id': 'c1', 'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
             ],
+            'finish_reason': 'tool_call',
         },
     ]
     # The synthetic connection emits the post-tool response without yielding, so the concurrent tool
@@ -1213,9 +1262,9 @@ async def test_session_span_counts_dropped_session_queue_structural_events() -> 
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR adds
-    # contributes a part start and end of its own.
-    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 512
+    # Seven structural events per turn: the untranscribed segment's part starts and ends too. The cap evicts a
+    # part's start with the rest of the part, so it can keep one fewer than it allows.
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 511
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
@@ -1425,9 +1474,9 @@ def test_chat_span_without_response_ends_without_metrics() -> None:
     settings, exporter, metric_reader = _settings_with_metrics()
     session = RealtimeSession(_Connection([]), _ok_runner, instrumentation=settings)
     session._session_instrumentation.context = Context()  # pyright: ignore[reportPrivateUsage]
-    session._ensure_chat_span()  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.ensure_chat_span('r1')  # pyright: ignore[reportPrivateUsage]
 
-    session._session_instrumentation.end_chat_span([], None)  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.end_chat_span('r1', [], None)  # pyright: ignore[reportPrivateUsage]
 
     assert [span.name for span in exporter.get_finished_spans()] == ['chat']
     assert metric_reader.get_metrics_data() is None

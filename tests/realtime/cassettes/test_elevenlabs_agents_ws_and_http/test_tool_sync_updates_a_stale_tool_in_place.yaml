@@ -1,0 +1,134 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in one short sentence. Use the get_weather tool for any weather
+            question.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_5201m52p5j48faq9dh7jkgqa0t90
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: What is the weather in Berlin?
+- kind: message
+  direction: received
+  at: 1.512
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_fe03f8cfb9c747afbd618fe4ee304b74
+      parameters:
+        city: Berlin
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 1.513
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_fe03f8cfb9c747afbd618fe4ee304b74
+    result: It is sunny and 21 degrees in Berlin.
+    is_error: false
+- kind: message
+  direction: received
+  at: 1.561
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_fe03f8cfb9c747afbd618fe4ee304b74
+      tool_type: client
+      is_error: false
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: success
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.75
+  data:
+    ping_event:
+      event_id: 2
+      ping_ms: null
+    type: ping
+- kind: message
+  direction: sent
+  at: 1.75
+  data:
+    type: pong
+    event_id: 2
+- kind: message
+  direction: received
+  at: 3.451
+  data:
+    ping_event:
+      event_id: 3
+      ping_ms: 46
+    type: ping
+- kind: message
+  direction: sent
+  at: 3.452
+  data:
+    type: pong
+    event_id: 3
+- kind: message
+  direction: received
+  at: 3.541
+  data:
+    audio_event:
+      audio_base_64: ////////+//7//v//v/+//3//f/8//3/+//8////AAAA
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 3.629
+  data:
+    audio_event:
+      audio_base_64: lRcsDWoL7BL1FhERAgqXC5gQBw0PAjv8AQHeBw8HewD/
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 3.629
+  data:
+    agent_response_event:
+      agent_response: It is sunny and twenty-one degrees Celsius in Berlin.
+      event_id: 1
+      response_id: 1400f3b3-7b9d-48f1-b6b9-01b8a00dce5c
+      in_response_to_ids:
+      - 9738daf5-dd9c-4754-823c-28f96f9ebf9b
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 3.629
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 429
+      context_limit_tokens: 1048576
+    type: context_usage
