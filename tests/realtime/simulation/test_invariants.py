@@ -32,6 +32,17 @@ def test_unexpected_error_is_reported_whichever_order_operations_finish() -> Non
             sim.check()
 
 
+def test_unexpected_consumer_error_is_reported_once() -> None:
+    """An exception other than a `RealtimeError` escaping the session's iterator is a violation, judged once."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.consumer_error = RuntimeError('boom')
+        with pytest.raises(
+            InvariantViolation, match=r"\[api\.unexpected_error\] iterating the session raised RuntimeError\('boom'\)"
+        ):
+            sim.check()
+        sim.check()
+
+
 def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
     """The client may resend what an ambiguous send delivered, but nothing else may arrive twice."""
     with OpenAISimulation(strict=False) as sim:
