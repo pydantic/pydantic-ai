@@ -59,6 +59,9 @@ class PromptRewind(Exception):
     """Open the rewind picker without submitting or clearing the draft."""
 
 
+_Submission = _Queued | KeyboardInterrupt | EOFError | PromptRewind
+
+
 class LivePrompt:
     """One terminal surface, one keyboard reader, sequential queued submissions."""
 
@@ -112,9 +115,12 @@ class LivePrompt:
             feed=self.feed,
             eof=lambda: self.submit(EOFError()),
         )
-        self._submissions: deque[_Queued | KeyboardInterrupt | EOFError | PromptRewind] = deque()
-        # The queued prompt the draft would rewrite on Enter, and the queue as a recall walk found it.
+        self._submissions: deque[_Submission] = deque()
+        # The queued prompt taken out of the queue while the draft edits it, the submission it returns after
+        # (`None` for the front), and the draft from before the recall that took it, which Esc restores.
         self._editing: _Queued | None = None
+        self._editing_after: _Submission | None = None
+        self._shelved_draft = ''
         self._recall_queue: list[_Queued] = []
         self._recall_target: _Queued | None = None
         self._search_target: _Queued | None = None
@@ -138,14 +144,50 @@ class LivePrompt:
 
     @property
     def queued_messages(self) -> tuple[str, ...]:
-        """Pending text, excluding control signals."""
-        return tuple(item.text for item in self._queued())
+        """Pending text, excluding control signals, including the queued prompt being edited."""
+        return tuple(item.text for item in self._pending())
 
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
 
+    def _pending(self) -> list[_Queued]:
+        """Queued prompts in order, with the one being edited at the place it returns to."""
+        items = list(self._submissions)
+        if self._editing is not None:
+            items.insert(self._return_index(), self._editing)
+        return [item for item in items if isinstance(item, _Queued)]
+
+    def _return_index(self) -> int:
+        after = self._editing_after
+        # Once the submission before it has run, so has everything ahead of it: it goes first.
+        return self._submissions.index(after) + 1 if after is not None and after in self._submissions else 0
+
+    def _edit(self, entry: _Queued | None) -> None:
+        """Take `entry` out of the queue while the draft edits it, returning the one edited before unchanged.
+
+        A prompt being edited cannot run, so a turn that ends meanwhile starts the next one instead.
+        An entry the run took before the walk reached it is only text in the draft, as history is.
+        """
+        if entry is self._editing:
+            return
+        if self._editing is not None:
+            self._put_back(self._editing)
+        if entry is None or entry not in self._submissions:
+            return
+        index = self._submissions.index(entry)
+        self._editing_after = self._submissions[index - 1] if index else None
+        self._discard(entry)
+        self._editing = entry
+
+    def _put_back(self, entry: _Queued) -> None:
+        """Return the prompt taken out to edit to its place in the queue."""
+        self._submissions.insert(self._return_index(), entry)
+        self._editing = None
+        self._submitted.set()
+
     def take_queued(self) -> list[str]:
         """Remove the queued prompts and return their text, as when another session reads this editor next."""
+        self._edit(None)
         queued = self._queued()
         for entry in queued:
             self._discard(entry)
@@ -155,7 +197,7 @@ class LivePrompt:
         """Publish a submission without ending or replacing the editor."""
         self._enqueue(_Queued(value) if isinstance(value, str) else value)
 
-    def _enqueue(self, value: _Queued | KeyboardInterrupt | EOFError | PromptRewind) -> None:
+    def _enqueue(self, value: _Submission) -> None:
         self._submissions.append(value)
         self._submitted.set()
         self.paint()
@@ -171,10 +213,16 @@ class LivePrompt:
             self._submitted.clear()
 
     async def read(self) -> str:
-        """Consume queued submissions in order, first showing the status the shell set up for this read."""
+        """Consume queued submissions in order, first showing the status the shell set up for this read.
+
+        With nothing else queued the shell is idle, so a queued prompt being edited is just the draft now.
+        """
+        if not self._submissions:
+            self._editing = None
         self.paint()
         await self._submitted.wait()
         if not self._submissions:
+            self._editing = None
             self._wake_pending = False
             self._submitted.clear()
             raise PromptWakeup
@@ -250,11 +298,14 @@ class LivePrompt:
             self.refresh_completions()
 
     def escape(self) -> None:
-        """Cancel or dismiss first; only consecutive idle presses request a rewind."""
+        """Stop editing a queued prompt, then cancel or dismiss; only consecutive idle presses request a rewind."""
         previous, self._last_escape = self._last_escape, None
-        if self.interrupts.active:
+        if self._editing is not None:
+            self.stop_editing()
+        elif self.interrupts.active:
             cancelled = self.interrupts.cancel(exit_on_repeat=False)
             telemetry.record('prompt interrupt', key='escape', cancelled_turn=cancelled)
+            self._unqueue()
         elif self.buffer.search is not None:
             self.search('escape')
         elif self._completions or self._completion_pending:
@@ -267,9 +318,43 @@ class LivePrompt:
                 self._last_escape = now
                 self.notice = 'Press Esc again to rewind the conversation.'
 
+    def stop_editing(self) -> None:
+        """Return the queued prompt being edited unchanged, or remove it if its draft was cleared.
+
+        Either way the draft from before the recall comes back, as in Claude Code, where Esc on a
+        queued prompt being edited ends the edit rather than the turn.
+        """
+        assert self._editing is not None
+        if self.buffer.text.strip():
+            self._put_back(self._editing)
+        else:
+            self._editing = None
+            self.notice = 'Removed the queued message.'
+            telemetry.record('prompt submitted', route='discarded queued')
+        self.buffer.search = None
+        self.buffer.history_index = None
+        self.buffer.replace(self._shelved_draft)
+        self.refresh_completions()
+
+    def _unqueue(self) -> None:
+        """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
+
+        Control signals stay queued. A prompt being edited is already in the draft, which follows the others.
+        """
+        self._editing = None
+        queued = self._queued()
+        if not queued:
+            return
+        for entry in queued:
+            self._discard(entry)
+        self.buffer.search = None
+        self.buffer.history_index = None
+        self.buffer.replace('\n'.join([*(entry.text for entry in queued), *filter(None, [self.buffer.text])]))
+        self.notice = 'Queued messages moved to the input. Press Enter to send them.'
+
     def restore_draft(self, text: str) -> None:
         """Replace the draft after a rewind, without editing a queued submission."""
-        self._editing = None
+        self._edit(None)
         self.buffer.search = None
         self.buffer.history_index = None
         self.buffer.replace(text)
@@ -290,16 +375,18 @@ class LivePrompt:
             self._search_target = self._editing
         self.buffer.edit(key)
         # Cancelling (or finding nothing) leaves the original text, and with it the edit target.
-        self._editing = self._search_target if self.buffer.text == self.buffer.search_original else None
+        self._edit(self._search_target if self.buffer.text == self.buffer.search_original else None)
 
     def interrupt(self) -> None:
         """Cancel running work, or else drop the draft and signal the reader."""
         cancelled = self.interrupts.cancel()
         telemetry.record('prompt interrupt', key='ctrl-c', cancelled_turn=cancelled)
-        if not cancelled:
+        if cancelled:
+            self._unqueue()
+        else:
             self.buffer.replace('')
             self.buffer.search = None
-            self._editing = None
+            self._edit(None)
             self.submit(KeyboardInterrupt())
 
     def _chord(self, key: str) -> bool:
@@ -328,32 +415,29 @@ class LivePrompt:
             # The highlighted command is already typed in full, so Enter runs it.
             self.dismiss_completions()
         text = self.buffer.text.strip()
+        # The prompt being edited is out of the queue: each outcome below returns it or leaves it out.
         target, self._editing = self._editing, None
-        if target is not None and target not in self._submissions:
-            # The run took the prompt while it was being edited, so the edit becomes a new follow-up.
-            target = None
         if not text and target is None:
             return
         recalled = self.buffer.history_index is not None
         self.buffer.history_index = None
         self.buffer.reset()
         if target is not None and not text:
-            self._discard(target)
             telemetry.record('prompt submitted', route='discarded queued')
             return
         command = expand_bare_command(text)
         if target is not None and command == target.text:
+            self._put_back(target)
             return
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         if self.run_now is not None and self.run_now(command):
             route = 'run now'
-            if target is not None:
-                self._discard(target)
         elif target is not None:
             route = 'edited queued'
             target.text, target.recorded = command, text
+            self._put_back(target)
         else:
             route = 'queued' if self.interrupts.active else 'submitted'
             self._enqueue(_Queued(command, recorded=text))
@@ -363,12 +447,14 @@ class LivePrompt:
         """Walk queued prompts, newest first, before command history.
 
         The queue holds the most recent input, so Up reaches it before older history, as in
-        shell history. A recalled queued prompt keeps its place in the queue: Enter rewrites
-        it, and clearing the draft before Enter removes it.
+        shell history. A recalled queued prompt leaves the queue while it is edited, and keeps its
+        place: Enter puts it back rewritten, Esc unchanged, and clearing the draft removes it.
         """
         if self.buffer.history_index is None:
-            self._recall_queue = self._queued()
+            self._recall_queue = self._pending()
             self._recall_target = self._editing
+            if self._editing is None:
+                self._shelved_draft = self.buffer.text
         self.buffer.vertical(
             backwards=backwards,
             queued=tuple(entry.text for entry in self._recall_queue),
@@ -376,9 +462,9 @@ class LivePrompt:
         )
         offset = self.buffer.recall_offset
         if offset == 0:
-            self._editing = self._recall_target
+            self._edit(self._recall_target)
         elif offset is not None:
-            self._editing = self._recall_queue[offset] if -offset <= len(self._recall_queue) else None
+            self._edit(self._recall_queue[offset] if -offset <= len(self._recall_queue) else None)
 
     def _steered(self, text: str) -> bool:
         """Hand prompt text to the active run; commands and shell lines never steer."""
@@ -396,16 +482,14 @@ class LivePrompt:
         if not self._steered(text):
             self.accept()
             return
-        target, self._editing = self._editing, None
+        # The steered text may be an edit of a queued prompt, which then no longer waits for its own turn.
+        self._editing = None
         # Steered text joins the running turn, so show its response, as submitting does.
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         self.buffer.history_index = None
         self.buffer.reset()
-        if target is not None and target in self._submissions:
-            # The steered text was an edit of a queued prompt, so it no longer waits for its own turn.
-            self._discard(target)
         telemetry.record('prompt steer', steered=True, source='draft')
 
     def steer_queued(self) -> None:
@@ -543,14 +627,19 @@ class LivePrompt:
                 width,
             )
             + reset
-            for entry in self._queued()
+            for entry in self._pending()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
         title = ''
         if self.interrupts.active:
             head, glyph = ' Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            hints = '| Enter: queue | Alt+Enter: steer ' if self.queued_messages or self.buffer.text.strip() else ''
+            if self._editing is not None:
+                hints = '| Enter: save | Esc: stop editing | Clear it to remove '
+            elif self.queued_messages or self.buffer.text.strip():
+                hints = '| Enter: queue | Alt+Enter: steer '
+            else:
+                hints = ''
             title = truncate(f'{head}{glyph} {hints}', width)
             if title.startswith(head + glyph):
                 title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'

@@ -83,7 +83,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue, timed double-Esc gesture, and menu handoff |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (a recalled queued prompt leaves it while edited; an editor interrupt moves it into the draft), timed double-Esc gesture, and menu handoff |
 | `ui/prompt/terminal.py` | `Terminal`, the terminal driver: console, `LivePrompt`, line prompt, transcript, input history, and pasted images, attached to the one live session shown (`attach`, `show`); `drive` runs the session CLAI started with until the session shown ends; `session_console` for sessions opened beside it |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |

@@ -1,7 +1,8 @@
 """Messages queue first; explicit steering uses core delivery."""
 
 import asyncio
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Sequence
+from contextlib import asynccontextmanager
 from io import StringIO
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from tests.clai2.test_live_prompt import editor
 
@@ -138,12 +139,12 @@ async def test_steering_an_edited_queued_prompt_takes_it_out_of_the_queue() -> N
         assert accepted == ['second now']
         assert live.queued_messages == ('first',)
         live.feed('up')
-        assert await live.read() == 'first'
         live.buffer.insert(' again')
         live.feed('alt-enter')
-        # The run already took the recalled prompt, so the edit steers without touching the queue.
         assert accepted == ['second now', 'first again']
         assert live.queued_messages == ()
+        live.submit('later')
+        assert await live.read() == 'later'
 
 
 @pytest.mark.parametrize('draft', ['/help', '!git status', 'clear', 'idle prompt'])
@@ -480,14 +481,127 @@ async def test_recalling_history_leaves_the_queued_prompt_alone() -> None:
         assert live.queued_messages == ('queued', 'old')
 
 
-async def test_edit_of_a_consumed_prompt_becomes_a_new_follow_up() -> None:
+async def test_a_queued_prompt_being_edited_waits_while_the_queue_runs() -> None:
     async with editor() as (live, _, _):
-        queue(live, 'taken')
+        queue(live, 'a', 'b', 'c')
         live.feed('up')
-        assert await live.read() == 'taken'
+        live.feed('up')
+        # `b` is out of the queue while it is edited, so the run takes the others around it.
+        assert await live.read() == 'a'
+        assert queue_rows(live) == ['Follow-up (editing): b', 'Follow-up: c']
+        assert await live.read() == 'c'
+        live.buffer.insert('2')
+        live.feed('enter')
+        assert await live.read() == 'b2'
+
+
+async def test_walking_onto_a_prompt_the_run_took_edits_a_new_follow_up() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'a', 'b')
+        live.feed('up')
+        assert await live.read() == 'a'
+        live.feed('up')
+        # The walk still shows `a`, but the run took it: `b` is back in the queue and `a` is a new follow-up.
+        assert live.buffer.text == 'a'
+        assert queue_rows(live) == ['Follow-up: b']
         live.buffer.insert(' again')
         live.feed('enter')
-        assert live.queued_messages == ('taken again',)
+        assert live.queued_messages == ('b', 'a again')
+
+
+async def test_a_queued_prompt_being_edited_becomes_the_draft_once_idle() -> None:
+    async with editor() as (live, _, _):
+        queue(live, 'only')
+        live.feed('up')
+        live.wake()
+        with pytest.raises(PromptWakeup):
+            await live.read()
+        # Nothing is queued any more: Esc leaves the draft alone and Enter sends it like any other.
+        live.feed('escape')
+        assert (live.buffer.text, live.queued_messages) == ('only', ())
+        live.buffer.insert(' again')
+        live.feed('enter')
+        assert await live.read() == 'only again'
+
+
+@asynccontextmanager
+async def running(live: LivePrompt) -> AsyncGenerator[list[bool]]:
+    """Run an operation Esc and Ctrl-C can cancel, yielding whether it completed once it ends."""
+    started = anyio.Event()
+    completed: list[bool] = []
+
+    async def operation() -> None:
+        started.set()
+        await anyio.sleep_forever()
+
+    async def run_operation() -> None:
+        completed.append(await live.interrupts.run(operation()))
+
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(run_operation)
+        await started.wait()
+        yield completed
+
+
+async def test_esc_stops_editing_a_queued_prompt_before_it_interrupts() -> None:
+    async with editor() as (live, _, _):
+        async with running(live) as completed:
+            queue(live, 'follow up')
+            live.buffer.replace('draft')
+            live.feed('up')
+            live.buffer.insert(' changed')
+            live.feed('escape')
+            # The edit is dropped, the queued prompt and the draft are as they were, and the turn runs on.
+            assert live.interrupts.active
+            assert (live.buffer.text, live.queued_messages) == ('draft', ('follow up',))
+            assert queue_rows(live) == ['Follow-up: follow up']
+            live.feed('escape')
+        assert completed == [False]
+        # The interrupt returns the queued prompt to the input instead of running it next.
+        assert (live.buffer.text, live.queued_messages) == ('follow up\ndraft', ())
+        live.submit('later')
+        assert await live.read() == 'later'
+
+
+async def test_esc_on_a_cleared_queued_prompt_removes_it() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b')
+            live.feed('up')
+            live.feed('ctrl-u')
+            live.feed('escape')
+            assert live.interrupts.active
+            assert live.queued_messages == ('a',)
+            assert live.buffer.text == ''
+            assert Text.from_ansi(live.frame()[-1]).plain == 'Removed the queued message. | queued: 1'
+            live.feed('escape')
+        assert (live.buffer.text, live.queued_messages) == ('a', ())
+
+
+@pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
+async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
+    async with editor() as (live, _, _):
+        async with running(live) as completed:
+            queue(live, 'first', '/help')
+            live.submit(EOFError())
+            live.buffer.replace('draft')
+            live.feed(key)
+        assert completed == [False]
+        assert live.buffer.text == 'first\n/help\ndraft'
+        assert live.notice == 'Queued messages moved to the input. Press Enter to send them.'
+        # Only typed input moves; an exit signal still ends the session.
+        with pytest.raises(EOFError):
+            await live.read()
+
+
+async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_the_input() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b')
+            live.feed('up')
+            live.buffer.insert('2')
+            live.feed('ctrl-c')
+        assert (live.buffer.text, live.queued_messages) == ('a\nb2', ())
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:
