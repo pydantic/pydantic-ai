@@ -79,6 +79,7 @@ from pydantic_ai.exceptions import (
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelServerError,
     ModelUnavailableError,
     UserError,
 )
@@ -216,7 +217,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 provider_error_code=provider_error_code,
                 in_stream=in_stream,
             ) from e
-        # An exception event with no known status, like `modelStreamErrorException`.
+        # An exception event with no known status.
         raise (category or ModelAPIError)(
             model_name=model_name,
             message=str(e),
@@ -248,8 +249,15 @@ _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
     'serviceunavailableexception': 503,
     'internalserverexception': 500,
     'validationexception': 400,
+    'modelstreamerrorexception': 424,
+    'modeltimeoutexception': 408,
 }
-"""The HTTP status Bedrock documents for each `ConverseStream` exception event's error before the stream opens."""
+"""The HTTP status Bedrock documents for each exception event in a response stream.
+
+See https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStreamOutput.html and
+https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ResponseStream.html. A
+`modelStreamErrorException` also has an `originalStatusCode`, but botocore leaves it out of the error it raises.
+"""
 
 
 def _error_category(code: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
@@ -259,6 +267,9 @@ def _error_category(code: str | None, message: object) -> _model_errors.HTTPErro
             return ModelRateLimitError
         case 'servicequotaexceededexception':
             return ModelQuotaExceededError
+        case 'modelstreamerrorexception':
+            # The model failed while streaming its response; Bedrock says to retry the request.
+            return ModelServerError
         case 'serviceunavailableexception' | 'modelnotreadyexception':
             return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
         case 'validationexception' if isinstance(message, str) and any(

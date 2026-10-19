@@ -55,18 +55,31 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
     return None
 
 
+_QUOTA_CODES = (
+    'insufficient_quota',
+    'billing_hard_limit_reached',
+    'credit_balance_exhausted',
+    'organization_spend_limit_exceeded',
+    'project_spend_limit_exceeded',
+    'organization_usage_limit_exceeded',
+)
+"""OpenAI error codes that say the account's quota, credits or spend limit is exhausted, rather than a rate limit.
+
+OpenAI sends them with a 429, like a rate limit; see https://developers.openai.com/api/docs/guides/error-codes.
+"""
+
 _OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
     'rate_limit_exceeded': 429,
-    'insufficient_quota': 429,
+    'rate_limit_error': 429,
+    **dict.fromkeys(_QUOTA_CODES, 429),
     'context_length_exceeded': 400,
     'service_unavailable': 503,
+    'service_unavailable_error': 503,
+    'server_is_overloaded': 503,
     'overloaded': 503,
     'server_error': 500,
 }
 """The HTTP status OpenAI-compatible APIs use for an error, by its `code` or `type`, for errors that come without one."""
-
-_QUOTA_CODES = ('insufficient_quota', 'billing_hard_limit_reached')
-"""OpenAI error codes that say the account's quota or billing limit is exhausted, rather than a rate limit."""
 
 _CONTEXT_WINDOW_MESSAGES = ('maximum context length', 'reduce the length of the messages')
 """How OpenAI-compatible APIs that send no `context_length_exceeded` code (OpenRouter, vLLM, Groq) word an overflow."""

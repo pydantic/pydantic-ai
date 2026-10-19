@@ -664,6 +664,96 @@ CASES = [
         stream=True,
     ),
     Case(
+        id='openai-credit-balance-exhausted',
+        model=_openai,
+        handler=_json(
+            429,
+            {'error': {'message': 'Limit reached', 'type': 'rate_limit_error', 'code': 'credit_balance_exhausted'}},
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'credit_balance_exhausted'},
+    ),
+    Case(
+        id='openai-organization-spend-limit-exceeded',
+        model=_openai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Limit reached',
+                    'type': 'rate_limit_error',
+                    'code': 'organization_spend_limit_exceeded',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'organization_spend_limit_exceeded'},
+    ),
+    Case(
+        id='openai-project-spend-limit-exceeded',
+        model=_openai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Limit reached',
+                    'type': 'rate_limit_error',
+                    'code': 'project_spend_limit_exceeded',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'project_spend_limit_exceeded'},
+    ),
+    Case(
+        id='openai-organization-usage-limit-exceeded',
+        model=_openai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Limit reached',
+                    'type': 'rate_limit_error',
+                    'code': 'organization_usage_limit_exceeded',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'organization_usage_limit_exceeded'},
+    ),
+    Case(
+        id='openai-stream-credit-balance-exhausted',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'No credits left', 'code': 'credit_balance_exhausted'}}),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_code': 'credit_balance_exhausted'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-server-is-overloaded',
+        model=_openai,
+        handler=_sse_data(
+            {
+                'error': {
+                    'message': 'Slow down',
+                    'code': 'server_is_overloaded',
+                    'type': 'service_unavailable_error',
+                }
+            }
+        ),
+        categories=_OVERLOADED,
+        attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': 'server_is_overloaded'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-slow-down',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'Slow down', 'code': 'slow_down', 'type': 'rate_limit_error'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error'},
+        stream=True,
+    ),
+    Case(
         id='openai-stream-server-error',
         model=_openai,
         handler=_sse_data({'error': {'message': 'The server had an error', 'code': 'server_error'}}),
@@ -958,8 +1048,20 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('modelStreamErrorException', 'The model stream failed.', None),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 424, 'in_stream': True, 'provider_error_code': 'modelStreamErrorException'},
+            id='stream-model-stream-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('modelTimeoutException', 'The model took too long.', None),
+            {ModelHTTPError},
+            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException'},
+            id='stream-model-timeout',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('unknownStreamException', 'Something else failed.', None),
             set[type[ModelAPIError]](),
-            {'in_stream': True, 'provider_error_code': 'modelStreamErrorException'},
+            {'in_stream': True, 'provider_error_code': 'unknownStreamException'},
             id='stream-unmapped',
         ),
         pytest.param(
