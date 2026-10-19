@@ -79,9 +79,16 @@ that runs with the gateway's credentials.
 
 The headless runner streams model responses so it can record assistant messages, reasoning,
 tool calls and results (including native tools), and usage in the canonical session. The
-engine subscribes to typed core events through the public `Agent.on_event` API. The inline
-parser selects their framed JSONL records from captured engine stdio. The gh-aw runtime
-bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
+engine subscribes to typed core events through the public `Agent.on_event` API. It writes
+framed JSONL records through a dedicated descriptor while ordinary stdout and stderr remain
+terminal output. The framing key enters the child over stdin and is removed from the child
+environment before agent code can start tool processes.
+
+The gh-aw runtime captures the complete engine stream under `${RUNNER_TEMP}`, outside the
+agent sandbox's mounts, and publishes it to `/tmp/gh-aw/agent-stdio.log` only after the AWF
+sandbox has exited. The parser reads that protected capture. Writes by agent tools to the
+shared artifact therefore cannot forge canonical records, terminal status, or usage. The
+runtime bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
@@ -244,18 +251,30 @@ configure no endpoint.
 
 ## gh-aw compatibility
 
-This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
-or a newer compatible release for canonical session records and merged usage that match
-the unified-session schema. Install the pinned extension with:
+This definition requires the protected session capture contract introduced by
+[github/gh-aw#69586](https://github.com/github/gh-aw/pull/69586). A compatible gh-aw build
+must contain at least the contract in
+[`5e2b5d7`](https://github.com/github/gh-aw/commit/5e2b5d7e646319d709823ca078a8315a528c7367):
 
-```bash
-gh extension install github/gh-aw --pin v0.91.1
-```
+- accept `engine.behaviors.execution.protected-session-capture: true` only with an enabled
+  AWF sandbox and usable log parser;
+- capture live engine stdout and stderr under `${RUNNER_TEMP}`, outside every agent sandbox
+  mount, while preserving partial output and the AWF exit status;
+- set `GH_AW_PROTECTED_SESSION_CAPTURE=1` for the engine and parser only when that protected
+  path is active; and
+- replace `/tmp/gh-aw/agent-stdio.log` with the protected capture after the sandbox exits,
+  or discard the shared log if the protected capture is missing.
 
-The default stable release is below this runtime floor. Existing workflows must be
-recompiled with a compatible gh-aw pin and have their generated lockfile committed.
-Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
-the runtime it selects.
+The engine refuses to start when the runtime marker is absent. File permissions under the
+shared sandbox identity are not a substitute for this boundary. No released gh-aw version
+contains this contract yet; the previous
+[v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1) compatibility floor remains
+necessary but is not sufficient. This engine update must not be published until #69586 has
+a tagged release with an installable extension. Before this Pydantic change merges, this
+paragraph and the unified documentation must name that release and its `gh extension install`
+command. Existing workflows must then be recompiled with the compatible release and have
+their generated lockfile committed. Installing a newer `gh aw` CLI locally does not alter
+an already committed lockfile or the runtime it selects.
 
 The workflow summary is the canonical success/failure report. Categorical summary labels
 for specific MCP failures and maximum-turn outcomes are removed; MCP startup and

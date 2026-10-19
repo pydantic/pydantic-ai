@@ -836,8 +836,8 @@ engine:
 # Pydantic AI
 
 Shared engine definition for CLAI 2 headless execution. Import this file and set
-`engine: id: pydantic-ai`; gh-aw v0.91.1 or newer is required for canonical
-session capture and schema-valid merged usage.
+`engine: id: pydantic-ai`; the gh-aw protected session capture contract from
+github/gh-aw#69586, verified at `5e2b5d7`, is required.
 
 ```yaml
 imports:
@@ -852,9 +852,10 @@ resolves `PAI_AGENT` once from an imported Agent or JSON/YAML spec. Gateway MCP
 tools are added alongside existing tools. The workflow's model and proxy routing
 apply to all target forms.
 
-The recorder captures assistant messages, reasoning, tool calls and results (including
-native tools), and usage. The parser selects its framed records; gh-aw writes
-`agent-session.jsonl` and collects `usage/aw_session.jsonl`. Import failures and
-interrupted runs keep their actual failure outcome, without inferred turns or
-tool completions. See `README.md` for setup, credentials, and observability.
+The recorder sends assistant messages, reasoning, tool calls and results (including
+native tools), and usage through a dedicated descriptor. gh-aw captures the stream outside
+the sandbox and publishes it after AWF exits; the parser selects its framed records and
+writes `agent-session.jsonl`, and the conclusion collects `usage/aw_session.jsonl`.
+Import failures and interrupted runs keep their actual failure outcome, without inferred
+turns or tool completions. See `README.md` for setup, credentials, and observability.
 -->

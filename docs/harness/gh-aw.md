@@ -45,10 +45,15 @@ import-based engine like this one, so it is not part of the configuration below.
 
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
-- Install the gh-aw extension at [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
-  or a newer compatible release: `gh extension install github/gh-aw --pin v0.91.1`.
-  The default stable release is below the runtime floor this engine needs.
-- Existing workflows need a compatible runtime pin and a newly compiled lockfile.
+- Use a gh-aw build containing the protected session capture contract in
+  [github/gh-aw#69586](https://github.com/github/gh-aw/pull/69586). No released version
+  contains it yet; the previous [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
+  runtime floor remains necessary but is not sufficient. The currently verified upstream
+  build is [`5e2b5d7`](https://github.com/github/gh-aw/commit/5e2b5d7e646319d709823ca078a8315a528c7367).
+- This Pydantic change must not merge until #69586 has a tagged release with an installable
+  extension. Before merge, this prerequisite and the engine README must name that release
+  and its `gh extension install` command.
+- Existing workflows need a compatible runtime build and a newly compiled lockfile.
   Installing a newer `gh aw` CLI locally does not change the runtime an existing lockfile
   selects.
 - The workflow summary is the canonical success/failure report. Categorical summary labels
@@ -534,14 +539,27 @@ engine's own lines, `gh run view <run-id> --log` (add `--attempt N` for an earli
 is often quicker.
 
 The headless runner streams model responses so their typed events can be recorded in the
-canonical session. The engine emits `session.init`, `user.message`, `assistant.message`,
-`assistant.reasoning`,
+canonical session. It sends framed recorder events through a dedicated descriptor and keeps
+ordinary stdout and stderr as terminal output. The random framing key enters the child over
+stdin and is removed from the environment before agent code can start tool processes.
+
+A compatible gh-aw runtime accepts
+`engine.behaviors.execution.protected-session-capture: true`, requires an enabled AWF
+sandbox and usable parser, and captures the complete engine stream under `${RUNNER_TEMP}`
+outside every sandbox mount. After AWF exits, the parser bootstrap replaces the shared
+`/tmp/gh-aw/agent-stdio.log` artifact with that protected capture. If the protected capture
+is missing, it discards the shared log. The runtime sets
+`GH_AW_PROTECTED_SESSION_CAPTURE=1` for the engine and parser only when this path is active;
+the engine fails before launch when the marker is absent. This preserves partial output and
+the AWF exit status without trusting file permissions under the shared sandbox identity.
+
+The engine emits `session.init`, `user.message`, `assistant.message`, `assistant.reasoning`,
 `tool.execution_start`, `tool.execution_complete`, and `session.result`. The result includes
 reported usage when available; startup failures still record status without usage when none
 is available. If finalizing the recording fails, the launcher reports the error on stderr,
 preserves the CLI exit status, and attempts a status-only result. The inline parser selects
-framed typed events from captured engine stdio,
-and the gh-aw runtime bootstrap writes the canonical stream to `agent-session.jsonl`.
+framed typed events from the protected capture, and the gh-aw runtime bootstrap writes the
+canonical stream to `agent-session.jsonl`.
 Errors and calls still pending at interruption remain accurately represented; no tool IDs,
 completions or turns are inferred. A compatible gh-aw
 conclusion collects usage and `aw_session.jsonl`, including gateway and safe-output
@@ -552,8 +570,9 @@ activity. These artifacts complement the Actions summary and run logs.
 The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
-and usage. The inline parser selects the framed records from captured engine stdio rather
-than reconstructing a transcript from terminal output.
+and usage. The inline parser selects framed records from the protected host capture rather
+than accepting records written by agent tools to the shared artifact or reconstructing a
+transcript from terminal output.
 
 The gh-aw conclusion step gathers the agent session and usage into `aw_session.jsonl` and
 includes gateway and safe-output activity. The gh-aw usage artifact can be downloaded with
