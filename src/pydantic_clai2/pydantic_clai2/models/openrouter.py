@@ -90,7 +90,7 @@ def model(name: str) -> OpenRouterModel:
 def choose(names: list[str]) -> str | None:  # pragma: no cover -- terminal ownership.
     """Pick one discovered model in Termflow."""
     builder = MenuBuilder('OpenRouter models').items([MenuItem(name, value=name) for name in names])
-    result = slash_search(builder, footer='enter select · esc cancel', key_source=menu_key).run()
+    result = slash_search(builder, footer='Enter select - Esc cancel', key_source=menu_key).run()
     return result.item.value if not result.cancelled and result.item and isinstance(result.item.value, str) else None
 
 

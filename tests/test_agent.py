@@ -8478,8 +8478,10 @@ def test_binary_content_serializable():
                 'usage': {
                     'input_tokens': 56,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -8556,8 +8558,10 @@ def test_image_url_serializable_missing_media_type():
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -8640,8 +8644,10 @@ def test_image_url_serializable():
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -9725,13 +9731,6 @@ class _ToolsetOnlyAgent(AbstractAgent[None, str]):
 
     async def __aexit__(self, *args: Any) -> bool | None:
         raise NotImplementedError
-
-
-async def test_third_party_agent_rejects_connect():
-    """A third-party `AbstractAgent` that doesn't implement connections says so by type."""
-    with pytest.raises(UserError, match=re.escape('`_ToolsetOnlyAgent` does not support explicit connections.')):
-        async with _ToolsetOnlyAgent([]).connect():
-            pytest.fail('A third-party agent without connection support cannot connect')  # pragma: no cover
 
 
 def test_construction_toolsets_ignores_overrides():

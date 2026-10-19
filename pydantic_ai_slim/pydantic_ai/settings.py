@@ -269,6 +269,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -287,12 +288,66 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Decisions
     """
 
+    request_timeout: float
+    """A deadline for one request to one model, in seconds, enforced by Pydantic AI for every model.
+
+    [`timeout`][pydantic_ai.settings.ModelSettings.timeout] is applied by the provider client to each attempt:
+    an SDK retry re-arms it, and on a streamed response it only limits the wait for each chunk. This one clock
+    instead covers every attempt the provider SDK and HTTP transport make, any continuation of a paused
+    response, and reading a streamed response through its last chunk, including the time your code takes to
+    consume it. In Temporal's terms, `timeout` is the start-to-close timeout of one attempt and
+    `request_timeout` the schedule-to-close timeout of the whole request.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised. A
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives each model it tries a fresh deadline,
+    and by default falls back to the next model when one runs out.
+
+    It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
+    """
+
+    max_retries: int
+    """Override how many times the provider SDK's client retries a failed request, for one request.
+
+    `0` makes a single attempt. The SDK still decides which failures to retry and how long to wait
+    between attempts; this setting changes only how many retries it makes, so a request is sent at most
+    `1 + max_retries` times. Without it, the client's own configuration applies: `2` retries for the
+    OpenAI, Anthropic, Groq and Cohere clients Pydantic AI builds, and none for Google's.
+
+    Set it to `0` when something else owns retrying, such as a retrying HTTP transport, a durable
+    execution engine's retry policy, or a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+    that should move to its next model as soon as one fails. See
+    [Provider SDK retries](../retries.md#provider-sdk-retries).
+
+    Supported by:
+
+    * OpenAI
+    * OpenAI ChatGPT
+    * OpenAI Codex
+    * Anthropic
+    * Google (keeps the delays and status codes of the provider's `retry_options`)
+    * Groq
+    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Cohere
+    * Cerebras
+    * Crusoe
+    * GitHub Copilot
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
+    * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
+    * OpenAI Decisions
+    """
+
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -338,7 +393,7 @@ class ModelSettings(TypedDict, total=False):
     * Google
     * Groq
     * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
-    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a single forced tool is sent as a parameter; a larger named subset is honored by filtering the tool list)
     * Bedrock
     * xAI
     * HuggingFace
@@ -466,6 +521,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -603,6 +659,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
