@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
@@ -31,12 +31,13 @@ from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import responses
 
     from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.meta import MetaProvider
@@ -79,6 +80,9 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
     if host == 'api.meta.ai':
         return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
+    if host.endswith('.openai.azure.com'):
+        # The replay client is a plain `AsyncOpenAI`; `AzureProvider` only reads its base URL and API key from it.
+        return OpenAIResponsesModel(model_name, provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, client)))
     assert host == 'api.openai.com', host
     return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 

@@ -300,9 +300,7 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         cache_read_tokens=inp.cached_tokens or 0 if inp is not None else 0,
         cache_audio_read_tokens=cached.audio_tokens or 0 if cached is not None else 0,
         output_audio_tokens=out.audio_tokens or 0 if out is not None else 0,
-        # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
-        # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
-        **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
+        output_reasoning_tokens=details.get('reasoning_tokens', 0),
         # Image input is priced at its own rate (and cached image input at another), so it has to reach
         # pricing under the meter names genai-prices reads; in `details` alone it was priced as text.
         **({'input_image_tokens': image} if (image := details.get('input_image_tokens')) else {}),
@@ -494,9 +492,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_request_answers: tuple[InputId, ...] = ()
         # Which response, user turn, and input each frame is about (see `frames()`).
         self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled)
-        # Inputs that shared a `response.create` with an earlier one and so get no response of their own,
-        # reported to the session through `_take_merged_response_requests`.
-        self._merged_response_requests = 0
         # The calls each response made, by response id, and the response each call came from: a response's
         # tool results get a single `response.create`, once the response is done and every call has its
         # output. Asking after each one had the model answer before its sibling calls had results.
@@ -561,10 +556,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     @property
     def _answers_tool_calls_per_response(self) -> bool:
         return True
-
-    def _take_merged_response_requests(self) -> int:
-        merged, self._merged_response_requests = self._merged_response_requests, 0
-        return merged
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
@@ -716,17 +707,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         batch = self._tool_call_batches[response_id]
         batch.unanswered.discard(content.tool_call_id)
         batch.inputs.append(input_index)
-        await self._answer_tool_call_batch_if_complete(response_id)
+        await self._answer_tool_call_batch_if_complete(response_id, solicited=True)
 
-    async def _answer_tool_call_batch_if_complete(self, response_id: str) -> None:
-        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs."""
+    async def _answer_tool_call_batch_if_complete(self, response_id: str, *, solicited: bool = False) -> None:
+        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs.
+
+        `solicited` is for a caller's `send()` of the last output, which is told when the request didn't go out
+        (see `_solicit_response`).
+        """
         batch = self._tool_call_batches[response_id]
         if batch.done and not batch.unanswered:
             del self._tool_call_batches[response_id]
-            # One input names the request: the session counts one reply for the batch, so counting each
-            # output's input would release more reservations than this request holds when it's merged or
-            # refused. The response answers every output, though.
-            await self._request_response((batch.inputs[-1],), answers=batch.inputs)
+            # One input names the request, as the batch gets one reply; the response answers every output.
+            request = self._solicit_response if solicited else self._request_response
+            await request((batch.inputs[-1],), answers=batch.inputs)
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         self._lifecycle.message_sent(input_index)
@@ -745,7 +739,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if respond:
             await self._solicit_response((input_index,))
 
-    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+    async def _solicit_response(
+        self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None
+    ) -> None:
         """Request a response for a caller's `send()`, which is told when the request didn't go out.
 
         A `response.create` that fails on a dead socket never reached the server, so no response is
@@ -755,7 +751,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         ws = self._ws
         try:
-            await self._request_response(input_indexes)
+            await self._request_response(input_indexes, answers=answers)
         except self.transport_errors:
             # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
             # the link was replaced meanwhile, the active response is the new socket's, not this one.
@@ -993,11 +989,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 else None
             )
             after.extend(self._lifecycle.response_created(created.response, outstanding=outstanding))
-            if not self._response_started:
-                # The response our `response.create` asked for has started, so the request it carried
-                # for several inputs (deferred behind the previous response together) was not refused:
-                # it answers all of them at once.
-                self._merged_response_requests += max(0, len(self._response_request_inputs) - 1)
             self._response_active = True
             self._response_started = True
             self._active_response_id = created.response.id or None
@@ -1147,9 +1138,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if response.status != 'cancelled' or was_client_cancel:
                 await self._create_response(deferred_inputs, deferred_answers)
             else:
-                # The response the user's barge-in starts answers them instead, and takes one of their
-                # requests; the others are merged into it. No response is requested for them, though.
-                self._merged_response_requests += max(0, len(deferred_inputs) - 1)
+                # The user's barge-in takes the turn: no response is requested for them.
                 self._lifecycle.requests_dropped(deferred_answers)
         if isinstance(response_id, str) and (batch := self._tool_call_batches.get(response_id)) is not None:
             # No more calls can join the response: its tool results are answered once all are in.

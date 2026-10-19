@@ -12,29 +12,34 @@ show it. The page follows `/theme`, and the sidebar's footer picks a theme too. 
 ends the web UI; `/web status` shows its address.
 
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
-the address, opens it, and logs the conversation to the terminal until Ctrl-C. There, each
-session runs in its own directory. Opening a session saved elsewhere moves CLAI there before its
-next turn, with that directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if
-CLAI had started there. **New session** asks where the session runs: a project or worktree from
-the sidebar, by default the current one, or any directory by its absolute path
-(`/workspace DIRECTORY` in the composer does the same). The header shows where the session works.
-`clai2 --web --resume ID` starts in that session's directory. Nothing moves while a turn, a
-background `/fork`, or a delegated task runs. The launch directory's `.env` stays loaded.
+the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
+ends every session. There, each session you open is live in its own directory, with that
+directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
+there; CLAI's own working directory never changes. **New session** asks where the session runs: a
+project or worktree from the sidebar, by default the current one, or any directory by its absolute
+path. The header shows where the session works. `/workspace DIRECTORY` or `/resume ID` typed in a
+session moves that session instead, never while a turn, a background `/fork`, or a delegated task
+runs in it. `clai2 --web --resume ID` starts in that session's directory. A session left idle for
+an hour, with nothing running or queued and no browser showing it, closes, except the one CLAI
+started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
 A session remembers its checkout when it is saved, so one from a worktree you have since removed
 stays under its project, marked removed; an older session from a removed folder is placed by
-where it was, or listed under Removed folders. Click one to switch to it, or use its menu to
-rename, fork, archive, or delete it. Archiving hides a session from the sidebar and `/resume`
-without deleting anything; the archive button beside the search lists archived sessions too, muted,
-and searches them, each with **Unarchive** in its menu. The open session and running ones cannot
-be archived, and resuming an archived one, or a new turn in it, unarchives it. A session whose
-directory is gone, such as a removed worktree, opens read-only; so does, with `/web` from a
-terminal, a session saved in another directory, since the terminal works where it started.
-Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts, Cmd/Ctrl+K searches sessions,
-Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
+where it was, or listed under Removed folders. Click one to switch to it, even while other sessions
+run turns: each session you open stays live and keeps working while you look at another. A dot by
+a live session shows that it runs a turn, pulsing; runs one with input queued behind it, ringed; or
+waits for your answer to a question, amber. Use a session's menu to rename, fork, archive, or delete
+it. Archiving hides a session from the sidebar and `/resume` without deleting anything; the archive
+button beside the search lists archived sessions too, muted, and searches them, each with
+**Unarchive** in its menu. The shown session and running ones cannot be archived, and resuming an
+archived one, or a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A
+session whose directory is gone, such as a removed worktree, opens read-only; so does, with `/web`
+from a terminal, a session saved in another directory, since the terminal works where it started.
+Keyboard: Enter sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no
+other, Cmd/Ctrl+K searches sessions, Cmd/Ctrl+Shift+O starts a new one, Cmd/Ctrl+B hides the sidebar.
 
 The browser can make the agent run commands, so the server listens on 127.0.0.1 only and
 every request must carry a token that is new each launch, though kept across `/update`; the printed link contains it. Keep
@@ -57,7 +62,9 @@ reload. **General** holds the settings `/set` changes, grouped as their keys are
 Sessions, ...): each change is checked, saved, and applied at once, and the terminal prints what it
 saved; a change made in the terminal shows here too. `/set` or `/settings` typed in the composer
 opens it, and `/theme` or `/spinner` opens a small dialog with that one setting, instead of a menu
-in the terminal.
+in the terminal. A command's menu (`/model`, `/effort`, `/keys`, ...) acts on the session the page
+shows, as the command typed there would: picking a model in session B leaves session A's model as it
+was. Settings every session shares, such as `/set display.*`, still change them all.
 
 <!-- From #10456 -->
 **Models** (`#settings/models`, or `/model` typed in the composer) picks the model for
@@ -271,6 +278,72 @@ answers its questions, and reports back. It destroys a workspace only after you 
 ID** when it asked, in its chat. It also finds the saved sessions of every project and cleans them
 up by archiving them ("archive every session older than 3 days"), which you can undo. No tool
 deletes a session, and archiving removes no folder or worktree. It needs `workspaces` on, which
-the chat offers to do in one click, and uses the session's model. Its conversation is kept across
+the chat offers to do in one click, and uses the saved default model, the one a new session starts
+with (`/set model NAME` changes it). Its conversation is kept across
 reloads and restarts. The session's own agent gets none of this. See
 [the plugin guide](PLUGINS.md#orchestrator-an-agent-that-runs-workspaces).
+
+## Several live sessions
+
+The web UI (`clai2 --web`, or `/web` from a terminal) keeps every session you open live in the one
+CLAI process: each runs its own turns in
+its own folder, with its own plugins and input queue, while the others run theirs. The page watches
+the sessions it shows over its one WebSocket.
+
+### Wire protocol
+
+Sessions are named by their conversation ID, the `id` the sidebar lists.
+
+- **Per-session messages** (`item`, `delta`, and the other item messages, `turn_start`, `turn_end`,
+  `status`, `question`, `question_closed`, `notice`, `title`, `task`, `task_event`) carry `"session": "<conversation id>"` and go only to the
+  connections watching that session. A `snapshot` names its session in `session.id`.
+- **Global messages** (`sessions`, `plugins`, `settings`, `theme`, `update`, `orchestrator`, `live`,
+  and the settings menus' `dialog`, `dialog_shown`, and `dialog_closed`) go to every connection and
+  carry no `session`; every `snapshot` lists the open dialogs.
+- `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
+  conversation, or changes state:
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `queued` means input waits while that session's turn runs; `asking` means a question its turn
+  asked waits for the user.
+- The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
+  watches. The server answers with a `snapshot` for each newly watched live session. An ID that is not
+  live yet stays watched: its `snapshot` comes once it opens. A connection that never sends `watch`
+  (an older page, `web/client.py`) watches the default session, as before, and gets its `snapshot`
+  when another session becomes the default. A watched session is never closed for being idle.
+- When a live session switches conversation (`/new` or `/resume` typed in it), its watchers get a
+  `snapshot` for the new ID, and `live` changes.
+
+Routes for one live session, `{id}` its conversation ID; each answers 404 when it is not live:
+
+| Route | Does |
+|---|---|
+| `GET /api/sessions/{id}/state` | its `snapshot` |
+| `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
+| `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
+| `GET /api/sessions/{id}/complete?text=…` | Tab completions |
+| `POST /api/sessions/{id}/model` | select a model, body `{"name": "…"}` |
+| `POST /api/sessions/{id}/switch` | turn a `/set` switch on or off, body `{"key": "…", "on": true}`, as `/api/switch` |
+| `POST /api/sessions/{id}/questions/{request_id}` | answer its question |
+| `POST /api/sessions/{id}/dialogs/{dialog_id}` | answer a settings menu's dialog, as `/api/dialogs/…` |
+| `GET /api/sessions/{id}/commands/{name}/fields[?menu=KEY…]` | the `MenuInfo` of the menu bare `/name` opens in this session, built from its own commands, as `/api/commands/{name}/fields` |
+| `POST /api/sessions/{id}/commands/{name}/fields/{key}[?menu=KEY…]` | set a row, body `{"value": "…"}` (`null` or empty resets it); answers `MenuEdited` |
+| `POST /api/sessions/{id}/commands/{name}/fields/{key}/action[?menu=KEY…]` | run a row's action, asking through the page's dialogs; answers `MenuEdited` |
+
+`POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
+one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
+optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
+the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
+opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
+with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
+delete) and `/api/tasks/{task_id}/…` are unchanged.
+
+A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
+choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings
+CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
+(`/api/plugins/…`) and dialogs belong to the page.
+
+The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
+`/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
+default session: the one this page last opened or started while it stays live, else the most recently opened.
+`/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
+orchestrators of other CLAI versions use them.
