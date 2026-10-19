@@ -66,6 +66,7 @@ from ..messages import (
 )
 from ..usage import RequestUsage, RunUsage
 from ._lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputId,
     InputLost,
@@ -578,6 +579,8 @@ class SessionCore:
             self._speech_ended(item.item_id)
         elif isinstance(item, InputAdded):
             self._place_input(item.input_id)
+        elif isinstance(item, AnswersRevised):
+            self._revise_answers(item)
         elif isinstance(item, (ResponseRequestRefused, InputLost)):
             self._settle(item.input_ids, 'refused' if isinstance(item, ResponseRequestRefused) else 'lost')
         elif isinstance(item, InputRejected):
@@ -704,6 +707,24 @@ class SessionCore:
                 self._obligations[input_id] = 'answered'
                 self._answered_by[input_id] = event.response_id
         self._effects.append(ResponseOpened(event.response_id))
+
+    def _revise_answers(self, event: AnswersRevised) -> None:
+        """The connection learned better which inputs a response under way answers (see `AnswersRevised`).
+
+        Where the inputs are in history doesn't change: only which response settles their reply obligations.
+        """
+        response = self._responses[event.response_id]
+        assert response.status is None or not event.claimed, f'{response.id!r} ended: it claims nothing more'
+        for input_id in event.claimed:
+            if self._obligations.get(input_id) == 'pending':
+                self._obligations[input_id] = 'answered'
+                self._answered_by[input_id] = response.id
+                response.answers = (*response.answers, input_id)
+        for input_id in event.released:
+            if self._answered_by.get(input_id) == response.id and self._obligations.get(input_id) == 'answered':
+                self._obligations[input_id] = 'pending'
+                del self._answered_by[input_id]
+                response.answers = tuple(answer for answer in response.answers if answer != input_id)
 
     def _response_content(self, event: AudioDelta | OutputTranscript) -> None:
         response = self._open_response(event.response_id)
@@ -1661,7 +1682,17 @@ class SessionCore:
             for call_id, response in self._call_response.items()
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
-        return self.still_owed(frozenset(tokens))
+        owed = self.still_owed(frozenset(tokens))
+        # An input a response under way (or the tool round it started) answers is followed from the input itself, so
+        # a waiter still waits for it if the response turns out not to answer it after all (`AnswersRevised`).
+        revisable = {token.key for token in owed if token.kind == 'response'} | {
+            self._call_response[token.key].id for token in owed if token.kind == 'call'
+        }
+        return owed | {
+            Owed('input', str(input_id), epoch)
+            for input_id, response_id in self._answered_by.items()
+            if response_id in revisable and self._obligations.get(input_id) == 'answered'
+        }
 
     def still_owed(self, tokens: frozenset[Owed]) -> frozenset[Owed]:
         """Follow each token to what it led to, keeping only what is still to come.

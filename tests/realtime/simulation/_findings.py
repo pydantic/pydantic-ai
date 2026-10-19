@@ -87,7 +87,15 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
     evidence='simulated',
     codes=frozenset(
-        {'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang', 'wait.early', 'history.order'}
+        {
+            'response.truncated',
+            'response.missing',
+            'usage.attribution',
+            'wait.hang',
+            'wait.early',
+            'turn_complete.while_owed',
+            'history.order',
+        }
     ),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
@@ -270,14 +278,15 @@ def _tool_round_reply_taken(sim: Simulation, violation: InvariantViolation) -> b
 RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     id='8763c #3',
     title=(
-        "a response already under way when a turn was sent (server VAD, a GPT-Live delegation) takes that turn's "
-        "reservation, so `wait_for_reply()` returns when it ends, before the turn's own reply (likewise a response "
-        'the provider starts on its own while a tool round is owed its answer)'
+        'on GPT-Live, a delegation the model starts on its own while a delegated tool round is owed its answer is '
+        'taken for that answer, so `wait_for_reply()` returns when it ends (the rest of 8763c #3, text taking a '
+        'reply already under way, is fixed: the OpenAI protocol asks again for a request server VAD overtook, '
+        'Gemini hands an input that cuts a reply off to the next, and Live answers text in the reply under way)'
     ),
-    tracked_by='reply obligations resolved only by the response that answers them',
-    evidence='recorded',
-    codes=frozenset({'wait.early'}),
-    providers=ALL,
+    tracked_by='delegated tool rounds mapped to the delegation that answers them',
+    evidence='simulated',
+    codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
+    providers=frozenset({'gpt-live'}),
     matches=_reply_taken_by_earlier_response,
 )
 
@@ -292,35 +301,6 @@ KNOWN_FINDINGS: list[Finding] = [
 
 def _gemini_behavior(sim: Simulation, name: str) -> bool:
     return bool(getattr(getattr(sim, 'behavior', None), name, False))
-
-
-def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
-    """The input the wait was owed a reply for cut off a model turn (or one the model hadn't started on yet)."""
-    if any(call.cancelled_by_server for call in sim.truth.tool_calls.values()):
-        return True  # It cut off a turn waiting on tool results: Gemini cancelled the calls.
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    return input_ is not None and any(
-        response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
-        for response in sim.truth.responses.values()
-    )
-
-
-CUT_OFF_TURN_COMPLETE = Finding(
-    id='SIM-13',
-    title=(
-        'a typed turn that cuts off a model turn (one waiting on tool results, whose calls Gemini cancels, or one '
-        "the model hadn't started on yet) gets its `wait_for_reply()` ended by the cut-off turn's `turn_complete`, "
-        'before its own reply'
-    ),
-    tracked_by=(
-        'turn boundaries mapped to the exchange they close, and obligations resolved only by their answer; '
-        'the cut-off-turn case #8766 left; found by this simulator'
-    ),
-    evidence='simulated',
-    codes=frozenset({'wait.early'}),
-    providers=GEMINI,
-    matches=_cut_off_by_the_input,
-)
 
 
 def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
@@ -665,15 +645,16 @@ PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
     id='SIM-24',
     title=(
         'until the server has echoed the metadata of one of our `response.create`s, the connection takes a response '
-        'it started on its own (server VAD) for the one we asked for, if ours is outstanding: it answers our input, '
-        "so the input is recorded before it and a wait for the input's reply ends with it"
+        'it started on its own (server VAD) for the one we asked for, if ours is outstanding and adds no item of its '
+        'own (a bare `create_response()`): it answers our input, so the input is recorded before it and a wait for '
+        "the input's reply ends with it"
     ),
     tracked_by=(
         "the OpenAI-protocol lifecycle tracker's documented inference: whether a server echoes request metadata is "
         'learned from its first echo, not assumed per provider'
     ),
     evidence='simulated',
-    codes=frozenset({'history.order', 'wait.early'}),
+    codes=frozenset({'history.order', 'wait.early', 'turn_complete.while_owed'}),
     providers=OPENAI_PROTOCOL,
     matches=_provider_reply_before_any_echo,
     accepted=True,
@@ -732,7 +713,6 @@ KNOWN_FINDINGS.extend(
         LIVE_RAW_CLOSE_ERROR,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
-        CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,

@@ -33,7 +33,11 @@ from ..realtime_connections import lifecycle_events
 with try_import() as imports_successful:
     from pydantic_ai.messages import BinaryAudio
     from pydantic_ai.realtime._openai_lifecycle import OpenAILifecycle
-    from pydantic_ai.realtime._openai_protocol import response_metadata_answers, response_request_metadata
+    from pydantic_ai.realtime._openai_protocol import (
+        ACTIVE_RESPONSE_RETRIES,
+        response_metadata_answers,
+        response_request_metadata,
+    )
     from pydantic_ai.realtime.codec import (
         CancelResponse,
         CommitAudio,
@@ -764,51 +768,100 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
     )
 
 
-async def test_a_request_refused_for_a_response_the_provider_started_is_answered_by_it() -> None:
-    """The refusal arrives before the server-VAD response's `response.created`, which answers the input."""
-    refused = refusal('pydantic_ai.response.0')
+def active_refusal(event_id: str) -> dict[str, Any]:
+    refused = refusal(event_id)
     refused['error']['code'] = 'conversation_already_has_active_response'
-    stream = Stream(refused, created('resp_vad'), done('resp_vad'))
+    return refused
+
+
+def requests_sent(ws: FakeWebSocket) -> list[dict[str, Any]]:
+    return [frame for frame in map(json.loads, ws.sent) if frame['type'] == 'response.create']
+
+
+SPOKEN_TURN = (
+    {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u'},
+    {'type': 'conversation.item.added', 'item': {'id': 'item_u', 'type': 'message', 'role': 'user'}},
+)
+"""A spoken turn server VAD commits, which the response it starts on its own answers."""
+
+OUR_ITEM_ADDED = {
+    'type': 'conversation.item.added',
+    'item': {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'},
+}
+
+
+async def test_a_request_refused_after_the_response_that_overtook_it_is_asked_again() -> None:
+    """As recorded live: server VAD starts a response before our item is added, and refuses our request after it ends.
+
+    That response never saw the input, so it answers nothing of ours: the request is asked for again, and the
+    response that starts answers the input. The refusal is handled, so it is reported to nobody.
+    """
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        done('resp_vad'),
+        active_refusal('pydantic_ai.response.0'),
+        created('resp_2', answers='0'),
+        done('resp_2'),
+    )
     await stream.connection.send('Hello?')
-    assert await stream.rest() == snapshot(
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, (ResponseStarted, InputAdded)) or 'Error' in str(event)] == (
+        snapshot(
+            [
+                ResponseStarted(response_id='resp_vad', user_turn_id='item_u'),
+                InputAdded(input_id=0),
+                ResponseStarted(response_id='resp_2', answers=(0,)),
+                'RealtimeSessionErrorEvent',
+            ]
+        )
+    )
+    assert [request['event_id'] for request in requests_sent(stream.ws)] == [
+        'pydantic_ai.response.0',
+        'pydantic_ai.response.0',
+    ]
+
+
+async def test_a_request_refused_while_the_response_that_overtook_it_goes_on_waits_for_its_end() -> None:
+    """The refusal can also come while that response is under way, or before it is even reported."""
+    for incoming in (
+        (created('resp_vad'), OUR_ITEM_ADDED, active_refusal('pydantic_ai.response.0')),
+        (active_refusal('pydantic_ai.response.0'), created('resp_vad'), OUR_ITEM_ADDED),
+    ):
+        stream = Stream(*SPOKEN_TURN, *incoming)
+        await stream.connection.send('Hello?')
+        await stream.take(len(incoming) + 1)
+        assert len(requests_sent(stream.ws)) == 1
+        stream.feed(done('resp_vad'), created('resp_2', answers='0'))
+        events = await stream.rest()
+        assert len(requests_sent(stream.ws)) == 2
+        assert [event for event in events if isinstance(event, ResponseStarted)] == [
+            ResponseStarted(response_id='resp_2', answers=(0,))
+        ]
+
+
+async def test_a_request_the_provider_keeps_refusing_is_given_up_on() -> None:
+    """Each response server VAD starts refuses it again: after `ACTIVE_RESPONSE_RETRIES` times, the refusal is reported."""
+    incoming: list[dict[str, Any]] = [*SPOKEN_TURN]
+    for number in range(ACTIVE_RESPONSE_RETRIES + 1):
+        incoming += [created(f'resp_vad{number}'), done(f'resp_vad{number}'), active_refusal('pydantic_ai.response.0')]
+    stream = Stream(*incoming)
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert len(requests_sent(stream.ws)) == ACTIVE_RESPONSE_RETRIES + 1
+    assert [
+        event
+        for event in events
+        if isinstance(event, ResponseRequestRefused) or event in ('InputRejected', 'RealtimeSessionErrorEvent')
+    ] == snapshot(
         [
             'InputRejected',
             'RealtimeSessionErrorEvent',
-            ResponseStarted(response_id='resp_vad', answers=(0,), basis='inferred'),
-            'ResponseDone',
-            ResponseEnded(
-                response_id='resp_vad',
-                status='completed',
-                finish_reason='stop',
-                provider_details={'status': 'completed'},
-            ),
+            ResponseRequestRefused(input_ids=(0,)),
             'RealtimeSessionErrorEvent',
         ]
     )
-
-
-async def test_a_request_refused_for_a_response_the_provider_never_reports_stays_refused() -> None:
-    """The next response is ours after all, or no response comes before the connection is gone."""
-    refused = refusal('pydantic_ai.response.0')
-    refused['error']['code'] = 'conversation_already_has_active_response'
-    stream = Stream(refused, created('resp_1', answers='1'))
-    await stream.connection.send('Hello?')
-    await stream.connection.send('Again?')
-    events = await stream.rest()
-    assert [event for event in events if isinstance(event, (ResponseRequestRefused, ResponseStarted))] == snapshot(
-        [ResponseRequestRefused(input_ids=(0,)), ResponseStarted(response_id='resp_1', answers=(1,))]
-    )
-
-    async def dial() -> Any:
-        return FakeWebSocket([])
-
-    for reconnect in (None, {'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1}):
-        stream = Stream(refused, dial=dial, reconnect=reconnect)
-        await stream.connection.send('Hello?')
-        events = await stream.rest()
-        assert [event for event in events if isinstance(event, ResponseRequestRefused)] == [
-            ResponseRequestRefused(input_ids=(0,))
-        ]
 
 
 async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_active() -> None:

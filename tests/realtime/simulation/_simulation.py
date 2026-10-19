@@ -189,6 +189,8 @@ class Simulation(ABC):
         self.operations: list[Operation] = []
         self.waiters: list[Waiter] = []
         self.events: list[RealtimeEvent] = []
+        self.turn_completes: list[Waiter] = []
+        """Each `RealtimeTurnCompleteEvent` the session streamed, as a wait that returned as it was queued."""
         self.consumer_error: BaseException | None = None
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None

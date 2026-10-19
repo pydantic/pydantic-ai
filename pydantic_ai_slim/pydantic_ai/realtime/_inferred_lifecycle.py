@@ -17,6 +17,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
 )
 from ._lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputId,
     InputLost,
@@ -43,6 +44,7 @@ from .codec import (
     ResponseDone,
     SessionUsage,
     ToolCall,
+    ToolCallCancelled,
     ToolResult,
 )
 
@@ -94,7 +96,9 @@ class InferredLifecycle:
       or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is
       made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
-      answered when it started (`ResponseStarted.basis='inferred'`).
+      answered when it started (`ResponseStarted.basis='inferred'`). One that is cut off answers only the oldest of
+      them: an input that reaches the provider mid-generation cuts it off, and the next response answers the rest
+      ([`AnswersRevised.released`][pydantic_ai.realtime.lifecycle.AnswersRevised.released]).
     - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
       has its whole transcript once that reply ends, unless the transcript is marked final before. A turn the
       provider identifies (its transcripts carry an `item_id`) is named by that id, and waits for its final
@@ -155,6 +159,13 @@ class InferredLifecycle:
         """The response under way."""
         self._open_named = False
         """Whether the provider named the response under way, by the `response_id` of its content."""
+        self._open_answers: tuple[InputId, ...] = ()
+        """The inputs the response under way answers, oldest first."""
+        self._open_said = False
+        """Whether the response under way said (or called) anything yet."""
+        self._calling: tuple[str, tuple[InputId, ...]] | None = None
+        """The latest response that ended at its tool calls, and the inputs it answers: its reply goes on in the
+        answer to the calls, until the next response starts."""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
         self._cut_off = False
@@ -409,6 +420,8 @@ class InferredLifecycle:
             self._response_done(event, before, after)
         elif isinstance(event, InputRejected):
             self._input_rejected(event, after)
+        elif isinstance(event, ToolCallCancelled):
+            self._calls_cancelled(before)
         # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
         # drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
         return before, after
@@ -443,6 +456,7 @@ class InferredLifecycle:
             # Content of a response the provider names differently: the one under way is over.
             self._end(before, status='completed')
         self._ensure_response(before, named=named)
+        self._open_said = True
         if isinstance(event, ToolCall):
             if event.response_usage_follows:
                 self._calls_awaiting_usage = True
@@ -646,6 +660,8 @@ class InferredLifecycle:
         self._responses += 1
         self._open = named or f'pydantic_ai_response_{self._responses}'
         self._open_named = named is not None
+        self._open_answers = answers
+        self._calling = None
         if turn_id is not None:
             self._turn_reply = (turn_id, self._open)
         elif not answers and self._transcribes and self.transcripts_lag_replies:
@@ -705,6 +721,14 @@ class InferredLifecycle:
         response_id = self._open
         assert response_id is not None
         self._open = None
+        answers, self._open_answers = self._open_answers, ()
+        said, self._open_said = self._open_said, False
+        if status == 'cancelled':
+            # Cut off: it answers what started it, if it said anything, and the next response answers the rest.
+            self._release(events, response_id, answers if not said else answers[1:])
+        elif finish_reason == 'tool_call':
+            # Its reply goes on in the answer to its calls, unless the provider cancels them (see `_calls_cancelled`).
+            self._calling = (response_id, answers)
         self._cut_off = False
         self._unprompted_reply = None
         self._deferred = None
@@ -720,6 +744,28 @@ class InferredLifecycle:
             self._turn_reply = None
             self._close_turn(events, turn_id=reply[0])
         self._place_held(events)
+
+    def _release(self, events: list[LifecycleEvent], response_id: str, released: tuple[InputId, ...]) -> None:
+        """Inputs a response was taken to answer reached the provider after it started: the next response answers them.
+
+        One that reaches the provider before a generation starts joins it, while one that comes during the generation
+        cuts it off (as Gemini Live does). Which of those taken for its own came during it can't be told, but the
+        oldest of them started it.
+        """
+        if released:
+            events.append(AnswersRevised(response_id=response_id, released=released))
+            self._unanswered[:0] = released
+
+    def _calls_cancelled(self, events: list[LifecycleEvent]) -> None:
+        """The provider cancelled tool calls: an input cut off the turn waiting on their results.
+
+        That turn's reply would have gone on in the answer to the calls, so the response that made them answers
+        only what started it, and the next response, which the provider starts for the input that cut in, the rest.
+        """
+        if (calling := self._calling) is not None:
+            self._calling = None
+            response_id, answers = calling
+            self._release(events, response_id, answers[1:])
 
     def _end_deferred(self, events: list[LifecycleEvent]) -> None:
         """End the held filler as the model carries the exchange on in a response of its own, starting now."""

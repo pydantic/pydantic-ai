@@ -71,6 +71,8 @@ from ..usage import RequestUsage
 from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, StaleEvent
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
+    ACTIVE_RESPONSE_ERROR_CODE,
+    ACTIVE_RESPONSE_RETRIES,
     AUDIO_DELTA_TYPES,
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_ADDED_EVENTS,
@@ -528,6 +530,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # batch's request is named after its last output (the session counts one reply for the batch)
         # while it answers all of them. Sent as the request's `metadata`, which the response echoes.
         self._deferred_response_answers: list[InputId] = []
+        # Our request for a response that a response the provider started on its own (server VAD) overtook: still
+        # to be refused (while that one is under way), or, on a protocol clone that cancels its own instead, started.
+        self._request_in_flight: tuple[tuple[int, ...], tuple[InputId, ...]] | None = None
+        # How many of our requests in a row the provider refused because a response of its own was under way.
+        self._active_response_refusals = 0
         self._response_request_answers: tuple[InputId, ...] = ()
         # Which response, user turn, and input each frame is about (see `frames()`).
         self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled)
@@ -963,6 +970,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def _unanswered_inputs(self) -> list[InputId]:
         """The inputs whose request for a response is still to be answered: sent, deferred, or not yet made."""
         unanswered = [*self._deferred_response_answers]
+        if self._request_in_flight is not None:
+            unanswered += self._request_in_flight[1]
         if self._response_active and not self._response_started:
             unanswered += self._response_request_answers
         unanswered += [input_ for batch in self._tool_call_batches.values() for input_ in batch.inputs]
@@ -1042,8 +1051,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             after = []
         events: list[RealtimeCodecEvent] = []
         superseded = False
+        asked_again = False
         if event_type == 'error':
-            events.extend(await self._handle_error(data))
+            rejected = await self._handle_error(data)
+            asked_again = rejected is None
+            events.extend(rejected or ())
         if event_type == 'response.done':
             # Settled *before* the frame is mapped: mapping a malformed `response.done` raises
             # `ValueError`, which `frames` surfaces as a recoverable frame error and keeps reading —
@@ -1052,7 +1064,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # `response.create` behind a response that already ended.
             done_events, superseded = await self._handle_response_done(data)
             events.extend(done_events)
-        event = self._map_event(data)
+        event = None if asked_again else self._map_event(data)
         if (
             event_type == 'response.function_call_arguments.done'
             and isinstance(event, ToolCall)
@@ -1069,6 +1081,18 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 else None
             )
             after.extend(self._lifecycle.response_created(created.response, outstanding=outstanding))
+            if outstanding is not None and self._lifecycle.request_outstanding(outstanding[0]):
+                # Not ours: one the provider started on its own while ours was on its way, which it refuses or
+                # (xAI) starts once this one is cancelled.
+                self._request_in_flight = (self._response_request_inputs, self._response_request_answers)
+            elif (in_flight := self._request_in_flight) is not None and not self._lifecycle.request_outstanding(
+                client_event_id('response', in_flight[0])
+            ):
+                # Ours after all, started once the provider cancelled its own.
+                self._request_in_flight = None
+                self._active_response_refusals = 0
+            elif outstanding is not None:
+                self._active_response_refusals = 0
             self._response_active = True
             self._response_started = True
             self._active_response_id = created.response.id or None
@@ -1119,15 +1143,21 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             events, before=self._lifecycle.take_leading(), after=[*after, *self._take_pending_lifecycle()], stale=stale
         )
 
-    async def _handle_error(self, data: dict[str, Any]) -> list[InputRejected]:
+    async def _handle_error(self, data: dict[str, Any]) -> list[InputRejected] | None:
         """Report the inputs an `error` frame refused, and release a refused request for a response.
 
         The refused request can be the one this connection is waiting on to start, the only thing that
         would ever have cleared `_response_active`: left set, every later request would queue behind a
         response that never comes. Requests deferred behind it are sent now instead.
+
+        A request refused because a response the provider started on its own was under way is asked for again
+        once that one is over, up to `ACTIVE_RESPONSE_RETRIES` times in a row: `None` says the error is handled so,
+        and reported to nobody.
         """
         error = RealtimeErrorEvent.model_validate(data).error
         rejected = rejected_inputs(error)
+        if error.code == ACTIVE_RESPONSE_ERROR_CODE and await self._ask_again(error.event_id):
+            return None
         if (
             self._response_active
             and not self._response_started
@@ -1138,6 +1168,38 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if self._pending_response:
                 await self._create_response(*self._take_deferred_response_inputs())
         return rejected
+
+    async def _ask_again(self, event_id: str | None) -> bool:
+        """Ask again for a request of ours refused while another response was under way; `False` to give up on it.
+
+        Asked once the response under way is over, which may be already: the refusal can come after its end.
+        """
+        in_flight = self._request_in_flight
+        if in_flight is not None and event_id == client_event_id('response', in_flight[0]):
+            # Refused as the response that overtook it was under way.
+            self._request_in_flight = None
+            request = in_flight
+        elif (
+            self._response_active
+            and not self._response_started
+            and self._response_request_inputs
+            and event_id == client_event_id('response', self._response_request_inputs)
+        ):
+            # Refused for a response of the provider's own that isn't reported yet: it is, next, and this one
+            # waits behind it.
+            request = (self._response_request_inputs, self._response_request_answers)
+        else:
+            return False
+        self._active_response_refusals += 1
+        if self._active_response_refusals > ACTIVE_RESPONSE_RETRIES:
+            # The provider kept starting responses of its own: give up on this one, as on any other refusal.
+            self._active_response_refusals = 0
+            self._lifecycle.requests_refused(request[1])
+            return False
+        if request is not in_flight:
+            self._response_request_inputs = self._response_request_answers = ()
+        await self._request_response(request[0], answers=request[1])
+        return True
 
     async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
         """Update response state and emit usage for a `response.done`.
@@ -1301,6 +1363,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a response a
             # barge-in explicitly stopped. Sent inside this guard because the new socket can drop before
             # the frame reaches it, which has to consume an attempt like any other failed reconnect.
+            if (in_flight := self._request_in_flight) is not None:
+                # Neither refused nor started on the old socket: asked for again like one deferred.
+                self._request_in_flight = None
+                self._pending_response = True
+                self._deferred_response_inputs[:0] = in_flight[0]
+                self._deferred_response_answers[:0] = in_flight[1]
             replay_response = self._pending_response or (
                 self._response_active and not self._response_started and not self._cancel_sent
             )
