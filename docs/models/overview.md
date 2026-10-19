@@ -287,7 +287,7 @@ these categories, whichever provider it came from:
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded.
 
-Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#http-errors), as they always were.
+Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
 only where the provider offers nothing else. Every `ModelAPIError` also exposes the provider's
 [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code],
@@ -321,7 +321,7 @@ See [Compaction](../capabilities/compaction.md) for keeping a conversation under
 first place, which is preferable to waiting for `ModelContextWindowExceededError`: model performance usually degrades well
 before the hard limit.
 
-### HTTP errors
+### HTTP errors {#handling-http-errors}
 
 When a provider returns a 4xx or 5xx response, the error is a
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], and also an instance of the error category above

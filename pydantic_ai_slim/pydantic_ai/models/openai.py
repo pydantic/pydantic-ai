@@ -249,7 +249,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
 
 
-def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str = 'openai') -> ModelHTTPError:
+def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
     body: object | None = e.body
     suggested_model_id = None
     if e.code == 'model_not_found':
