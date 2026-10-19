@@ -205,7 +205,7 @@ class WorkspaceTools:
         `ref` is a branch, tag, or commit, such as `main`; empty for the kind's own or the repository's `HEAD`.
         The workspace gets a new branch. Nothing runs in it until `session_start`.
         """
-        workspace = await self.workspaces().create(kind=kind, repo=repo, ref=ref)
+        workspace = await self.workspaces().create(kind=kind, repo=repo, ref=ref, base=self.host.workspace)
         return f'Created workspace {workspace.id} at {workspace.path} on branch {workspace.branch}.'
 
     async def workspace_destroy(self, ctx: RunContext[None], workspace: str) -> str:

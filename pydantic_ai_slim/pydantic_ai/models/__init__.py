@@ -169,6 +169,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'fireworks',
         'meta',
         'nebius',
+        'openai-chatgpt',
         'openai-codex',
         'openrouter',
         'ovhcloud',
@@ -2009,8 +2010,9 @@ def infer_model(  # noqa: C901
 
         return OpenAICodexModel(model_name, provider=provider)
     # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
-    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API. ChatGPT plan usage only serves
+    # the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta', 'openai-chatgpt'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

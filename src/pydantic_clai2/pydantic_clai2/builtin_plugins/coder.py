@@ -132,7 +132,7 @@ class CoderSettings(BaseModel):
     def skill_libraries(self, *, home: Path, parents: Sequence[Path] = ()) -> list[str]:
         """`skill_folders` with `~/` expanded, each once, in precedence order.
 
-        Relative folders are searched in the launch directory and then in each of `parents`, its parents
+        Relative folders are searched in the session directory and then in each of `parents`, its parents
         up to the git root, nearest directory first: every relative folder in one directory comes before
         any in the next, so `src/.claude/skills` takes precedence over the repository's `.agents/skills`,
         the way nearer instruction files do. Consecutive relative folders are searched together, so they
@@ -277,30 +277,12 @@ class _ProjectSkills(WrapperCapability[DepsT]):
     """
 
     project: LocalWorkspaceBackend = field(kw_only=True)
-    """The directory CLAI started in, where the commands' skills are read."""
-
-    disabled: frozenset[str] = field(default=frozenset[str](), kw_only=True)
-    """Skill names the user turned off, left out of the run's catalog.
-
-    Removed from what `Skills` offers rather than passed as its `exclude`, which fails a run when a
-    name is not found: the setting is the same in every project, and a project may not have the skill.
-    """
+    """The session's directory (`PluginHost.workspace`), where the commands' skills are read."""
 
     async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
         if not ctx.workspace.attached:
             ctx = replace(ctx, workspace=Workspace(self.project))
-        offered = await super().for_run(ctx)
-        if not self.disabled:
-            return offered
-        return offered.visit_and_replace(self._enabled) or CombinedCapability[DepsT]([])
-
-    def _enabled(self, capability: AbstractCapability[DepsT]) -> AbstractCapability[DepsT] | None:
-        """Each skill `Skills` offers is a deferred capability whose `id` is the skill's name.
-
-        The model loads a skill by that name with `load_capability`, so the `id` is what the catalog
-        shows it. `TestDisabledSkills` fails if a disabled skill reaches the catalog some other way.
-        """
-        return None if capability.defer_loading and capability.id in self.disabled else capability
+        return await super().for_run(ctx)
 
 
 class CoderPlugin(Plugin[CoderSettings, DepsT]):
@@ -325,17 +307,26 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         The model's catalog is read again at the start of every run, so it lists a skill added since;
         its command arrives when the plugin loads again.
         """
-        cwd = Path(await anyio.Path.cwd())
-        # The launch directory itself stays relative, resolved by the workspace as before.
-        _, *parents = await anyio.to_thread.run_sync(repository_directories, cwd)
+        directory = self.host.workspace
+        # The session's directory itself stays relative, resolved by the workspace as before.
+        _, *parents = await anyio.to_thread.run_sync(repository_directories, directory)
         libraries = self.settings.skill_libraries(home=Path(await anyio.Path.home()), parents=parents)
         # Without a local workspace (Windows), the folders cannot be read here or by the run.
         if not libraries or not supports_local_workspace():
             return
-        skills = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
-        workspace = LocalWorkspaceBackend(cwd)
+        # The model's skills leave out the ones turned off. The setting is the same in every project, so a
+        # name this project lacks is skipped. The commands and the settings menu read every skill.
+        skills = Skills[DepsT](
+            libraries,
+            exclude=self.settings.disabled_skills,
+            missing_directories='skip',
+            duplicate_names='keep_first',
+            unknown_names='skip',
+        )
+        listed = Skills[DepsT](libraries, missing_directories='skip', duplicate_names='keep_first')
+        workspace = LocalWorkspaceBackend(directory)
         try:
-            catalog = await skills.load(workspace)
+            catalog = await listed.load(workspace)
         except (UserError, ValueError, OSError) as exc:
             # A misconfigured or unreadable folder would otherwise fail every turn, or the whole plugin, so
             # skills are left out and the file and shell tools still load.
@@ -344,8 +335,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
         self._skills = skills
         self._skill_workspace = workspace
         self._skill_definitions = catalog.skills
-        # CLAI hides library warnings from the prompt, so what a run would warn about is shown here.
-        self._skill_notices = (*(skipped.message for skipped in catalog.skipped), *catalog.advice)
+        # Only skipped skills are reported. Fields such as `allowed-tools` belong to other clients that share
+        # the skill folders, so naming them at every launch would be a warning nobody can act on.
+        self._skill_notices = tuple(skipped.message for skipped in catalog.skipped)
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         settings = self.settings
@@ -361,11 +353,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             return (coder,)
         return (
             coder,
-            _ProjectSkills[DepsT](
-                CombinedCapability([self._skills]),
-                project=self._skill_workspace,
-                disabled=frozenset(settings.disabled_skills),
-            ),
+            _ProjectSkills[DepsT](CombinedCapability([self._skills]), project=self._skill_workspace),
         )
 
     def get_commands(self) -> Sequence[Command]:

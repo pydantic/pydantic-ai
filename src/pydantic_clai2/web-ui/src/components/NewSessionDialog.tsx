@@ -39,7 +39,16 @@ function places(projects: Project[], current: string): Place[] {
 }
 
 /** Where a new session runs: a directory CLAI has sessions in, by default the current one, or any other by its path. */
-export function NewSessionDialog({ current, onClose }: { current: string; onClose: () => void }) {
+export function NewSessionDialog({
+  current,
+  onOpened,
+  onClose,
+}: {
+  current: string
+  /** Show the new live session, by its conversation ID. */
+  onOpened: (id: string) => void
+  onClose: () => void
+}) {
   const [projects, setProjects] = useState<Project[]>([])
   const [typed, setTyped] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
@@ -79,7 +88,8 @@ export function NewSessionDialog({ current, onClose }: { current: string; onClos
     setSending(true)
     setProblem(null)
     try {
-      await api.newSession(path)
+      const { id } = await api.newSession(path)
+      onOpened(id)
       onClose()
     } catch (error) {
       setProblem(message(error))
