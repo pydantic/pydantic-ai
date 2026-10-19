@@ -84,7 +84,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox`, `SpritesSandbox`, and `SmolSandbox` (a local microVM) work the same way. See
+`E2BSandbox`, `SpritesSandbox`, `KubernetesSandbox` (a pod from a Kubernetes agent-sandbox warm pool), and `SmolSandbox` (a local microVM) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -267,7 +267,7 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `KubernetesSandbox` (`.kubernetes_sandbox`, `[kubernetes]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
 | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction`, `FallbackCompaction`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |

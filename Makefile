@@ -108,6 +108,10 @@ integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
+.PHONY: integration-kubernetes
+integration-kubernetes: ## Run the harness Kubernetes sandbox tests against real sandboxd (`GOBIN=$$PWD/.bin go install sigs.k8s.io/agent-sandbox/packages/sandboxd/cmd/sandboxd@v1.0.7`, then set SANDBOXD_BIN)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/kubernetes
+
 .PHONY: update-examples
 update-examples: ## Update documentation examples
 	uv run -m pytest --update-examples tests/test_examples.py

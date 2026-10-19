@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -107,6 +108,8 @@ __all__ = [
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',
+    'KubernetesSandbox',
+    'KubernetesSandboxBackend',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -180,6 +183,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'KubernetesSandbox': 'kubernetes_sandbox',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',
@@ -223,6 +227,7 @@ _CONSTANT_EXPORTS = {
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'E2BSandboxBackend': 'e2b_sandbox',
+    'KubernetesSandboxBackend': 'kubernetes_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
