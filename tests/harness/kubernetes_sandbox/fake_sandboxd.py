@@ -115,10 +115,11 @@ class FakeSandboxd:
         await self.server.start()
 
     async def stop(self) -> None:
-        for process in list(self._processes.values()):
-            process.kill_group()
+        # Calls end first, as when the pod goes: a command killed first could still report its exit.
         assert self.server is not None
         await self.server.stop(grace=0)
+        for process in list(self._processes.values()):
+            process.kill_group()
 
     async def _start(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> AsyncIterator[Any]:
         Response = MESSAGES['StartResponse']
