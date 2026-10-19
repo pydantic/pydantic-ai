@@ -119,6 +119,22 @@ sandbox = KubernetesSandbox(warm_pool='python-pool', namespace='agents', connect
 
 `'in-cluster-service'` connects through the sandbox's Service instead, which needs `service: true` on the template. Either way, agent-sandbox's default NetworkPolicy admits traffic only from its router, so the template's `networkPolicy` must admit your agent's pods on TCP ports 8080 and 9090. Port-forwarding does not work on gVisor or Kata, so use an in-cluster connection there.
 
+## Other ports and timeouts
+
+The connection modes use sandboxd's default ports, 8080 and 9090, and the SDK's default timeouts. If your template runs sandboxd on other ports, or a port-forward needs longer to start, pass the SDK's own connection config instead:
+
+```python {names="defined"}
+from k8s_agent_sandbox.models import SandboxdPodTunnelConnectionConfig
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
+
+sandbox = KubernetesSandbox(
+    warm_pool='python-pool',
+    connection=SandboxdPodTunnelConnectionConfig(grpc_port=9191, rest_port=8181, port_forward_ready_timeout=60),
+)
+```
+
+`SandboxdInClusterConnectionConfig` takes the same ports, with `mode='in-cluster-pod-ip'` or `mode='in-cluster-service'`.
+
 ## Clean up
 
 Ending a run never deletes the sandbox. A sandbox claimed by `KubernetesSandbox` is deleted after `sandbox_timeout` (24 hours by default) whether or not anyone still uses it; delete it sooner with the ref you stored:
@@ -140,7 +156,7 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 | --- | --- |
 | `warm_pool` | Name of the `SandboxWarmPool` to claim new sandboxes from. Required. |
 | `namespace` | Namespace of the warm pool and the claims. Default: `'default'`. |
-| `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`. |
+| `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports and timeouts. |
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. It must already exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
@@ -151,6 +167,7 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 - Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`). sandboxd's own file API only serves its root directory, so it cannot stand in for the whole filesystem the agent's commands see.
 - A command's timeout or cancellation kills its process group; a job that detaches with `setsid` may keep running. A background job that keeps the command's output open delays the result by about 5 seconds; redirect its output to a file.
 - A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
+- If a sandbox's pod is deleted while its claim remains, as when its node fails, the controller recreates it. Until the new pod is ready, commands fail with an error that durable runs retry, and the new pod keeps only what the template stores on a persistent volume.
 - sandboxd's optional bearer token is not supported yet; rely on the NetworkPolicy to restrict who can reach the pods.
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.

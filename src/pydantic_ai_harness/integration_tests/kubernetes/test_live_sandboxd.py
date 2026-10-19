@@ -3,12 +3,13 @@
 The unit suite in `tests/harness/kubernetes_sandbox` runs against a Python stand-in for sandboxd.
 This file runs the same rules against the real daemon, so what only the daemon can answer is
 checked here: how `Start` streams and ends, that cancelling a call kills the command's process
-group, how `WriteStdin` races a command that already exited, how a program that cannot start is
-reported, and that the backend's hand-written messages decode as sandboxd's protobuf.
+group, how sandboxd shuts down with a command running, and that the backend's hand-written messages
+decode as sandboxd's protobuf.
 
 Only the Kubernetes side is stood in for: each claim starts its own `sandboxd` process with its own
-root directory, the way each claimed pod runs one, and deleting the claim stops it and removes the
-directory. Claims, warm pools and `kubectl port-forward` need a cluster, which this does not start.
+root directory, the way each claimed pod runs one, and deleting the claim stops it with SIGTERM, as
+the kubelet stops a deleted pod, and removes the directory. Claims, warm pools and
+`kubectl port-forward` need a cluster: `test_live_cluster.py` runs against one.
 
 Run with `make integration-kubernetes` after building sandboxd from a release tag:
 
@@ -97,14 +98,19 @@ class Daemon:
                     await anyio.sleep(0.05)
 
     def stop(self) -> None:
-        # Deleting a pod kills its processes and drops its `emptyDir`. sandboxd starts each command
-        # in its own process group, which killing the daemon leaves running, so kill those first.
+        # Deleting a pod sends its container SIGTERM, and sandboxd passes it on to the commands it runs.
+        # Past the grace period the kubelet kills what is left; sandboxd starts each command in its own
+        # process group, which killing the daemon leaves running, so those go too.
         children = subprocess.run(['pgrep', '-P', str(self.process.pid)], capture_output=True, text=True).stdout
+        self.process.send_signal(signal.SIGTERM)
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
         for pid in children.split():
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(int(pid), signal.SIGKILL)
-        self.process.send_signal(signal.SIGKILL)
-        self.process.wait()
         shutil.rmtree(self.root, ignore_errors=True)
 
 

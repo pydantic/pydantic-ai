@@ -10,7 +10,11 @@ import grpc
 import grpc.aio
 import pytest
 from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxNotFoundError
-from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
+from k8s_agent_sandbox.models import (
+    SandboxdInClusterConnectionConfig,
+    SandboxDirectConnectionConfig,
+    SandboxdPodTunnelConnectionConfig,
+)
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
@@ -59,20 +63,27 @@ def test_backend_arguments_are_checked_without_io() -> None:
         KubernetesSandboxBackend(warm_pool='pool', env={'A': 1})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match='working_dir must be an absolute'):
         KubernetesSandboxBackend(warm_pool='pool', working_dir='relative')
+    with pytest.raises(ValueError, match="connection must be one of 'port-forward'"):
+        KubernetesSandboxBackend(warm_pool='pool', connection='gateway')  # type: ignore[arg-type]
+    # The SDK's other configs reach its legacy runtime, not sandboxd.
+    with pytest.raises(ValueError, match='got SandboxDirectConnectionConfig: commands run through sandboxd'):
+        KubernetesSandboxBackend(warm_pool='pool', connection=SandboxDirectConnectionConfig(api_url='http://router'))  # type: ignore[arg-type]
 
 
 @asyncio_only
 async def test_the_sdk_client_matches_the_connection(cluster: FakeCluster) -> None:
-    for connection in ('port-forward', 'in-cluster-pod-ip'):
+    other_ports = SandboxdPodTunnelConnectionConfig(grpc_port=9191, rest_port=8181)
+    for connection in ('port-forward', 'in-cluster-pod-ip', other_ports):
         backend = KubernetesSandboxBackend(warm_pool='pool', connection=connection)
         await backend.run(['true'])
         await backend.aclose()
-    tunnel, in_cluster = cluster.clients
+    tunnel, in_cluster, configured = cluster.clients
     assert isinstance(tunnel.connection_config, SandboxdPodTunnelConnectionConfig)
     assert isinstance(in_cluster.connection_config, SandboxdInClusterConnectionConfig)
     assert in_cluster.connection_config.mode == 'in-cluster-pod-ip'
+    assert configured.connection_config is other_ports
     # The SDK would otherwise delete its claims when the interpreter exits.
-    assert not tunnel.cleanup and not in_cluster.cleanup
+    assert not tunnel.cleanup and not in_cluster.cleanup and not configured.cleanup
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
@@ -214,6 +225,19 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(cluster: FakeClust
     cluster.status_error = RuntimeError('API server unreachable')
     with pytest.raises(ConnectionError):
         await backend.run(['true'])
+    # So does a sandbox whose pod the controller is recreating: it comes back.
+    cluster.status_error = None
+    cluster.restarting = True
+    with pytest.raises(ConnectionError):
+        await backend.run(['true'])
+    await backend.aclose()
+
+
+@asyncio_only
+async def test_a_command_killed_by_a_signal_in_a_live_sandbox_keeps_its_exit_code(cluster: FakeCluster) -> None:
+    # Only a sandbox that was deleted turns a signal exit into `WorkspaceUnavailableError`.
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    assert (await backend.run(['sh', '-c', 'kill -TERM $$'])).exit_code == 143
     await backend.aclose()
 
 
@@ -287,6 +311,8 @@ def test_capability_arguments_are_checked() -> None:
         KubernetesSandbox(warm_pool='pool', sandbox_timeout=0)
     with pytest.raises(UserError, match='working_dir'):
         KubernetesSandbox(warm_pool='pool', working_dir='relative')
+    with pytest.raises(UserError, match="connection must be one of 'port-forward'"):
+        KubernetesSandbox(warm_pool='pool', connection='gateway')  # type: ignore[arg-type]
     assert KubernetesSandbox(warm_pool='pool', sandbox_timeout=None).sandbox_timeout is None
 
 

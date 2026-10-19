@@ -1,17 +1,20 @@
 """A [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) sandbox behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK assumptions verified 2026-10-19 against `k8s-agent-sandbox` 1.0.6 and 1.0.7 and sandboxd from
-agent-sandbox v1.0.7:
+SDK assumptions verified 2026-10-19 against `k8s-agent-sandbox` 1.0.6 and 1.0.7, sandboxd from
+agent-sandbox v1.0.7, and a kind cluster running the v1.0.7 controller:
 
 * `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool`, waits until it is
   Ready, and deletes the claim it named if that fails or is cancelled; `get_sandbox` attaches to a
-  claim by name and raises `SandboxNotFoundError` for any failed lookup;
+  claim by name, waits 30 seconds for a claim that does not exist, and raises `SandboxNotFoundError`
+  for any failed lookup;
 * `client.k8s_helper.get_sandbox_claim` returns `None` only for a 404, and `delete_sandbox_claim`
-  ignores only a 404;
+  ignores only a 404; `AsyncSandbox.status()` reports `SandboxNotFound` only for a 404;
 * `AsyncSandbox.connector.connect()` (re)opens the transport and `grpc_channel()` returns a `grpc.aio`
   channel to the pod's sandboxd, over a `kubectl port-forward` or an in-cluster address, depending
   on the connection config;
-* sandboxd runs commands in its `--root-dir` (`/workspace` by default).
+* sandboxd runs commands in its `--root-dir` (`/workspace` by default);
+* deleting a claim deletes its Sandbox, then its pod: sandboxd passes the pod's SIGTERM on to the
+  commands it runs and reports them as exiting 143. A deleted pod whose claim remains is recreated.
 
 Re-check these before changing the integration.
 """
@@ -22,7 +25,7 @@ import importlib.util
 import sys
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 import anyio
 
@@ -59,16 +62,41 @@ if _missing('k8s_agent_sandbox') or _missing('grpc'):
     raise ImportError('Install `pydantic-ai-harness[kubernetes]` to use KubernetesSandbox.')
 
 if TYPE_CHECKING:
+    from typing import TypeAlias
+
     from k8s_agent_sandbox.async_sandbox import AsyncSandbox
     from k8s_agent_sandbox.async_sandbox_client import AsyncSandboxClient
+    from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
 
 PROVIDER = 'kubernetes'
 
 DEFAULT_SANDBOX_TIMEOUT = 24 * 60 * 60
 
-Connection = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-ip']
+ConnectionMode = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-ip']
 """How the client reaches a sandbox's sandboxd: a `kubectl port-forward` to the pod (from outside the
 cluster), or directly from inside the cluster through the sandbox's Service or its pod IP."""
+
+if TYPE_CHECKING:
+    Connection: TypeAlias = ConnectionMode | SandboxdPodTunnelConnectionConfig | SandboxdInClusterConnectionConfig
+    """A connection mode with the SDK's default ports and timeouts, or the SDK's own sandboxd connection config."""
+
+
+def connection_problem(connection: object) -> str | None:
+    """Say what is wrong with a `connection` argument, or return `None` when the SDK reaches sandboxd with it."""
+    if isinstance(connection, str):
+        if connection in get_args(ConnectionMode):
+            return None
+        return f'connection must be one of {", ".join(map(repr, get_args(ConnectionMode)))}, got {connection!r}.'
+    # Whoever built a config object has imported the SDK already, so this import costs nothing.
+    from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
+
+    if isinstance(connection, SandboxdPodTunnelConnectionConfig | SandboxdInClusterConnectionConfig):
+        return None
+    return (
+        'connection must be a connection mode, a `SandboxdPodTunnelConnectionConfig`, or a '
+        f'`SandboxdInClusterConnectionConfig`, got {type(connection).__name__}: commands run through '
+        'sandboxd, which the SDK reaches only with those configs.'
+    )
 
 
 def parse_ref(ref: WorkspaceRef) -> tuple[str, str]:
@@ -87,8 +115,10 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
 
     if connection == 'port-forward':
         config = SandboxdPodTunnelConnectionConfig()
-    else:
+    elif isinstance(connection, str):
         config = SandboxdInClusterConnectionConfig(mode=connection)
+    else:
+        config = connection
     # `cleanup=False`: by default the SDK deletes the claims it created when the interpreter exits,
     # and a backend never destroys its environment; whoever holds the ref does.
     return AsyncSandboxClient(connection_config=config, cleanup=False)
@@ -155,6 +185,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise ValueError('pass `warm_pool` to claim a new sandbox, or `ref` to attach to one')
         if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
             raise TypeError('env keys and values must be strings')
+        if problem := connection_problem(connection):
+            raise ValueError(problem)
         self._ref = ref
         self._warm_pool = warm_pool
         self._namespace = namespace
@@ -222,12 +254,17 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             async with self._lock:
                 sandbox = await self._acquire()
             try:
-                return await _start_command(sandbox, argv, env={**self._env, **(env or {})}, timeout=timeout)
+                result = await _start_command(sandbox, argv, env={**self._env, **(env or {})}, timeout=timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
                 raise
             except Exception as error:
                 await self._raise_if_gone(sandbox, error)
                 raise
+            if result.exit_code > 128:
+                # Deleting a sandbox stops its pod with SIGTERM, and sandboxd reports the command it
+                # interrupted as an ordinary exit, 143. A command killed by a signal may be one of those.
+                await self._raise_if_gone(sandbox, None)
+            return result
 
     async def aclose(self) -> None:
         """Close the connection to the sandbox (including a `kubectl port-forward`); the sandbox keeps running."""
@@ -258,24 +295,19 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Claim or attach on first use; the caller holds `_lock`, so concurrent first operations share one claim."""
         if self._sandbox is not None:
             return self._sandbox
-        from k8s_agent_sandbox.exceptions import (
-            SandboxClaimFailedError,
-            SandboxNotFoundError,
-            SandboxWarmPoolNotFoundError,
-        )
+        from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxWarmPoolNotFoundError
 
         if self._client is None:
             self._client = _client(self._connection)
         if self._ref is not None:
             namespace, claim_name = parse_ref(self._ref)
-            try:
-                sandbox = await self._client.get_sandbox(claim_name, namespace=namespace)
-            except SandboxNotFoundError as error:
-                # The SDK raises this for any failed lookup, an unreachable API server too, so only a
-                # claim the API server reports missing is gone for good.
-                if await self._client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
-                    raise WorkspaceUnavailableError(f'Kubernetes sandbox {self._ref.id!r} no longer exists') from error
-                raise
+            # Workaround: `get_sandbox` watches a missing claim for 30 seconds before failing, and then
+            # raises the `SandboxNotFoundError` it raises for any failed lookup, an unreachable API server
+            # too. The API server's answer is immediate, and only its 404 means gone for good; any other
+            # failure of `get_sandbox` propagates for the caller to retry. Not tracked upstream yet.
+            if await self._client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
+                raise WorkspaceUnavailableError(f'Kubernetes sandbox {self._ref.id!r} no longer exists')
+            sandbox = await self._client.get_sandbox(claim_name, namespace=namespace)
             self._sandbox = sandbox
             return sandbox
         assert self._warm_pool is not None
@@ -293,19 +325,19 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._sandbox = sandbox
         return sandbox
 
-    async def _raise_if_gone(self, sandbox: AsyncSandbox, error: Exception) -> None:
-        """Raise `WorkspaceUnavailableError` if the sandbox is gone; otherwise leave `error` to propagate."""
+    async def _raise_if_gone(self, sandbox: AsyncSandbox, error: Exception | None) -> None:
+        """Raise `WorkspaceUnavailableError` if the sandbox is gone; otherwise return, leaving the outcome as it is."""
         # A lost connection looks the same whether the pod was deleted or the network blinked, so
-        # ask the API server. A sandbox that is still Ready means a transient failure that durable
-        # engines may retry.
+        # ask the API server. Only a deleted Sandbox is gone for good: one that is not Ready, such as
+        # a pod the controller is recreating, comes back, so its failure is one durable engines may retry.
         state, message = 'SandboxReady', ''
         with anyio.CancelScope(shield=True), anyio.move_on_after(10):
             try:
                 state, message = await sandbox.status()
             except Exception:
-                # The API server cannot say either: keep the original error.
+                # The API server cannot say either: keep the original outcome.
                 pass
-        if state != 'SandboxReady':
+        if state == 'SandboxNotFound':
             raise WorkspaceUnavailableError(
                 f'Kubernetes sandbox {sandbox.claim_name!r} is gone ({state}: {message})'
             ) from error

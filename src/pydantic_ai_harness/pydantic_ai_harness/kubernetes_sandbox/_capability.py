@@ -15,13 +15,14 @@ from pydantic_ai_harness._workspace_provider import check_integer, check_working
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
-    Connection,
     KubernetesSandboxBackend,
+    connection_problem,
     destroy_sandbox,
 )
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
+    from pydantic_ai_harness.kubernetes_sandbox._backend import Connection
 
 
 class _SuppliedBackend(KubernetesSandboxBackend):
@@ -62,7 +63,9 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
     connection: Connection = 'port-forward'
     """How to reach a sandbox's sandboxd: `'port-forward'` runs `kubectl port-forward` to the pod
     (from outside the cluster; not on gVisor or Kata), `'in-cluster-service'` and
-    `'in-cluster-pod-ip'` connect directly from inside the cluster."""
+    `'in-cluster-pod-ip'` connect directly from inside the cluster. These use sandboxd's default ports
+    and the SDK's default timeouts; for others, pass the SDK's `SandboxdPodTunnelConnectionConfig` or
+    `SandboxdInClusterConnectionConfig`."""
 
     sandbox_timeout: int | None = DEFAULT_SANDBOX_TIMEOUT
     """Seconds after which a newly claimed sandbox is deleted, whether or not anyone still uses it;
@@ -85,6 +88,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_working_dir(self.working_dir)
+        if problem := connection_problem(self.connection):
+            raise UserError(problem)
 
     def backend(self, ref: WorkspaceRef) -> KubernetesSandboxBackend:
         """Construct a lazy backend for an existing claim; close its connection with `aclose()`."""

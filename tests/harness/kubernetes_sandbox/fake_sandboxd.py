@@ -7,7 +7,8 @@ open pipe; a signal death exits 128+n. Messages are built with protobuf from a d
 `process.proto`, independently of the backend's hand-written encoding, so the two check each other.
 
 `FakeCluster` stands in for the SDK's `AsyncSandboxClient`: each claim gets its own `FakeSandboxd`
-and root directory, and deleting a claim stops its server.
+and root directory. Deleting a claim stops its server as deleting the pod stops sandboxd: commands
+get SIGTERM, so a call in flight reports exit 143, and the server goes after them.
 """
 
 from __future__ import annotations
@@ -96,6 +97,9 @@ class FakeSandboxd:
         self.server: grpc.aio.Server | None = None
         self.target = ''
         self._processes: dict[int, _Process] = {}
+        self._idle = asyncio.Event()
+        """Set while no command runs."""
+        self._idle.set()
         self._next_id = 0
         self.send_exit = True
         """When false, `Start` ends its stream without the exit event."""
@@ -115,11 +119,15 @@ class FakeSandboxd:
         await self.server.start()
 
     async def stop(self) -> None:
-        # Calls end first, as when the pod goes: a command killed first could still report its exit.
+        for process in list(self._processes.values()):
+            process.kill_group(signal.SIGTERM)
+        # Each call reports its command's exit before the server goes. Stopping the server cancels a call
+        # whose command ignored SIGTERM, which kills it, as the kubelet does after the grace period.
+        idle = asyncio.ensure_future(self._idle.wait())
+        await asyncio.wait([idle], timeout=5)
+        idle.cancel()
         assert self.server is not None
         await self.server.stop(grace=0)
-        for process in list(self._processes.values()):
-            process.kill_group()
 
     async def _start(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> AsyncIterator[Any]:
         Response = MESSAGES['StartResponse']
@@ -130,6 +138,7 @@ class FakeSandboxd:
         self._next_id += 1
         process_id = self._next_id
         self._processes[process_id] = process
+        self._idle.clear()
         # Reaps the child however the call ends.
         waiter = asyncio.ensure_future(process.wait())
         tasks: list[asyncio.Future[Any]] = []
@@ -177,6 +186,8 @@ class FakeSandboxd:
                 task.cancel()
             process.close()
             self._processes.pop(process_id, None)
+            if not self._processes:
+                self._idle.set()
 
 
 class _Process:
@@ -230,9 +241,9 @@ class _Process:
         _, status = await asyncio.to_thread(os.waitpid, self.pid, 0)
         return os.waitstatus_to_exitcode(status)
 
-    def kill_group(self) -> None:
+    def kill_group(self, signum: int = signal.SIGKILL) -> None:
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(self.pid, signal.SIGKILL)
+            os.killpg(self.pid, signum)
 
     def close(self) -> None:
         for fd in (self._stdin, *self._pipes):
@@ -259,6 +270,8 @@ class FakeSandbox:
             raise self.cluster.status_error
         if self.cluster.claims.get((self.namespace, self.claim_name or '')) is not self.sandboxd:
             return 'SandboxNotFound', 'Sandbox object not found in Kubernetes.'
+        if self.cluster.restarting:
+            return 'SandboxNotReady', 'Pod exists with phase: Pending'
         return 'SandboxReady', ''
 
 
@@ -300,6 +313,8 @@ class FakeCluster:
         self.clients: list[FakeClient] = []
         self.created: list[tuple[str, str, dict[str, Any]]] = []
         self.status_error: Exception | None = None
+        self.restarting = False
+        """When set, sandboxes report not Ready, as while the controller recreates a deleted pod."""
         self.channel_error: Exception | None = None
         self.create_error: Exception | None = None
         self.create_gate: asyncio.Event | None = None
