@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react'
 import { SessionContext, api, connect, interrupt, orchestrator, sessionApi, type Connection, type Socket } from './api'
+import type { Attachment } from './attachments'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { QuestionCard } from './components/QuestionCard'
 import { Sidebar, type SidebarHandle } from './components/Sidebar'
@@ -31,6 +32,8 @@ interface Opening {
   id: string
   title: string
 }
+
+const NO_ATTACHMENTS: readonly Attachment[] = []
 
 function initialTheme(): Theme {
   const saved = localStorage.getItem('clai-theme')
@@ -100,6 +103,14 @@ export function App() {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const draft = drafts[shown ?? ''] ?? ''
   const setDraft = useCallback((text: string) => setDrafts((all) => ({ ...all, [shown ?? '']: text })), [shown])
+  // Each session's pasted images, kept as its draft is.
+  const [attached, setAttached] = useState<Record<string, readonly Attachment[]>>({})
+  const attachments = attached[shown ?? ''] ?? NO_ATTACHMENTS
+  const setAttachments = useCallback(
+    (update: (current: readonly Attachment[]) => Attachment[]) =>
+      setAttached((all) => ({ ...all, [shown ?? '']: update(all[shown ?? ''] ?? NO_ATTACHMENTS) })),
+    [shown],
+  )
   const composer = useRef<ComposerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
   const socket = useRef<Socket | null>(null)
@@ -474,6 +485,8 @@ export function App() {
       onMenu={openMenu}
       draft={draft}
       onDraft={setDraft}
+      attachments={attachments}
+      onAttachments={setAttachments}
       onError={showError}
     />
   )

@@ -242,7 +242,17 @@ def test_the_item_log_follows_a_cell() -> None:
 def test_history_items() -> None:
     long = 'x' * (RESULT_CHARS + 5)
     messages = [
-        ModelRequest(parts=[UserPromptPart(['Look', BinaryContent(b'png', media_type='image/png')])]),
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'Look',
+                        BinaryContent(b'png', media_type='image/png'),
+                        BinaryContent(b'pdf', media_type='application/pdf'),
+                    ]
+                )
+            ]
+        ),
         ModelResponse(
             parts=[
                 ThinkingPart('plan'),
@@ -271,7 +281,9 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert items[0].text == 'Look\n[BinaryContent]'
+    assert items[0].text == 'Look\n[image]\n[BinaryContent]'
+    image_only = UserPromptPart(['', BinaryContent(b'png', media_type='image/png')])
+    assert history_items([ModelRequest(parts=[image_only])])[0].text == '[image]', 'a prompt of images alone'
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40

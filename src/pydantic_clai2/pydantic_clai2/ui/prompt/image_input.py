@@ -17,6 +17,8 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_PENDING_BYTES = 32 * 1024 * 1024
 MAX_PIXELS = 25_000_000
 MARKER = re.compile(r'\[image:[0-9a-f]{8}\]')
+FORMATS = ('PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF')
+ATTACHED = 'Image attached. Enter sends it; delete its marker to remove it.'
 
 
 class ImageBuffer(BytesIO):
@@ -55,8 +57,19 @@ def read_image(path: Path) -> BinaryContent:
     path = local_image_path(str(path))
     if path.stat().st_size > MAX_IMAGE_BYTES:
         raise ValueError('Image file exceeds the 10 MiB attachment limit.')
-    with Image.open(path, formats=['PNG', 'JPEG', 'GIF', 'WEBP', 'BMP', 'TIFF']) as image:
+    with Image.open(path, formats=FORMATS) as image:
         return encode_image(image)
+
+
+def decode_image(data: bytes) -> BinaryContent:
+    """Read image bytes from elsewhere, such as the browser's clipboard, checked and normalized as a file is."""
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError('Image exceeds the 10 MiB attachment limit.')
+    try:
+        with Image.open(BytesIO(data), formats=FORMATS) as image:
+            return encode_image(image)
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError(f'Not an image CLAI can read: {exc}') from exc
 
 
 def read_images(paths: Sequence[Path]) -> list[BinaryContent]:
@@ -123,7 +136,6 @@ class ImageInput:
                 marker = f'[image:{uuid4().hex[:8]}]'
             self.pending[marker] = image
             markers.append(marker)
-        self.notice = 'Image attached. Enter sends it; delete its marker to remove it.'
         return ' '.join(markers) + ' '
 
     def resolve(self, text: str) -> tuple[str, list[BinaryContent]]:
@@ -166,6 +178,7 @@ class ImageInput:
                         return
                     images = read_images(paths)
                 buffer.insert_text(self.attach(images))
+                self.notice = ATTACHED
             except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
                 self.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
             finally:

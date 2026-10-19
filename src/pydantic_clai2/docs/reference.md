@@ -1044,6 +1044,13 @@ by `/resume`. Input recall stores markers, not image bytes: paste the image agai
 if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `clai2 --web`,
+paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
+files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
+Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The images
+are sent with your prompt, or alone, and CLAI checks and converts them to PNG with the same limits
+as above. Unsent images stay with each session's draft until you reload the page.
+
 Pillow is a terminal-only dependency; see the CLAI dependency boundary in
 [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
 

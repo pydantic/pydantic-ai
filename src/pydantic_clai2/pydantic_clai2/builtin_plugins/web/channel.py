@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.messages import ModelMessage, UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.protocol import (
@@ -210,20 +210,25 @@ class SessionChannel:
 
     # What the browser does.
 
-    def send(self, text: str) -> str | None:
+    def send(self, text: str, *, images: Sequence[BinaryContent] = ()) -> str | None:
         """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
 
         That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
+        nothing is entered. Otherwise the result is `None`. `images` go with a prompt, which may then be blank.
         """
         text = text.strip()
-        if not text:
+        if not text and not images:
             raise ValueError('Type a prompt or a /command.')
         if text.startswith('!'):
             raise ValueError('Shell lines (!) run only in the terminal.')
-        if is_command_input(text) and len(text.split()) == 1 and self.service.host.command_menu(text[1:]) is not None:
+        if (
+            not images
+            and is_command_input(text)
+            and len(text.split()) == 1
+            and self.service.host.command_menu(text[1:]) is not None
+        ):
             return text[1:]
-        self.session.send_input(text)
+        self.session.send_input(text, images=images)
         return None
 
     def switch(self, key: Switch, on: bool) -> None:

@@ -1,6 +1,7 @@
 """The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
 
 import asyncio
+import base64
 import html
 import io
 import re
@@ -18,6 +19,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
+from PIL import Image
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
@@ -29,7 +31,7 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -80,6 +82,7 @@ from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
+from pydantic_clai2.ui.prompt.image_input import decode_image
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
 from tests.clai2.test_tasks import task
@@ -399,6 +402,60 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
     assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
     response = web_.post('/api/input', {'text': '!ls'})
     assert (response.status_code, response.json()) == (400, {'detail': 'Shell lines (!) run only in the terminal.'})
+    response = web_.post('/api/input', {'text': '/model', 'images': [encoded(png('red'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': 'Images go with a prompt, not with a /command or ! line.'},
+    ), 'not even a command whose menu the page would show'
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(b'not an image')]})
+    assert response.status_code == 400 and response.json()['detail'].startswith('Not an image CLAI can read')
+    assert web_.shell.images.pending == {}
+
+
+def png(color: str) -> bytes:
+    output = io.BytesIO()
+    Image.new('RGB', (3, 2), color=color).save(output, format='PNG')
+    return output.getvalue()
+
+
+def encoded(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') -> None:
+    """Images sent with a prompt reach the model after its text, also queued behind a running turn, also alone."""
+    started, release = anyio.Event(), anyio.Event()
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        if len(prompts) == 1:
+            started.set()
+            await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'first'})
+        web_.portal.call(started.wait)
+        # Queued in the inbox of a session no editor reads, until the running turn ends.
+        queued = web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+        assert queued.json() == {'menu': None}
+        assert web_.post('/api/input', {'text': ' ', 'images': [encoded(png('blue'))]}).status_code == 200
+        web_.portal.call(release.set)
+        messages: list[ServerMessage] = []
+        for _ in range(3):
+            messages += receive_until(socket, TurnEnded)[0]
+        started_items = [message.item for message in messages if isinstance(message, TurnStarted)]
+        assert [item.text for item in started_items if item] == ['first', 'what is this?\n[image]', '[image]']
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert prompts == ['first', ['what is this?', decode_image(png('red'))], ['', decode_image(png('blue'))]]
+    assert web_.shell.images.pending == {}, 'sent images are let go'
 
 
 def test_completion_and_models(make_web: 'MakeWeb') -> None:

@@ -88,7 +88,9 @@ const menuQuery = (target: MenuTarget) =>
 export function sessionApi(id: string | null) {
   const base = id === null ? '/api' : `/api/sessions/${encodeURIComponent(id)}`
   return {
-    send: (text: string) => call<Entered>('POST', `${base}/input`, { text }),
+    /** Enter a prompt or `/command`; `images`, base64-encoded, go with a prompt. */
+    send: (text: string, images: readonly string[] = []) =>
+      call<Entered>('POST', `${base}/input`, images.length ? { text, images } : { text }),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),

@@ -16,10 +16,11 @@ from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
+from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
+from pydantic import Base64Bytes, BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
@@ -45,6 +46,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.ui.prompt.image_input import decode_image
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -108,6 +110,12 @@ class Input(BaseModel):
     """A prompt or `/command` to enter."""
 
     text: str = Field(max_length=200_000)
+
+
+class PromptInput(Input):
+    """Input for a session's prompt, with the images pasted for it, base64-encoded."""
+
+    images: list[Base64Bytes] = []
 
 
 class Answer(BaseModel):
@@ -268,9 +276,11 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     async def state(conversation_id: str | None = None) -> Response:
         return Response(dump(session(conversation_id).snapshot()), media_type='application/json')
 
-    async def send(body: Input, conversation_id: str | None = None) -> Entered:
+    async def send(body: PromptInput, conversation_id: str | None = None) -> Entered:
         channel = session(conversation_id)
-        return Entered(menu=_run(lambda: channel.send(body.text)))
+        # Off the loop: decoding a large image would stall every stream meanwhile.
+        images = await _wait(to_thread.run_sync(lambda: [decode_image(data) for data in body.images]))
+        return Entered(menu=_run(lambda: channel.send(body.text, images=images)))
 
     async def interrupt(conversation_id: str | None = None) -> Interrupted:
         return Interrupted(interrupted=session(conversation_id).session.interrupt())

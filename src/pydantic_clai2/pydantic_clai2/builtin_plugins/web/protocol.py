@@ -20,6 +20,7 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     RetryPromptPart,
@@ -912,9 +913,14 @@ def user_text(part: UserPromptPart) -> str:
     if isinstance(part.content, str):
         return part.content
     return '\n'.join(
-        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        item
+        if isinstance(item, str)
+        else '[image]'
+        if isinstance(item, BinaryContent) and item.is_image
+        else f'[{type(item).__name__}]'
         for item in part.content
-        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+        # A prompt sent as images alone has an empty text.
+        if not (isinstance(item, str) and (not item or item.startswith(NOTE_PREFIX)))
     )
 
 

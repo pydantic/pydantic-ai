@@ -27,6 +27,7 @@ from pydantic_clai2.ui.prompt.image_input import (
     ImageBuffer,
     ImageInput,
     clipboard_images,
+    decode_image,
     encode_image,
     pasted_paths,
     read_image,
@@ -117,6 +118,17 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
     else:
         with pytest.raises(ValueError, match='No image'):
             clipboard_images()
+
+
+def test_decode_image(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
+    data = image_path.read_bytes()
+    assert decode_image(data) == read_image(image_path)
+    with pytest.raises(ValueError, match='Not an image CLAI can read'):
+        decode_image(b'not an image')
+    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', len(data) - 1)
+    with pytest.raises(ValueError, match='10 MiB'):
+        decode_image(data)
 
 
 def test_attachment_lifetime_and_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
