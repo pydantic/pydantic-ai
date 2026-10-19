@@ -117,6 +117,8 @@ class LogfirePlugin(Plugin[LogfireSettings]):
     at the same instance while it is loaded and restores when it unloads.
     """
 
+    scope = 'process'
+    """Global instrumentation, configured once for the process; `SessionTracing` keeps a root per session."""
     _active_httpx: ClassVar[list['LogfirePlugin']] = []
     """Live opt-in instances, ordered so HTTPX instrumentation can move to a remaining instance on unload."""
 

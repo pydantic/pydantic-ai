@@ -945,7 +945,7 @@ def test_settings_from_the_browser_are_validated_saved_and_applied(make_web: 'Ma
     assert isinstance(form, dict) and form['values'] == {'mode': 'slow', 'limit': 5, 'label': 'hi'}
     second = loaded_plugin(web_, 'sample')
     assert second is not first
-    assert [saved.settings for saved in web_.shell.loader._store.plugins() if saved.id == 'sample'] == [  # pyright: ignore[reportPrivateUsage]
+    assert [saved.settings for saved in web_.shell.process.store.plugins() if saved.id == 'sample'] == [
         {'mode': 'slow', 'limit': 5, 'label': 'hi'}
     ]
     # Nothing changed, nothing reloaded.
@@ -1431,7 +1431,6 @@ def follow_workspaces(
         loader=shell.loader,
         status=shell.status,
         settings=settings,
-        keep='web',
     )
     workspace.attach(sessions=shell.sessions, commands=shell.commands)
     return workspace
@@ -1527,7 +1526,7 @@ def test_a_session_moves_only_between_turns(
     (broken / '.clai').mkdir(parents=True)
     (broken / '.clai' / 'settings.json').write_text('{"model": 1}')
     monkeypatch.chdir(tmp_path)
-    web_ = make_web(Agent(TestModel()))
+    web_ = make_web(Agent(TestModel()), extra=[REPO_CONTEXT])
     workspace = follow_workspaces(web_, lambda project: Settings(model=None))
     shell = web_.shell
     shell.session._running = True  # pyright: ignore[reportPrivateUsage]
@@ -1554,8 +1553,11 @@ def test_a_session_moves_only_between_turns(
     )
     loaded = shell.loader._loaded  # pyright: ignore[reportPrivateUsage]
     assert loaded['web'].plugin is plugin
-    web_.portal.call(lambda: shell.loader.restart(project=(), keep='absent'))
-    assert loaded['web'].plugin is not plugin, 'a plugin not named to keep loads again too'
+    repo_context = loaded['repo_context'].plugin
+    web_.portal.call(lambda: shell.loader.restart(project=()))
+    assert loaded['repo_context'].plugin is not repo_context, 'a session-scoped plugin loads again'
+    assert loaded['web'].plugin is plugin, 'a process-scoped plugin follows no session directory'
+    assert list(loaded)[-1] == 'web'
 
 
 def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path: Path) -> None:

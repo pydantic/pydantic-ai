@@ -14,7 +14,7 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.loader import SessionPlugins
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.rendering.status import Status
@@ -40,12 +40,10 @@ class SessionWorkspace:
 
     session: Session[None, str]
     context: CommandContext
-    loader: PluginLoader[None]
+    loader: SessionPlugins[None]
     status: Status
     settings: Callable[[ProjectSettings], Settings]
     """The settings CLAI starts with beside a project file: saved ones, then the project's, then launch flags."""
-    keep: str
-    """The plugin serving the browser, which stays loaded: loading it again would end the page."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 
@@ -76,7 +74,7 @@ class SessionWorkspace:
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
         self.context.use_project(project, settings)
-        await self.loader.restart(project=project.plugins, keep=self.keep)
+        await self.loader.restart(project=project.plugins)
 
     async def command(self, args: list[str]) -> str:
         """`/workspace DIRECTORY` starts a new session in DIRECTORY; bare, it names this session's."""

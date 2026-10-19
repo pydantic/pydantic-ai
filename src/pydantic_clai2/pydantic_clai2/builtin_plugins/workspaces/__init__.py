@@ -72,6 +72,9 @@ def describe(workspace: Workspace) -> str:
 class WorkspacesPlugin(Plugin[WorkspacesSettings]):
     """Checkouts of a repository, each with its own CLAI: /workspaces makes, opens, stops, and destroys them."""
 
+    scope = 'process'
+    """One lock over the shared registry; `host.workspace` follows the session that runs `/workspaces`."""
+
     def __init__(self, host: PluginHost[None], settings: WorkspacesSettings) -> None:
         super().__init__(host, settings)
         self.workspaces = Workspaces(kinds=settings.kinds)

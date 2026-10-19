@@ -79,6 +79,9 @@ class WebSettings(BaseModel):
 class WebPlugin(Plugin[WebSettings]):
     """Drive this session from a local web UI: streaming chat, tool cards, sessions sidebar. /web starts it."""
 
+    scope = 'process'
+    """One server for the whole process. Its host's conversation and status are those of the session that loaded it."""
+
     def __init__(self, host: PluginHost[None], settings: WebSettings) -> None:
         super().__init__(host, settings)
         self.token = secrets.token_urlsafe(32)
