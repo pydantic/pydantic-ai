@@ -124,10 +124,13 @@ class FakeSandboxd:
         if self.start_error is not None:
             await context.abort(self.start_error, 'failed')
         env = {**os.environ, **dict(request.config.env_vars)}
-        process = await _Process.spawn(list(request.config.command), cwd=self.root, env=env)
+        process = _Process.spawn(list(request.config.command), cwd=self.root, env=env)
         self._next_id += 1
         process_id = self._next_id
         self._processes[process_id] = process
+        # Reaps the child however the call ends.
+        waiter = asyncio.ensure_future(process.wait())
+        tasks: list[asyncio.Future[Any]] = []
         queue: asyncio.Queue[Any] = asyncio.Queue()
 
         async def pump(stream: asyncio.StreamReader, name: str) -> None:
@@ -137,21 +140,21 @@ class FakeSandboxd:
             finally:
                 queue.put_nowait(None)  # End of this stream, also when cut off below.
 
-        pumps = [
-            asyncio.ensure_future(pump(process.stdout, 'stdout')),
-            asyncio.ensure_future(pump(process.stderr, 'stderr')),
-        ]
-        waiter = asyncio.ensure_future(process.wait())
-
-        async def cut_off_after_exit() -> None:
+        async def cut_off_after_exit(pumps: list[asyncio.Task[None]]) -> None:
             # Like sandboxd's wait delay: stop reading pipes a background child keeps open.
             await waiter
             _, pending = await asyncio.wait(pumps, timeout=_GRACE)
             for task in pending:
                 task.cancel()
 
-        finisher = asyncio.ensure_future(cut_off_after_exit())
         try:
+            # Inside the `try`, so a call cancelled while the pipes connect still kills the command.
+            await process.connect_pipes()
+            pumps = [
+                asyncio.ensure_future(pump(process.stdout, 'stdout')),
+                asyncio.ensure_future(pump(process.stderr, 'stderr')),
+            ]
+            tasks = [*pumps, asyncio.ensure_future(cut_off_after_exit(pumps))]
             yield _UNKNOWN_EVENT
             yield Response(init={'process_id': process_id})
             ended = 0
@@ -168,7 +171,7 @@ class FakeSandboxd:
             # Reached on cancellation too, which is how sandboxd stops a command whose call ends.
             if not waiter.done():
                 process.kill_group()
-            for task in (*pumps, finisher):
+            for task in tasks:
                 task.cancel()
             process.close()
             self._processes.pop(process_id, None)
@@ -181,15 +184,17 @@ class _Process:
     gRPC server) write log lines into the child's stderr before it execs.
     """
 
-    def __init__(self, pid: int, stdin: int, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader) -> None:
+    def __init__(self, pid: int, stdin: int, stdout: int, stderr: int) -> None:
         self.pid = pid
         self._stdin = stdin
-        self.stdout = stdout
-        self.stderr = stderr
+        self._pipes = [stdout, stderr]
+        """Output pipes not yet handed to the event loop."""
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
         self._transports: list[asyncio.BaseTransport] = []
 
     @classmethod
-    async def spawn(cls, argv: list[str], *, cwd: Path, env: dict[str, str]) -> _Process:
+    def spawn(cls, argv: list[str], *, cwd: Path, env: dict[str, str]) -> _Process:
         stdin_r, stdin_w = os.pipe()
         stdout_r, stdout_w = os.pipe()
         stderr_r, stderr_w = os.pipe()
@@ -208,14 +213,16 @@ class _Process:
         )
         for fd in (stdin_r, stdout_w, stderr_w):
             os.close(fd)
+        return cls(pid, stdin_w, stdout_r, stderr_r)
+
+    async def connect_pipes(self) -> None:
         loop = asyncio.get_running_loop()
-        process = cls(pid, stdin_w, asyncio.StreamReader(), asyncio.StreamReader())
-        for fd, reader in ((stdout_r, process.stdout), (stderr_r, process.stderr)):
+        for reader in (self.stdout, self.stderr):
+            pipe = os.fdopen(self._pipes.pop(0), 'rb', 0)
             transport, _ = await loop.connect_read_pipe(
-                lambda reader=reader: asyncio.StreamReaderProtocol(reader), os.fdopen(fd, 'rb', 0)
+                lambda reader=reader: asyncio.StreamReaderProtocol(reader), pipe
             )
-            process._transports.append(transport)
-        return process
+            self._transports.append(transport)
 
     async def wait(self) -> int:
         _, status = await asyncio.to_thread(os.waitpid, self.pid, 0)
@@ -226,7 +233,8 @@ class _Process:
             os.killpg(self.pid, signal.SIGKILL)
 
     def close(self) -> None:
-        os.close(self._stdin)
+        for fd in (self._stdin, *self._pipes):
+            os.close(fd)
         for transport in self._transports:
             transport.close()
 
