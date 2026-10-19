@@ -286,7 +286,8 @@ class _HostProcess(FakeProcess):
         self.owner.check_alive()
         if command.startswith('realpath -m -- '):
             target = shlex.split(command)[-1]
-            resolved = (Path(cwd or self.host_root) / target).resolve(strict=False)
+            # `os.path.realpath` leaves a symlink loop unresolved; `Path.resolve` raises on it before 3.13.
+            resolved = os.path.realpath(os.path.join(cwd or self.host_root, target))
             return SimpleNamespace(result=f'{resolved}\n', exit_code=0)
         if command.startswith('if [ -e '):
             source, destination = shlex.split(command)[-2:]
