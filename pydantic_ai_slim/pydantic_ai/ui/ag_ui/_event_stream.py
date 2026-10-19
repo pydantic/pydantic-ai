@@ -467,8 +467,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # The adapter module imports this one to build its stream.
         from ._adapter import AGUIAdapter
 
-        # An activity rather than chat messages: the client keeps it in its message list and sends it
-        # back, but a UI only renders activity types it registered a renderer for.
+        # An activity rather than chat messages: the client keeps it in its message list, but a UI only
+        # renders activity types it registered a renderer for. `@ag-ui/client` doesn't send activities
+        # back, so only a frontend that re-adds them restores the messages on the next run.
         enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not enqueued:
             return
