@@ -29,6 +29,11 @@ async def workspace_session(service: 'WebService', workspace_id: str, *, start: 
     With `start`, a workspace without one, or whose session was never saved or is deleted, gets a new one
     in its checkout; without, that is a `RuntimeError`. `ValueError` when the checkout is gone.
     """
+    async with service.workspace_locks[workspace_id]:
+        return await _workspace_session(service, workspace_id, start=start)
+
+
+async def _workspace_session(service: 'WebService', workspace_id: str, *, start: bool) -> SessionChannel:
     workspaces = enabled(service.host.plugins)
     workspace = await workspaces.get(workspace_id)
     if workspace.conversation is not None:

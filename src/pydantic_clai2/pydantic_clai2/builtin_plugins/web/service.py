@@ -4,6 +4,7 @@ The browser names a session by the conversation it holds. Sessions open and clos
 and each one's channel is made when it is first seen and dropped once it is gone.
 """
 
+from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -106,6 +107,8 @@ class WebService:
         """Where the settings menus opened in this page ask their questions."""
         self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
+        self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
+        """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
