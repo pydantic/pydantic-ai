@@ -481,29 +481,6 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
 )
 
 
-def _turn_without_its_transcript(sim: Simulation) -> bool:
-    """With transcription on, a spoken turn's transcript never reached the client before the session ended or dropped."""
-    ended = sim.close_requested is not None or sim.receive_ended or bool(sim.truth.connection_losses)
-    return (
-        ended
-        and getattr(getattr(sim, 'openai', None), 'transcription', False)
-        and any(input_.kind == 'speech' and input_.transcript_read is None for input_ in sim.truth.inputs)
-    )
-
-
-def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
-    """A turn `commit_audio()` committed whose reply the client hadn't read the end of when the connection dropped or
-    the session ended."""
-    truth = sim.truth
-    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
-    return ended and any(
-        input_.kind == 'speech'
-        and input_.committed_by_client
-        and (input_.answered_by is None or truth.responses[input_.answered_by].terminal_read is None)
-        for input_ in truth.inputs
-    )
-
-
 def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
     return (
         _xai_push_to_talk(sim)
@@ -524,36 +501,6 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
     codes=frozenset({'history.turn_missing', 'wait.hang', 'response.missing', 'usage.requests'}),
     providers=frozenset({'xai'}),
     matches=lambda sim, violation: _push_to_talk_audio_after_a_repeated_terminal(sim),
-)
-
-
-HAND_COMMIT_UNANSWERED_AT_THE_END = Finding(
-    id='SIM-34',
-    title=(
-        'a spoken turn `commit_audio()` committed is lost when the connection drops, or the session closes or ends (on '
-        "a failed send, an exceeded limit), before its reply is over (the session core's own: the current one loses "
-        'it only on xAI, whose held commit goes out with the request)'
-    ),
-    tracked_by='user turns recorded from the provider committing them; found by this simulator on #9422',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_unanswered_at_the_end(sim),
-)
-
-
-TURN_LOST_AT_CLOSE = Finding(
-    id='SIM-25',
-    title=(
-        'a spoken turn committed with input transcription on, whose transcript never arrives (the session closes or '
-        'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never '
-        'comes (surfaced by Macroscope for closing after `commit_audio()`)'
-    ),
-    tracked_by='user turns recorded from the provider committing them, not from their transcript; found reviewing #9070',
-    evidence='recorded',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _turn_without_its_transcript(sim),
 )
 
 
@@ -722,9 +669,7 @@ KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
-        TURN_LOST_AT_CLOSE,
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
-        HAND_COMMIT_UNANSWERED_AT_THE_END,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,

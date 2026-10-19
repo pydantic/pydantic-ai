@@ -533,6 +533,19 @@ class RealtimeConnection(ABC):
         return
         yield  # pragma: no cover
 
+    def _stop_reading(self) -> Sequence[LifecycleEvent]:
+        """The lifecycle events of what the provider has, but the session won't read about, as it closes.
+
+        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+
+        The session calls this once while closing, after it has stopped reading the connection and before it settles
+        its history. A provider that acknowledges what it was sent only later (the OpenAI protocol's audio commit) has
+        the acknowledgements the session will now never read: say what they would have.
+
+        The default returns none.
+        """
+        return ()
+
     @property
     def model_name(self) -> str | None:
         """The model id the server reported serving this session, when the provider reports one.
