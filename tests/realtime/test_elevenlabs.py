@@ -20,6 +20,7 @@ from inline_snapshot import snapshot
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.realtime import WebRTCSession
 from pydantic_ai.realtime.codec import OutputTranscript
 from pydantic_ai.tools import ToolDefinition
 
@@ -37,6 +38,7 @@ with try_import() as imports_successful:
         ElevenLabsRealtimeModelSettings,
         map_event,
     )
+    from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
     from .test_openai import FakeConnect, FakeWebSocket, sdk_frame
 
@@ -54,7 +56,7 @@ def _model(
 
 def _connect(
     model: ElevenLabsRealtimeModel, instructions: str, *, messages: Sequence[ModelMessage] | None = None
-) -> AbstractAsyncContextManager[ElevenLabsRealtimeConnection]:
+) -> AbstractAsyncContextManager[OpenAIRealtimeConnection]:
     return model.connect(
         messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
         model_settings=None,
@@ -158,7 +160,7 @@ def test_session_config_shape() -> None:
 def test_session_config_settings() -> None:
     settings = ElevenLabsRealtimeModelSettings(
         elevenlabs_voice='voice-id',
-        elevenlabs_turn_detection={'type': 'server_vad', 'threshold': 0.4},
+        openai_turn_detection={'type': 'server_vad', 'threshold': 0.4},
         input_transcription_model=None,
         max_tokens=100,
         parallel_tool_calls=False,
@@ -180,6 +182,15 @@ def test_session_config_settings() -> None:
     )
     assert config['max_output_tokens'] == 100
     assert config['parallel_tool_calls'] is False
+
+
+def test_session_config_ignores_openai_voice() -> None:
+    settings = ElevenLabsRealtimeModelSettings(openai_voice='alloy')
+    config = _model(settings)._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+    assert 'voice' not in config['audio']['output']
+    settings = ElevenLabsRealtimeModelSettings(openai_voice='alloy', elevenlabs_voice='voice-id')
+    config = _model(settings)._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+    assert config['audio']['output']['voice'] == 'voice-id'
 
 
 def test_session_config_push_to_talk_and_cross_provider_turn_detection() -> None:
@@ -259,6 +270,21 @@ async def test_connect_surfaces_handshake_error(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(ModelAPIError, match='bad voice'):
         async with _connect(_model(), 'x'):
             pass  # pragma: no cover
+
+
+async def test_webrtc_is_unsupported() -> None:
+    model = _model()
+    with pytest.raises(UserError, match=r'does not support WebRTC, so `create_client_secret\(\)` is unavailable'):
+        await model.create_client_secret()
+    with pytest.raises(UserError, match=r'`answer_webrtc_offer\(\)` is unavailable'):
+        await model.answer_webrtc_offer('v=0')
+    session = WebRTCSession(provider_name='elevenlabs', session_id='call')
+    with pytest.raises(UserError, match=r'`connect_webrtc\(\)` is unavailable'):
+        model.connect_webrtc(
+            session, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        )
+    with pytest.raises(UserError, match='cannot end a call from the server'):
+        await model.hang_up(session)
 
 
 async def test_connection_names_elevenlabs_when_closed() -> None:

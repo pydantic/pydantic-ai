@@ -29,7 +29,6 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.ordinal import (
     INSTRUCTIONS,
     INVALID,
@@ -54,18 +53,17 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAuthSignIn, SignIn as MCPSignIn, TokenStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
-from pydantic_clai2.plugins.loader import (
-    _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
-    PluginError,
-    PluginLoader,
-)
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.plugins.menus import Option, SettingsMenu
+from pydantic_clai2.plugins.process_plugins import RETIRED_BUILTINS
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.conftest import stored_accounts
 from tests.clai2.dialog_script import Answer, Asked, Back, Confirm, Finish, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import UNTIL_CLOSED, Script, pick, typed
+from tests.clai2.test_workspace_defaults import per_run
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ordinal')
 CLOSE = MenuResult(cancelled=True)
@@ -202,8 +200,9 @@ class Shell:
 
     def auth(self) -> OrdinalAuth[None]:
         [capability] = self.loader.capabilities()
-        assert isinstance(capability, OrdinalAuth)
-        return capability  # pyright: ignore[reportUnknownVariableType]
+        auth = per_run(capability)
+        assert isinstance(auth, OrdinalAuth)
+        return auth  # pyright: ignore[reportUnknownVariableType]
 
     async def run_capability(self) -> Ordinal[None] | None:
         return await self.auth()(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
@@ -240,7 +239,7 @@ def test_declared_as_a_disabled_built_in_with_no_settings() -> None:
     assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.ordinal'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
-    assert _RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
+    assert RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
 
 
 def test_url_matches_the_harness_endpoint() -> None:
@@ -533,7 +532,8 @@ async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest
     plugin = load_ordinal(plugin_host({'sign_in': 'browser'}))
     assert await run(plugin) == 'Signed in to Ordinal.'
     assert await run(plugin, 'status') == 'Signed in to Ordinal.'
-    [auth] = plugin.capabilities
+    [capability] = plugin.capabilities
+    auth = per_run(capability)
     assert isinstance(auth, OrdinalAuth)
     context = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert isinstance(await auth(context), Ordinal)
@@ -557,7 +557,8 @@ async def test_unreadable_keyring_is_reported(vault: Vault, monkeypatch: pytest.
 async def test_invalid_saved_choice_fails_closed(vault: Vault) -> None:
     save_codex_credentials(account=KEY_ACCOUNT, value='{"token": "a raw secret"}')
     plugin = load_ordinal(plugin_host({'sign_in': 'key'}))
-    [auth] = plugin.capabilities
+    [capability] = plugin.capabilities
+    auth = per_run(capability)
     assert isinstance(auth, OrdinalAuth)
     with pytest.raises(UserError, match='/plugins configure ordinal'):
         await auth(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
@@ -804,7 +805,7 @@ async def test_saved_catalog_toggle_becomes_the_built_in(
     await loader.load_all()
     [capability] = loader.capabilities()
     # `/plugins reload` re-imports the module, so compare where the class lives rather than its identity.
-    assert type(capability).__module__ == 'pydantic_clai2.builtin_plugins.ordinal'
+    assert type(per_run(capability)).__module__ == 'pydantic_clai2.builtin_plugins.ordinal'
 
     customized = PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', settings={'id': 'mine'})
     store.save_plugin(customized)

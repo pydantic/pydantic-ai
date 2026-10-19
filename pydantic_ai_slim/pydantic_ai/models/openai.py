@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import base64
+import hashlib
+import hmac
 import itertools
 import json
 import warnings
@@ -19,7 +21,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, Never, assert_never, cast, get_args, overload
+from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -45,6 +47,7 @@ from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
+    BaseToolReturnPart,
     BinaryContent,
     BinaryImage,
     CachePoint,
@@ -55,7 +58,9 @@ from ..messages import (
     ImageUrl,
     InstructionPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelResponseState,
@@ -127,6 +132,7 @@ from . import (
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import split_cache_setting
+from ._sdk_retries import with_max_retries
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -599,6 +605,11 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
+    """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
+    return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
+
+
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
@@ -1005,7 +1016,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
       that are already server-side.
 
     In both cases, messages that precede the chosen response in the history are omitted
-    from the input, since OpenAI reconstructs them from server-side state.
+    from the input, since OpenAI reconstructs them from server-side state. A response is only
+    chosen while those messages are unchanged: each response created with this setting records a
+    digest of the history it was created from as
+    [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
+    history processor or compaction has changed them since, the full history is sent instead.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -1024,7 +1039,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     - A concrete conversation ID string: use it as the OpenAI Responses API `conversation` parameter.
 
     When a matching conversation ID is found in message history, messages that precede that response
-    are omitted from the input, since OpenAI reconstructs them from the server-side conversation.
+    are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
+    changes to those messages, by a history processor or compaction for instance, don't reach the
+    model: it continues from the conversation as OpenAI stored it.
 
     Not compatible with
     [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
@@ -1227,6 +1244,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'top_k'})
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1310,6 +1329,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Chat Completions' `web_search_options` takes none."""
+        return native_tool.restricting_settings
+
     @cached_property
     def profile(self) -> OpenAIModelProfile:
         """The model profile.
@@ -1343,6 +1366,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     async def request(
         self,
@@ -1457,7 +1483,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 # `max_tokens` (e.g. OpenRouter), so the profile decides which field the `max_tokens` setting maps to.
                 max_tokens = model_settings.get('max_tokens', OMIT)
                 supports_max_completion_tokens = profile.get('openai_chat_supports_max_completion_tokens', True)
-                return await self.client.chat.completions.create(
+                return await with_max_retries(self.client, model_settings).chat.completions.create(
                     model=self.model_name,
                     messages=openai_messages,
                     parallel_tool_calls=model_settings.get('parallel_tool_calls', OMIT) if tools else OMIT,
@@ -2356,6 +2382,45 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
+    # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
+    # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
+    serialized = ModelMessagesTypeAdapter.dump_json(
+        [_without_application_metadata(message) for message in history], exclude_none=True
+    )
+    if key is None:
+        return hashlib.sha256(serialized).hexdigest()
+    return hmac.new(key, serialized, hashlib.sha256).hexdigest()
+
+
+def _without_application_metadata(message: ModelMessage) -> ModelMessage:
+    """`message` without the application-only `metadata` fields that are never sent to the model.
+
+    They can hold values that don't serialize to JSON, and changing them doesn't change what the server holds.
+    They're cleared by type, and a tool's return value is left whole: it's sent as is, `metadata` keys included.
+    """
+    # Split by type so `_part_without_application_metadata` sees a single part type.
+    if isinstance(message, ModelRequest):
+        return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+    return replace(message, parts=[_part_without_application_metadata(p) for p in message.parts], metadata=None)
+
+
+_PartT = TypeVar('_PartT', ModelRequestPart, ModelResponsePart)
+
+
+def _part_without_application_metadata(part: _PartT) -> _PartT:
+    if isinstance(part, BaseToolReturnPart):
+        return replace(part, metadata=None)
+    if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+        content = [replace(item, metadata=None) if isinstance(item, TextContent) else item for item in part.content]
+        return replace(part, content=content)
+    return part
+
+
+def _with_history_digest(response: ModelResponse, history_digest: str | None) -> ModelResponse:
+    return response if history_digest is None else replace(response, history_digest=history_digest)
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -2366,6 +2431,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     If you are interested in the differences between the Responses API and the Chat Completions API,
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
+
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'stop_sequences', 'top_k'}
+    )
 
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
@@ -2383,6 +2452,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
+    _history_digest_key: bytes | None = field(default=None, repr=False)
 
     def __init__(
         self,
@@ -2396,6 +2466,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize an OpenAI Responses model.
 
@@ -2404,8 +2475,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider: The provider to use. Defaults to `'openai'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
+            history_digest_key: A secret to key each response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] with (an HMAC-SHA256), so
+                stored history can't be used to test guesses at content redacted from it later. Every model
+                continuing the same conversations needs the same key; a response recorded with another key, or
+                none, is resent rather than continued from.
         """
         self._model_name = model_name
+        self._history_digest_key = history_digest_key
 
         if isinstance(provider, str):
             provider = infer_provider('gateway/openai' if provider == 'gateway' else provider)
@@ -2457,6 +2534,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
+
     @property
     def system(self) -> str:
         """The model provider."""
@@ -2505,6 +2585,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return frozenset(
             {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool, ToolSearchTool}
         )
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+        return frozenset()
 
     async def compact_messages(
         self,
@@ -2600,7 +2686,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         try:
             with map_decode_errors(self.model_name):
-                return await self.client.responses.compact(
+                return await with_max_retries(self.client, model_settings).responses.compact(
                     input=openai_messages,
                     model=self.model_name,
                     instructions=instructions,
@@ -2638,6 +2724,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `_get_continuation_info` already rejected the continuation with `UserError`.
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+            return self._process_response(response, settings, model_request_parameters)
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
@@ -2650,7 +2737,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # response, not a stream; same guard as `request_stream` below.
                 return stream
             async with stream:
-                streamed_response = await self._process_streamed_response(stream, settings, model_request_parameters)
+                streamed_response = await self._process_streamed_response(
+                    stream,
+                    settings,
+                    model_request_parameters,
+                    history_digest=self._history_digest_to_record(messages, settings),
+                )
                 async for _ in streamed_response:
                     pass
             return streamed_response.get()
@@ -2658,11 +2750,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response = await self._responses_create(
                 messages, stream=False, model_settings=settings, model_request_parameters=model_request_parameters
             )
+            if isinstance(response, ModelResponse):
+                return response
+            return _with_history_digest(
+                self._process_response(response, settings, model_request_parameters),
+                self._history_digest_to_record(messages, settings),
+            )
 
-        if isinstance(response, ModelResponse):
-            return response
+    def _history_digest_to_record(
+        self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
+    ) -> str | None:
+        """The digest of the history a new response is created from, when a later request may continue from it."""
+        if settings.get('openai_previous_response_id') is None:
+            return None
+        return _history_digest(messages, self._history_digest_key)
 
-        return self._process_response(response, settings, model_request_parameters)
+    def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+        """Whether `history`, the messages before `response`, differs from the history it was created from.
+
+        A response with no recorded history, from before it was recorded or from a request that didn't
+        continue server-side state, is trusted as before.
+        """
+        return response.history_digest is not None and response.history_digest != _history_digest(
+            history, self._history_digest_key
+        )
 
     async def count_tokens(
         self,
@@ -2700,7 +2811,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         extra_headers, timeout = self._build_request_options(settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            response = await self.client.responses.input_tokens.count(
+            response = await with_max_retries(self.client, settings).responses.input_tokens.count(
                 model=request_params.model,
                 input=request_params.input,
                 instructions=request_params.instructions,
@@ -2772,14 +2883,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
+                history_digest=None if expected_response_id else self._history_digest_to_record(messages, settings),
             )
             yield sr
 
     def _process_provider_details(self, response: responses.Response) -> dict[str, Any] | None:
         """Map a complete Responses API response object to provider details.
 
-        Subclasses may override this hook. It handles complete response objects, not live response event streams.
-        Built-in provider details take precedence on key collisions.
+        Subclasses may override this hook. It's called with the complete response, and when streaming, with the
+        complete response carried by the terminal event that ends the stream. Built-in provider details take
+        precedence on key collisions.
         """
         return None
 
@@ -2962,6 +3075,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
+        history_digest: str | None = None,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -3007,7 +3121,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
+            _history_digest=history_digest,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
+            _process_provider_details=self._process_provider_details,
         )
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
@@ -3288,7 +3404,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.create(
+                return await with_max_retries(self.client, model_settings).responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -3416,7 +3532,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         extra_headers, timeout = self._build_request_options(model_settings)
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.retrieve(
+                return await with_max_retries(self.client, model_settings).responses.retrieve(
                     response_id=response_id,
                     include=include or OMIT,
                     starting_after=starting_after if starting_after is not None else OMIT,
@@ -3684,17 +3800,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # from the message history takes precedence, so we chain to the latest stored
         # response instead of re-sending messages that are already server-side.
         #
-        # A compaction response in the tail is a hard chain boundary even with a
-        # concrete seed: crossing it would re-inject the context that compaction was
-        # meant to replace.
+        # A chain boundary in the tail (a compaction response, or a response whose prior
+        # history has changed) holds even with a concrete seed: crossing it would re-inject
+        # the context that compaction was meant to replace, or drop the change to the history.
         if setting is None:
             return None, messages
-        auto_id, trimmed = self._get_previous_response_id_and_new_messages(
+        auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
             messages, allow_no_new_messages=allow_no_new_messages
         )
         if auto_id is not None:
             return auto_id, trimmed
-        if setting == 'auto' or self._is_at_compaction_boundary(messages):
+        if setting == 'auto' or at_boundary:
             return None, messages
         return setting, messages
 
@@ -3719,38 +3835,40 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
 
-    def _is_at_compaction_boundary(self, messages: list[ModelMessage]) -> bool:
-        for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                return bool(m.provider_details and m.provider_details.get('compaction'))
-        return False
-
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
-    ) -> tuple[str | None, list[ModelMessage]]:
+    ) -> tuple[str | None, list[ModelMessage], bool]:
         # Find the most recent `provider_response_id` from messages produced by this
         # provider, and return it along with the messages that came after it (which
         # still need to be sent as new input). When nothing suitable is found, returns
-        # `(None, messages)` with the full list unchanged.
+        # `(None, messages)` with the full list unchanged. The third element says whether
+        # the most recent response from this provider is a chain boundary (a compaction, or
+        # a changed history), which a concrete seed must not cross either.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
-        for m in reversed(messages):
+        for index in range(len(messages) - 1, -1, -1):
+            m = messages[index]
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 # Responses from the stateless `/compact` endpoint can't be used as
                 # `previous_response_id`, so the compaction acts as a hard chain boundary:
                 # the next request must pass the `CompactionPart` via the `input` array
                 # (handled by `_map_messages`) without a `previous_response_id`.
                 if m.provider_details and m.provider_details.get('compaction'):
-                    return None, messages
+                    return None, messages, True
+                # The server continues from the history this response was created with, so if the
+                # messages before it have changed since (a history processor redacted or trimmed
+                # them, say), continuing would silently drop the change: resend everything instead.
+                if self._history_changed(m, messages[:index]):
+                    return None, messages, True
                 previous_response_id = m.provider_response_id
                 break
             else:
                 trimmed_messages.append(m)
 
         if previous_response_id and (allow_no_new_messages or trimmed_messages):
-            return previous_response_id, list(reversed(trimmed_messages))
+            return previous_response_id, list(reversed(trimmed_messages)), False
         else:
-            return None, messages
+            return None, messages, False
 
     def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
@@ -4807,11 +4925,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _tool_call_ids_are_response_scoped: bool
+    _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
+    _history_digest: str | None = None
+    """The digest of the history this response was created from, recorded on it as `ModelResponse.history_digest`."""
+
+    def get(self) -> ModelResponse:
+        return _with_history_digest(super().get(), self._history_digest)
 
     def _set_state(self, status: ResponseStatus | None) -> None:
         # `_track_background` stamps the `background` marker from `response.background` on every status
@@ -4849,6 +4973,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
             }
+        # Merged last so built-in provider details win on collisions, as in `_process_response`; those set later in
+        # the stream, like `finish_reason`, do too.
+        if hook_provider_details := self._process_provider_details(response):
+            self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     async def close_stream(self) -> None:
         await self._response.source.close()

@@ -63,6 +63,7 @@ from . import (
     get_user_agent,
 )
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
+from ._sdk_retries import with_max_retries
 from ._tool_choice import resolve_tool_choice
 from ._transport_errors import transport_error_message
 
@@ -182,6 +183,8 @@ class GroqModel(Model[AsyncGroq]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'service_tier', 'top_k'})
+
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
 
@@ -234,6 +237,11 @@ class GroqModel(Model[AsyncGroq]):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool})
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters `search_settings` applies."""
+        # `WebSearchTool` is the only native tool Groq supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
 
     async def request(
         self,
@@ -401,7 +409,7 @@ class GroqModel(Model[AsyncGroq]):
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
-            return await self.client.chat.completions.create(
+            return await with_max_retries(self.client, model_settings).chat.completions.create(
                 model=self._model_name,
                 messages=groq_messages,
                 n=1,

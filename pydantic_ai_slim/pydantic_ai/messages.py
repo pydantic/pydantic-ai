@@ -225,6 +225,20 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    scope: Literal['conversation', 'request'] = 'conversation'
+    """How long the model sees this prompt.
+
+    * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
+    * `'request'`: only for the model request it's part of, including a continuation of that same request
+      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+
+    A request-scoped prompt stays in the message history like any other part. Use one for a nudge about the
+    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
+    budget), not for something that stays true. See
+    [request-scoped system prompts](../message-history.md#request-scoped-system-prompts) for how each provider
+    renders it.
+    """
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -2543,25 +2557,20 @@ class BaseToolCallPart:
 
         This is just for convenience with models that require JSON strings as input.
 
+        The string is always compact JSON serialized from
+        [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict], keeping key order, even when `args`
+        is already a JSON string: a model's raw arguments may contain whitespace (`{"a": 1}`), while the same call
+        loaded back from a UI protocol or storage as a dict serializes compactly. Rendering both the same way keeps
+        the request bytes, and with them the provider's prompt cache, stable across that round trip.
+
         JSON that's malformed or doesn't represent an object is handled gracefully by returning
-        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
-        so that the value can still be sent to a model API (e.g. during a retry flow) instead of being rejected
-        by one that requires an object.
+        `'{"INVALID_JSON":"<raw args>"}'`, matching `args_as_dict`, so that the value can still be sent to a model
+        API (e.g. during a retry flow) instead of being rejected by one that requires an object.
 
         Because of that, this is not the way to render args that are still streaming in: a partial fragment
         that only becomes valid JSON once the following deltas are concatenated would be degraded to the
         wrapper. Emit those verbatim instead, as the UI event streams do.
         """
-        if not self.args:
-            return '{}'
-        if isinstance(self.args, str):
-            try:
-                if isinstance(pydantic_core.from_json(self.args), dict):
-                    # Returned verbatim rather than re-serialized, as the exact bytes the model produced
-                    # (key order, whitespace) matter for prompt caching.
-                    return self.args
-            except ValueError:
-                pass
         return pydantic_core.to_json(self.args_as_dict()).decode()
 
     def has_content(self) -> bool:
@@ -2962,6 +2971,28 @@ class ModelResponse:
     Each response records the ref when it is produced; the last response is refreshed when the run
     ends. A run with no attached workspace carries the conversation's ref forward, unless it was
     started with `workspace='new'`. Not sent to the model.
+    """
+
+    history_digest: str | None = None
+    """A digest of the history this response was created from: the messages before it, as they were sent.
+
+    Set by models that continue server-side state, such as
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    so a later request continues from this response only while the messages before it are unchanged.
+    The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
+    the model, so they're left out, and changing them doesn't count as a change.
+    Not sent to the model.
+
+    Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
+    can use to test guesses at content that was redacted from it later, such as a PIN or an account
+    number. If you redact history after it was sent, give the model a key. Don't just clear this
+    field: a response without one is trusted and continued from, and the provider still holds the
+    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
+    nothing continues from them.
+
+    Computing it serializes the whole history before the response on every request that continues
+    server-side state, so it costs local work proportional to the conversation's length.
     """
 
     failed_attempts: list[ModelRequestAttempt] | None = None
@@ -3592,6 +3623,11 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _is_request_scoped(part: ModelRequestPart) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether `part` is a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(part, SystemPromptPart) and part.scope == 'request'
 
 
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
@@ -4655,7 +4691,10 @@ class EnqueuedMessagesEvent:
 
 @dataclass(repr=False)
 class ToolCallEvent:
-    """Base class for events emitted when a tool call is about to be invoked.
+    """Base class for events emitted when a tool call is about to be invoked, or is settled without being invoked.
+
+    A call that isn't executed in this step still gets a call event, with `args_valid=None`, followed by
+    the result event carrying the return recorded in message history.
 
     Match against this in a `case` to handle [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent]
     and [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] together.
@@ -4672,7 +4711,10 @@ class ToolCallEvent:
 
     - `True`: Schema validation and custom validation (if configured) both passed; args are guaranteed valid.
     - `False`: Validation was performed and failed.
-    - `None`: Validation was not performed.
+    - `None`: Validation was not performed, because the call isn't executed in this step. This is the case
+      for a resumed deferred call whose supplied result isn't `ToolApproved` (e.g. `ToolDenied`), and for an
+      output, function or deferred tool call skipped because a final result was already processed.
+      The matching result event carries the return recorded in message history.
     """
 
     @property
@@ -4685,7 +4727,11 @@ class ToolCallEvent:
 
 @dataclass(repr=False)
 class FunctionToolCallEvent(ToolCallEvent):
-    """An event indicating the start to a call to a function tool."""
+    """An event indicating the start to a call to a function tool.
+
+    When `args_valid` is `None`, the tool isn't executed in this step; see
+    [`ToolCallEvent.args_valid`][pydantic_ai.messages.ToolCallEvent.args_valid].
+    """
 
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
@@ -4818,10 +4864,11 @@ class DeferredToolResultsEvent:
 
 @dataclass(repr=False)
 class RealtimeTurnCompleteEvent:
-    """The model exchange is over: generation and tool work are complete.
+    """The model exchange is over: what `RealtimeSession.wait_for_reply()` waits for has come.
 
-    It is synthesized by the session once no tool calls are still running and no further response is
-    in flight. Input transcription can finish after this event. On WebRTC sidebands, provider playback
+    It is synthesized by the session when a response ends and the model owes nothing more: no reply to an
+    input sent (text, a tool's result, a request for a response), no answer to a tool call, and no response
+    still under way. Input transcription can finish after this event. On WebRTC sidebands, provider playback
     can also continue until [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent].
     """
 

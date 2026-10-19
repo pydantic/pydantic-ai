@@ -1,8 +1,9 @@
 """The orchestrator: an agent of its own in the web UI, which runs workspaces for the user.
 
-It has its own conversation and only the tools in `workspace_tools`, plus `ask_user_question`, answered
-in its own chat. The session's agent gets none of them. Its conversation is one JSON file in CLAI's state
-directory, so it survives a reload and a restart, and never shows among the saved sessions.
+It has its own conversation and only the tools in `workspace_tools` and `session_tools`, plus
+`ask_user_question`, answered in its own chat. The session's agent gets none of them. Its conversation
+is one JSON file in CLAI's state directory, so it survives a reload and a restart, and never shows
+among the saved sessions.
 """
 
 import asyncio
@@ -114,7 +115,7 @@ class Orchestrator:
     def __init__(self, *, host: PluginHost[None], publish: Callable[[ServerMessage], None]) -> None:
         self.host = host
         self._publish = publish
-        self.answerer = BrowserAnswerer(publish=self._send, terminal=None)
+        self.answerer = BrowserAnswerer(publish=lambda message, _session: self._send(message), terminal=None)
         """Asks in the orchestrator chat alone, so only the user there answers, never the terminal."""
         self._translator = EventTranslator()
         self._turn = ItemLog()
@@ -153,14 +154,19 @@ class Orchestrator:
         return configured(self.host.plugins) is not None
 
     async def state(self) -> OrchestratorState:
-        return self._state((await self.load()).messages)
+        saved = await self.load()
+        return self._state(saved.messages, await self.host.default_model_name())
 
-    def _state(self, messages: Sequence[ModelMessage]) -> OrchestratorState:
+    def _state(self, messages: Sequence[ModelMessage], model: str | None) -> OrchestratorState:
         items = history_items(messages)
         if self.running:
             items += self._turn.items.values()
         return OrchestratorState(
-            enabled=self.enabled(), running=self.running, items=items, questions=self.answerer.questions
+            enabled=self.enabled(),
+            running=self.running,
+            model=model,
+            items=items,
+            questions=self.answerer.questions,
         )
 
     def _send(self, message: OrchestratorEvent) -> None:
@@ -172,16 +178,21 @@ class Orchestrator:
             self._send(message)
 
     def agent(self) -> Agent[None, str]:
-        """The orchestrator's agent, made on first use: the workspace tools and `ask_user_question`, nothing else."""
+        """The orchestrator's agent, made on first use: the workspace and session tools and `ask_user_question`."""
         if self._agent is None:
+            from pydantic_clai2.builtin_plugins.web import session_tools
             from pydantic_clai2.builtin_plugins.web.workspace_tools import WorkspaceTools
 
             self._tools = WorkspaceTools(self.host)
+            sessions = session_tools.SessionTools(self.host, publish=self._publish)
             self._agent = Agent(
                 name='orchestrator',
                 deps_type=type(None),
-                instructions=INSTRUCTIONS,
-                capabilities=[Capability[None](tools=self._tools.tools()), AskUser[None](answerer=self.answerer)],
+                instructions=[INSTRUCTIONS, session_tools.INSTRUCTIONS],
+                capabilities=[
+                    Capability[None](tools=[*self._tools.tools(), *sessions.tools()]),
+                    AskUser[None](answerer=self.answerer),
+                ],
             )
         return self._agent
 
@@ -206,15 +217,16 @@ class Orchestrator:
         self._turn.apply(ItemAdded(item=item))
         self._send(TurnStarted(item=item))
         # The history this turn starts from, which another CLAI may have changed since the page loaded.
-        self._send(self._state(saved.messages))
+        self._send(self._state(saved.messages, await self.host.default_model_name()))
         messages = saved.messages
         outcome: TurnOutcome = 'failed'
         error: str | None = None
         usage: RunUsage | None = None
         try:
-            model = await self.host.conversation.resolved_model()
+            # The saved default, as a new session starts with, never one session's own choice.
+            model = await self.host.default_model()
             if model is None:
-                raise RuntimeError('Choose a model for this session first.')
+                raise RuntimeError('Choose a model with /model first.')
             async with self.agent().iter(prompt, message_history=messages, model=model) as run:
                 try:
                     async for node in run:

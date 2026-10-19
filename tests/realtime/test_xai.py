@@ -42,7 +42,6 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
-    _session as realtime_session,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -1667,8 +1666,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
-    commits_announced: list[None] = []
-    conn._set_audio_commit_listener(lambda: commits_announced.append(None))  # pyright: ignore[reportPrivateUsage]
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)
@@ -1686,8 +1683,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
-    # The session placed the turn when the commit first started going out; sending it again doesn't move it.
-    assert len(commits_announced) == 1
 
 
 async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
@@ -1930,17 +1925,12 @@ def _spoken_reply(response_id: str, pcm: bytes, transcript: str) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize('core_mode', ['core', 'legacy'])
-async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(
-    monkeypatch: pytest.MonkeyPatch, core_mode: str
-) -> None:
+async def test_retained_audio_eviction_keeps_a_committed_turn_in_its_place(monkeypatch: pytest.MonkeyPatch) -> None:
     """A spoken turn goes after what its commit followed, even once the retained-audio budget evicted that answer's audio.
 
     The second answer arrives before the second turn's transcript and evicts the first answer's audio, which the
-    second commit was placed after. Also run on the current core (`_CORE_MODE = 'legacy'`), whose own record keeps
-    retained audio only there: in core mode it lets that audio go as soon as it records it.
+    second commit was placed after.
     """
-    monkeypatch.setattr(realtime_session, '_CORE_MODE', core_mode)
     tenth_of_a_second = b'\x10\x27' * 2400
     ws = _PhasedWebSocket(
         [_created(), _updated()],

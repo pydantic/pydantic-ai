@@ -1,5 +1,5 @@
 ---
-description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI and Azure, with your tools."
+description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI, Azure and ElevenLabs Agents, with your tools."
 ---
 
 # Realtime (speech-to-speech)
@@ -15,7 +15,7 @@ A realtime session uses the same agent [tools](tools.md), [dependencies](../depe
 agent can look up an order, check availability, or act on the logged-in user's data with the same
 tools and dependencies a text agent would use. The call itself becomes ordinary message history
 that you can [hand to `Agent.run()`](history.md#handing-off-to-a-text-agent) for summarization or
-structured follow-up, the same code runs against [five providers](#provider-support), and usage
+structured follow-up, the same code runs against [every supported provider](#provider-support), and usage
 limits and [Logfire](../logfire.md) tracing are built in. Your application owns the audio transport —
 bridged through your backend, or [browser-direct over WebRTC](deployment.md#browser-webrtc-server-sideband)
 on OpenAI and Azure — while Pydantic AI runs the provider-agnostic agent loop.
@@ -153,6 +153,7 @@ and quirks:
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | Replays local history |
+| [ElevenLabs](elevenlabs.md) | ✓ | ✗ | ✓ (toggle-gated) | ✗ | ✗ | ✗ | ✗ |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
 or [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile]: the
@@ -194,8 +195,8 @@ realtime = agent.realtime(
 )
 ```
 
-Voices and detailed controls are provider-specific — `openai_voice`, `google_voice`, `xai_voice`
-and friends live on the corresponding provider settings classes, with defaults and limitations on
+Voices and detailed controls are provider-specific — `openai_voice`, `google_voice`, `xai_voice`,
+`elevenlabs_agents_voice_id` and friends live on the corresponding provider settings classes, with defaults and limitations on
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not

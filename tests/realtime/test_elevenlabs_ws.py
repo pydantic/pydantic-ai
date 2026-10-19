@@ -49,7 +49,7 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 
-# TODO(elevenlabs-launch): the launch model id.
+# TODO(elevenlabs-launch): the published model id.
 MODEL = 'eleven-voice'
 
 

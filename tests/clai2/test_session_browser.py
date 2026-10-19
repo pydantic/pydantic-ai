@@ -64,11 +64,16 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
     ]
     source = iter(keys or [])
 
-    def refresh(query: str, limit: int) -> list[ConversationSummary]:
-        return [e for e in entries if query.lower() in e.title.lower()][:limit]
+    def refresh(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+        found = [e for e in entries if query.lower() in e.title.lower() and (archived or e.archived_at is None)]
+        return found[:limit]
 
     def rename(entry: ConversationSummary, title: str) -> None:
         entries[entries.index(entry)] = replace(entry, title=title)
+
+    def archive(entry: ConversationSummary, archived: bool) -> None:
+        index = next(index for index, e in enumerate(entries) if e.id == entry.id)
+        entries[index] = replace(entry, archived_at=datetime.now(UTC) if archived else None)
 
     widget = SessionBrowser(
         entries=entries,
@@ -78,6 +83,7 @@ def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[Conv
         preview=lambda session_id: f'Transcript {session_id}\nuser: hello',
         delete=entries.remove,
         rename=rename,
+        archive=archive,
         output=StringIO(),
         key_source=lambda: next(source),
         size=lambda: (110, 24),
@@ -170,7 +176,7 @@ def test_search_sort_rename_delete_and_stable_refresh() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key('d')
     assert widget.confirm is not None
-    assert widget.footer() == 'Delete saved session: Other? y confirm / any other key cancel'
+    assert widget.footer() == 'Delete saved session: Other? y confirm - any other key cancel'
     widget.handle_key('n')
     assert len(entries) == 3
     widget.handle_key('d')
@@ -337,7 +343,7 @@ def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(module.time, 'monotonic', lambda: next(ticks))
     attempts: list[str] = []
 
-    def fail(query: str, limit: int) -> list[ConversationSummary]:
+    def fail(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
         attempts.append(query)
         raise OSError('database unavailable')
 
@@ -559,3 +565,27 @@ def test_git_unavailable_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(subprocess, 'run', fail)
     assert project_identity(str(tmp_path)) == ProjectIdentity(key=str(tmp_path), name=tmp_path.name, root=str(tmp_path))
+
+
+def test_archiving_hides_a_session_until_archived_ones_are_listed() -> None:
+    widget, entries = browser()
+    assert 'h archived' in widget.footer()
+    widget.handle_key(Key.ENTER)
+    assert 'a archive - h archived' in widget.footer()
+    widget.handle_key('a')
+    assert widget.notice == 'Cannot archive the active session. Use /new first.'
+    widget.handle_key(Key.DOWN)
+    widget.handle_key('a')
+    assert widget.notice == 'Archived Other. h lists archived sessions.'
+    assert [entry.id for entry in widget.entries] == ['one', 'two']
+    widget.handle_key('h')
+    assert widget.notice == 'Archived sessions are listed.'
+    frame = widget.frame(width=110, height=24)
+    assert 'archived included' in frame[0]
+    assert any('Other ! (archived)' in line for line in frame)
+    widget.selected_id = 'three'
+    widget.handle_key('a')
+    assert widget.notice == 'Unarchived Other.' and entries[2].archived_at is None
+    widget.handle_key('h')
+    assert widget.notice == 'Archived sessions are hidden.'
+    assert [entry.id for entry in widget.entries] == ['one', 'two', 'three']

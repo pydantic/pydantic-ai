@@ -16,7 +16,7 @@ from typing import (
     assert_never,
 )
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
@@ -98,6 +98,7 @@ try:
         COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
+        ENQUEUED_MESSAGES_ACTIVITY_TYPE,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
@@ -192,6 +193,26 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+_messages_ta: TypeAdapter[list[Message]] = TypeAdapter(list[Message])
+
+
+def _enqueued_messages(content: dict[str, Any]) -> list[Message]:
+    """The AG-UI messages in a `pydantic_ai_enqueued_messages` activity, or none when the client sent something malformed.
+
+    Enqueued-message activities nested inside are dropped: the content is the client's to send, and
+    honoring them would let it recurse `load_messages` as deeply as it liked.
+    """
+    try:
+        messages = _messages_ta.validate_python(content.get('messages'))
+    except ValidationError:
+        return []
+    return [
+        message
+        for message in messages
+        if not (isinstance(message, ActivityMessage) and message.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE)
+    ]
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -260,8 +281,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
-    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction and
-      [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction, enqueued
+      messages and [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed
@@ -316,7 +337,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            manage_system_prompt=self.manage_system_prompt,
+            preserve_file_data=self.preserve_file_data,
+        )
 
     @classmethod
     async def from_request(
@@ -594,6 +621,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                    elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
+                        # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                        # They carry their own message ids, so the activity's id isn't kept on them.
+                        # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
+                        builder._append_whole(  # pyright: ignore[reportPrivateUsage]
+                            cls.load_messages(
+                                _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
+                            )
+                        )
+                        continue
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -704,8 +741,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                system_content.append(part.content)
+                # A request-scoped prompt is for the model's current request only; loaded back, it would
+                # come back as a lasting system prompt.
+                if part.scope != 'request':
+                    system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
+                # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
+                # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
+                # as one user message instead of one per prompt.
+                flush_user_content()
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
                 else:
@@ -782,6 +826,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
                 else:
+                    flush_user_content()
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
@@ -953,6 +998,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
           string is no longer recoverable as args on reload. Unlike the live event stream, which emits
           them verbatim so streamed fragments stay concatenable, history has to hold a sendable value.
+          Args that do parse are dumped as compact JSON, the form the model adapters send, so whitespace
+          in the model's raw string doesn't survive.
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
@@ -965,6 +1012,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - Each `UserPromptPart` (and each `RetryPromptPart` without a tool name) is dumped as its own
+          `UserMessage`, so a request's prompts reload as the same separate parts rather than merged into one.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only

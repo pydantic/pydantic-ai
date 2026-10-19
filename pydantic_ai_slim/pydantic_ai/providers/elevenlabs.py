@@ -1,32 +1,24 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TYPE_CHECKING
 
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
-from pydantic_ai.profiles.elevenlabs import elevenlabs_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
-
-if TYPE_CHECKING:
-    from pydantic_ai.realtime import RealtimeModelProfile
 
 
 class ElevenLabsProvider(Provider[AsyncHTTPClient]):
     """Provider for the ElevenLabs API.
 
-    ElevenLabs has no async SDK client that fits Pydantic AI's transports, so the provider's `client`
-    is a plain HTTP client. The realtime models authenticate their WebSocket connections with
-    [`api_key`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider.api_key] and derive the WebSocket
-    URL from [`base_url`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider.base_url].
+    The provider's `client` is a plain async HTTP client: model classes make their ElevenLabs API calls with it,
+    authenticated by the `api_key` and addressed to the `base_url` the provider exposes. (For
+    [ElevenLabs Agents][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel], these are the REST
+    calls around the agent WebSocket: fetching the agent configuration, minting a signed WebSocket URL, and
+    optionally syncing tool definitions.)
 
-    `base_url` doubles as the region switch: pass a
-    [data-residency host](https://elevenlabs.io/docs/product-guides/administration/data-residency)
-    such as `https://api.eu.residency.elevenlabs.io` to keep the connection inside a region.
+    `base_url` doubles as the region switch: pass `https://api.eu.residency.elevenlabs.io` (or the
+    India and Singapore hosts, `api.in.residency.elevenlabs.io` and `api.sg.residency.elevenlabs.io`) to keep
+    both the REST calls and the derived WebSocket endpoint inside a data-residency region.
     """
-
-    # TODO(elevenlabs-launch): use #7964's ElevenLabsProvider. This whole file is a local stub of the one shared
-    # `ElevenLabsProvider` (name `'elevenlabs'`) that #7964 adds, kept shape-compatible with it (`api_key`,
-    # `base_url`, `client`) so `ElevenLabsRealtimeModel` builds on it unchanged. Delete it when rebasing onto #7964.
 
     @property
     def name(self) -> str:
@@ -42,14 +34,8 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
 
     @property
     def api_key(self) -> str:
-        """The resolved API key, used to authenticate the realtime WebSocket handshake."""
+        """The resolved API key, sent as the `xi-api-key` header on REST requests."""
         return self._api_key
-
-    @staticmethod
-    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-        # TODO(elevenlabs-launch): #7964's shared provider returns the *Agents* profile here, so on rebase the
-        # speech-to-speech profile has to be chosen another way; see scratch/LAUNCH_CHECKLIST.md, section 5.
-        return elevenlabs_realtime_model_profile(model_name)
 
     def __init__(
         self,
@@ -62,7 +48,9 @@ class ElevenLabsProvider(Provider[AsyncHTTPClient]):
 
         Args:
             api_key: The API key to use for authentication. If not provided, the `ELEVENLABS_API_KEY`
-                environment variable will be used if available.
+                environment variable will be used if available. The key is always required: even a
+                public agent's conversation is preceded by REST preflight calls that authenticate
+                with it.
             base_url: The base URL for the ElevenLabs API. Defaults to the global endpoint; pass a
                 [data-residency host](https://elevenlabs.io/docs/product-guides/administration/data-residency)
                 such as `https://api.eu.residency.elevenlabs.io` to pin a region.
