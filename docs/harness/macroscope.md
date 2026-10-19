@@ -29,7 +29,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Macroscope
 
 agent = Agent(
-    'anthropic:claude-sonnet-5',
+    '{{ anthropic:medium }}',
     capabilities=[
         LocalWorkspace('.'),
         Macroscope(),
@@ -110,7 +110,7 @@ so you can declare it in a config file instead of Python:
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-5
+model: {{ anthropic:medium }}
 capabilities:
   - Macroscope:
       base: main

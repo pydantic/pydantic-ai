@@ -71,6 +71,7 @@ def test_settings_form_validates_and_converts() -> None:
         'parallel_tool_calls': True,
         'thinking': True,
         'service_tier': 'flex',
+        'cache': '1h',
     }
     assert model_settings_from_json(everything).to_model_settings() == everything
     with pytest.raises(ValidationError):
@@ -158,7 +159,7 @@ def test_settings_shortcut_does_not_consume_search(tmp_path: Path, monkeypatch: 
         next(keys)
 
 
-def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
+async def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     context, applied = make_context(tmp_path)
     menu = ModelMenu(context)
     assert menu.current == 'openai-codex:gpt-6-astra'
@@ -175,17 +176,22 @@ def test_model_menu_rows_details_and_flow(tmp_path: Path) -> None:
     assert menu.details(MenuItem('stray', value='nope')) == ''
     assert menu.build() is not None
     marker = menu.settings_marker(object(), priced)
+    # `Ctrl+S` closes the list for the model's settings menu, then the list opens again on that model.
     script = Script(
         lists=[pick('anthropic'), marker, pick('max_tokens'), MenuResult(cancelled=True), pick(priced.value)],
         choices=[],
         texts=[typed('42')],
     )
-    messages = run_model_flow(menu, script.runners)
-    assert messages == [
-        f'Saved max_tokens for {priced.value}. Applies when this model is selected.',
-        'Saved model. Applied.',
-    ]
+    assert await open_add_model_menu(context, runners=script.runners) == '\n'.join(
+        [f'Saved max_tokens for {priced.value}. Applies when this model is selected.', 'Saved model. Applied.']
+    )
+    assert script.opened == ['list', 'list', 'list', 'text', 'list', 'list']
     assert context.settings.model == priced.value
+    # Again from the reopened list, and backing out of it returns to the providers.
+    closed = MenuResult(cancelled=True)
+    script = Script(lists=[pick('anthropic'), marker, closed, marker, closed, closed, closed], choices=[], texts=[])
+    assert await open_add_model_menu(context, runners=script.runners) == 'No changes.'
+    assert script.opened == ['list'] * 7
     assert applied == ['model']
     assert 'settings  max_tokens=42' in menu.details(priced)
     assert run_model_flow(menu, Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners) == []
@@ -197,8 +203,8 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     assert await open_add_model_menu(context, run=lambda menu: []) == 'No changes.'
     assert await open_add_model_menu(context, run=lambda menu: [menu.choose('test')]) == 'Saved model. Applied.'
     context.store.save_model_settings('test', {'max_tokens': 3, 'seed': 7})
-    assert context.model_settings('test') == {'max_tokens': 3, 'seed': 7}
-    assert context.model_settings('other') is None
+    assert context.model_settings('test') == {'max_tokens': 3, 'seed': 7, 'cache': True}
+    assert context.model_settings('other') == {'cache': True}
     seen: list[ModelSettings | None] = []
     hooks = Hooks[None]()
 
@@ -210,7 +216,7 @@ async def test_open_add_model_menu_and_settings_reach_the_run(tmp_path: Path) ->
     session = Session(Agent(TestModel(custom_output_text='ok')), deps=None, plugins=[hooks])
     session.model_settings = context.model_settings('test')
     assert (await session.prompt('hi')).output == 'ok'
-    assert seen == [{'max_tokens': 3, 'seed': 7}]
+    assert seen == [{'max_tokens': 3, 'seed': 7, 'cache': True}]
 
 
 def test_live_model_overrides_follow_saves_and_keep_the_last_valid_ones(tmp_path: Path) -> None:
@@ -308,7 +314,6 @@ def test_empty_model_picker(tmp_path: Path) -> None:
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'empty.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     assert model_completions(context, []) == ['add', 'settings', 'chains']
@@ -324,7 +329,6 @@ async def test_select_new_model_from_picker(tmp_path: Path, initial_model: str |
     context = CommandContext(
         settings=Settings(model=initial_model),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: applied.append(key),
     )
     assert context.store.models() == ([initial_model] if initial_model else [])
@@ -472,7 +476,6 @@ async def test_cannot_delete_saved_default_model(
     context = CommandContext(
         settings=Settings(model=current),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     pressed = iter(['home', 'ctrl-d', 'escape'])

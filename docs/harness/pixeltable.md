@@ -34,7 +34,7 @@ from pixeltable.functions.openai import embeddings
 pxt.create_dir('hr', if_exists='ignore')
 handbook = pxt.create_table('hr.handbook', {'topic': pxt.String, 'text': pxt.String}, if_exists='ignore')
 handbook.insert([{'topic': 'expenses', 'text': 'Meals during business travel are reimbursed up to 60 EUR per day.'}])
-handbook.add_embedding_index('text', embedding=embeddings.using(model='text-embedding-3-small'), if_exists='ignore')
+handbook.add_embedding_index('text', embedding=embeddings.using(model='{{ openai:embedding.name }}'), if_exists='ignore')
 ```
 
 An agent that searches it and keeps notes across runs:
@@ -45,7 +45,7 @@ from pydantic_ai_harness import Memory, Pixeltable
 from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[
         Pixeltable(['hr.handbook']),
         Memory(PixeltableMemoryStore(table_name='hr.memory')),
@@ -137,7 +137,7 @@ its one positional argument, so the short form passes it alone:
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Pixeltable: ['hr.handbook']
 ```

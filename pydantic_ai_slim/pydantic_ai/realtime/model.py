@@ -248,6 +248,14 @@ class RealtimeModel(AbstractModel):
         """Return the native tool types implemented by this realtime model class."""
         return frozenset()
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return the names of the settings set on `native_tool` that this model can't apply.
+
+        Works like [`Model.unsupported_native_tool_settings`][pydantic_ai.models.Model.unsupported_native_tool_settings]:
+        a native tool with any of these is treated as unsupported for the session. The default is an empty set.
+        """
+        return frozenset()
+
     def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
         """Merge model-level defaults with connection-level overrides."""
         settings = self.settings.copy() if self.settings else None
@@ -337,6 +345,7 @@ class RealtimeModel(AbstractModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
         """Relay a browser's WebRTC SDP offer to the provider and return the SDP answer plus a [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession].
 
@@ -347,6 +356,11 @@ class RealtimeModel(AbstractModel):
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]. Only implemented by
         providers that support WebRTC (OpenAI and Azure OpenAI); the default raises
         [`UserError`][pydantic_ai.exceptions.UserError] and points callers to the WebSocket transport.
+
+        `message_history` is the conversation the call continues. A model whose protocol only takes history
+        when a session starts (OpenAI GPT-Live) seeds it into the session this creates; the others seed it
+        when the sideband attaches, from the history that session is opened with, so pass the same history
+        to both.
         """
         self._raise_unsupported_webrtc('answer_webrtc_offer')
 

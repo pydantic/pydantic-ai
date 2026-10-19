@@ -55,6 +55,7 @@ class Store(MemoryStore, SearchableMemoryStore, Protocol):
     """Combined contract implemented by the bundled stores."""
 
 
+@pytest.mark.subprocess(reason='Verify optional dependency imports in a fresh interpreter.')
 def test_wildcard_import_without_pixeltable() -> None:
     """A fresh interpreter must import ordinary stores without the Pixeltable extra."""
     result = subprocess.run(

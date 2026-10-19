@@ -633,6 +633,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Function tool helpers ----------------------------------------------
 
+    def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
+        """Record a 'not executed' stub for a call skipped because a final result was already processed.
+
+        Emits an unvalidated `FunctionToolCallEvent` and the stub's `FunctionToolResultEvent`, like
+        `_record_output_part` does for a skipped output tool, so event-stream consumers (e.g. UI adapters)
+        see the same result the message history records.
+        """
+        part = _messages.ToolReturnPart(
+            tool_name=call.tool_name,
+            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            tool_call_id=call.tool_call_id,
+        )
+        self.output_parts.append(part)
+        yield _messages.FunctionToolCallEvent(call)
+        yield _messages.FunctionToolResultEvent(part)
+
     async def _validate_function_calls(
         self, calls: list[_messages.ToolCallPart], *, validated_calls: dict[str, ValidatedToolCall[DepsT]]
     ) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -809,6 +825,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+        def record_result(
+            result: tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None], index: int
+        ) -> _messages.FunctionToolResultEvent:
+            tool_parts, tool_user_content = result
+            tool_parts_by_index[index] = tool_parts
+            if tool_user_content:
+                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+
+            tool_part = tool_parts[0]
+            assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
         async def handle_call_or_result(
             coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
             | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
@@ -825,13 +853,25 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_parts
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                return record_result((tool_parts, tool_user_content), index)
 
-                tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+        def record_completed_results(
+            tasks_by_index: dict[
+                int, asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            ],
+        ) -> None:
+            for index, task in tasks_by_index.items():
+                if (
+                    task.done()
+                    and not task.cancelled()
+                    and task.exception() is None
+                    and index not in tool_parts_by_index
+                ):
+                    # A tool that finished before a sibling raised or the run was cancelled keeps
+                    # its return in the interrupted request, so resuming from that history doesn't
+                    # re-run it. Under `parallel_ordered_events` such results haven't been settled
+                    # yet; no result event is emitted for them, so event order is unchanged.
+                    record_result(task.result(), index)
 
         def call_tool(
             index: int,
@@ -888,6 +928,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                 yield event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                    record_completed_results(tasks_by_index)
                     raise
                 except BaseException:
                     # Cancel any still-running sibling tasks so they don't become
@@ -895,6 +936,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # (e.g. RuntimeError, ConnectionError) propagates out of
                     # handle_call_or_result().
                     await cancel_and_drain(*tasks_by_index.values())
+                    record_completed_results(tasks_by_index)
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface
@@ -990,13 +1032,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(self.final_result.output, DeferredToolRequests):
                 for call in calls:
-                    self.output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                            tool_call_id=call.tool_call_id,
-                        )
-                    )
+                    for event in self._skip_function_call(call):
+                        yield event
         elif calls:
             for call in calls:
                 try:
@@ -1126,13 +1163,8 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         if self.final_result is not None:
             # An output succeeded: function tools are not executed.
             for call in function_calls:
-                self.output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
+                for event in self._skip_function_call(call):
+                    yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
             async for event in self._run_function_calls(function_calls):  # pragma: no branch

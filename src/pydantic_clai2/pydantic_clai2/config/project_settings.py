@@ -59,6 +59,20 @@ def find_project_file(workspace: Path, name: Path = PROJECT_FILE) -> Path | None
     return None
 
 
+def repository_directories(workspace: Path) -> list[Path]:
+    """`workspace` and its parents up to the nearest git root, nearest first; only `workspace` outside a repository.
+
+    Like `find_project_file`, the walk stops at the first `.git`, and an unreadable one still ends it.
+    """
+    start = workspace.resolve()
+    walked: list[Path] = []
+    for directory in (start, *start.parents):
+        walked.append(directory)
+        if _present(directory / '.git'):
+            return walked
+    return [start]
+
+
 def _unapproved(plugin: PluginSettings, *, root: Path) -> PluginSettings:
     """`plugin` switched off, with its file anchored to the project `root`.
 

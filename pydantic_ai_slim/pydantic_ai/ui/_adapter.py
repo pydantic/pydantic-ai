@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -31,6 +31,8 @@ from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
     ModelMessage,
+    ModelRequest,
+    SystemPromptPart,
     ToolAvailabilityDeltaPart,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
@@ -133,6 +135,24 @@ def _check_content_type(request: Request, allowed_content_types: frozenset[str] 
     )
 
 
+def validation_error_response(e: ValidationError) -> Response:
+    """Build the 422 response returned when a UI request body fails validation."""
+    from starlette.responses import Response
+
+    try:
+        content = e.json()
+    except ValueError:
+        # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
+        # `e.json()` can't serialize — drop the echoed input so the client still gets its
+        # 422 rather than a 500.
+        content = e.json(include_input=False)
+    return Response(
+        content=content,
+        media_type='application/json',
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+    )
+
+
 # TODO(v3): remove this helper along with the Vercel AI adapter's deprecated `preserve_file_data` alias (AG-UI's `preserve_file_data` is a separate, non-deprecated setting)
 def resolve_allow_uploaded_files(
     allow_uploaded_files: bool, preserve_file_data: bool | None, *, stacklevel: int = 3
@@ -161,6 +181,33 @@ def resolve_allow_uploaded_files(
 
 
 _COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def enqueued_messages_for_client(
+    messages: Sequence[ModelMessage], *, manage_system_prompt: Literal['server', 'client']
+) -> list[ModelMessage]:
+    """The enqueued messages to stream to the frontend.
+
+    When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
+    frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
+    Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
+    current request only, and loaded back they'd become lasting system prompts.
+    """
+    kept: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, SystemPromptPart)
+                or (manage_system_prompt == 'client' and part.scope != 'request')
+            ]
+            if not parts:
+                continue
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+        kept.append(message)
+    return kept
 
 
 def compaction_payload(part: CompactionPart) -> dict[str, Any]:
@@ -598,8 +645,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -713,8 +760,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -803,8 +850,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
-            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a workspace capability, run inside a Temporal workflow, DBOS workflow or Prefect flow, gets one derived from the workflow or flow run so its workspace state survives worker recovery.
+            conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -842,7 +889,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             A streaming Starlette response with protocol-specific events encoded per the request's `Accept` header value.
         """
         try:
-            from starlette.responses import Response
+            from starlette.responses import Response  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except ImportError as e:  # pragma: no cover
             raise ImportError(
                 'Please install the `starlette` package to use `dispatch_request()` method, '
@@ -866,18 +913,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 ),
             )
         except ValidationError as e:
-            try:
-                content = e.json()
-            except ValueError:
-                # A body that isn't valid UTF-8 leaves the raw bytes on `input_value`, which
-                # `e.json()` can't serialize — drop the echoed input so the client still gets its
-                # 422 rather than a 500.
-                content = e.json(include_input=False)
-            return Response(
-                content=content,
-                media_type='application/json',
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            )
+            return validation_error_response(e)
 
         return adapter.streaming_response(
             adapter.run_stream(

@@ -26,8 +26,8 @@ from pydantic_ai.usage import UsageLimits
 
 from ..cassette_utils import (
     get_bedrock_tool_names_from_cassette,
-    get_cohere_tool_names_from_cassette,
     get_first_post_body,
+    get_function_tool_names_from_cassette,
 )
 from ..conftest import try_import
 
@@ -334,7 +334,7 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
         {
             'type': 'allowed_tools',
             'mode': 'required',
-            'tools': [{'type': 'function', 'name': 'final_result'}, {'type': 'function', 'name': 'get_weather'}],
+            'tools': [{'type': 'function', 'name': 'get_weather'}, {'type': 'function', 'name': 'final_result'}],
         }
     ),
     ('anthropic', 'auto'): snapshot('auto'),
@@ -352,8 +352,8 @@ EXPECTED_TOOL_CHOICE: dict[tuple[str, Scenario], Any] = {
     ('mistral', 'auto'): snapshot('auto'),
     ('mistral', 'none'): snapshot(None),
     ('mistral', 'required'): snapshot('any'),
-    ('mistral', 'list_single'): snapshot('any'),
-    ('mistral', 'none_with_output'): snapshot('any'),
+    ('mistral', 'list_single'): snapshot({'type': 'function', 'function': {'name': 'get_weather'}}),
+    ('mistral', 'none_with_output'): snapshot({'type': 'function', 'function': {'name': 'final_result'}}),
     ('mistral', 'tools_plus_output'): snapshot('any'),
     ('google', 'auto'): snapshot('AUTO'),
     ('google', 'none'): snapshot('NONE'),
@@ -494,14 +494,19 @@ async def test_tool_choice_matrix(
         # `tool_choice='none'` + output tool with no direct output resolves to ('required', {final_result}),
         # which now skips the tool_defs filter (cache preservation) — the function tool stays in the wire payload.
         assert get_bedrock_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
+    elif provider == 'mistral' and scenario == 'list_single':
+        # Mistral names the single forced tool natively, so the full tools array stays on the wire.
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather', 'get_time']
+    elif provider == 'mistral' and scenario == 'none_with_output':
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather', 'final_result']
     elif provider == 'cohere' and scenario == 'list_single':
         # Cohere can't target a tool by name, so the named subset is sent by filtering the tools
         # array down to the chosen tool — `get_time` is dropped.
-        assert get_cohere_tool_names_from_cassette(vcr) == ['get_weather']
+        assert get_function_tool_names_from_cassette(vcr) == ['get_weather']
     elif provider == 'cohere' and scenario == 'none_with_output':
         # `tool_choice='none'` + output tool resolves to ('required', {final_result}). Cohere has no
         # prompt cache to preserve, so it filters the tools to the subset — `get_weather` is dropped.
-        assert get_cohere_tool_names_from_cassette(vcr) == ['final_result']
+        assert get_function_tool_names_from_cassette(vcr) == ['final_result']
 
 
 # Standalone (outside the `(provider, scenario)` matrix): a native-tool-only request has no

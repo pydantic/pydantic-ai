@@ -46,7 +46,7 @@ from pydantic_ai_harness import Memory, Pixeltable
 from pydantic_ai_harness.memory import PixeltableMemoryStore
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6.1-sol',
     capabilities=[
         Pixeltable(['hr.handbook']),
         Memory(PixeltableMemoryStore(table_name='hr.memory')),
@@ -138,7 +138,7 @@ its one positional argument, so the short form passes it alone:
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: openai:gpt-6.1-sol
 capabilities:
   - Pixeltable: ['hr.handbook']
 ```
