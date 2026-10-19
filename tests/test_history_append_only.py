@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,7 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import (
     MCP,
+    AbstractCapability,
     Capability,
     CombinedCapability,
     DynamicCapability,
@@ -46,6 +48,7 @@ from pydantic_ai.messages import AgentStreamEvent, ModelMessage
 from pydantic_ai.models import Model, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from .append_only import (
@@ -217,6 +220,10 @@ def _random_instructions(ctx: RunContext[Any]) -> str:
     return f'Your session is {uuid4().hex}.'
 
 
+async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    return [replace(tool, description=f'{tool.description} As of {CLOCK.now:%H:%M}.') for tool in tools]
+
+
 @pytest.mark.parametrize(
     ('capability', 'known', 'allowed', 'outcome', 'report'),
     [
@@ -236,6 +243,16 @@ def _random_instructions(ctx: RunContext[Any]) -> str:
             'fail',
             'built the same request twice from the same history with different bytes',
             id='determinism',
+        ),
+        pytest.param(
+            CombinedCapability[Any](
+                [Capability(id='clock', instructions=_clock_instructions), PrepareTools(_clock_tool_descriptions)]
+            ),
+            (Known('prefix', 'example', match='The time is'),),
+            None,
+            'fail',
+            'As of',
+            id='known-does-not-hide-another',
         ),
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
@@ -280,7 +297,7 @@ def _random_instructions(ctx: RunContext[Any]) -> str:
     ],
 )
 async def test_checks_report_what_they_catch(
-    capability: Capability[Any],
+    capability: AbstractCapability[Any],
     known: tuple[Known, ...],
     allowed: Allowed | None,
     outcome: str,

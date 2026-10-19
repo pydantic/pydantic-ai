@@ -29,7 +29,8 @@ import json
 import pkgutil
 import sys
 import warnings
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,8 +44,9 @@ from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
 from .cassette_utils import PrefixBlock, canonical_prefix_blocks
@@ -328,6 +330,18 @@ class _RecordsParameters(Model):
         # Only ever mixed in ahead of a provider model, whose `request` this calls.
         return await super().request(messages, model_settings, model_request_parameters)  # pyright: ignore[reportAbstractUsage]
 
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.recorded_parameters.append(model_request_parameters)
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+
 
 with try_import() as provider_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -449,6 +463,7 @@ async def run_conversation(
     # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
     second = await agent.run('And what else?', message_history=first.all_messages(), event_stream_handler=_drain)
     conversation = list(transport.sent)
+    parameters = list(model.recorded_parameters)
 
     history = second.all_messages()
     replay_at = clock.now
@@ -459,7 +474,7 @@ async def run_conversation(
         await agent.run('Anything more?', message_history=history)
         replays.append(transport.sent[-1])
 
-    parameters = model.recorded_parameters[: len(conversation)]
+    assert len(parameters) == len(conversation)
     return ConversationResult(provider, conversation, (replays[0], replays[1]), parameters)
 
 
@@ -546,7 +561,7 @@ def _first_divergence(index: int, earlier: list[PrefixBlock], later: list[Prefix
     return PrefixBreak(index, section, block_index, before_text, after_text, in_tail=block_index == len(earlier) - 1)
 
 
-def _around_difference(a: str, b: str, context: int = 60) -> tuple[str, str]:
+def _around_difference(a: str, b: str, context: int = 100) -> tuple[str, str]:
     """The two strings around the first character where they differ."""
     offset = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
     start = max(0, offset - context)
@@ -702,6 +717,46 @@ class Allowed:
     """The providers this mover applies to; on the others the capability must keep the prefix."""
 
 
+def _violations(
+    result: ConversationResult, *, allowed: Allowed | None, check_ids: bool
+) -> dict[Check, tuple[str, list[str]]]:
+    """Every violation of each check, as a summary and one item per violation."""
+    violations: dict[Check, tuple[str, list[str]]] = {}
+    breaks = result.prefix_breaks()
+    if allowed is not None and result.provider not in allowed.providers:
+        allowed = None
+    if allowed is None:
+        if breaks:
+            violations['prefix'] = ('rewrote the prefix', [str(b) for b in breaks])
+    elif not breaks:
+        violations['prefix'] = (
+            'no longer moves the prefix',
+            [f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix'],
+        )
+    elif allowed.tail:
+        if deep := [str(b) for b in breaks if not b.in_tail]:
+            violations['prefix'] = (
+                'may only replace the last block of each request, but rewrote earlier history',
+                deep,
+            )
+    elif len(breaks) > allowed.max_moves:
+        violations['prefix'] = (
+            f'moved the prefix {len(breaks)} times, more than the {allowed.max_moves} its `ALLOWED` entry permits',
+            [str(b) for b in breaks],
+        )
+    if check_ids and (unaddressable := result.unaddressable_instructions()):
+        violations['ids'] = (
+            'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
+            unaddressable,
+        )
+    if difference := result.nondeterministic_projection():
+        violations['determinism'] = (
+            'built the same request twice from the same history with different bytes',
+            [difference.strip()],
+        )
+    return violations
+
+
 def check_conversation(
     name: str,
     result: ConversationResult,
@@ -711,50 +766,31 @@ def check_conversation(
     check_ids: bool = True,
 ) -> None:
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
-    breaks = result.prefix_breaks()
-    failures: dict[Check, str] = {}
-    if allowed is not None and result.provider not in allowed.providers:
-        allowed = None
-    if allowed is not None:
-        if not breaks:
-            failures['prefix'] = f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix'
-        elif allowed.tail and (deep := [b for b in breaks if not b.in_tail]):
-            failures['prefix'] = (
-                'may only replace the last block of each request, but rewrote earlier history:\n  '
-                + '\n  '.join(map(str, deep))
-            )
-        elif not allowed.tail and len(breaks) > allowed.max_moves:
-            failures['prefix'] = (
-                f'moved the prefix {len(breaks)} times, more than the {allowed.max_moves} its `ALLOWED` entry permits:\n  '
-                + '\n  '.join(map(str, breaks))
-            )
-    elif breaks:
-        failures['prefix'] = 'rewrote the prefix:\n  ' + '\n  '.join(map(str, breaks))
-    if check_ids and (unaddressable := result.unaddressable_instructions()):
-        failures['ids'] = (
-            'contributed instruction blocks without an `id`, so changes to them rewrite the prefix:\n  '
-            + '\n  '.join(unaddressable)
-        )
-    if difference := result.nondeterministic_projection():
-        failures['determinism'] = (
-            f'built the same request twice from the same history with different bytes:{difference}'
-        )
+    violations = _violations(result, allowed=allowed, check_ids=check_ids)
 
+    # Each violation must be explained by an entry of its own, so a known break can't hide a new one in the
+    # same conversation.
     unexpected: list[str] = []
-    expected: list[str] = []
-    for check, report in failures.items():
-        entry = next(
-            (k for k in known if k.check == check and result.provider in k.providers and k.match in report), None
-        )
-        if entry is None:
-            unexpected.append(f'[{check}] {name} on {result.provider} {report}')
-        else:
-            expected.append(f'[{check}] {entry.issue}')
-    stale = [
-        f'[{k.check}] {k.issue}'
-        for k in known
-        if result.provider in k.providers and (k.check not in failures or k.match not in failures[k.check])
-    ]
+    used: set[int] = set()
+    for check, (summary, items) in violations.items():
+        unmatched: list[str] = []
+        for item in items:
+            index = next(
+                (
+                    i
+                    for i, k in enumerate(known)
+                    if k.check == check and result.provider in k.providers and k.match in item
+                ),
+                None,
+            )
+            if index is None:
+                unmatched.append(item)
+            else:
+                used.add(index)
+        if unmatched:
+            unexpected.append(f'[{check}] {name} on {result.provider} {summary}:\n  ' + '\n  '.join(unmatched))
+    expected = [f'[{known[i].check}] {known[i].issue}' for i in sorted(used)]
+    stale = [f'[{k.check}] {k.issue}' for i, k in enumerate(known) if result.provider in k.providers and i not in used]
     if unexpected or stale:
         message = '\n\n'.join(unexpected)
         if stale:
