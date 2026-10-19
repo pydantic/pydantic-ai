@@ -79,7 +79,7 @@ from pydantic_ai.realtime import (
     WebRTCSession,
 )
 from pydantic_ai.realtime._instrumentation import SessionInstrumentation
-from pydantic_ai.realtime._lifecycle import UserTurnEnded, UserTurnStarted
+from pydantic_ai.realtime._lifecycle import ResponseStarted, UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -4822,12 +4822,11 @@ async def test_a_stale_response_request_failing_after_the_redial_keeps_the_repla
 
 
 @pytest.mark.anyio
-async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
-    """Requests joining one already deferred get no `response.create` of their own, and the session is told.
+async def test_requests_joining_a_deferred_response_create_share_it() -> None:
+    """Requests joining one already deferred get no `response.create` of their own.
 
     The connection keeps a single deferred `response.create`, which answers everything added before it
-    goes out. The session reserves one response per request, so each merged request is reported for
-    it to release.
+    goes out: the response it starts names them all as what it answers.
     """
     done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
     created = json.dumps(
@@ -4840,30 +4839,10 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send('third')  # joins the deferred request
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
 
-    events = await collect_codec_events(conn)
-    # Reported once the shared response has started, not when the requests joined: a refused
-    # `response.create` takes back every request it carried instead.
-    assert [type(event).__name__ for event in events] == ['ResponseDone']
-    assert conn._take_merged_response_requests() == 2  # pyright: ignore[reportPrivateUsage]
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
+    frames = [frame async for frame in conn.frames()]
+    started = [event for frame in frames for event in frame if isinstance(event, ResponseStarted)]
+    assert started[-1].answers == (1, 2, 3)
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
-
-
-@pytest.mark.anyio
-async def test_response_started_by_the_server_reports_no_merged_requests() -> None:
-    """Only the start of the response a `response.create` asked for settles the requests it carried."""
-    created = [
-        json.dumps({'type': 'response.created', 'response': {'id': rid, 'status': 'in_progress', 'output': []}})
-        for rid in ('resp-1', 'resp-2')
-    ]
-    conn = OpenAIRealtimeConnection(FakeWebSocket(created))  # type: ignore[arg-type]
-    await conn.send('first')
-    await conn.send('second')  # deferred behind the first
-    await conn.send('third')  # joins the deferred request
-    # A second `response.created` while the first response is still active (a server-started response)
-    # is not the deferred request starting.
-    await collect_codec_events(conn)
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _QueuedWebSocket(FakeWebSocket):
@@ -4957,7 +4936,7 @@ async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for
             ws.push(frame)
         with anyio.fail_after(5):
             await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     transcripts = [
         part.transcript
