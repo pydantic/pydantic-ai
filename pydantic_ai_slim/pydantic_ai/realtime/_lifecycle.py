@@ -1,35 +1,13 @@
-"""Identified lifecycle events: the second version of the contract between a connection and the session.
+"""The lifecycle events a connection yields alongside the codec events (see `pydantic_ai.realtime.lifecycle`).
 
-The codec vocabulary in `codec.py` tells the session *what* the model said, but not which response it
-belongs to, when that response began or ended, or which of the session's inputs it answers. The session
-used to infer all of that from the shapes of event sequences, which is where most of its ordering bugs
-came from. Only the connection sees the frames that settle those questions, so under this contract it
-states them outright, with an id on every entity:
-
-- a response is bracketed by exactly one `ResponseStarted` and one `ResponseEnded`, and its content
-  events (which carry its `response_id`) arrive only in between;
-- `ResponseStarted.answers` names the inputs whose reply the response is, so a reply obligation is
-  settled by the response the provider says answers it rather than by whichever starts next;
-- a spoken user turn is bracketed by `UserTurnStarted` and `UserTurnEnded` (or `UserTurnDiscarded`);
-- `InputAdded` marks where an input joined the provider's conversation, so history can follow the
-  provider's order;
-- `InputLost` and `ResponseRequestRefused` settle the inputs no response will ever answer;
-- `OutputItemDetails` carries what the provider says about an item of a response's output, for the part it
-  makes.
-
-An input is identified the way `InputRejected.input_index` identifies it: by its position among every
-`send()` call made on the connection.
-
-These types are internal. A connection opts in with `RealtimeConnection._lifecycle_version = 2` and
-yields them, interleaved with the codec events, from `RealtimeConnection._lifecycle_events()`; its public
-iterator keeps yielding the codec events alone, so anything iterating a connection directly sees exactly
-the vocabulary it always has. They become public only once they are documented as a provider-facing API.
+Defined here, apart from `InferredLifecycle`, so that `codec.py` can name them without importing the codec
+vocabulary back.
 """
 
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import TypeAliasType
 
@@ -47,7 +25,16 @@ AnswersBasis = Literal['protocol', 'inferred']
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseStarted:
+class LifecycleEvent:
+    """What a connection says about the responses, spoken turns, and inputs its codec events are about.
+
+    The base of the lifecycle events below, so `isinstance(event, LifecycleEvent)` tells one apart from a codec
+    event in a [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.RealtimeFrame].
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResponseStarted(LifecycleEvent):
     """A response began: exactly once per response, before any of its content."""
 
     response_id: str
@@ -76,7 +63,7 @@ reconnect did not carry it over) or closed before the provider reported it done.
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseEnded:
+class ResponseEnded(LifecycleEvent):
     """A response ended: exactly once per started response, after all of its content and usage."""
 
     response_id: str
@@ -88,14 +75,14 @@ class ResponseEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnStarted:
+class UserTurnStarted(LifecycleEvent):
     """The user began a spoken turn (the provider heard speech start, or a commit names a turn it hadn't)."""
 
     turn_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnEnded:
+class UserTurnEnded(LifecycleEvent):
     """A spoken turn joined the provider's conversation, at this point in its order."""
 
     turn_id: str
@@ -108,24 +95,25 @@ class UserTurnEnded:
 
 
 @dataclass(frozen=True, kw_only=True)
-class UserTurnDiscarded:
-    """A spoken turn gets no more audio: it was cleared, or its connection lost.
+class UserTurnClosed(LifecycleEvent):
+    """No more audio or transcript is coming for a spoken turn.
 
-    One that hadn't joined the conversation (`UserTurnEnded`) never will; one that had stays, as it was.
+    It was cleared, its connection lost, or its transcript is over. One that hadn't joined the conversation
+    (`UserTurnEnded`) is dropped, as it never will; one that had keeps what it has.
     """
 
     turn_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
-class InputAdded:
+class InputAdded(LifecycleEvent):
     """An input joined the provider's conversation, at this point in its order."""
 
     input_id: InputId
 
 
 @dataclass(frozen=True, kw_only=True)
-class InputLost:
+class InputLost(LifecycleEvent):
     """The provider will never answer these inputs' request for a response.
 
     The connection dropped the request (a barge-in cut off the response it was waiting behind), or lost it
@@ -136,14 +124,14 @@ class InputLost:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResponseRequestRefused:
+class ResponseRequestRefused(LifecycleEvent):
     """The provider refused the request for a response made for these inputs, so none will answer them."""
 
     input_ids: tuple[InputId, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
-class OutputItemDetails:
+class OutputItemDetails(LifecycleEvent):
     """What the provider says about one item of a response's output, to keep on the part that item makes.
 
     Like OpenAI's `phase`, which tells an assistant message the model meant as commentary on its way to a tool
@@ -155,32 +143,20 @@ class OutputItemDetails:
     provider_details: dict[str, Any]
 
 
-LifecycleEvent = TypeAliasType(
-    'LifecycleEvent',
-    ResponseStarted
-    | ResponseEnded
-    | UserTurnStarted
-    | UserTurnEnded
-    | UserTurnDiscarded
-    | InputAdded
-    | InputLost
-    | ResponseRequestRefused
-    | OutputItemDetails,
-)
-"""The events a connection on the second version of the lifecycle contract yields besides the codec events."""
+@dataclass(frozen=True)
+class StaleEvent:
+    """A codec event about a response that has already ended: a repeated terminal, or content trailing it.
 
-LIFECYCLE_EVENT_TYPES = (
-    ResponseStarted,
-    ResponseEnded,
-    UserTurnStarted,
-    UserTurnEnded,
-    UserTurnDiscarded,
-    InputAdded,
-    InputLost,
-    ResponseRequestRefused,
-    OutputItemDetails,
-)
-"""The `LifecycleEvent` variants, for `isinstance` checks."""
+    The application still receives `event`, as it always has, but nothing applies it to the conversation: the
+    response it is about is over. A connection that can't tell such events apart (most can't) never yields one.
+    """
 
-TaggedEvent: TypeAlias = 'tuple[RealtimeCodecEvent | LifecycleEvent, bool]'
-"""An event of a connection's `_tagged_frames()`, with whether it is stale."""
+    event: RealtimeCodecEvent
+
+
+RealtimeFrame = TypeAliasType('RealtimeFrame', 'list[RealtimeCodecEvent | LifecycleEvent | StaleEvent]')
+"""What one message from the provider (or one transition of the connection's own, like a reconnect) makes.
+
+The events are in order, and the session applies a frame whole before it streams any of it, so whatever reacts
+to one of its events finds the conversation as far along as the frame takes it.
+"""

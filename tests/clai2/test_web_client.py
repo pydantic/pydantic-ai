@@ -16,7 +16,6 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins.web import WebPlugin
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient, _error  # pyright: ignore[reportPrivateUsage]
@@ -24,6 +23,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import MenuEdited, TitleChanged
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from tests.clai2.test_web import QuestionModel
 
 pytestmark = pytest.mark.anyio
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.anyio
 
 @dataclass
 class Served:
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     web: WebPlugin
     client: WebClient
     view: SessionView
@@ -107,6 +107,16 @@ async def test_commands_and_their_notices(tmp_path: Path) -> None:
         [notice] = view.notices
         assert notice.command == '/web status' and notice.text.startswith('Web UI at http://127.0.0.1:')
         assert served.web.token not in repr(view.items)
+
+
+async def test_a_bare_command_with_a_menu_is_refused(tmp_path: Path) -> None:
+    """`/set` alone would open its menu in a page, which a client has not got: it says so, and nothing runs."""
+    async with serving(Agent(TestModel()), tmp_path) as served:
+        with pytest.raises(ValueError, match=r'/set opens a menu in the page; send it with arguments instead\.'):
+            await served.client.send('/set')
+        await served.view.send('/set display.thinking false')
+        assert await served.view.wait(timeout=10) == 'idle'
+        assert served.shell.context.settings.thinking is False
 
 
 @pytest.mark.parametrize(

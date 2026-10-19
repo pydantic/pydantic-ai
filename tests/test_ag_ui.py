@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.metadata
 import inspect
 import json
@@ -16,7 +17,7 @@ from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AudioUrl,
@@ -43,6 +44,8 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryPromptPart,
+    RunCancelled,
+    RunTimedOut,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -61,16 +64,18 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    sanitize_messages,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -8480,6 +8485,46 @@ async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
     assert 'RUN_ERROR' not in event_types
 
 
+async def test_run_timeout_finishes_like_cancellation() -> None:
+    """A run that outlives `timeout=` ends like a first-party cancellation: a bare `RUN_FINISHED`, and `on_cancel` gets the `RunTimedOut`."""
+
+    async def stream_then_time_out(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+        yield 'partial'
+        ctx = get_current_run_context()
+        assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+        ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+        await asyncio.Event().wait()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    agent = Agent(model=FunctionModel(stream_function=stream_then_time_out))
+    adapter = AGUIAdapter(agent=agent, run_input=create_input(UserMessage(id='m1', content='hi')))
+    cancelled: list[RunCancelled] = []
+
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream(timeout=60, on_cancel=cancelled.append))
+    ]
+
+    assert [event['type'] for event in events] == snapshot(
+        ['RUN_STARTED', 'TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END', 'RUN_FINISHED']
+    )
+    assert 'outcome' not in events[-1]
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages()[-1] == snapshot(
+        ModelResponse(
+            parts=[TextPart(content='partial')],
+            usage=RequestUsage(output_tokens=1, input_tokens=50),
+            model_name='function::stream_then_time_out',
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
@@ -9037,6 +9082,309 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
     assert isinstance(activity, ActivityMessage)
     assert snapshot_event['activityType'] == activity.activity_type
     assert snapshot_event['content'] == activity.content
+
+
+def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
+    """The messages `@ag-ui/client`'s default reducer appends for these events.
+
+    A minimal port covering the event types the enqueued-messages tests produce: text messages, tool
+    calls and results, and activity snapshots, each appended at its stream position.
+    """
+    messages: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    tool_calls: dict[str, dict[str, Any]] = {}
+    for event in events:
+        match event['type']:
+            case 'TEXT_MESSAGE_START':
+                by_id[event['messageId']] = {'id': event['messageId'], 'role': 'assistant'}
+                messages.append(by_id[event['messageId']])
+            case 'TEXT_MESSAGE_CONTENT':
+                message = by_id[event['messageId']]
+                message['content'] = message.get('content', '') + event['delta']
+            case 'TOOL_CALL_START':
+                # The stream announces every parent message before a tool call references it.
+                tool_calls[event['toolCallId']] = {
+                    'id': event['toolCallId'],
+                    'type': 'function',
+                    'function': {'name': event['toolCallName'], 'arguments': ''},
+                }
+                by_id[event['parentMessageId']].setdefault('toolCalls', []).append(tool_calls[event['toolCallId']])
+            case 'TOOL_CALL_ARGS':
+                tool_calls[event['toolCallId']]['function']['arguments'] += event['delta']
+            case 'TOOL_CALL_RESULT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'tool',
+                        'toolCallId': event['toolCallId'],
+                        'content': event['content'],
+                    }
+                )
+            case 'ACTIVITY_SNAPSHOT':
+                messages.append(
+                    {
+                        'id': event['messageId'],
+                        'role': 'activity',
+                        'activityType': event['activityType'],
+                        'content': event['content'],
+                    }
+                )
+            case _:
+                pass
+    return TypeAdapter(list[Message]).validate_python(messages)
+
+
+def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
+    """Message boundaries, part kinds and content, without the IDs and timestamps a reload re-mints."""
+    return [
+        (
+            message.kind,
+            [
+                (
+                    part.part_kind,
+                    part.args_as_dict() if isinstance(part, ToolCallPart) else getattr(part, 'content', None),
+                )
+                for part in message.parts
+            ],
+        )
+        for message in messages
+    ]
+
+
+def _enqueuing_agent() -> Agent[object, str]:
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Background result: 42')
+        ctx.enqueue(SystemPromptPart(content='Announcement'))
+        ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
+        return 'started'
+
+    return agent
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `pydantic_ai_enqueued_messages` activity at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    adapter = AGUIAdapter(
+        agent,
+        create_input(UserMessage(id='user-1', content='Go')),
+        ag_ui_version='0.1.19',
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert 'Reminder' not in json.dumps(events)
+
+
+@requires_ag_ui('0.1.19')
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+    """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
+
+    They ride in a `pydantic_ai_enqueued_messages` activity, which the client keeps in its message list and
+    only renders if it registered a renderer for that type, and load back as their own requests at the
+    position they were delivered in. An enqueued system prompt is only sent when the frontend owns the
+    system prompt, since it would otherwise be stripped on the way back in.
+    """
+    agent = _enqueuing_agent()
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', manage_system_prompt=manage_system_prompt)
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+
+    activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    assert activities[0] == snapshot(
+        {
+            'type': 'ACTIVITY_SNAPSHOT',
+            'timestamp': IsInt(),
+            'messageId': IsStr(),
+            'activityType': 'pydantic_ai_enqueued_messages',
+            'content': {
+                'messages': [
+                    {
+                        'id': IsStr(),
+                        'role': 'user',
+                        'content': 'Background result: 42',
+                    }
+                ]
+            },
+            'replace': True,
+        }
+    )
+    # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
+    streamed = [
+        [(message['role'], message['content']) for message in activity['content']['messages']]
+        for activity in activities
+    ]
+    announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
+    assert streamed == [
+        [('user', 'Background result: 42')],
+        *announcement,
+        [('assistant', 'Synthetic reply'), ('user', 'Synthetic follow-up')],
+    ]
+    # Delivered after the tool result and before the step that responds to it, as in server history.
+    types = [event['type'] for event in events]
+    assert types.index('TOOL_CALL_RESULT') < types.index('ACTIVITY_SNAPSHOT') < types.index('TEXT_MESSAGE_CONTENT')
+
+    reloaded = AGUIAdapter(
+        agent, create_input(user, *_reduce_events(events)), manage_system_prompt=manage_system_prompt
+    )
+    loaded = reloaded.sanitize_messages(reloaded.messages)
+    if manage_system_prompt == 'server':
+        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            expected = sanitize_messages(server_history)
+    else:
+        expected = sanitize_messages(server_history, strip_system_prompts=False)
+    assert _model_visible(loaded) == _model_visible(expected)
+    assert _model_visible(loaded) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background result: 42')]),
+        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
+        # An enqueued response stays its own message: the model's next text doesn't extend it.
+        ('response', [('text', 'Synthetic reply')]),
+        ('request', [('user-prompt', 'Synthetic follow-up')]),
+        ('response', [('text', 'done')]),
+    ]
+
+
+async def test_enqueued_messages_event_skipped_for_legacy_ag_ui() -> None:
+    """Enqueued-message activities are omitted when the negotiated AG-UI version predates activity events."""
+    agent = _enqueuing_agent()
+    adapter = AGUIAdapter(agent, create_input(UserMessage(id='user-1', content='Go')), ag_ui_version='0.1.10')
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+    assert not any(event['type'] == 'ACTIVITY_SNAPSHOT' for event in events)
+
+
+@requires_ag_ui('0.1.19')
+async def test_enqueued_messages_preserve_file_data() -> None:
+    """With `preserve_file_data`, an enqueued uploaded file survives the stream round trip like a dumped one."""
+    uploaded = UploadedFile(file_id='file-1', provider_name='openai', media_type='application/pdf')
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='attach', json_args='{}', tool_call_id='attach-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def attach(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Here is the file', uploaded)
+        return 'attached'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19', preserve_file_data=True)
+    events = [
+        json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)], preserve_file_data=True)
+    assert uploaded in [
+        item for part in iter_message_parts(loaded, ModelRequest, UserPromptPart) for item in part.content
+    ]
+
+
+def test_enqueued_messages_keep_their_own_message_ids() -> None:
+    """The activity's id isn't kept on the enqueued messages, which carry their own."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'user', 'content': 'injected'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([AssistantMessage(id='assistant-1', content='hello'), activity])
+    assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
+        [('response', {'ui_message_id': 'assistant-1'}), ('request', {'ui_message_id': 'enqueued-1'})]
+    )
+
+
+def test_enqueued_response_is_not_extended_by_the_next_message() -> None:
+    """A payload ending in a response, e.g. one whose trailing system prompt stayed on the server, is a boundary."""
+    activity = ActivityMessage(
+        id='activity-1',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'enqueued-1', 'role': 'assistant', 'content': 'synthetic'}]},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity, AssistantMessage(id='assistant-1', content='reply')])
+    assert [
+        (message.kind, _model_visible([message])[0][1], (message.metadata or {}).get('__pydantic_ai__'))
+        for message in loaded
+    ] == snapshot(
+        [
+            ('response', [('text', 'synthetic')], {'ui_message_id': 'enqueued-1'}),
+            ('response', [('text', 'reply')], {'ui_message_id': 'assistant-1'}),
+        ]
+    )
+
+
+def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:
+    """A client can put anything in the activity; malformed content loads nothing, and nesting doesn't recurse."""
+    nested = ActivityMessage(
+        id='nested',
+        activity_type='pydantic_ai_enqueued_messages',
+        content={'messages': [{'id': 'x', 'role': 'user', 'content': 'dropped'}]},
+    )
+    messages: list[Message] = [
+        AssistantMessage(id='assistant-1', content='hello'),
+        ActivityMessage(id='a1', activity_type='pydantic_ai_enqueued_messages', content={'messages': 'not-a-list'}),
+        ActivityMessage(id='a2', activity_type='pydantic_ai_enqueued_messages', content={}),
+        ActivityMessage(
+            id='a3',
+            activity_type='pydantic_ai_enqueued_messages',
+            content={
+                'messages': [
+                    {'id': 'inner', 'role': 'user', 'content': 'kept'},
+                    nested.model_dump(mode='json', by_alias=True),
+                ]
+            },
+        ),
+    ]
+
+    assert _model_visible(AGUIAdapter.load_messages(messages)) == snapshot(
+        [('response', [('text', 'hello')]), ('request', [('user-prompt', 'kept')])]
+    )
 
 
 async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:

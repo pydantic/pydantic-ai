@@ -25,6 +25,7 @@ from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGu
 from pydantic_clai2 import _app, open_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins.loader import PluginSettingsError
 
 
@@ -62,6 +63,26 @@ async def test_tools_and_instructions_come_from_the_workspace(
     root = 'sandbox' if sandboxed else 'checkout'
     assert f'Notes from the {root}.' in result.output
     assert f'Rules from the {root}.' in instructions[0]
+
+
+async def test_skills_come_from_the_workspaces_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skills at the root of the repository `workspace` is in reach the model, wherever the process runs."""
+    repository = tmp_path / 'repository'
+    (repository / '.git').mkdir(parents=True)
+    (repository / 'package').mkdir()
+    skill = repository / '.agents' / 'skills' / 'release'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Release from the repository.\n---\n\nRelease it.\n')
+    (tmp_path / 'elsewhere').mkdir()
+    monkeypatch.chdir(tmp_path / 'elsewhere')
+    model = TestModel(call_tools=[], custom_output_text='done')
+    async with open_stock_agent(workspace=repository / 'package', model=model) as agent:
+        await agent.run('hello')
+    parameters = model.last_model_request_parameters
+    assert parameters is not None
+    assert 'release: Release from the repository.' in '\n'.join(
+        part.content for part in parameters.instruction_parts or ()
+    )
 
 
 @pytest.mark.parametrize(
@@ -169,7 +190,7 @@ async def test_model_names_resolve_through_clai(tmp_path: Path, monkeypatch: pyt
 
         return FunctionModel(stream_function=stream, model_name=name)
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     # A setting saved for the CLI's runs on this model stays out.
     SettingsStore().save_model_settings('anthropic:claude-sonnet-4-6', {'temperature': 0.5})
     async with open_stock_agent(workspace=tmp_path, model='anthropic:claude-sonnet-4-6') as agent:
@@ -249,7 +270,7 @@ async def test_approval_gated_host_configuration(tmp_path: Path, monkeypatch: py
     def ask_first(call: ToolCallInfo) -> GuardrailResult:
         return GuardrailResult.approve() if call.name == 'shell' else GuardrailResult.allow()
 
-    monkeypatch.setattr(_app._ModelResolver, 'resolve', resolve)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(ModelResolver, 'resolve', resolve)
     async with open_stock_agent(
         workspace=tmp_path,
         model='gateway/anthropic:claude-opus-5-5',

@@ -76,6 +76,7 @@ from pydantic_ai.realtime.codec import (
 
 from .conftest import TestEnv, try_import
 from .docs_model_aliases import resolve_model_aliases, restore_model_aliases
+from .realtime_connections import InferredConnection
 
 with try_import() as imports_successful:
     # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
@@ -208,7 +209,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
-class MockRealtimeConnection(RealtimeConnection):
+class MockRealtimeConnection(InferredConnection):
     """A scripted realtime connection for executable documentation examples.
 
     The default script speaks one assistant turn. When the example's agent defines a
@@ -217,19 +218,22 @@ class MockRealtimeConnection(RealtimeConnection):
     session/tool loop rather than pasted into the docs.
     """
 
-    def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
+    def __init__(self, function_tool_names: Sequence[str] = (), *, answers_a_send: bool = False) -> None:
         self._function_tool_names = function_tool_names
+        self._answers_a_send = answers_a_send
+        self._input_received = asyncio.Event()
         self._tool_result_received = asyncio.Event()
         self._closed = asyncio.Event()
 
     async def aclose(self) -> None:
         self._closed.set()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
+        self._input_received.set()
         if isinstance(content, ToolResult):
             self._tool_result_received.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         if 'check_availability' in self._function_tool_names:
             yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
             yield ToolCall(
@@ -242,35 +246,44 @@ class MockRealtimeConnection(RealtimeConnection):
             yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
             yield ResponseDone()
         else:
+            if self._answers_a_send:
+                # A real provider answers what it was sent: an example that sends something gets the turn as its
+                # reply. (One that only listens gets it straight away.)
+                await self._input_received.wait()
             yield AudioDelta(data=b'\x00\x00')
             yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
             yield ResponseDone()
-        await self._closed.wait()
+        # An example can end the session before reading on.
+        await self._closed.wait()  # pragma: lax no cover
 
 
-@asynccontextmanager
-async def _mock_realtime_connect(
-    self: RealtimeModel,
-    *,
-    model_request_parameters: ModelRequestParameters,
-    **kwargs: Any,
-) -> AsyncGenerator[RealtimeConnection]:
-    connection = MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
-    try:
-        yield connection
-    finally:
-        await connection.aclose()
+def _patch_realtime_models(mocker: MockerFixture, *, answers_a_send: bool) -> None:
+    """Route realtime documentation examples through the scripted connection.
 
-
-def _patch_realtime_models(mocker: MockerFixture) -> None:
-    """Route realtime documentation examples through the scripted connection."""
+    `answers_a_send` says the example sends something, which the scripted turn then answers.
+    """
     from pydantic_ai.realtime.azure import AzureRealtimeModel
     from pydantic_ai.realtime.google import GoogleRealtimeModel
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
     from pydantic_ai.realtime.xai import XaiRealtimeModel
 
+    @asynccontextmanager
+    async def connect(
+        self: RealtimeModel,
+        *,
+        model_request_parameters: ModelRequestParameters,
+        **kwargs: Any,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        connection = MockRealtimeConnection(
+            [tool.name for tool in model_request_parameters.function_tools], answers_a_send=answers_a_send
+        )
+        try:
+            yield connection
+        finally:
+            await connection.aclose()
+
     for model_class in (OpenAIRealtimeModel, AzureRealtimeModel, GoogleRealtimeModel, XaiRealtimeModel):
-        mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
+        mocker.patch.object(model_class, 'connect', new=connect)
 
 
 def _python_version_skip_reason(min_version: str | None, max_version: str | None) -> str | None:
@@ -513,7 +526,7 @@ def test_docs_examples(
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     _patch_optional_mcp_modules(mocker)
-    _patch_realtime_models(mocker)
+    _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
     _prepare_heavy_imports(request, mocker, example)
 
     env.set('OPENAI_API_KEY', 'testing')
@@ -558,6 +571,7 @@ def test_docs_examples(
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
     env.set('VOYAGE_API_KEY', 'testing')
     env.set('XAI_API_KEY', 'testing')
+    env.set('ELEVENLABS_API_KEY', 'testing')
     env.set('TAVILY_API_KEY', 'testing')
     env.set('ZAI_API_KEY', 'testing')
     env.set('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
@@ -1067,6 +1081,11 @@ tool_responses: dict[tuple[str, str], str] = {
     (
         'delete_file',
         'Deleting files is not allowed',
+    ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
+    # The handler example's results go out in call order, so the `.env` update answers last.
+    (
+        'update_file',
+        "File '.env' updated: ''",
     ): 'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.',
 }
 

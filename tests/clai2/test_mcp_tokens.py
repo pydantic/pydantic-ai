@@ -229,7 +229,7 @@ def test_a_rejected_sign_in_reads_as_signing_in_again() -> None:
 
 
 async def test_rename_signs_out_the_old_name(tmp_path: Path, vault: Vault) -> None:
-    command, store = make(tmp_path, Script(lists=[pick('name'), pick('save')], choices=[], texts=[typed('renamed')]))
+    command, store = make(tmp_path, Script(lists=[], choices=[pick('name'), pick('save')], texts=[typed('renamed')]))
     store.put('docs', HTTPServer(type='http', url=HttpUrl(URL), auth='oauth'))
     await TokenStore('docs').put('k', {'v': 1})
     assert (await command(['edit', 'docs'])).startswith('Updated renamed.')

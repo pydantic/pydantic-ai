@@ -38,12 +38,13 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
 from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
+    CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
     client_item_input,
     is_user_message_item,
@@ -51,7 +52,6 @@ from ._openai_protocol import (
     response_metadata_answers,
 )
 
-_CONVERSATION_ITEM_ADDED_FRAMES = frozenset({'conversation.item.added', 'conversation.item.created'})
 _TRANSCRIPTION_SETTLED_FRAMES = frozenset(
     {'conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.failed'}
 )
@@ -263,7 +263,12 @@ class OpenAILifecycle:
         self._pending.append(self._end(response_id, status, finish_reason, provider_details))
 
     def response_unreadable(self, active_response_id: str | None) -> None:
-        """A `response.done` too malformed to name its response: it still ended the one being generated."""
+        """A `response.done` too malformed to name its response: it still ended the one being generated.
+
+        A response whose `response.created` carried no id is the current synthetic one.
+        """
+        if active_response_id is None:
+            active_response_id, self._current_synthetic = self._current_synthetic, None
         if active_response_id is not None and active_response_id in self._open:
             self._pending.append(self._end(active_response_id, 'lost', None, None))
 
@@ -283,7 +288,7 @@ class OpenAILifecycle:
         if event_type == 'input_audio_buffer.timeout_triggered':
             self._idle_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
             return []
-        if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
+        if event_type in CONVERSATION_ITEM_ADDED_EVENTS:
             return self.item_added(data)
         if event_type == 'response.output_item.added':
             return _output_item_details(data)
@@ -301,7 +306,7 @@ class OpenAILifecycle:
         for turn_id in merged:
             del self._speaking[turn_id]
         self._speaking[item_id] = None
-        return [*(UserTurnDiscarded(turn_id=turn_id) for turn_id in merged), UserTurnStarted(turn_id=item_id)]
+        return [*(UserTurnClosed(turn_id=turn_id) for turn_id in merged), UserTurnStarted(turn_id=item_id)]
 
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
@@ -359,7 +364,7 @@ class OpenAILifecycle:
         If it hadn't joined the conversation yet, it never will; if it had (xAI adds its item at speech start),
         it stays, with nothing more to come for it.
         """
-        events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
+        events: list[LifecycleEvent] = [UserTurnClosed(turn_id=turn_id) for turn_id in self._speaking]
         # One that hadn't joined never will, whatever the provider still reports about it.
         self._committed.update(self._speaking)
         # Nor is a transcript waited for any more: the turn is settled.
@@ -447,7 +452,7 @@ class OpenAILifecycle:
         self._requests.clear()
         self._lose_everything_open()
         # A transcript still to come for a turn of the old connection never will.
-        self._pending.extend(UserTurnDiscarded(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
+        self._pending.extend(UserTurnClosed(turn_id=turn_id) for turn_id in sorted(self._untranscribed))
         self._untranscribed.clear()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:

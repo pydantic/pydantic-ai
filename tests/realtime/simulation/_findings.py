@@ -68,7 +68,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
+ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
 GEMINI = frozenset({'gemini'})
 
@@ -215,9 +215,10 @@ def _sent_before_reply_content(sim: Simulation, violation: InvariantViolation) -
 UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     id='SIM-39',
     title=(
-        'Gemini Live and GPT-Live neither acknowledge an input nor say when a response starts, so an input that asks '
-        'for no reply (context, an image), sent while a reply is owed but before any of its content arrived, is '
-        'placed after that reply: the server may have had it before it started'
+        'Gemini Live, GPT-Live, and ElevenLabs Agents neither acknowledge an input nor say when a response starts, so '
+        "an input that asks for no reply (context, an image), sent before any of a reply's content arrived, is placed "
+        'by what the client knew when it sent it: after the reply it owed, before one it had no word of yet, where '
+        'the server may have had it the other way around'
     ),
     tracked_by=(
         "the inferred lifecycle's documented inference (`_inferred_lifecycle.py`): an input sent while the model "
@@ -225,7 +226,7 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.order'}),
-    providers=GEMINI | {'gpt-live'},
+    providers=GEMINI | {'gpt-live', 'elevenlabs-agents'},
     matches=_sent_before_reply_content,
     accepted=True,
 )
@@ -376,20 +377,6 @@ ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
     providers=GEMINI,
     matches=_in_flight_at_the_result,
     accepted=True,
-)
-
-
-ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT = Finding(
-    id='SIM-33',
-    title=(
-        "with asynchronous Gemini tool calls, the `interrupted` + `turn_complete` the batch's result cuts in with "
-        'ends `wait_for_reply()` before the model has answered the result'
-    ),
-    tracked_by='turn boundaries mapped to the exchange they close (#8760 is parked); found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'wait.early'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: _gemini_behavior(sim, 'talks_through_tool_calls') and bool(sim.truth.tool_calls),
 )
 
 
@@ -746,7 +733,6 @@ KNOWN_FINDINGS.extend(
         LIVE_RAW_CLOSE_ERROR,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
-        ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT,
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,

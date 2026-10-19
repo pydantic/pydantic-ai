@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
-from contextlib import contextmanager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
@@ -71,6 +71,11 @@ def session_context(session_id: str) -> Generator[None]:
         _CURRENT_SESSION_ID.reset(token)
 
 
+def step_store(conversations: SqliteConversationStore) -> SqliteStepStore:
+    """Where runs over `conversations`, delegated tasks' included, capture their steps."""
+    return SqliteStepStore(database=conversations.database, max_snapshots_per_run=8)
+
+
 FamilyDefaults = Callable[[str], ModelSettings | None]
 """CLAI's family default settings for a model, given its name."""
 
@@ -124,9 +129,9 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
 class WorkspacelessCapability(DynamicCapability[DepsT]):
     """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.
 
-    A plain capability function might return a sandbox, so CLAI attaches its launch directory only once the
+    A plain capability function might return a sandbox, so CLAI attaches the session's directory (`Session.workspace`) only once the
     run's capability functions have resolved, after every `for_run`; harness `Skills` reads its libraries
-    there and finds no workspace. For this one, CLAI attaches the launch directory before `for_run`, and a
+    there and finds no workspace. For this one, CLAI attaches it before `for_run`, and a
     run whose function does return a workspace fails.
     """
 
@@ -354,10 +359,10 @@ class Session(Generic[DepsT, OutputT]):
         """The Git checkout `workspace` is in, read once, when a session is first saved here."""
         self.on_change: Callable[[ConversationChanged], Awaitable[None]] | None = None
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
+        self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
+        """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
         self._published = (self.conversation_id, self.title)
-        self.step_store: StepStore | None = (
-            SqliteStepStore(database=conversations.database, max_snapshots_per_run=8) if conversations else None
-        )
+        self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
             ReplStates(directory=conversations.database.with_suffix('.repl'), session_id=current_session_id)
             if conversations
@@ -519,16 +524,23 @@ class Session(Generic[DepsT, OutputT]):
         finally:
             self._running = False
 
-    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True) -> str:
+    async def resume(
+        self, conversation_id: str, *, allow_other_workspace: bool = False, record: bool = True, unarchive: bool = True
+    ) -> str:
         """Restore a saved head without invoking the model or replaying tools.
 
         A session another live process is running is not taken over: its newest saved state is
         copied into a new saved session, which this one continues while the original keeps running.
 
         `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
-        startup restore that runs before the observability plugin subscribes.
+        startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
+        archived session archived, for a restore that continues in a fork of it. One another live session
+        of this CLAI holds raises `ValueError`.
         """
-        notice = await self._restore(conversation_id, allow_other_workspace=allow_other_workspace, record=record)
+        with self.claim(conversation_id):
+            notice = await self._restore(
+                conversation_id, allow_other_workspace=allow_other_workspace, record=record, unarchive=unarchive
+            )
         await self._publish()
         return notice
 
@@ -537,7 +549,9 @@ class Session(Generic[DepsT, OutputT]):
         if self._record_resumed is not None:
             self._record_resumed()
 
-    async def _restore(self, conversation_id: str, *, allow_other_workspace: bool, record: bool) -> str:
+    async def _restore(
+        self, conversation_id: str, *, allow_other_workspace: bool, record: bool, unarchive: bool
+    ) -> str:
         if self._running:
             raise RuntimeError('Cannot resume during a running conversation')
         self._running = True
@@ -565,6 +579,11 @@ class Session(Generic[DepsT, OutputT]):
                 messages = interrupted_history(messages)
             summary = saved.summary
             notice = f'Resumed {summary.title} ({summary.id}).{warning}'
+            if unarchive and busy is None and summary.archived_at is not None:
+                # The session being worked in is listed again. Saving new content lists one archived while open
+                # in another CLAI again.
+                await self.conversations.set_archived(conversation_id=summary.id, archived=False)
+                summary = replace(summary, archived_at=None)
             if busy is not None:
                 summary = await self.conversations.save(summary=fork_summary(saved.summary), messages=messages)
                 self._copy_repl(saved.summary.id, summary.id)

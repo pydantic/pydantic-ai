@@ -16,6 +16,7 @@ from pydantic_clai2.ui.stderr_relay import relay_stderr
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pydantic_clai2.cli.self_update import WebHandoff
     from pydantic_clai2.config import Settings
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
@@ -23,6 +24,11 @@ if TYPE_CHECKING:
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
 """Carries a removable checkout's launch `HEAD` across `/update`; an environment variable, so older builds ignore it."""
+_RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
+"""Carries the web UI's port and token across `/update`, so its open pages reconnect.
+
+In the environment, which only you can read, rather than on the command line `ps` shows every user.
+"""
 
 
 def run(*, splash: Splash | None = None) -> None:
@@ -105,6 +111,7 @@ def run(*, splash: Splash | None = None) -> None:
         if splash is not None:
             splash.stop()
     relaunched = os.environ.pop(_RELAUNCH_WORKTREE, None)  # Popped so tools and later launches never see it.
+    served = _web_handoff(os.environ.pop(_RELAUNCH_WEB, None))  # Likewise, and the model never reads the token.
     worktree = launched = None
     try:
         store = SettingsStore(args.database)
@@ -118,11 +125,14 @@ def run(*, splash: Splash | None = None) -> None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
         model = args.model or os.getenv('CLAI_MODEL')
-        settings_for = _settings_for(store, model=model, request_limit=args.request_limit)
-        settings = settings_for(project)
-        if agent is not None and agent.model is not None and not model:
+        settings_for = _settings_for(
+            store,
+            model=model,
+            request_limit=args.request_limit,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
-            settings = settings.model_copy(update={'model': None})
+            agent_model=agent is not None and agent.model is not None and not model,
+        )
+        settings = settings_for(project)
         if args.prompt is not None:
             from pydantic_clai2.cli.headless import run_headless
 
@@ -158,6 +168,7 @@ def run(*, splash: Splash | None = None) -> None:
                     fork_session=args.fork_session,
                     port=args.port,
                     token=None if args.token_file is None else read_token(args.token_file),
+                    restart=served,
                 )
             )
             return
@@ -180,6 +191,8 @@ def run(*, splash: Splash | None = None) -> None:
                     session_id=args.session_id,
                     fork_session=args.fork_session,
                     worktree=worktree,
+                    web=served,
+                    settings_for=settings_for,
                 )
             )
             offer_worktree_cleanup(worktree=launched)
@@ -192,6 +205,8 @@ def run(*, splash: Splash | None = None) -> None:
             new_session_id=relaunch.new_session_id,
         )
         _remember_worktree(launched)
+        if relaunch.web is not None:
+            os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
         sys.stdout.flush()
         os.execv(relaunch.executable, argv)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
@@ -205,9 +220,12 @@ def run(*, splash: Splash | None = None) -> None:
 
 
 def _settings_for(
-    store: 'SettingsStore', *, model: str | None, request_limit: int | None
+    store: 'SettingsStore', *, model: str | None, request_limit: int | None, agent_model: bool = False
 ) -> 'Callable[[ProjectSettings], Settings]':
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags."""
+    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
+
+    With `agent_model`, no model: the `--agent` agent's own one is used.
+    """
     from pydantic_clai2.config import resolve_settings
 
     def settings_for(project: 'ProjectSettings') -> 'Settings':
@@ -216,7 +234,8 @@ def _settings_for(
             overrides['model'] = model
         if request_limit is not None:
             overrides['run.request_limit'] = request_limit
-        return resolve_settings(overrides)
+        settings = resolve_settings(overrides)
+        return settings.model_copy(update={'model': None}) if agent_model else settings
 
     return settings_for
 
@@ -260,9 +279,16 @@ def relaunch_argv(
 ) -> list[str]:
     """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
 
-    An unsaved conversation started with `--session-id` restarts under `new_session_id`.
+    An unsaved conversation started with `--session-id` restarts under `new_session_id`. The token
+    `--token-file` names stays in its file.
     """
     argv = [executable]
+    if args.web:
+        argv.append('--web')
+        if args.port is not None:
+            argv += ['--port', str(args.port)]
+        if args.token_file is not None:
+            argv += ['--token-file', str(args.token_file)]
     if args.agent is not None:
         argv += ['--agent', args.agent]
     if args.model is not None:
@@ -279,6 +305,16 @@ def relaunch_argv(
 
 
 _TOKEN = re.compile(r'[A-Za-z0-9_-]{32,256}')
+
+
+def _web_handoff(value: str | None) -> 'WebHandoff | None':
+    """The web UI `/update` handed over as `PORT TOKEN`; `None` when there is none, or it is malformed."""
+    from pydantic_clai2.cli.self_update import WebHandoff
+
+    port, _, token = (value or '').partition(' ')
+    if not port.isdigit() or int(port) > 65535 or not _TOKEN.fullmatch(token):
+        return None
+    return WebHandoff(port=int(port), token=token)
 
 
 def read_token(path: Path) -> str:

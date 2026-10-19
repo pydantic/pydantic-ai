@@ -121,12 +121,18 @@ class ServerSession:
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     ptt_speech: str | None = None
     """xAI push-to-talk: the user turn xAI reported speech for (`speech_started`) in the uncommitted buffer."""
+    items: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint of each item in the conversation, by item id (for `conversation.item.delete`)."""
     answered_everything: bool = False
     """xAI push-to-talk: a reply ended and nothing new arrived since, so xAI drops a `response.create`."""
     uncommitted_answers: list[str] = field(default_factory=list[str])
     """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
     conversation: set[str] = field(default_factory=set[str])
     """What this session's conversation holds, as `conversation_fingerprint`s: a re-dial starts empty."""
+    truncated_items: set[str] = field(default_factory=set[str])
+    """Assistant items a truncation cut: the server deletes their transcript, keeping only the audio heard."""
+    item_fingerprints: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint each finished assistant item added to `conversation`."""
     restoration_checked: bool = False
 
     @property
@@ -219,6 +225,7 @@ class OpenAIServer:
             'response.create': self._on_response_create,
             'response.cancel': self._on_response_cancel,
             'conversation.item.truncate': self._on_truncate,
+            'conversation.item.delete': self._on_item_delete,
         }[frame['type']]
         handler(session, frame)
 
@@ -541,20 +548,45 @@ class OpenAIServer:
             )
             return
         self.truth.truncations.append((item_id, audio_end_ms))
+        # "Truncating audio will delete the server-side text transcript to ensure there is not text in the
+        # context that hasn't been heard by the user" (the API reference).
+        session.truncated_items.add(item_id)
+        if (fingerprint := session.item_fingerprints.pop(item_id, None)) is not None:
+            session.conversation.discard(fingerprint)
         self._emit(session, {'type': 'conversation.item.truncated', 'item_id': item_id, 'audio_end_ms': audio_end_ms})
 
     def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
         """Acknowledge an item joining the conversation, as the real API does for every item, whoever made it."""
+        item_id = item_id or self._new_item()
         if (fingerprint := conversation_fingerprint(item)) is not None:
             session.conversation.add(fingerprint)
+            session.items[item_id] = fingerprint
         self._emit(
             session,
             {
                 'type': 'conversation.item.added',
                 'previous_item_id': None,
-                'item': {**item, 'id': item_id or self._new_item(), 'object': 'realtime.item', 'status': 'completed'},
+                'item': {**item, 'id': item_id, 'object': 'realtime.item', 'status': 'completed'},
             },
         )
+
+    def _on_item_delete(self, session: ServerSession, frame: dict[str, Any]) -> None:
+        """Delete an item from the conversation, as the real API does (verified live), or refuse an unknown one."""
+        item_id = frame['item_id']
+        if (fingerprint := session.items.pop(item_id, None)) is None:  # pragma: lax no cover (only a stale id)
+            self._emit(
+                session, _error('invalid_value', f'Item with item_id not found: {item_id}', frame.get('event_id'))
+            )
+            return
+        session.conversation.discard(fingerprint)
+        self.truth.pruned.append(fingerprint)
+        kind, _, call_id = fingerprint.partition(':')
+        if (
+            kind in ('function_call', 'function_call_output') and call_id in session.unanswered_tool_outputs
+        ):  # pragma: lax no cover (only a premature deletion)
+            # The model hadn't answered the result yet: it would answer without it.
+            self.truth.pruned_unanswered.append(call_id)
+        self._emit(session, {'type': 'conversation.item.deleted', 'item_id': item_id})
 
     def _audio_item_added(self, session: ServerSession, item_id: str) -> None:
         self._item_added(
@@ -689,7 +721,9 @@ class OpenAIServer:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
         transcript = item['content'][0]['transcript']
-        session.conversation.add(f'assistant:{transcript}')
+        if active.message_item not in session.truncated_items:
+            session.conversation.add(fingerprint := f'assistant:{transcript}')
+            session.item_fingerprints[active.message_item] = fingerprint
         self._emit(
             session,
             {
@@ -739,6 +773,8 @@ class OpenAIServer:
             )
             session.item_audio_ms[active.message_item] = 0
             active.audio_ms = 0
+            truth.items[active.message_item] = []
+            self.truth.item_responses[active.message_item] = truth
         item = active.output[-1]
         common = {
             'response_id': truth.key,
@@ -755,6 +791,7 @@ class OpenAIServer:
         truth.words.append(word)
         self.truth.word_seq[word] = self.truth.tick()
         active.message_words.append(word)
+        truth.items[active.message_item].append(word)
         item['content'][0]['transcript'] = ' '.join(active.message_words)
         self._emit(
             session,
@@ -786,7 +823,8 @@ class OpenAIServer:
             'arguments': '{}',
         }
         active.output.append(item)
-        session.conversation.add(f'function_call:{call_id}')
+        # The real API adds each output item to the conversation as it starts.
+        self._item_added(session, item, item_id)
         self._emit(
             session,
             {
