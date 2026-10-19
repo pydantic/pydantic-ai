@@ -180,6 +180,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     path = bin_dir / 'docker'
     path.write_text(_FAKE_DOCKER)
     path.chmod(0o755)
-    (bin_dir / 'podman').symlink_to(path)
+    (bin_dir / 'podman').write_text(_FAKE_DOCKER)
+    (bin_dir / 'podman').chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     return FakeDocker(bin_dir)

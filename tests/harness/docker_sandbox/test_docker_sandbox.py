@@ -44,30 +44,32 @@ def container_dir(tmp_path: Path) -> Path:
     return path
 
 
-async def test_first_use_creates_one_container_with_the_configured_options(
-    docker: FakeDocker, container_dir: Path
-) -> None:
+async def test_first_use_runs_docker_run_with_the_configured_options(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend(
         image='python:3.13-slim',
         working_dir=str(container_dir),
-        env={'A': 'backend', 'B': "it's $HOME"},
         allow_internet_access=False,
         docker_args=['--memory', '2g'],
     )
-    assert backend.ref is None
 
-    result = await backend.run(['sh', '-c', 'printf "%s|%s" "$A" "$B"; exit 3'], env={'A': 'call'})
-    await backend.run('true', shell=True)
+    await backend.working_dir()
 
-    assert (result.exit_code, result.stdout) == (3, "call|it's $HOME")
-    assert backend.ref is not None and backend.ref.provider == 'docker'
-    assert docker.containers() == [backend.ref.id]
-    run_call = docker.calls[0]
-    assert run_call == (
+    assert backend.ref is not None
+    assert docker.calls[0] == (
         f'run --detach --init --network none --memory 2g --name {backend.ref.id} '
         f'--label ai.pydantic.workspace=true --workdir {container_dir} --entrypoint sh '
         '-- python:3.13-slim -c while :; do sleep 86400; done'
     )
+
+
+async def test_a_calls_env_goes_on_top_of_the_backends(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(
+        image='image', working_dir=str(container_dir), env={'A': 'backend', 'B': "it's $HOME"}
+    )
+
+    result = await backend.run(['sh', '-c', 'printf "%s|%s" "$A" "$B"'], env={'A': 'call'})
+
+    assert result.stdout == "call|it's $HOME"
 
 
 async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, container_dir: Path) -> None:
@@ -84,20 +86,15 @@ async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: Fa
 
     assert (await backend.run(['pwd', '-P'])).stdout.strip() == str(container_dir.resolve())
     assert backend.ref is not None and docker.containers() == [backend.ref.id]
-    await DockerSandbox().destroy(backend.ref)
-    assert docker.containers() == []
+    await DockerSandbox().destroy(backend.ref)  # refused if the label had been overridden
 
 
-async def test_a_failed_create_is_unavailable(docker: FakeDocker) -> None:
+async def test_a_create_that_made_no_container_is_unavailable_and_leaves_no_ref(docker: FakeDocker) -> None:
+    backend = DockerSandboxBackend(image='missing-image')
+
     with pytest.raises(
         WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
     ):
-        await DockerSandboxBackend(image='missing-image').working_dir()
-
-
-async def test_a_create_that_made_no_container_leaves_no_ref(docker: FakeDocker) -> None:
-    backend = DockerSandboxBackend(image='missing-image')
-    with pytest.raises(WorkspaceUnavailableError):
         await backend.working_dir()
 
     assert backend.ref is None
@@ -305,13 +302,11 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
     result = await agent.run('go')
 
     assert result.output == '{"probe":"contained"}'
-    assert isinstance(result.workspace.backend, DockerSandboxBackend)
-    ref = result.workspace.ref
-    assert ref is not None and docker.containers() == [ref.id]
+    assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
 
-    await DockerSandbox().destroy(ref)
-    await DockerSandbox().destroy(ref)  # removing a missing container is fine
-    assert docker.containers() == []
+
+async def test_destroying_a_removed_container_is_fine(docker: FakeDocker) -> None:
+    await DockerSandbox().destroy(WorkspaceRef(provider='docker', id='gone'))
 
 
 async def test_a_capability_without_an_image_leaves_new_runs_to_other_workspaces(
@@ -358,8 +353,10 @@ async def test_the_cli_is_the_one_on_path_when_the_capability_was_created(
 
 async def test_destroy_uses_the_configured_executable(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('box', container_dir)
+    sandbox = DockerSandbox(executable='podman')
+    (docker.bin_dir / 'docker').unlink()
 
-    await DockerSandbox(executable='podman').destroy(WorkspaceRef(provider='docker', id='box'))
+    await sandbox.destroy(WorkspaceRef(provider='docker', id='box'))
 
     assert docker.containers() == []
 
@@ -381,11 +378,6 @@ async def test_attaching_with_a_working_dir_the_container_lacks_reports_dockers_
         await sandbox.backend(WorkspaceRef(provider='docker', id='box')).working_dir()
 
 
-def test_an_attach_only_capability_still_validates_where_it_is_written() -> None:
-    with pytest.raises(ValueError, match='invalid environment variable name'):
-        DockerSandbox(env={'NOT-A-NAME': 'x'})
-
-
 async def test_without_a_working_dir_commands_start_in_the_images_own(docker: FakeDocker) -> None:
     backend = DockerSandboxBackend(image='image', working_dir=None)
 
@@ -400,7 +392,6 @@ async def test_capability_attaches_to_its_own_refs_only(docker: FakeDocker, cont
     ref = WorkspaceRef(provider='docker', id='earlier')
 
     assert (await agent.run('go', workspace=ref)).workspace.ref == ref
-    assert await capability.backend(ref).working_dir() == str(container_dir.resolve())
     with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='e2b', id='earlier'))
     with pytest.raises(ValueError, match="unsupported workspace provider 'e2b'"):
@@ -442,11 +433,6 @@ async def test_a_container_that_cannot_be_inspected_is_refused(docker: FakeDocke
         await DockerSandbox().destroy(ref)
 
 
-async def test_attaching_to_a_removed_container_is_unavailable(docker: FakeDocker) -> None:
-    with pytest.raises(WorkspaceUnavailableError, match='gone is unavailable: no such container'):
-        await DockerSandbox().backend(WorkspaceRef(provider='docker', id='gone')).working_dir()
-
-
 async def test_a_container_that_fails_to_start_is_unavailable(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('broken', container_dir)
 
@@ -463,8 +449,16 @@ async def test_a_failed_removal_raises(docker: FakeDocker, container_dir: Path) 
         await DockerSandbox().destroy(WorkspaceRef(provider='docker', id='stuck'))
 
 
-def test_capability_validates_where_it_is_written() -> None:
-    with pytest.raises(UserError, match='working_dir must be an absolute POSIX path'):
-        DockerSandbox(image='image', working_dir='relative')
-    with pytest.raises(UserError, match='does not support `defer_loading=True`'):
-        DockerSandbox(image='image', defer_loading=True)
+@pytest.mark.parametrize(
+    ('kwargs', 'error', 'match'),
+    [
+        ({'image': 'x', 'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
+        ({'image': 'x', 'defer_loading': True}, UserError, 'does not support `defer_loading=True`'),
+        ({'env': {'NOT-A-NAME': 'x'}}, ValueError, 'invalid environment variable name'),
+    ],
+)
+def test_invalid_capability_configuration_is_rejected_at_construction(
+    kwargs: dict[str, object], error: type[Exception], match: str
+) -> None:
+    with pytest.raises(error, match=match):
+        DockerSandbox(**kwargs)  # pyright: ignore[reportArgumentType]

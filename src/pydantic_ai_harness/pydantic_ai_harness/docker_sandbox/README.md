@@ -188,7 +188,7 @@ Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` onc
 
 A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/), [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Inside, commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
-- Don't mount the Docker socket or directories holding secrets. Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
+- Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks. Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
 - Docker creates a missing `working_dir` owned by `root`, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own.
 - With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
 - `env` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine.

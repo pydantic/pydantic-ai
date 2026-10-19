@@ -158,7 +158,8 @@ def resolve_executable(executable: str) -> str:
 
     A `docker` that appears on `PATH` later, such as in a mounted project's virtualenv, then isn't the one that runs.
     """
-    return shutil.which(executable) or executable
+    path = shutil.which(executable)
+    return os.path.abspath(path) if path else executable
 
 
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
