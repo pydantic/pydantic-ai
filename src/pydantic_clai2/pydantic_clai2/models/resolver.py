@@ -1,7 +1,7 @@
 """Model names to models: provider integrations loaded on demand, accounts, profiles, and `chain:` fallbacks."""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -19,6 +19,7 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins.menus import Dialogs, SettingsMenu
 
 if TYPE_CHECKING:
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_clai2.auth import CodexAuth
     from pydantic_clai2.models.accounts import Account
 
@@ -44,13 +45,15 @@ class ModelResolver:
     """Where a plugin sign-in saves its models."""
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
+    codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
+    """The native Codex provider per account, which the process's sessions share; sign-ins prompt on `console`."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
         if self._auth is None:
             from pydantic_clai2.auth import CodexAuth
 
-            self._auth = CodexAuth(self.console)
+            self._auth = CodexAuth(self.console, providers=self.codex_providers)
         return self._auth
 
     async def login(self, args: list[str], dialogs: Dialogs | None = None) -> str:

@@ -88,7 +88,7 @@ async def run_web(
     reason: SessionEndReason = 'error'
     served: WebHandoff | None = None
     async with agent, create_task_group() as workers:
-        workers.start_soon(shell.sessions.namer.run)
+        workers.start_soon(shell.process.namer.run)
         try:
             notice = ''
             if resume is not None or session_id is not None:
