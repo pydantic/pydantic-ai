@@ -230,8 +230,12 @@ async def test_output_limit_after_direct_exit_stops_the_background_writer(
                 os.kill(int(writer_pid.read_text()), signal.SIGKILL)
 
 
-async def test_background_output_within_the_drain_grace_is_captured(workspace_harness: WorkspaceHarness) -> None:
+async def test_background_output_within_the_drain_grace_is_captured(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # The background child writes only once the direct shell is gone; the drain grace still captures it.
+    # A long grace costs nothing here: the child exits after writing, and EOF ends the drain.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
     backend = workspace_harness.backend()
     script = 'echo a; (while kill -0 $$ 2>/dev/null; do sleep 0.01; done; echo b) &'
     result = await asyncio.wait_for(backend.run(['sh', '-c', script]), timeout=10)
@@ -264,9 +268,11 @@ async def test_commands_keep_the_sandbox_environment(workspace_harness: Workspac
 
 
 async def test_cancellation_during_drain_stops_the_background_writer(
-    workspace_harness: WorkspaceHarness, tmp_path: Path
+    workspace_harness: WorkspaceHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The direct shell exits while a same-group child keeps the pipe open; cancelling during the drain kills it.
+    # A drain longer than any startup delay, so the cancel, not the grace, ends it.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 60.0)
     writer_pid = tmp_path / 'writer.pid'
     backend = workspace_harness.backend()
     await backend.working_dir()
