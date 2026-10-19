@@ -49,6 +49,7 @@ try:
         Noul as TypeSafeNoul,
         NoulAnswer as TypeSafeNoulAnswer,
         NoulCriteria as TypeSafeNoulCriteria,
+        RetryPolicy as TypeSafeRetryPolicy,
         Score as TypeSafeScore,
         ScoreAnswer as TypeSafeScoreAnswer,
         TypeSafeAPIConnectionError,
@@ -222,6 +223,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
         if not all(image.is_image for image in request.images):
             raise UserError('TypeSafe supports image evidence only; `request.images` contains a non-image.')
         timeout = model_settings.get('timeout')
+        max_retries = model_settings.get('max_retries')
         extra_headers = httpx2.Headers(model_settings.get('extra_headers'))
         if request.images:
             # TypeSafe refuses a request with an image unless it opts in to the still-experimental image input.
@@ -235,6 +237,7 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
                 model=self._model_name,
                 # The mapper writes each image's label into the state once, and the API puts the image in its place.
                 assets={f'<image {i}>': TypeSafeImage(image.data) for i, image in enumerate(request.images, start=1)},
+                retry=None if max_retries is None else TypeSafeRetryPolicy(max_retries=max_retries),
                 timeout=None if timeout is None else to_httpx2_timeout(timeout),
                 extra_headers=extra_headers,
                 extra_body=cast('Mapping[str, JsonValue] | None', model_settings.get('extra_body')),

@@ -79,13 +79,14 @@ from pydantic_ai.realtime import (
     WebRTCSession,
 )
 from pydantic_ai.realtime._instrumentation import SessionInstrumentation
-from pydantic_ai.realtime._lifecycle import UserTurnEnded, UserTurnStarted
+from pydantic_ai.realtime._lifecycle import ResponseStarted, UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     realtime_websocket_url,
     replay_items,
+    seed_items,
     server_vad_from_turn_detection,
 )
 from pydantic_ai.realtime.codec import (
@@ -114,6 +115,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, try_import
+from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -1975,6 +1977,46 @@ async def test_replay_items_marks_a_spoken_turn_without_a_transcript() -> None:
     assert history[0].parts == [SpeechPart(speaker='user', audio=audio)]
 
 
+async def test_seeding_and_replay_mark_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Book me a flight.')]),
+        # Cut off where the listener stopped hearing it.
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        # Interrupted with no offset reported: the last speech part is marked.
+        ModelResponse(
+            parts=[
+                SpeechPart(speaker='assistant', transcript='Let me check.'),
+                SpeechPart(speaker='assistant', transcript='It leaves at'),
+            ],
+            state='interrupted',
+        ),
+        # Nothing was transcribed, so there is still nothing to seed.
+        ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=0)], state='interrupted'),
+    ]
+
+    expected = snapshot(
+        [
+            {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Book me a flight.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, the morning flight\n[Interrupted after 640 ms]'}],
+            },
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Let me check.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'It leaves at\n[Interrupted]'}],
+            },
+        ]
+    )
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
+    assert await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
+
+
 async def test_replay_items_keeps_failed_multimodal_tool_return_wrapped_once() -> None:
     history = [
         ModelResponse(parts=[ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image')]),
@@ -2697,7 +2739,7 @@ async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() 
     ]
     ws = FakeWebSocket([json.dumps(frame) for frame in frames])
     conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
-    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in lifecycle_events(conn)]
 
     assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
     assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
@@ -2724,7 +2766,7 @@ async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
         {'type': 'input_audio_buffer.committed', 'item_id': 'spoken', 'previous_item_id': 'idle'},
     ]
     conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
-    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in lifecycle_events(conn)]
 
     assert events[:-1] == [
         SessionUsage(usage=RequestUsage(details={'input_transcription_seconds': 5}), response_scoped=False),
@@ -4588,7 +4630,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
                     'type': 'function_call',
                     'name': 'get_weather',
                     'call_id': 'tc_1',
-                    'arguments': '{"city": "Paris"}',
+                    'arguments': '{"city":"Paris"}',
                 },
             },
             {
@@ -4780,12 +4822,11 @@ async def test_a_stale_response_request_failing_after_the_redial_keeps_the_repla
 
 
 @pytest.mark.anyio
-async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
-    """Requests joining one already deferred get no `response.create` of their own, and the session is told.
+async def test_requests_joining_a_deferred_response_create_share_it() -> None:
+    """Requests joining one already deferred get no `response.create` of their own.
 
     The connection keeps a single deferred `response.create`, which answers everything added before it
-    goes out. The session reserves one response per request, so each merged request is reported for
-    it to release.
+    goes out: the response it starts names them all as what it answers.
     """
     done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
     created = json.dumps(
@@ -4798,30 +4839,10 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send('third')  # joins the deferred request
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
 
-    events = await collect_codec_events(conn)
-    # Reported once the shared response has started, not when the requests joined: a refused
-    # `response.create` takes back every request it carried instead.
-    assert [type(event).__name__ for event in events] == ['ResponseDone']
-    assert conn._take_merged_response_requests() == 2  # pyright: ignore[reportPrivateUsage]
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
+    frames = [frame async for frame in conn.frames()]
+    started = [event for frame in frames for event in frame if isinstance(event, ResponseStarted)]
+    assert started[-1].answers == (1, 2, 3)
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
-
-
-@pytest.mark.anyio
-async def test_response_started_by_the_server_reports_no_merged_requests() -> None:
-    """Only the start of the response a `response.create` asked for settles the requests it carried."""
-    created = [
-        json.dumps({'type': 'response.created', 'response': {'id': rid, 'status': 'in_progress', 'output': []}})
-        for rid in ('resp-1', 'resp-2')
-    ]
-    conn = OpenAIRealtimeConnection(FakeWebSocket(created))  # type: ignore[arg-type]
-    await conn.send('first')
-    await conn.send('second')  # deferred behind the first
-    await conn.send('third')  # joins the deferred request
-    # A second `response.created` while the first response is still active (a server-started response)
-    # is not the deferred request starting.
-    await collect_codec_events(conn)
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _QueuedWebSocket(FakeWebSocket):
@@ -4915,7 +4936,7 @@ async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for
             ws.push(frame)
         with anyio.fail_after(5):
             await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     transcripts = [
         part.transcript

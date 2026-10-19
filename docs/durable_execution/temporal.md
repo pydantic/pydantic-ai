@@ -258,6 +258,58 @@ Temporal stores workflow-side workspace call arguments (commands, `env=`, file c
 Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
 secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
 
+### Harness Workspace Capabilities {#harness-workspace-capabilities}
+
+[Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
+Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
+on each engine. Three things are specific to Temporal.
+
+**Live events.** Tools that write files ask for approval and report the write from the workflow, so
+`FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
+listeners as they happen. Other tools run in activities and their events are not delivered: `FileReadEvent`,
+`DirectoryListedEvent` and `FilesSearchedEvent` from the file tools, and `CommandStartedEvent`,
+`CommandOutputEvent` and `CommandFinishedEvent` from `shell`
+([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
+results. When Temporal replays a workflow, approval listeners run again, so make their external effects
+idempotent.
+
+**Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
+become activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
+folders at run start adds a toolset at run time, which Temporal refuses, so pass
+`SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
+
+#### Command timeouts {#harness-command-timeouts}
+
+An activity has 60 seconds by default. `run_command` and `shell` get 300 seconds, which covers the `shell`
+tool's 270-second foreground wait. A `run_command` given a longer timeout, through
+`Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Set it with
+`SetToolMetadata` in the agent's capabilities:
+
+```python
+from datetime import timedelta
+
+from pydantic_ai_harness.coder import Coder
+from temporalio.workflow import ActivityConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='coder',
+    capabilities=[
+        LocalWorkspace('.'),
+        Coder(),
+        TemporalDurability(),
+        SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30))),
+    ],
+)
+```
+
+For longer work, use `start_command` or `shell(mode='background')`, which return while the command keeps
+running.
+
 ### Capabilities at Runtime
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
@@ -353,14 +405,20 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent
-    from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import (
+        AgentEventStream,
+        PydanticAIWorkflow,
+        TemporalDurability,
+    )
 
 durability = TemporalDurability(event_stream_topic='agent-events')
 agent = Agent('{{ openai:medium }}', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
-class AssistantWorkflow:
+class AssistantWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]  # registers the agent's activities with the worker
+
     @workflow.init
     def __init__(self, prompt: str) -> None:
         self.events = AgentEventStream()
@@ -373,7 +431,8 @@ class AssistantWorkflow:
 ```
 
 A consumer that holds only a workflow handle then observes the run as it happens, with
-[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]:
+[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events].
+This and the following snippets continue the workflow module above (they use its `agent`, `durability` and workflow classes) and take a `client` connected with [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin], as in the [first example](#durable-agent):
 
 ```python {title="temporal_workflow_streams_consumer.py" test="skip" lint="skip"}
 from uuid import uuid4
@@ -405,7 +464,9 @@ The adapter's two jobs split across the boundary: the HTTP handler turns the req
 
 ```python {title="temporal_workflow_streams_ui_workflow.py" test="skip" lint="skip"}
 @workflow.defn
-class ChatWorkflow:
+class ChatWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.init
     def __init__(self, body: bytes) -> None:
         self.events = AgentEventStream()
@@ -541,13 +602,21 @@ Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) fo
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflow. Its deadline is computed from `workflow.now()` and enforced with a workflow timer, so a replayed workflow computes the same deadline and fires the same timer. When it fires, the in-flight activity is cancelled according to its `cancellation_type`, and the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in workflow code. Like `RunCancelled`, an uncaught `RunTimedOut` fails the workflow as a typed application error, so catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+
+[`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] is serialized into activities, so an agent run by a tool inside an activity inherits the deadline too. The deprecated `TemporalAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the workflow: a workflow's `execution_timeout` would end it without recording the run's history, so keep using it only as a backstop.
+
 ### Suspended Turns and Background Mode
 
 Some providers can pause a model turn mid-flight (Anthropic `pause_turn`) or run it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)). Pydantic AI transparently continues such a suspended turn until it completes. Each segment runs in a separate model request activity, while the workflow checkpoints the suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and its background job ID between segments. The final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response resumes with that response passed to the first activity.
 
 This has a few operational implications:
 
-- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
+- **Timeouts and heartbeats**: size `start_to_close_timeout` and `heartbeat_timeout` for one provider round trip. A [`request_timeout`](../timeouts.md#model-request-deadlines) model setting covers all segments of the turn: it runs as a workflow timer, and cancels the in-flight activity when it fires. With a [`FallbackModel`](../models/overview.md#fallback-model), the deadlines run inside the activities instead, and the picked model's deadline carries over from one segment's activity to the next. Model request activities are given a default `heartbeat_timeout` of 30 seconds; see [Activity Configuration](#activity-configuration) for how heartbeating works across the other activities.
 - **Retries and waits**: a failed segment retries independently. Delays between background polls use durable Temporal timers and do not consume activity wall-clock time.
 - **Cancellation**: if an error abandons a suspended job, its provider teardown runs in a dedicated cancellation activity.
 - **Payload size**: whenever [streaming](#streaming) is used — an `event_stream_handler`, a `ProcessEventStream` capability, or a per-run `event_stream_handler` — each segment's buffered events are shipped back to the workflow and must fit within Temporal's [payload size limit](#large-payloads) (2MB by default). A segment that overflows raises the same `UserError` as any other oversized model response.
@@ -575,7 +644,7 @@ from temporalio import workflow
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ResolveModelId
-from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
@@ -612,7 +681,9 @@ agent = Agent(
 
 
 @workflow.defn
-class MultiModelWorkflow:
+class MultiModelWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.run
     async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
         if use_reasoning:

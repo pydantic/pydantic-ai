@@ -229,7 +229,7 @@ history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSess
 split it, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
-was sent and recorded in history, not when the model took it in. Since Live can take text as context
+was sent, not when the model took it in. Since Live can take text as context
 without answering it, bound [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
 with a timeout rather than relying on a reply always following.
 

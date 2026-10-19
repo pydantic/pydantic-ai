@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import TypeAdapter
@@ -470,6 +471,77 @@ async def test_context_snapshots_and_missing_field_guards(missing: str | None) -
 
     context = TaskBoundary(tamper_request=rewrite_tool_context(_drop(missing)) if missing else None)
     assert 'checked' in await run_agent_in_task(agent, runtime, context)
+
+
+@pytest.mark.parametrize('carried', [True, False])
+async def test_child_task_reads_the_run_deadline(carried: bool) -> None:
+    """The run's deadline crosses into a child task; a payload without it reads as a run without one."""
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='deadline', deps_type=type(None), capabilities=[runtime])
+    seen: list[datetime | None] = []
+
+    @agent.tool
+    async def inspect_deadline(ctx: RunContext[None]) -> str:
+        seen.append(ctx.deadline)
+        return 'checked'
+
+    context = TaskBoundary(tamper_request=None if carried else rewrite_tool_context(_drop('deadline')))
+    assert 'checked' in await run_agent_in_task(agent, runtime, context, timeout=60)
+    (deadline,) = seen
+    if carried:
+        assert deadline is not None and deadline > datetime.now(UTC)
+    else:
+        assert deadline is None
+
+
+async def test_run_context_serialization_is_exhaustive() -> None:
+    """Every `RunContext` field is either carried into a child task or deliberately left out.
+
+    A field added to `RunContext` fails this test until it is serialized for child tasks or listed below with a
+    reason. Otherwise it would silently become unreadable inside a child task.
+    """
+    intentionally_unserialized = {
+        'deps',  # encoded separately by the codec
+        'agent',  # reattached from the worker's agent on load
+        'model',  # live Model instance; its id crosses as `_model_id` and resolves worker-side
+        'tracer',  # live tracer; only whether it was enabled crosses, and the worker supplies its own
+        'tool_manager',  # live ToolManager; `available_tool_names` crosses as a snapshot instead
+        'capabilities',  # live capability objects; `active_capability_ids` crosses as a snapshot instead
+        'root_capability',  # live capability chain, reattached from the worker's agent on load
+        'pending_messages',  # live run queue; replaced by an `EnqueueGuard` on load
+        'messages',  # full history would ride in every child task payload
+        'prompt',  # multi-modal content would ride in every child task payload
+        'validation_context',  # arbitrary user object; rebuilt from the worker's agent on load
+        'model_settings',  # only set for model requests, which receive it as their own parameter
+        '_mcp_tool_defs_cache',  # run-local cache read and written workflow-side
+        '_event_stream_buffer',  # live run event buffer; child task events cross as recorded effects
+        '_pending_immediate_dispatches',  # live workflow-side event deduplication state
+        '_event_stream_replacements',  # live workflow-side legacy-replacement state
+        '_capability',  # live capability instance used only while dispatching workflow-side hooks
+        'realtime_session',  # live session object; realtime sessions don't run inside child tasks
+        '_cancellation',  # live controller holding an asyncio task reference
+        '_durable_operations',  # workflow-side callables; worker dispatch is pre-registered
+        '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
+        'workspace',  # live facade; only its ref crosses, as `workspace_ref`
+        '_run_held_toolsets',  # a child task may run in another process, so it enters its own toolsets
+    }
+    carried_only_when_set = {
+        '_tool_name_path',  # set while a name-changing wrapper lists a toolset; defaults to `()` otherwise
+    }
+    carried: set[str] = set()
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(TestModel(), name='context-coverage', deps_type=type(None), capabilities=[runtime])
+
+    @agent.tool_plain
+    async def noop() -> str:
+        return 'checked'
+
+    context = TaskBoundary(tamper_request=rewrite_tool_context(carried.update))
+    assert 'checked' in await run_agent_in_task(agent, runtime, context)
+
+    assert carried & intentionally_unserialized == set()
+    uncategorized = set(RunContext.__dataclass_fields__) - carried - intentionally_unserialized - carried_only_when_set
+    assert uncategorized == set()
 
 
 async def test_missing_worker_workspace_provider_has_an_actionable_error() -> None:
