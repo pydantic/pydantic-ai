@@ -35,7 +35,7 @@ listentome = false
 logfire = false
 logfire-api = false
 openai = "2026-10-06T21:31:20Z"
-pixeltable = "2026-09-30T18:59:00Z"
+pixeltable = "2026-10-16T18:08:00Z"
 pydantic = false
 pydantic-ai-harness = false
 pydantic-core = false
@@ -5237,13 +5237,14 @@ wheels = [
 
 [[package]]
 name = "pixeltable"
-version = "0.7.12"
+version = "0.7.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "av", version = "19.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "beautifulsoup4" },
+    { name = "boto3" },
     { name = "cloudpickle" },
     { name = "deprecated", version = "1.3.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "deprecated", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
@@ -5281,7 +5282,7 @@ dependencies = [
     { name = "tzlocal" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/fd/dfcfd1e7c7de29c1bb16383a821b47383da394d92f38a5ebf4cf7f315db9/pixeltable-0.7.12-py3-none-any.whl", hash = "sha256:a4edff55f3476825abc2ff1e43a8453d33c013463b5d580b26b70282071d7423", size = 1343950, upload-time = "2026-09-30T18:58:32.991Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/88/8b641bebc2f4a8ea6df23739569626e4fc97544c7adb13772de556fa1159/pixeltable-0.7.18-py3-none-any.whl", hash = "sha256:8cb218af23bf9c3d9711906f59acd65749b8ad2f8a63cf386434d05426ae9c86", size = 1405580, upload-time = "2026-10-16T18:07:40.406Z" },
 ]
 
 [[package]]

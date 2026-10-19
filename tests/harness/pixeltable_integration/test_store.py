@@ -82,20 +82,6 @@ def _intercept_update(monkeypatch: pytest.MonkeyPatch, table: pxt.Table, *, colu
     monkeypatch.setattr(table, 'update', update)
 
 
-def _intercept_delete(monkeypatch: pytest.MonkeyPatch, table: pxt.Table, *, around: Around) -> None:
-    """Route the first delete on `table` through `around`."""
-    real = table.delete
-    pending = [True]
-
-    def delete(where: Expr | None = None) -> pxt.UpdateStatus:
-        if pending:
-            pending.clear()
-            return around(lambda: real(where=where))
-        return real(where=where)
-
-    monkeypatch.setattr(table, 'delete', delete)
-
-
 def _drop_receipt(table: pxt.Table, operation: MemoryOperation) -> None:
     table.delete(where=table.path == f'{RECEIPT_PREFIX}{operation.id}')
 
@@ -112,7 +98,9 @@ def _insert_prepared_receipt(
     existed: bool,
 ) -> None:
     """Journal an intent in the prepared state, as a writer that crashed before applying it leaves it."""
-    intent = json.dumps({'file': file, 'op': op, 'expected': expected, 'new': new})
+    intent = json.dumps(
+        {'file': file, 'op': op, 'expected': expected, 'new': new, 'version': version or uuid.uuid4().hex}
+    )
     insert_rows(
         store.table,
         [
@@ -187,6 +175,14 @@ class TestPixeltableMemoryStore:
         assert await store.list_paths('', limit=50) == ['a.md']
         found = await store.search('', 'alpha', limit=10, max_files=10, max_chars=400, max_file_chars=1_000)
         assert [match.path for match in found.matches] == ['a.md']
+        current = await store.read('a.md', max_chars=100)
+        assert current is not None
+        await store.delete('a.md', expected_version=current.version)
+        assert await store.read('a.md', max_chars=100) is None
+        assert await store.list_paths('', limit=50) == []
+        assert not (
+            await store.search('', 'alpha', limit=10, max_files=10, max_chars=400, max_file_chars=1_000)
+        ).matches
 
     async def test_table_path_directories(self, root: str) -> None:
         nested = PixeltableMemoryStore(table_name=f'{root}.a.b.memory')
@@ -391,13 +387,36 @@ class TestPixeltableMemoryStoreRecovery:
         operation = MemoryOperation(id='run-1:call-11', fingerprint='write:b.md:one')
         first = await store.write('b.md', 'one', expected_version=None, operation=operation)
         t = store.table
-        intent = json.dumps({'file': 'b.md', 'op': 'write', 'expected': None, 'new': 'one'})
+        intent = json.dumps({'file': 'b.md', 'op': 'write', 'expected': None, 'new': 'one', 'version': first.version})
         t.update({'content': intent}, where=t.path == f'{RECEIPT_PREFIX}{operation.id}')
         replay = await store.write('b.md', 'one', expected_version=None, operation=operation)
         assert replay == MemoryMutation(version=first.version, replayed=True, existed=False)
         file = await store.read('b.md', max_chars=100)
         assert file is not None
         assert (file.content, file.version) == ('one', first.version)
+
+    async def test_interrupted_create_does_not_resurrect_a_later_delete(
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operation = MemoryOperation(id='interrupted-create', fingerprint='write:note.md:original')
+
+        def interrupt_completion(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
+            raise RuntimeError('interrupted before receipt completion')
+
+        _intercept_update(monkeypatch, store.table, columns={'content'}, around=interrupt_completion)
+        with pytest.raises(RuntimeError, match='before receipt completion'):
+            await store.write('note.md', 'original', expected_version=None, operation=operation)
+
+        peer = PixeltableMemoryStore(table_name=table_name)
+        current = await peer.read('note.md', max_chars=100)
+        assert current is not None
+        await peer.delete('note.md', expected_version=current.version)
+        assert await peer.read('note.md', max_chars=100) is None
+
+        restarted = PixeltableMemoryStore(table_name=table_name)
+        with pytest.raises(MemoryConflictError, match='changed during operation'):
+            await restarted.get_operation(operation)
+        assert await restarted.read('note.md', max_chars=100) is None
 
     async def test_prepared_receipt_conflicts_when_path_moved(self, store: PixeltableMemoryStore) -> None:
         # The journaled expectation is stale: the path changed after the receipt was written.
@@ -466,8 +485,9 @@ class TestPixeltableMemoryStoreRecovery:
             assert file is not None
             assert (file.content, file.version) == ('next', 'vr')
 
+    @pytest.mark.parametrize('deleted', [False, True])
     async def test_roll_forward_conflicts_when_a_writer_moves_the_path(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch, deleted: bool
     ) -> None:
         operation = MemoryOperation(id='run-1:call-16', fingerprint='write:m.md:x')
         _insert_prepared_receipt(
@@ -477,15 +497,20 @@ class TestPixeltableMemoryStoreRecovery:
 
         def other_writes_after_claim(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
             status = call()
-            anyio.from_thread.run(partial(other.write, 'm.md', 'other', expected_version=None))
+            created = anyio.from_thread.run(partial(other.write, 'm.md', 'other', expected_version=None))
+            if deleted:
+                anyio.from_thread.run(partial(other.delete, 'm.md', expected_version=created.version))
             return status
 
         _intercept_update(monkeypatch, store.table, columns={'last_operation_id'}, around=other_writes_after_claim)
         with pytest.raises(MemoryConflictError, match='changed during operation'):
             await store.get_operation(operation)
         file = await store.read('m.md', max_chars=10)
-        assert file is not None
-        assert file.content == 'other'
+        if deleted:
+            assert file is None
+        else:
+            assert file is not None
+            assert file.content == 'other'
 
 
 class TestPixeltableMemoryStoreRaces:
@@ -568,15 +593,13 @@ class TestPixeltableMemoryStoreRaces:
 
         if mutation == 'create':
             _intercept_insert(monkeypatch, store.table, receipt=False, around=other_updates_first)
-        elif mutation == 'write':
+        else:
             _intercept_update(
                 monkeypatch,
                 store.table,
-                columns={'content', 'version', 'last_operation_id'},
+                columns={'kind', 'content', 'version', 'last_operation_id'},
                 around=other_updates_first,
             )
-        else:
-            _intercept_delete(monkeypatch, store.table, around=other_updates_first)
         with pytest.raises(MemoryConflictError, match=error):
             if mutation == 'delete':
                 await store.delete('race.md', expected_version=expected)

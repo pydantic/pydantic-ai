@@ -15,11 +15,6 @@ and [memory store source](https://github.com/pydantic/pydantic-ai/blob/main/src/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-## The problem
-
-An agent answering from Pixeltable data needs catalog discovery, filtering, and embedding search.
-This capability supplies those tools with shared access checks, result limits, and error handling.
-
 ## Usage
 
 Install the `pixeltable` extra (Python 3.11 or later). The example uses an OpenAI model and OpenAI
@@ -93,8 +88,8 @@ recalls it in a second run without the first run's chat history.
   because they expose local file paths. Explicit array and binary projections are also rejected.
 - `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
   (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values
-  become `null`, and `truncated` reports applied bounds. `list_tables` and `describe_table` are sized
-  by the allowlist and schema.
+  become `null`, and `truncated` reports applied bounds. A cap below the minimal result envelope
+  still returns that envelope. `list_tables` and `describe_table` are sized by the allowlist and schema.
 - Invalid requests, missing tables, and transient provider errors become
   [`ModelRetry`](../tools-advanced.md#tool-retries); infrastructure and authorization failures
   propagate to the application.
@@ -109,6 +104,8 @@ recalls it in a second run without the first run's chat history.
 - Writes use compare-and-set versions and operation receipts, so a retry can recover or replay a
   mutation without applying it twice. Paths are limited to 255 characters and operation ids to 248;
   the `__op__` and `__meta__` path roots are reserved.
+- Recovery cannot overwrite a later mutation; conflicting pending writes and deletes raise `MemoryConflictError`.
+  Deleted paths retain a content-free version marker to detect intervening mutations.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
 - `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory
   rows. Route writes and deletes through the store to preserve versions and receipts.

@@ -33,6 +33,7 @@ from pydantic_ai_harness.memory._store import lexical_search, validate_store_pat
 from pydantic_ai_harness.pixeltable._types import column_base, is_nullable_type
 
 _KIND_FILE = 'file'
+_KIND_DELETED = 'deleted'
 _KIND_OP = 'op'
 _OP_PREFIX = '__op__/'
 # Set in a receipt row's (otherwise unused) last_operation_id by whoever rolls its intent forward.
@@ -89,6 +90,7 @@ class _Intent(TypedDict):
     op: str
     expected: str | None
     new: str | None
+    version: str
 
 
 def _insert_rows(t: pxt.Table, rows: list[dict[str, object]]) -> None:
@@ -209,22 +211,14 @@ class PixeltableMemoryStore:
                 self._table = None
                 return fn()
 
-    def _ensure_dirs(self) -> None:
-        if '.' not in self._table_name:
-            return
-        parts = self._table_name.rsplit('.', 1)[0].split('.')
-        acc: list[str] = []
-        for part in parts:
-            acc.append(part)
-            pxt.create_dir('.'.join(acc), if_exists='ignore')
-
     def _ensure_table(self) -> pxt.Table:
         if self._table is not None:
             return self._table
         try:
             t = pxt.get_table(self._table_name)
         except pxt.NotFoundError:
-            self._ensure_dirs()
+            if parent := self._table_name.rpartition('.')[0]:
+                pxt.create_dir(parent, parents=True, if_exists='ignore')
             # if_exists='ignore' can also return a table a concurrent writer just created; it is checked below.
             t = pxt.create_table(  # pyright: ignore[reportUnknownMemberType]
                 self._table_name,
@@ -282,7 +276,9 @@ class PixeltableMemoryStore:
         return metadata['has_default_idxs']
 
     def _file_row(self, t: pxt.Table, path: str) -> dict[str, Any] | None:
-        query = t.where((t.path == path) & (t.kind == _KIND_FILE)).select(t.content, t.version, t.last_operation_id)
+        query = t.where((t.path == path) & ((t.kind == _KIND_FILE) | (t.kind == _KIND_DELETED))).select(
+            t.kind, t.content, t.version, t.last_operation_id
+        )
         assert isinstance(query, pxt.Query)
         rows = query.collect()
         if len(rows) == 0:
@@ -318,8 +314,9 @@ class PixeltableMemoryStore:
         """Settle a prepared receipt, claiming it before replay to prevent withdrawal.
 
         A failed writer withdraws its unclaimed intent; a peer can roll it forward.
-        Unsettled claimed intents remain for recovery. A missing file settles a
-        delete after a crash. Return `False` if the intent vanished before the claim.
+        Unsettled claimed intents remain for recovery. Deleted paths retain their
+        generation, so a later delete cannot make a stale create eligible again.
+        Return `False` if the intent vanished before the claim.
         """
         receipt_row = (t.path == _receipt_path(operation)) & (t.kind == _KIND_OP) & (t.content == intent)
         recorded: _Intent = json.loads(intent)
@@ -329,7 +326,7 @@ class PixeltableMemoryStore:
             raise conflict
         row = self._file_row(t, recorded['file'])
         current = None if row is None else str(row['version'])
-        applied = (not receipt.existed or current is None) if recorded['op'] == 'delete' else current == receipt.version
+        applied = (recorded['op'] == 'delete' and not receipt.existed) or current == recorded['version']
         if not applied and current == recorded['expected']:
             # Claim first: a writer withdrawing this intent deletes it only while unclaimed.
             if t.update({'last_operation_id': _CLAIMED}, where=receipt_row).row_count_stats.upd_rows != 1:
@@ -340,11 +337,7 @@ class PixeltableMemoryStore:
                 # A peer may have applied it concurrently; re-check before declaring a conflict.
                 row = self._file_row(t, recorded['file'])
                 current = None if row is None else str(row['version'])
-                applied = (
-                    (not receipt.existed or current is None)
-                    if recorded['op'] == 'delete'
-                    else current == receipt.version
-                )
+                applied = (recorded['op'] == 'delete' and not receipt.existed) or current == recorded['version']
             else:
                 applied = True
         if not applied:
@@ -356,22 +349,23 @@ class PixeltableMemoryStore:
         self, t: pxt.Table, operation: MemoryOperation | None, recorded: _Intent, mutation: MemoryMutation
     ) -> None:
         path = recorded['file']
-        if recorded['op'] == 'delete':
-            if not mutation.existed:
-                return
-            status = t.delete(where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == recorded['expected']))
-            if status.row_count_stats.del_rows != 1:
-                raise MemoryConflictError(f'memory path {path!r} changed before it could be deleted')
-        elif recorded['expected'] is None:
+        if recorded['op'] == 'delete' and not mutation.existed:
+            return
+        # Keep a content-free generation on deletion: physical absence would let a
+        # pending create apply again after another writer created and deleted the file.
+        values: dict[str, object] = {
+            'kind': _KIND_DELETED if recorded['op'] == 'delete' else _KIND_FILE,
+            'content': recorded['new'],
+            'version': recorded['version'],
+            'last_operation_id': operation.id if operation else None,
+        }
+        if recorded['expected'] is None:
             _insert_rows(
                 t,
                 [
                     {
                         'path': path,
-                        'kind': _KIND_FILE,
-                        'content': recorded['new'],
-                        'version': mutation.version,
-                        'last_operation_id': operation.id if operation else None,
+                        **values,
                         'fingerprint': None,
                         'existed': None,
                     }
@@ -379,15 +373,14 @@ class PixeltableMemoryStore:
             )
         else:
             status = t.update(
-                {
-                    'content': recorded['new'],
-                    'version': mutation.version,
-                    'last_operation_id': operation.id if operation else None,
-                },
-                where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == recorded['expected']),
+                values,
+                where=(t.path == path)
+                & ((t.kind == _KIND_FILE) | (t.kind == _KIND_DELETED))
+                & (t.version == recorded['expected']),
             )
             if status.row_count_stats.upd_rows != 1:
-                raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
+                action = 'deleted' if recorded['op'] == 'delete' else 'written'
+                raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
 
     def _prepare_operation(
         self,
@@ -468,15 +461,19 @@ class PixeltableMemoryStore:
             if receipt is not None:
                 return receipt
         row = self._file_row(t, path)
-        current = None if row is None else str(row['version'])
+        current = str(row['version']) if row is not None and row['kind'] == _KIND_FILE else None
         if current != expected_version:
             action = 'deleted' if content is None else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
         mutation = MemoryMutation(
-            version=None if content is None else uuid.uuid4().hex, replayed=False, existed=row is not None
+            version=None if content is None else uuid.uuid4().hex, replayed=False, existed=current is not None
         )
         recorded = _Intent(
-            file=path, op='delete' if content is None else 'write', expected=expected_version, new=content
+            file=path,
+            op='delete' if content is None else 'write',
+            expected=None if row is None else str(row['version']),
+            new=content,
+            version=mutation.version or uuid.uuid4().hex,
         )
         intent = json.dumps(recorded)
         if operation is not None:

@@ -24,7 +24,7 @@ os.environ['PIXELTABLE_HOME'] = tempfile.mkdtemp(prefix='pydantic-ai-pixeltable-
 # rather than an `if` statement: branch coverage traces statement arcs, and no single
 # environment can take both arms of an install-dependent branch.
 collect_ignore = (
-    ['test_capability.py', 'test_memory.py', 'test_store.py', 'test_toolset.py']
+    ['test_capability.py', 'test_memory.py', 'test_store.py', 'test_toolset.py', 'test_video.py']
     if importlib.util.find_spec('pixeltable') is None
     else []
 )

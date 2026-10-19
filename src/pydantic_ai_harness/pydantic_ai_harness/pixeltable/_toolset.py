@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import date, datetime
 from typing import NoReturn
 
@@ -141,10 +141,6 @@ def _retry_or_raise(exc: Exception, prefix: str = '') -> NoReturn:
     ):
         raise ModelRetry(f'{prefix}{exc.message}') from exc
     raise exc
-
-
-def _row(row: Mapping[str, object]) -> dict[str, object]:
-    return {key: _cell(value) for key, value in row.items()}
 
 
 def _clip(value: object, budget: int) -> object:
@@ -435,5 +431,5 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         except pxt.Error as exc:
             _retry_or_raise(exc)
         has_more = len(fetched) > n
-        rows = [_row(dict(row)) for row in fetched[:n]]
+        rows = [{key: _cell(value) for key, value in dict(row).items()} for row in fetched[:n]]
         return _bounded_payload(_norm(table), rows, has_more=has_more, max_chars=self._max_chars)
