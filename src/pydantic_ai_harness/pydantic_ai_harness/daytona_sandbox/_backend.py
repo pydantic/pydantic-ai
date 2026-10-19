@@ -49,7 +49,7 @@ import uuid
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn
 
 import anyio
 import anyio.lowlevel
@@ -63,6 +63,7 @@ from pydantic_ai.workspaces import (
     SupportsRealpath,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
@@ -111,6 +112,9 @@ _EVENT_CONNECT_GRACE = 6.0
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream, read from the output files.
 _PARTIAL_OUTPUT_LIMIT = 4096
+# E2B's cap and preview: the backend downloads a command's whole output into memory.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 
 _logger = logging.getLogger(__name__)
 
@@ -331,11 +335,28 @@ class _DaytonaProcess:
         out_path, err_path = _output_paths(self.marker)
         try:
             with anyio.fail_after(_REQUEST_TIMEOUT):
-                stdout = await self._sandbox.fs.download_file(out_path, _REQUEST_TIMEOUT)
+                # A command can grow a file without writing it (`truncate`), so sizes are checked first.
+                sizes = await self._process.exec(
+                    f'for f in {out_path} {err_path}; do if [ -e "$f" ]; then wc -c < "$f"; else echo 0; fi; done',
+                    timeout=_REQUEST_TIMEOUT,
+                )
                 try:
-                    stderr = await self._sandbox.fs.download_file(err_path, _REQUEST_TIMEOUT)
-                except daytona.DaytonaNotFoundError:
-                    stderr = b''  # The working directory was missing, so the command never started.
+                    out_size, err_size = (int(size) for size in sizes.result.split())
+                except ValueError:
+                    raise WorkspaceError(f'Could not read the command output sizes: {sizes.result!r}') from None
+                if out_size + err_size > _MAX_OUTPUT_BYTES:
+                    stdout, stderr = await self._excerpts('head', _OUTPUT_PREVIEW_BYTES)
+                    raise WorkspaceOutputLimitError(
+                        'Daytona command output exceeded the 10 MiB limit; redirect it to a file and read part '
+                        'of it instead',
+                        limit=_MAX_OUTPUT_BYTES,
+                        stdout=stdout,
+                        stderr=stderr,
+                    )
+                stdout = await self._sandbox.fs.download_file(out_path, _REQUEST_TIMEOUT) if out_size else b''
+                stderr = await self._sandbox.fs.download_file(err_path, _REQUEST_TIMEOUT) if err_size else b''
+        except WorkspaceOutputLimitError:
+            raise
         except Exception as error:
             await _raise_failure(self._sandbox, error, 'Could not read the command output')
         finally:
@@ -345,13 +366,23 @@ class _DaytonaProcess:
             return CommandResult(exit_code=exit_code, stdout='', stderr=f'{self.marker}-cwd')
         return CommandResult(exit_code=exit_code, stdout=output, stderr=stderr.decode(errors='replace'))
 
+    async def _excerpts(self, end: Literal['head', 'tail'], limit: int) -> tuple[str, str]:
+        """At most `limit` bytes from one end of each output file, cut in the sandbox before transfer."""
+        parts = [f'{path}.part' for path in _output_paths(self.marker)]
+        cuts = '; '.join(
+            f'{end} -c {limit} -- {path} > {part} 2>/dev/null || : > {part}'
+            for path, part in zip(_output_paths(self.marker), parts)
+        )
+        await self._process.exec(cuts, timeout=_REQUEST_TIMEOUT)
+        out, err = [await self._sandbox.fs.download_file(part, _REQUEST_TIMEOUT) for part in parts]
+        return out.decode(errors='replace'), err.decode(errors='replace')
+
     async def _remove_output_files(self) -> None:
         """Best effort: a file left behind only takes space in the sandbox's `/tmp`."""
+        paths = [path for output in _output_paths(self.marker) for path in (output, f'{output}.part')]
         with anyio.move_on_after(_REQUEST_TIMEOUT, shield=True):
             try:
-                await self._process.exec(
-                    f'rm -f -- {" ".join(_output_paths(self.marker))}', timeout=_REQUEST_TIMEOUT
-                )
+                await self._process.exec(f'rm -f -- {" ".join(paths)}', timeout=_REQUEST_TIMEOUT)
             except Exception:
                 pass
 
@@ -362,13 +393,10 @@ class _DaytonaProcess:
             return  # The result already read and removed the output files.
         # Best effort: the files only add the partial output a timeout reports.
         with anyio.move_on_after(_REQUEST_TIMEOUT):
-            for preview, path in zip((self.stdout, self.stderr), _output_paths(self.marker)):
-                try:
-                    data = await self._sandbox.fs.download_file(path, _REQUEST_TIMEOUT)
-                except Exception:
-                    preview[0] = ''
-                    continue
-                preview[0] = data.decode(errors='replace')[-_PARTIAL_OUTPUT_LIMIT:]
+            try:
+                self.stdout[0], self.stderr[0] = await self._excerpts('tail', _PARTIAL_OUTPUT_LIMIT)
+            except Exception:
+                self.stdout[0], self.stderr[0] = '', ''
         await self._remove_output_files()
 
 

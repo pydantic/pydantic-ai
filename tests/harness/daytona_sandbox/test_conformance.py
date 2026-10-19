@@ -60,11 +60,6 @@ class TestFakeDaytonaSandboxBackend(WorkspaceBackendSuite):
 @pytest.mark.daytona_live
 # The live tier runs without coverage; in CI only its gate fixtures run, to skip it.
 class TestLiveDaytonaSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
-    @pytest.fixture
-    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
-        # Daytona keeps the session command open while a background child holds its output pipes.
-        return False
-
     # Destructive rules need their own sandbox, not the shared class-scoped one. Each is deleted
     # here if a failed rule left it behind, and the client it opened is closed rather than left to
     # the garbage collector with a connection still open.

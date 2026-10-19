@@ -311,8 +311,9 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   `git clone <url> .` fails on later turns (or use `git init` + `git fetch`).
 - For an existing native sandbox pass `workspace=ModalSandboxBackend(sandbox=...)` (same for E2B,
   Sprites and Daytona); the capability's settings don't apply to it.
-- On E2B, Sprites and Daytona, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
-  its output (`start_command` already does).
+- On E2B and Sprites, a background child that inherits stdout/stderr keeps `run()` waiting: redirect
+  its output (`start_command` already does). On Daytona, `run()` returns when the command exits, without
+  what the child prints later.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 

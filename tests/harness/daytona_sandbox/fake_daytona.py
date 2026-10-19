@@ -79,6 +79,18 @@ class FakeProcess:
                 return SimpleNamespace(result='missing stage', exit_code=1)
             self.owner.files[destination] = self.owner.files.pop(source)
             return SimpleNamespace(result='', exit_code=0)
+        if command.startswith('for f in '):
+            # The output files' sizes, as `wc -c` prints them.
+            paths = command.split(';')[0].split()[3:]
+            sizes = [str(len(self.owner.files.get(path, b''))) for path in paths]
+            return SimpleNamespace(result=self.owner.output_sizes_reply or '\n'.join(sizes) + '\n', exit_code=0)
+        if command.startswith(('head -c ', 'tail -c ')):
+            # Bounded excerpts of the output files, cut in the sandbox.
+            for cut in command.split('; '):
+                end, _, limit, _, path, _, part = cut.split()[:7]
+                data = self.owner.files.get(path, b'')
+                self.owner.files[part] = data[: int(limit)] if end == 'head' else data[-int(limit) :]
+            return SimpleNamespace(result='', exit_code=0)
         if command.startswith('rm -f -- '):
             for path in shlex.split(command)[3:]:
                 self.owner.files.pop(path, None)
@@ -451,6 +463,8 @@ class FakeSandbox:
         self.process_stderr: list[str] = []
         self.process_reply: list[str] | None = None
         self.process_hangs = False
+        # Replaces the output files' sizes the backend asks for, to test a garbled reply.
+        self.output_sizes_reply = ''
         self.process_follow_open = False
         self.process_exit_code: int | None = 0
         # Raised by successive `delete_session` calls; deletion succeeds once it is exhausted.

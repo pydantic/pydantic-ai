@@ -80,7 +80,7 @@ Commands run under `sh -c` as the non-root `daytona` user. File reads refuse FIF
 
 A command timeout starts after the sandbox is ready. Each command runs in its own Daytona process session, and on a timeout the backend deletes that session, which stops the command; the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the output so far. A cancelled run deletes the session too. If Daytona does not confirm the deletion, the command may still be running: inspect the sandbox or delete it yourself. `timeout=None` removes the command deadline, not Daytona's idle stop or transport limits.
 
-A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Daytona keeps the session command open while its output is held. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
+A command's output is collected once it exits, so `run()` returns then even if a background child it started is still running; output that child writes afterwards is not returned. A command whose combined output passes 10 MiB raises `WorkspaceOutputLimitError` once it exits, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
 
 See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
 

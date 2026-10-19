@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
@@ -330,10 +331,34 @@ class TestCommands:
         # A lost output file on a live sandbox is a failed command result, not a missing path.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['out']
         sandbox.download_error = error
         with pytest.raises(expected):
             await backend.run(['true'])
         assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
+
+    async def test_output_over_the_limit_raises_with_a_preview(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The sizes are checked before any download, so a file grown without being written cannot
+        # fill the application's memory; the preview is cut in the sandbox.
+        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._MAX_OUTPUT_BYTES', 10)
+        monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._OUTPUT_PREVIEW_BYTES', 3)
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.process_stdout = ['abcdefgh']
+        sandbox.process_stderr = ['ijkl']
+        with pytest.raises(WorkspaceOutputLimitError) as exc_info:
+            await backend.run(['true'])
+        assert (exc_info.value.limit, exc_info.value.stdout, exc_info.value.stderr) == (10, 'abc', 'ijk')
+        assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
+
+    async def test_a_garbled_output_size_reply_is_a_workspace_error(self, fake_daytona: FakeDaytona) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.output_sizes_reply = 'wc: oops'
+        with pytest.raises(WorkspaceError, match=r"^Could not read the command output sizes: 'wc: oops'$"):
+            await backend.run(['true'])
 
     async def test_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
