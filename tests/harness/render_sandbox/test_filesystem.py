@@ -307,3 +307,29 @@ async def test_new_file_gets_the_default_mode(workspace_harness: WorkspaceHarnes
     target = workspace_harness.root / 'new'
     await workspace_harness.backend().write_bytes(str(target), b'data')
     assert target.stat().st_mode & 0o777 == 0o666 & ~umask
+
+
+async def test_replacement_stays_private_until_it_takes_the_old_mode(workspace_harness: WorkspaceHarness) -> None:
+    import shutil
+    import stat
+
+    target = workspace_harness.root / 'existing'
+    target.write_bytes(b'original')
+    target.chmod(0o644)
+    modes_while_filling: list[int] = []
+    copy = shutil.copyfileobj
+
+    def observe_commit(child: pytest.MonkeyPatch, action: str) -> None:
+        if action == 'commit':
+
+            def observed(source: Any, output: Any, length: int = 0) -> None:
+                modes_while_filling.append(stat.S_IMODE(os.fstat(output.fileno()).st_mode))
+                copy(source, output, length)
+
+            child.setattr(shutil, 'copyfileobj', observed)
+
+    workspace_harness.helper_fault = observe_commit
+    await workspace_harness.backend().write_bytes(str(target), b'replacement')
+    assert modes_while_filling == [0o600]
+    assert target.stat().st_mode & 0o777 == 0o644
+    assert target.read_bytes() == b'replacement'

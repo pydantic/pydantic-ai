@@ -1,6 +1,9 @@
 """Shared deterministic fixtures, and the gate for the live tier."""
 
+from __future__ import annotations
+
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -12,13 +15,19 @@ with try_import():
 
 
 @pytest.fixture
-def workspace_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> WorkspaceHarness:
-    return make_workspace_harness(monkeypatch, tmp_path)
+async def workspace_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AsyncIterator[WorkspaceHarness]:
+    harness = make_workspace_harness(monkeypatch, tmp_path)
+    yield harness
+    await harness.aclose()
 
 
 @pytest.fixture
-def isolated_workspace_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> WorkspaceHarness:
-    return make_workspace_harness(monkeypatch, tmp_path, isolated_filesystems=True)
+async def isolated_workspace_harness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> AsyncIterator[WorkspaceHarness]:
+    harness = make_workspace_harness(monkeypatch, tmp_path, isolated_filesystems=True)
+    yield harness
+    await harness.aclose()
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:

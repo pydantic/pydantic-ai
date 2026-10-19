@@ -1,8 +1,9 @@
 """A fake Render SDK whose sandboxes are local directories.
 
-User commands run as local subprocesses. The shipped file helper runs in-process, so its
-coverage needs no child interpreter; `inline_helpers` runs it as Render does instead, under
-`python3 -I -c` in the command's directory. Isolation mode gives each fake sandbox its own root.
+User commands run as local subprocesses, or with `supervised` under the shipped supervisor in a child
+interpreter, as Render runs them. The shipped file helper runs in-process, so its coverage needs no child
+interpreter; `inline_helpers` runs it as Render does instead, under `python3 -I -c` in the command's
+directory. Isolation mode gives each fake sandbox its own root.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
 _BACKEND_MODULE = 'pydantic_ai_harness.render_sandbox._backend'
 FILE_HELPER = files('pydantic_ai_harness.render_sandbox').joinpath('_file_transfer.py')
+SUPERVISOR = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py')
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,22 @@ class WorkspaceHarness:
     # Called inside an in-process file helper run with a scoped monkeypatch and the helper's action.
     helper_fault: Callable[[pytest.MonkeyPatch, str], None] | None = None
     opened_clients: list[RenderAsync] = field(default_factory=list[RenderAsync])
+    # Run user commands under the shipped supervisor in a child interpreter, as Render does.
+    supervised: bool = False
+    supervisors: list[tuple[dict[str, Any], asyncio.subprocess.Process]] = field(
+        default_factory=list[tuple[dict[str, Any], asyncio.subprocess.Process]]
+    )
 
     execute: Callable[..., Awaitable[CommandResult]] = field(init=False)
     install: Callable[[RenderAsync], None] = field(init=False)
+
+    async def aclose(self) -> None:
+        """Reap every supervisor and remove its claim; the tests stop each command they leave running."""
+        for config, process in self.supervisors:
+            if process.returncode is None:  # pragma: no cover - only after a regression leaves a command running
+                process.kill()
+            await process.communicate()
+            shutil.rmtree(config['claim'], ignore_errors=True)
 
     def backend(self, ref: WorkspaceRef | None = None, **settings: Any) -> RenderSandboxBackend:
         settings.setdefault('working_dir', str(self.root))
@@ -90,6 +105,8 @@ def make_workspace_harness(
     # Short bounds keep a regressed stop or readiness wait from stalling the test; no test waits them out.
     monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._STOP_TIMEOUT', 1)
     monkeypatch.setattr(f'{_BACKEND_MODULE}._POLL_INTERVAL', 0)
+    # A supervised command returns this long after its direct child exits if a background child holds a pipe.
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 0.2)
     harness = WorkspaceHarness(
         RenderAsync(token='test-only', owner_id='tea-test'),
         root=tmp_path,
@@ -127,7 +144,7 @@ def use_host_credentials(harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPa
         harness.opened_clients.append(client)
         return client
 
-    monkeypatch.setattr(f'{_BACKEND_MODULE}.RenderAsync', open_client)
+    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands.RenderAsync', open_client)
 
 
 def client_is_closed(client: RenderAsync) -> bool:
@@ -216,7 +233,6 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
         *,
         working_dir: str,
         env: Mapping[str, str],
-        timeout: float | None,
     ) -> CommandResult:
         harness.commands.append(command)
         if harness.sandboxes[sandbox_id].status != 'running':
@@ -238,21 +254,16 @@ def commands(harness: WorkspaceHarness) -> Callable[..., Awaitable[CommandResult
         values = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
         values.update(harness.create_calls[sandbox_id].env)
         values.update(env)
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=working_dir,
+            env=values,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=working_dir,
-                env=values,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except (FileNotFoundError, PermissionError) as error:
-            # The remote supervisor reports these as the shell's exit codes.
-            return CommandResult(exit_code=127 if isinstance(error, FileNotFoundError) else 126, stdout='', stderr='')
-        try:
-            async with asyncio.timeout(timeout):
-                stdout, stderr = await process.communicate()
+            stdout, stderr = await process.communicate()
         except BaseException:
             process.kill()
             # Draining after the kill closes the pipe transports, so none is left for the garbage collector.
@@ -281,15 +292,18 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
         def frame(kind: str, **fields: object) -> SandboxExecOutput:
             return SandboxExecOutput('stdout', json.dumps({'nonce': nonce, 'kind': kind, **fields}) + '\n')
 
+        argv = config.get('argv', [])
+        helper = argv[:4] == ['python3', '-I', '-c', FILE_HELPER.read_text()]
+        if harness.supervised and not (operation == 'run' and (config['cwd'] == '/' or helper)):
+            async for event in _supervise(harness, identifier, operation, config):
+                yield event
+            return
         if operation == 'stop':
             yield frame('stopped')
             yield SandboxExecExit(0)
             return
-        argv = config['argv']
         invocation = argv[2] if argv[:2] == ['/bin/sh', '-c'] else argv
-        result = await harness.execute(
-            identifier, invocation, working_dir=config['cwd'], env=config['env'], timeout=config['timeout']
-        )
+        result = await harness.execute(identifier, invocation, working_dir=config['cwd'], env=config['env'])
         for name, value in [('stdout', result.stdout), ('stderr', result.stderr)]:
             for start in range(0, len(value), 16384):
                 yield frame(
@@ -299,3 +313,28 @@ def stream(harness: WorkspaceHarness) -> Callable[[str, str], AsyncGenerator[San
         yield SandboxExecExit(0)
 
     return execute
+
+
+async def _supervise(
+    harness: WorkspaceHarness, identifier: str, operation: str, config: dict[str, Any]
+) -> AsyncGenerator[SandboxExecEvent]:
+    """Run the shipped supervisor in a child interpreter with the sandbox's create-time environment."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    env.update(harness.create_calls[identifier].env)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(SUPERVISOR),
+        operation,
+        json.dumps(config),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    # Render keeps an exec running after the client disconnects; the backend's stop or `aclose` ends it.
+    harness.supervisors.append((config, process))
+    assert process.stdout is not None and process.stderr is not None
+    while line := await process.stdout.readline():
+        yield SandboxExecOutput('stdout', line.decode())
+    stderr = await process.stderr.read()
+    assert not stderr, stderr.decode()
+    yield SandboxExecExit(await process.wait())

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping
@@ -26,7 +25,6 @@ from pydantic_ai.workspaces import (
     FileEntry,
     SupportsCommands,
     SupportsFilesystem,
-    Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceOutputLimitError,
@@ -34,6 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_integer,
@@ -49,7 +48,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover - exercised by the clean-import test
     raise ImportError('Install `pydantic-ai-harness[render]` to use RenderSandbox.') from _import_error
 
-from ._commands import prepare_command, run_command
+from ._commands import client_scope, close_client, open_client, prepare_command, run_command
 from ._filesystem import NativeFilesystem
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,6 @@ _READINESS_TIMEOUT = 60.0
 _OPERATION_TIMEOUT = 30.0
 # Render allows 100 API requests a minute; readiness polling stays well under that.
 _POLL_INTERVAL = 1.0
-_MISSING_CREDENTIALS = 'Set RENDER_API_KEY and RENDER_WORKSPACE_ID in the environment, or pass a configured `client=`.'
 
 
 def _check_env(env: Mapping[str, str] | None) -> dict[str, str]:
@@ -85,20 +83,6 @@ def check_sandbox_timeout(value: int) -> None:
 def _require_asyncio() -> None:
     if not running_on_asyncio():
         raise UserError('Render sandbox needs the asyncio event loop: the backend runs its calls on asyncio tasks.')
-
-
-def _open_client() -> RenderAsync:
-    if not os.environ.get('RENDER_WORKSPACE_ID'):
-        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS)
-    try:
-        return RenderAsync()
-    except ValueError as error:
-        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS) from error
-
-
-async def _close_client(client: RenderAsync) -> None:
-    # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
-    await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
 
 
 async def _wait_despite_cancellation(task: asyncio.Task[_T]) -> _T:
@@ -165,8 +149,8 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         self._sandbox_timeout = sandbox_timeout
         self._working_dir = absolute_path('working_dir', working_dir) or DEFAULT_WORKING_DIR
         self._filesystem = NativeFilesystem(self, _OPERATION_TIMEOUT)
-        # Metadata operations use `Workspace`'s shell implementation over this backend's commands.
-        self._shell = Workspace(self._filesystem.commands)
+        # Metadata operations use core's shell implementation over this backend's commands, as Sprites does.
+        self._shell = _ShellFilesystem(self)
         self._lock = anyio.Lock()
         self._create_task: asyncio.Task[None] | None = None
         # Without a caller-supplied client, each top-level operation opens its own and closes it when
@@ -193,14 +177,14 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         if (client := self._operation_clients.get(task)) is not None:
             yield client
             return
-        client = _open_client()
+        client = open_client()
         self._operation_clients[task] = client
         try:
             yield client
         finally:
             del self._operation_clients[task]
             with anyio.CancelScope(shield=True):
-                await _close_client(client)
+                await close_client(client)
 
     async def _create(self, client: RenderAsync) -> None:
         try:
@@ -254,7 +238,9 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
                     command_argv(f'{prepare}cd -- {path} && pwd -P', shell=True),
                     working_dir='/',
                 )
-                result = await run_command(client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT)
+                result = await run_command(
+                    client, self._ref.id, resolve, timeout=_OPERATION_TIMEOUT, stop_client=self._client
+                )
             except RateLimitError:
                 raise
             except ClientError as error:
@@ -291,7 +277,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
             assert self._ref is not None
             prepared = prepare_command(argv, working_dir=cwd, env=values, timeout=timeout)
             try:
-                return await run_command(client, self._ref.id, prepared, timeout=timeout)
+                return await run_command(client, self._ref.id, prepared, timeout=timeout, stop_client=self._client)
             except RateLimitError:
                 raise
             except ClientError as error:
@@ -324,7 +310,7 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
         return await self._shell.stat(path)
 
     async def list_dir(self, path: str) -> tuple[FileEntry, ...]:
-        return tuple(await self._shell.list_dir(path))
+        return await self._shell.list_dir(path)
 
     async def make_dir(self, path: str) -> None:
         await self._shell.make_dir(path)
@@ -339,17 +325,12 @@ class RenderSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyste
 async def terminate_sandbox(client: RenderAsync | None, sandbox_id: str) -> None:
     """Terminate a sandbox by ID; Render accepts an already terminated one, and an unknown ID is already gone."""
     _require_asyncio()
-    owned = client is None
-    client = client or _open_client()
-    try:
-        await client.experimental.sandboxes.terminate(sandbox_id)
-    except SandboxNotFoundError:
-        pass
-    except RateLimitError:
-        raise
-    except ClientError as error:
-        raise WorkspaceUnavailableError('Render rejected the termination; check the credentials') from error
-    finally:
-        if owned:
-            with anyio.CancelScope(shield=True):
-                await _close_client(client)
+    async with client_scope(client) as scope:
+        try:
+            await scope.experimental.sandboxes.terminate(sandbox_id)
+        except SandboxNotFoundError:
+            pass
+        except RateLimitError:
+            raise
+        except ClientError as error:
+            raise WorkspaceUnavailableError('Render rejected the termination; check the credentials') from error

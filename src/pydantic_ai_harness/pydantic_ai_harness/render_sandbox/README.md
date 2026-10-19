@@ -45,7 +45,7 @@ Commands start in `/workspace`, which is created on a new sandbox. Pass `working
 
 `RenderSandbox` supplies the workspace only. Add [`Coder`](../coder/) for a coding agent, or the narrower [`Shell`](../shell/) and [`FileSystem`](../filesystem/).
 
-A string command runs under `/bin/sh -c`; an argument list runs as given. Standard input is at EOF, and a non-zero exit is a normal result. A command whose combined output passes 1 MiB is stopped and raises `WorkspaceOutputLimitError` with the captured beginning in `stdout` and `stderr`; redirect large output to a file instead. A command and its environment must fit in about 110 KB, the limit on one exec argument; write larger content with the file tools.
+A string command runs under `/bin/sh -c`; an argument list runs as given. Standard input is at EOF, and a non-zero exit is a normal result. A command whose combined output passes 1 MiB is stopped and raises `WorkspaceOutputLimitError` with the captured beginning in `stdout` and `stderr`; redirect large output to a file instead. A command and its environment must fit in about 110 KB, the limit on one exec argument, where each non-ASCII character takes 6 bytes (12 for emoji); write larger content with the file tools.
 
 Render's exec API cannot stop a command, so the backend runs each command under a small Python supervisor sent with the exec request. On a timeout or cancellation, it kills the command's process group and leaves the sandbox usable. A background child that detaches into its own session keeps running. The supervisor and the file helpers need `python3` in the sandbox image, which Render's default image provides.
 

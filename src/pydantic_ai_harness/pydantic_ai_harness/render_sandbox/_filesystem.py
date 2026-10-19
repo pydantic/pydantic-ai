@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Protocol
@@ -16,12 +15,9 @@ from render.client.errors import ClientError, RateLimitError
 from render.experimental.sandbox import SandboxDownloadError, SandboxFileNotFoundError, SandboxNotFoundError
 
 from pydantic_ai.workspaces import (
-    CommandResult,
     SupportsCommands,
     WorkspaceBackend,
-    WorkspaceCommand,
     WorkspaceError,
-    WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
@@ -33,33 +29,9 @@ class _Commands(WorkspaceBackend, SupportsCommands, Protocol):
     pass
 
 
-class CommandView:
-    """The backend's commands without its file methods, so a `Workspace` over it uses the shell for files."""
-
-    def __init__(self, backend: _Commands) -> None:
-        self.backend = backend
-
-    @property
-    def ref(self) -> WorkspaceRef | None:
-        return self.backend.ref
-
-    async def working_dir(self) -> str:
-        return await self.backend.working_dir()
-
-    async def run(
-        self,
-        command: WorkspaceCommand,
-        *,
-        shell: bool = False,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> CommandResult:
-        return await self.backend.run(command, shell=shell, env=env, timeout=timeout)
-
-
 class NativeFilesystem:
     def __init__(self, backend: _Commands, timeout: float) -> None:
-        self.commands = CommandView(backend)
+        self.commands = backend
         self.timeout = timeout
 
     async def _helper(self, action: str, path: str, directory: str, size: int = 0) -> int:

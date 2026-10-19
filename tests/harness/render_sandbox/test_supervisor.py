@@ -184,29 +184,6 @@ async def test_supervisor_stops_the_real_foreground_process(
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_supervisor_returns_after_direct_exit_with_inherited_pipe(
-    workspace_harness: WorkspaceHarness, local_exec: LocalExec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.render_sandbox._commands._DRAIN_GRACE', 0.05)
-    backend = workspace_harness.backend()
-    background_pid = tmp_path / 'background.pid'
-    try:
-        # The background process deliberately retains stdout and stderr. The supervisor
-        # must return after the direct shell's exit and the drain grace, without waiting for EOF.
-        result = await asyncio.wait_for(
-            backend.run(['sh', '-c', 'sleep 60 & echo $! > "$1"; printf done', 'sh', str(background_pid)]),
-            timeout=10,
-        )
-        assert (result.exit_code, result.stdout, result.stderr) == (0, 'done', '')
-        os.kill(int(background_pid.read_text()), 0)
-    finally:
-        if background_pid.exists():  # pragma: no branch - absent only if command startup regresses
-            try:
-                os.kill(int(background_pid.read_text()), signal.SIGKILL)
-            except ProcessLookupError:  # pragma: lax no cover - OS may already have reaped the background child
-                pass
-
-
 async def test_stop_fence_prevents_a_delayed_launch(
     workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path
 ) -> None:
@@ -225,22 +202,21 @@ async def test_stop_fence_prevents_a_delayed_launch(
     assert (await backend.run(['printf', 'still alive'])).stdout == 'still alive'
 
 
-@pytest.mark.parametrize('failure', ['missing', 'permission', 'format'])
+# The conformance suite covers a missing program's exit code 127 against the shipped supervisor.
+@pytest.mark.parametrize('failure', ['permission', 'format'])
 async def test_supervisor_reports_executable_startup_failure(
     workspace_harness: WorkspaceHarness, local_exec: LocalExec, tmp_path: Path, failure: str
 ) -> None:
     executable = tmp_path / 'program'
-    if failure != 'missing':
-        executable.write_text('not an executable format')
-        executable.chmod(0o700 if failure == 'format' else 0o600)
+    executable.write_text('not an executable format')
+    executable.chmod(0o700 if failure == 'format' else 0o600)
     backend = workspace_harness.backend()
     if failure == 'format':
         with pytest.raises(WorkspaceError, match='supervisor failed'):
             await backend.run([str(executable)])
     else:
         result = await backend.run([str(executable)])
-        expected = (127, 'command not found') if failure == 'missing' else (126, 'Permission denied')
-        assert (result.exit_code, result.stderr) == (expected[0], f'{executable}: {expected[1]}\n')
+        assert (result.exit_code, result.stderr) == (126, f'{executable}: Permission denied\n')
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 

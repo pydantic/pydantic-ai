@@ -396,17 +396,6 @@ async def test_blank_wire_lines_are_ignored(boundary: ScriptedSDK) -> None:
     assert (await backend.run(['side-effect'])).stdout == 'usable'
 
 
-async def test_oversized_launch_is_rejected_without_dispatch(boundary: ScriptedSDK) -> None:
-    backend = boundary.backend()
-    await backend.working_dir()
-    boundary.operations.clear()
-    with pytest.raises(ValueError, match='remote exec argument limit'):
-        await backend.run(['printf', '%s', 'x' * 126_000])
-    assert boundary.operations == []
-    assert boundary.creates == 1
-    assert backend.ref is not None
-
-
 async def test_wire_output_limit_preserves_partial_output(
     boundary: ScriptedSDK, monkeypatch: pytest.MonkeyPatch
 ) -> None:

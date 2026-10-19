@@ -24,10 +24,12 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
 
 
+@pytest.mark.subprocess(reason='Commands run under the shipped supervisor in a child interpreter, as on Render')
 class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):
     # Isolated roots give each fake sandbox its own directory, which termination deletes.
     @pytest.fixture
     def backend(self, isolated_workspace_harness: WorkspaceHarness) -> RenderSandboxBackend:
+        isolated_workspace_harness.supervised = True
         return isolated_workspace_harness.backend()
 
     @pytest.fixture
@@ -49,12 +51,6 @@ class TestFakeRenderSandboxBackend(WorkspaceBackendSuite):
             await RenderSandbox(client=isolated_workspace_harness.client).destroy(backend.ref)
 
         return destroy
-
-    @pytest.fixture
-    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
-        # The fake runs commands without the remote supervisor, so it waits for pipe EOF;
-        # `test_supervisor.py` covers the supervisor returning on the direct child's exit.
-        return False
 
 
 async def _destroy(backend: WorkspaceBackend) -> None:  # pragma: no cover - live tier only

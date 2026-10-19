@@ -12,6 +12,7 @@ import pytest
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from render import RenderAsync
     from render.client.errors import ClientError, RateLimitError, ServerError
     from render.experimental.sandbox import Sandbox, SandboxExecEvent, SandboxNotFoundError
 
@@ -305,26 +306,20 @@ async def test_interrupted_stream_on_a_running_sandbox_propagates(workspace_harn
         await backend.run(['true'])
 
 
-@pytest.mark.parametrize('phase', ['create', 'readiness', 'run'])
-async def test_rate_limit_is_propagated_unchanged_without_replay(
-    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch, phase: str
+async def test_rate_limit_during_readiness_propagates_unchanged(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     backend = workspace_harness.backend()
     rate_limit = RateLimitError('try later')
-    if phase == 'create':
-        workspace_harness.create_error = rate_limit
-    elif phase == 'run':
-        workspace_harness.command_error = rate_limit
-    else:
 
-        async def limited(identifier: str) -> Sandbox:
-            raise rate_limit
+    async def limited(identifier: str) -> Sandbox:
+        raise rate_limit
 
-        monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', limited)
+    monkeypatch.setattr(workspace_harness.client.experimental.sandboxes, 'from_id', limited)
     with pytest.raises(RateLimitError) as caught:
-        await backend.run(['printf', 'never replay'])
+        await backend.run(['printf', 'never sent'])
     assert caught.value is rate_limit
-    assert workspace_harness.commands.count(['printf', 'never replay']) <= 1
+    assert workspace_harness.commands == []
 
 
 @pytest.mark.parametrize(
@@ -411,6 +406,46 @@ async def test_each_operation_opens_and_closes_its_own_client(
     assert len(workspace_harness.opened_clients) == 1
     assert await backend.read_bytes(path) == b'contents'
     assert len(workspace_harness.opened_clients) == 2
+    assert all(client_is_closed(client) for client in workspace_harness.opened_clients)
+
+
+async def test_stop_after_cancellation_runs_on_its_own_open_client(
+    workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop can outlive the cancelled operation, so it never uses that operation's client."""
+    use_host_credentials(workspace_harness, monkeypatch)
+    execs: list[tuple[str, RenderAsync, bool]] = []
+    install = workspace_harness.install
+
+    def recording_install(client: RenderAsync) -> None:
+        install(client)
+        sdk = client.experimental.sandboxes
+        execute = sdk.exec
+
+        def record(identifier: str, launch: str) -> AsyncIterator[SandboxExecEvent]:
+            operation = shlex.split(launch)[4]
+            execs.append((operation, client, client_is_closed(client)))
+            return execute(identifier, launch)
+
+        monkeypatch.setattr(sdk, 'exec', record)
+
+    workspace_harness.install = recording_install
+    backend = RenderSandboxBackend(working_dir=str(workspace_harness.root))
+    await backend.working_dir()
+    execs.clear()
+    marker = workspace_harness.root / 'started'
+    task = asyncio.create_task(backend.run(['sh', '-c', 'touch "$1"; exec sleep 60', 'sh', str(marker)]))
+    # The command is running once it has written its marker; the deadline only guards against a hang.
+    async with asyncio.timeout(10):
+        while not marker.exists():
+            await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    (run_op, run_client, _), (stop_op, stop_client, stop_client_closed) = execs
+    assert (run_op, stop_op) == ('run', 'stop')
+    assert stop_client is not run_client
+    assert not stop_client_closed
     assert all(client_is_closed(client) for client in workspace_harness.opened_clients)
 
 

@@ -56,6 +56,12 @@ def destination(path: str) -> str:
     return target
 
 
+def umask() -> int:
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
 def sibling(path: str, directory: str) -> str:
     # Named after the staging directory, so `cleanup` can remove it even if a stop killed `commit`.
     return os.path.join(os.path.dirname(os.path.realpath(path)), '.render-pydantic-' + os.path.basename(directory))
@@ -67,14 +73,14 @@ def commit(path: str, directory: str, size: int) -> None:
     # Stage beside the destination so replacement is atomic across mount points.
     # A failed upload or interrupted copy cannot truncate the user's old file.
     temporary = sibling(path, directory)
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, 'wb') as output, os.fdopen(regular_file(staged), 'rb') as source:
             if os.fstat(source.fileno()).st_size != size:
                 raise OSError(errno.EIO, 'Incomplete uploaded file', path)
             shutil.copyfileobj(source, output, 1024 * 1024)
-        if os.path.exists(target):
-            os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode))
+        # Private while it fills; then the old file's mode, or the umask default for a new file.
+        os.chmod(temporary, stat.S_IMODE(os.stat(target).st_mode) if os.path.exists(target) else 0o666 & ~umask())
         os.replace(temporary, target)
     finally:
         if os.path.lexists(temporary):

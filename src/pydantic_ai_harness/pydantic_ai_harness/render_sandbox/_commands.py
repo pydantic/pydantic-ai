@@ -11,14 +11,16 @@ import asyncio
 import base64
 import binascii
 import json
+import os
 import shlex
 import uuid
 from collections.abc import AsyncGenerator, Mapping
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import TypeGuard
 
+import anyio
 from render import RenderAsync
 from render.client.errors import ClientError
 from render.experimental.sandbox import SandboxExecExit, SandboxExecOutput
@@ -160,11 +162,44 @@ async def _consume(client: RenderAsync, sandbox_id: str, launch: str, capture: _
         raise WorkspaceError('Command supervisor stream ended without a complete result')
 
 
-async def _stop(client: RenderAsync, sandbox_id: str, command: PreparedCommand) -> None:
-    capture = _Capture(command.nonce, 4096)
-    await _consume(client, sandbox_id, command.stop, capture)
-    if capture.terminal != 'stopped':
-        raise WorkspaceError('Command stop did not acknowledge its fence')
+async def _stop(client: RenderAsync | None, sandbox_id: str, command: PreparedCommand) -> None:
+    # Its own client when the caller supplied none: the stop can outlive the operation that opened the run's client.
+    async with client_scope(client) as scope:
+        capture = _Capture(command.nonce, 4096)
+        await _consume(scope, sandbox_id, command.stop, capture)
+        if capture.terminal != 'stopped':
+            raise WorkspaceError('Command stop did not acknowledge its fence')
+
+
+_MISSING_CREDENTIALS = 'Set RENDER_API_KEY and RENDER_WORKSPACE_ID in the environment, or pass a configured `client=`.'
+
+
+def open_client() -> RenderAsync:
+    if not os.environ.get('RENDER_WORKSPACE_ID'):
+        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS)
+    try:
+        return RenderAsync()
+    except ValueError as error:
+        raise WorkspaceUnavailableError(_MISSING_CREDENTIALS) from error
+
+
+async def close_client(client: RenderAsync) -> None:
+    # Render 1.2 exposes no close on `RenderAsync`; its pool lives on the sandbox API client.
+    await client.experimental.sandboxes.client.get_async_httpx_client().aclose()
+
+
+@asynccontextmanager
+async def client_scope(client: RenderAsync | None) -> AsyncGenerator[RenderAsync]:
+    """Yield `client`, or one opened from the environment and closed afterwards."""
+    if client is not None:
+        yield client
+        return
+    opened = open_client()
+    try:
+        yield opened
+    finally:
+        with anyio.CancelScope(shield=True):
+            await close_client(opened)
 
 
 _SOURCE = files('pydantic_ai_harness.render_sandbox').joinpath('_command_runner.py').read_text()
@@ -210,7 +245,12 @@ def prepare_command(
 
 
 async def run_command(
-    client: RenderAsync, sandbox_id: str, command: PreparedCommand, *, timeout: float | None
+    client: RenderAsync,
+    sandbox_id: str,
+    command: PreparedCommand,
+    *,
+    timeout: float | None,
+    stop_client: RenderAsync | None,
 ) -> CommandResult:
     """Run once, stopping the command if it may still be running after a timeout, cancellation or stream failure.
 
@@ -225,7 +265,7 @@ async def run_command(
         # No stop once the supervisor reported the end, or when Render refused the exec outright.
         refused = isinstance(error, ClientError) and error.__cause__ is None
         if capture.terminal is None and not refused:
-            await stop_shielded(lambda: _stop(client, sandbox_id, command), grace=_STOP_TIMEOUT)
+            await stop_shielded(lambda: _stop(stop_client, sandbox_id, command), grace=_STOP_TIMEOUT)
         if isinstance(error, TimeoutError) and deadline.expired():
             stdout, stderr = capture.text()
             raise WorkspaceTimeoutError('Command deadline exceeded', stdout=stdout, stderr=stderr) from error
