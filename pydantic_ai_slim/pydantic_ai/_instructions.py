@@ -434,19 +434,39 @@ def update_instruction_history(
     return prefix
 
 
-def continued_prefix(
-    messages: Sequence[ModelMessage], instructions: list[InstructionPart] | None
-) -> list[InstructionPart] | None:
-    """The prefix a request ending `messages` is sent if `instructions` continue its window, else `None`.
+def recorded_prefix(baseline: InstructionBaselinePart, instructions: str) -> list[InstructionPart] | None:
+    """The instruction parts a request in `baseline`'s window was sent, rebuilt from its recorded `instructions`.
 
-    Unlike `update_instruction_history`, this records nothing: it's for a request that repeats one already in
-    history, such as a resumed turn.
+    The joined text is split into the baseline's blocks at the blank lines that join them: an append-mode block
+    must match its recorded content, and a rewrite-mode block must match its digest's hash, so the parts are
+    exactly the ones the request was sent. `None` if the text isn't made of the baseline's blocks.
     """
-    baseline = instruction_window(messages)
-    normalized = _normalize_append_parts(instructions or [])
-    if baseline is None or not baseline.instructions or not continues_window(baseline, normalized):
+    blocks = [block for block in baseline.instructions if not isinstance(block, InstructionPart) or block.content]
+
+    def split(start: int, index: int) -> list[InstructionPart] | None:
+        if index == len(blocks):
+            return [] if start == len(instructions) else None
+        block = blocks[index]
+        last = index == len(blocks) - 1
+        if isinstance(block, InstructionPart):
+            ends = [start + len(block.content)] if instructions.startswith(block.content, start) else []
+        else:
+            ends = range(start, len(instructions) + 1)
+        for end in ends:
+            # Blocks are joined with a blank line, and the last one ends the text.
+            if end != len(instructions) if last else not instructions.startswith('\n\n', end):
+                continue
+            if isinstance(block, InstructionPart):
+                part = block
+            elif _instruction_text_hash(instructions[start:end]) == block.content_hash:
+                part = InstructionPart(content=instructions[start:end], id=block.id, dynamic=block.dynamic)
+            else:
+                continue
+            if (rest := split(end if last else end + 2, index + 1)) is not None:
+                return [part, *rest]
         return None
-    return window_prefix(baseline, normalized)
+
+    return split(0, 0)
 
 
 def _record_baseline(targets: Sequence[ModelRequest], instructions: list[InstructionPart]) -> InstructionBaselinePart:

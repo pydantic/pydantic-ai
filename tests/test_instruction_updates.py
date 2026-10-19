@@ -14,6 +14,7 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
+from pydantic_ai._instructions import recorded_prefix
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -860,6 +861,20 @@ async def test_instruction_updates_resumed_request_keeps_baseline():
     assert prefixes == [prefixes[0]] * 2
 
 
+def test_instruction_updates_recorded_prefix_rebuilds_the_parts_a_request_was_sent():
+    """The recorded text splits into the baseline's blocks only where each block matches what the baseline records."""
+    state = InstructionPart(content='A', on_change='append', name='state', id=STATE_ID)
+    # A rewrite-mode block with a blank line of its own, so the split has to try more than one boundary.
+    style = InstructionPart(content='Terse.\n\nVery.', dynamic=True)
+    baseline = InstructionBaselinePart(instructions=[InstructionDigest.of(style), state, InstructionDigest.of(style)])
+    text = 'Terse.\n\nVery.\n\nA\n\nTerse.\n\nVery.'
+    assert recorded_prefix(baseline, text) == [replace(style, dynamic=True), state, replace(style, dynamic=True)]
+    # The append-mode block doesn't match, a rewrite-mode block doesn't match its hash, or there's text left over.
+    assert recorded_prefix(baseline, 'Terse.\n\nVery.\n\nB\n\nTerse.\n\nVery.') is None
+    assert recorded_prefix(baseline, 'Terse.\n\nVery.\n\nA\n\nChatty.') is None
+    assert recorded_prefix(InstructionBaselinePart(instructions=[]), 'Terse.') is None
+
+
 async def test_instruction_updates_suspended_resume_after_a_rewritten_block_changed():
     """A resumed turn whose rewrite-mode block changed since it was sent resends its recorded instructions."""
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=Settings)
@@ -893,8 +908,20 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
         responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
     )
     await agent.run(model=model, deps=Settings('Chatty.', 'A'), message_history=history)
-    # The current instructions don't rebuild what the turn was sent, so it gets the recorded text, as on any agent.
-    assert captured_parts == [[InstructionPart(content='Terse.\n\nA')]]
+    # The continuation resends what the turn recorded, not the current instructions, and keeps the append-mode
+    # block an append-mode block, so the model renders the turn's prefix byte for byte.
+    assert captured_parts == [
+        [
+            InstructionPart(content='Terse.', dynamic=True),
+            InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+        ]
+    ]
+    assert isinstance(model, Model)
+    rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
+    assert InstructionPart.join(rendered.instruction_parts or []) == (
+        'Terse.\n\n<context id="agent:state">\nA\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    )
 
 
 @pytest.mark.parametrize('inline', [False, True])

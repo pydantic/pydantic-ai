@@ -67,7 +67,7 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
-from ._instructions import continued_prefix, instruction_window, update_instruction_history
+from ._instructions import instruction_window, recorded_prefix, update_instruction_history
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -1971,7 +1971,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = await _resumed_instruction_parts(ctx, run_context, instructions)
+        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -3083,29 +3083,24 @@ def _with_outgoing_reveal_state(
     )
 
 
-async def _resumed_instruction_parts(
-    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-    run_context: RunContext[DepsT],
-    instructions: str | None,
+def _resumed_instruction_parts(
+    history: list[_messages.ModelMessage], instructions: str | None
 ) -> list[_messages.InstructionPart] | None:
     """The instruction parts a suspended turn was sent, for its continuation to send again.
 
     The history records the joined `instructions`, which is all a turn without append-mode blocks needs. A
     turn in an `on_change='append'` window was sent its window's prefix, whose append-mode blocks the model
-    gets tagged. The baseline records those blocks, and digests of the rest, so the current instructions are
-    resolved to supply the rest; they're used only when they rebuild exactly the instructions the turn
-    recorded, which leaves the continuation byte-identical to the turn.
+    gets tagged, so the parts are rebuilt from the recorded text and the window's baseline, which leaves the
+    continuation byte-identical to the turn even if the instructions have changed since.
     """
     if not instructions:
         return None
-    history = ctx.state.message_history
     source = _get_history_instructions_source(history)
     end = next(index for index, message in enumerate(history) if message is source)
-    if instruction_window(history[: end + 1]) is not None:
-        current = await _get_instructions(ctx, run_context)
-        prefix = continued_prefix(history[: end + 1], _messages.InstructionPart.sorted(current) if current else None)
-        if prefix is not None and _messages.InstructionPart.join(prefix) == instructions:
-            return prefix
+    if (baseline := instruction_window(history[: end + 1])) is not None and (
+        prefix := recorded_prefix(baseline, instructions)
+    ) is not None:
+        return prefix
     return [_messages.InstructionPart(content=instructions)]
 
 
