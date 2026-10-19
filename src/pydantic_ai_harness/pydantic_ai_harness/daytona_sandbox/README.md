@@ -196,7 +196,7 @@ Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so unde
 
 ## Durable execution
 
-A shared client is created at module import so activities on this worker reuse it. Close it when the worker stops. Run a Temporal dev server on `localhost:7233` first.
+Each activity opens its own Daytona client and closes it once its operation ends, so the worker has nothing to close. Run a Temporal dev server on `localhost:7233` first.
 
 ```python
 import asyncio
@@ -210,15 +210,10 @@ from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-# The provider SDK must not be re-imported inside Temporal's restricted workflow sandbox.
-with workflow.unsafe.imports_passed_through():
-    from daytona import AsyncDaytona
-
-CLIENT = AsyncDaytona()
 agent = Agent(
     'anthropic:claude-opus-5-5',
     name='daytona_coder',
-    capabilities=[DaytonaSandbox(client=CLIENT), Coder(), TemporalDurability()],
+    capabilities=[DaytonaSandbox(), Coder(), TemporalDurability()],
 )
 
 
@@ -233,22 +228,19 @@ class SandboxWorkflow(PydanticAIWorkflow):
 
 async def main() -> None:
     client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
-    async with CLIENT:
-        async with Worker(client, task_queue='sandbox', workflows=[SandboxWorkflow]):
-            print(
-                await client.execute_workflow(
-                    SandboxWorkflow.run,
-                    'Use the shell tool to run pwd.',
-                    id=f'sandbox-{uuid.uuid4()}', task_queue='sandbox',
-                )
+    async with Worker(client, task_queue='sandbox', workflows=[SandboxWorkflow]):
+        print(
+            await client.execute_workflow(
+                SandboxWorkflow.run,
+                'Use the shell tool to run pwd.',
+                id=f'sandbox-{uuid.uuid4()}', task_queue='sandbox',
             )
+        )
 
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
-
-Without `client=`, each activity opens its own client and closes it once its operation ends.
 
 `Coder`, `Shell`, and `FileSystem` work under DBOS, Temporal and Prefect. See the [Coder](https://pydantic.dev/docs/ai/harness/coder/#durable-execution), [Shell](https://pydantic.dev/docs/ai/harness/shell/#durable-execution), and [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/#durable-execution) guides for engine-specific limits.
 
