@@ -111,6 +111,7 @@ def cancelled_sub_agent_return(
         tool_name=call.tool_name,
         content=f'The sub-agent run was cancelled: {error}',
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -132,6 +133,7 @@ def build_tool_return_part(
                 tool_name=call.tool_name,
                 content=tool_result.message,
                 tool_call_id=call.tool_call_id,
+                tool_kind=tool_kind,
                 outcome='denied',
             ),
             None,
@@ -758,6 +760,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tool_name=call.tool_name,
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
                     outcome='failed',
                 )
                 raise ToolFailedError(m)

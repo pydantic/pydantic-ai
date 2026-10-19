@@ -426,6 +426,7 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name=name,
             content=error.message,
             tool_call_id=call.tool_call_id,
+            tool_kind=call.tool_kind,
             outcome='failed',
         )
         return ToolFailedError(m)

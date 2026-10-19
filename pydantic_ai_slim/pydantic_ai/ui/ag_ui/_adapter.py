@@ -510,8 +510,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_calls[tool_call_id] = tool_name
 
                             # The claim is client-supplied, so it's set on the base part and promoted
-                            # best-effort by the final `narrow_message_parts` pass (which strips it if
-                            # it doesn't validate against the typed subclass).
+                            # best-effort by the final `narrow_message_parts` pass. A claim whose data
+                            # doesn't validate leaves a base part; only core's kinds are then stripped.
                             tool_kind = (
                                 parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
                             )

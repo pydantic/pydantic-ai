@@ -553,8 +553,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
                             # `tool_kind` comes from client-supplied metadata, so each claim is validated
                             # to a known `ToolPartKind` (else dropped) before being set on the base part;
-                            # the final `narrow_message_parts` pass then promotes it best-effort and
-                            # strips any claim whose data doesn't validate against the typed subclass.
+                            # the final `narrow_message_parts` pass then promotes it best-effort. A claim
+                            # whose data doesn't validate leaves a base part; only core's kinds are stripped.
                             raw_call_tool_kind = call_meta.get('tool_kind')
                             call_tool_kind = (
                                 parse_tool_kind(raw_call_tool_kind) if isinstance(raw_call_tool_kind, str) else None

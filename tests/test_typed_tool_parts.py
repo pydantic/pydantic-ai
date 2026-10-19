@@ -17,8 +17,14 @@ from pydantic_ai import Agent, RunContext, Tool, ToolKind, tools
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai._tool_search import TOOL_SEARCH_KIND
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, ValidatedToolArgs, WrapToolExecuteHandler
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    HandleDeferredToolCalls,
+    ValidatedToolArgs,
+    WrapToolExecuteHandler,
+)
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -44,7 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -284,11 +290,25 @@ def test_narrow_message_parts_promotes_a_kind_set_after_the_message_was_built() 
     assert isinstance(narrowed_request.parts[0], LookupReturnPart)
 
 
-def test_json_string_content_is_parsed_before_promotion() -> None:
+def test_json_string_content_is_validated_but_kept_as_sent() -> None:
     part = ToolReturnPart.narrow_type(
         ToolReturnPart('lookup', '{"in_stock": false}', tool_call_id='c1', tool_kind='test.lookup')
     )
-    assert isinstance(part, LookupReturnPart) and part.content == {'in_stock': False}
+    assert isinstance(part, LookupReturnPart)
+    assert part.content == '{"in_stock": false}'
+    assert part.typed_content == {'in_stock': False}
+
+
+def test_a_json_string_content_history_round_trips_byte_for_byte() -> None:
+    """Promotion doesn't rewrite the content, so what's dumped (and sent back to the model) doesn't change."""
+    request = ModelRequest(
+        parts=[ToolReturnPart('lookup', '{"in_stock":  true}', tool_call_id='c1', tool_kind='test.lookup')]
+    )
+    assert isinstance(request.parts[0], LookupReturnPart)
+    dumped = ModelMessagesTypeAdapter.dump_json([request])
+    reloaded = ModelMessagesTypeAdapter.validate_json(dumped)
+    assert isinstance(reloaded[0].parts[0], LookupReturnPart)
+    assert ModelMessagesTypeAdapter.dump_json(reloaded) == dumped
 
 
 def test_a_kind_without_a_declared_shape_is_promoted_as_is() -> None:
@@ -374,14 +394,19 @@ def test_a_kind_defined_again_must_keep_its_shapes() -> None:
         ToolKind('test', 'lookup', args=ImageResult)
 
 
-def test_a_kind_must_be_declared_with_the_kind_class_argument() -> None:
-    with pytest.raises(UserError, match='must declare its kind with the `kind` class argument'):
+def test_a_kind_set_in_the_class_body_is_deprecated_and_registers_nothing() -> None:
+    """Before `ToolKind`, a subclass could pin `tool_kind` in its body; it keeps working as a plain subclass."""
+    with pytest.warns(PydanticAIDeprecationWarning, match='Declare its kind with the `kind` class argument'):
 
         @dataclass(repr=False)
         class BodyDefault(ToolCallPart):
             _: KW_ONLY
 
             tool_kind: Literal['test.body'] = 'test.body'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    assert BodyDefault('t').tool_kind == 'test.body'
+    part = ToolCallPart('t', {}, tool_kind='test.body')
+    assert ToolCallPart.narrow_type(part) is part
 
 
 def test_a_kind_registered_twice_is_an_error() -> None:
@@ -977,3 +1002,68 @@ def test_the_old_tool_definition_kind_alias_is_deprecated() -> None:
         assert tools.ToolKind is tools.ToolDefinitionKind
     with pytest.raises(AttributeError, match="has no attribute 'Missing'"):
         tools.Missing
+
+
+def test_an_explicit_kind_is_kept_when_the_data_does_not_fit() -> None:
+    call = ToolCallPart.narrow_type(ToolCallPart('lookup', {'sku': 1.5}, tool_call_id='c1'), tool_kind='test.lookup')
+    assert type(call) is ToolCallPart and call.tool_kind == 'test.lookup'
+    tool_return = ToolReturnPart.narrow_type(
+        ToolReturnPart('lookup', 'oops', tool_call_id='c1'), tool_kind='test.lookup'
+    )
+    assert type(tool_return) is ToolReturnPart and tool_return.tool_kind == 'test.lookup'
+    unregistered = ToolCallPart.narrow_type(ToolCallPart('t', {}, tool_call_id='c2'), tool_kind='test.unregistered')
+    assert unregistered.tool_kind == 'test.unregistered'
+    failed = ToolReturnPart.narrow_type(
+        ToolReturnPart('lookup', {'in_stock': True}, tool_call_id='c3', outcome='failed'), tool_kind='test.lookup'
+    )
+    assert type(failed) is ToolReturnPart and failed.tool_kind == 'test.lookup'
+    # One of core's kinds is still stripped, as its typed class is in the deserialization union.
+    search = ToolCallPart.narrow_type(
+        ToolCallPart('search_tools', {'wrong': 1}, tool_call_id='c4'), tool_kind='tool-search'
+    )
+    assert type(search) is ToolCallPart and search.tool_kind is None
+
+
+async def test_failed_denied_and_non_fitting_calls_keep_the_tool_kind() -> None:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('failing', {'sku': 'A-1'}, tool_call_id='f1'),
+                    ToolCallPart('gated', {'sku': 'A-1'}, tool_call_id='d1'),
+                    ToolCallPart('failing', {'sku': 5.5}, tool_call_id='b1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def deny_all(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: ToolDenied('no') for call in requests.approvals})
+
+    agent = Agent(
+        FunctionModel(model_fn), deps_type=type(None), capabilities=[HandleDeferredToolCalls(handler=deny_all)]
+    )
+
+    @agent.tool_plain(tool_kind=lookup_kind)
+    def failing(args: LookupArgs) -> LookupResult:
+        raise ToolFailed('Inventory offline')
+
+    @agent.tool_plain(tool_kind=lookup_kind, requires_approval=True)
+    def gated(args: LookupArgs) -> LookupResult:
+        return _lookup(args['sku'])  # pragma: no cover
+
+    result = await agent.run('go')
+    calls = [part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart)]
+    assert [(type(call), call.tool_kind) for call in calls] == [
+        (LookupCallPart, 'test.lookup'),
+        (LookupCallPart, 'test.lookup'),
+        (ToolCallPart, 'test.lookup'),
+    ]
+    returns = {
+        part.tool_call_id: (type(part), part.tool_kind, part.outcome)
+        for part in result.all_messages()[2].parts
+        if isinstance(part, ToolReturnPart)
+    }
+    assert returns == {
+        'f1': (ToolReturnPart, 'test.lookup', 'failed'),
+        'd1': (ToolReturnPart, 'test.lookup', 'denied'),
+    }
