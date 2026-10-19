@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-# `missing-image` fails to pull, `flaky-image` fails only its first pull, `unstartable-image` creates a container
+# `flaky-image` fails only its first pull, `unstartable-image` creates a container
 # that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
 # cancelled, and `--fake-hang-late` makes it hang after creating the container. A `nopwd` container has no `pwd`.
 _FAKE_DOCKER = """#!/bin/sh
@@ -38,11 +38,6 @@ run)
     if [ "$2" = flaky-image ] && [ ! -e "$bin/flaky-pulled" ]; then
         touch "$bin/flaky-pulled"
         echo 'docker: Error response from daemon: Get "https://registry-1.docker.io/v2/": net/http: TLS handshake timeout.' >&2
-        exit 125
-    fi
-    if [ "$2" = missing-image ]; then
-        echo "Unable to find image 'missing-image:latest' locally" >&2
-        echo 'docker: Error response from daemon: pull access denied for missing-image.' >&2
         exit 125
     fi
     # Without `--workdir`, the image's own `WORKDIR`.

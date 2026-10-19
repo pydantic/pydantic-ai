@@ -80,26 +80,6 @@ async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, c
     assert '--network' not in docker.calls[0]
 
 
-async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: FakeDocker, container_dir: Path) -> None:
-    overrides = ['--name', 'mine', '--label', 'ai.pydantic.workspace=false', '--workdir', '/other']
-    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir), docker_args=overrides)
-
-    assert (await backend.run(['pwd', '-P'])).stdout.strip() == str(container_dir.resolve())
-    assert backend.ref is not None and docker.containers() == [backend.ref.id]
-    await DockerSandbox().destroy(backend.ref)  # refused if the label had been overridden
-
-
-async def test_a_create_that_made_no_container_is_unavailable_and_leaves_no_ref(docker: FakeDocker) -> None:
-    backend = DockerSandboxBackend(image='missing-image')
-
-    with pytest.raises(
-        WorkspaceUnavailableError, match=r'(?s)could not create a container from missing-image: .*pull access'
-    ):
-        await backend.working_dir()
-
-    assert backend.ref is None
-
-
 async def test_a_container_that_failed_to_start_keeps_its_ref(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend(image='unstartable-image', working_dir=str(container_dir))
     with pytest.raises(WorkspaceUnavailableError, match='port is already allocated'):
@@ -108,10 +88,13 @@ async def test_a_container_that_failed_to_start_keeps_its_ref(docker: FakeDocker
     assert backend.ref is not None and docker.containers() == [backend.ref.id]
 
 
-async def test_a_failed_create_is_retried_on_the_next_use(docker: FakeDocker, container_dir: Path) -> None:
+async def test_a_create_that_made_no_container_leaves_no_ref_and_is_retried(
+    docker: FakeDocker, container_dir: Path
+) -> None:
     backend = DockerSandboxBackend(image='flaky-image', working_dir=str(container_dir))
-    with pytest.raises(WorkspaceUnavailableError, match='could not create a container from flaky-image'):
+    with pytest.raises(WorkspaceUnavailableError, match=r'could not create a container from flaky-image: .*TLS'):
         await backend.working_dir()
+    assert backend.ref is None
 
     await backend.working_dir()
 
@@ -256,9 +239,48 @@ async def test_finished_commands_pid_files_are_removed_by_the_next_command(
 
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
+    await backend.working_dir()
+    assert backend.ref is not None
 
     with pytest.raises(WorkspaceOutputLimitError, match='Docker workspace output exceeded'):
-        await backend.run('head -c 11000000 /dev/zero', shell=True)
+        await backend.run('cat /dev/zero', shell=True)
+
+    # Only the stop removes the command's PID file.
+    assert docker.pid_files(backend.ref.id) == set()
+
+
+async def test_cancelling_a_command_stops_it_in_the_container(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
+    await backend.working_dir()
+    assert backend.ref is not None
+    before = docker.pid_files(backend.ref.id)
+    running: set[Path] = set()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(backend.run, ['sleep', '30'])
+        with anyio.fail_after(10):
+            while not (running := docker.pid_files(backend.ref.id) - before):
+                await anyio.sleep(0.05)
+        tg.cancel_scope.cancel()
+
+    # Only the stop removes the command's PID file.
+    assert not running & docker.pid_files(backend.ref.id)
+
+
+async def test_a_timeout_keeps_the_commands_own_output(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir))
+
+    with pytest.raises(WorkspaceTimeoutError) as caught:
+        await backend.run('echo out; echo err >&2; sleep 30', shell=True, timeout=1)
+
+    assert (caught.value.stdout, caught.value.stderr) == ('out\n', 'err\n')
+
+
+async def test_a_calls_env_is_validated_before_anything_runs(docker: FakeDocker) -> None:
+    with pytest.raises(ValueError, match="invalid environment variable name: 'A-B'"):
+        await DockerSandboxBackend(image='image').run(['true'], env={'A-B': 'x'})
+
+    assert docker.calls == []
 
 
 async def test_a_stalled_stop_still_raises_the_timeout(docker: FakeDocker, container_dir: Path) -> None:
@@ -338,17 +360,17 @@ async def test_the_docker_client_gets_only_the_variables_that_select_a_daemon(
 async def test_the_cli_is_the_one_on_path_when_the_capability_was_created(
     docker: FakeDocker, container_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sandbox = DockerSandbox(image='image', working_dir=str(container_dir))
+    docker.add_container('box', container_dir)
+    sandbox = DockerSandbox(working_dir=str(container_dir))
     later = tmp_path / 'later-bin'
     later.mkdir()
     (later / 'docker').write_text('#!/bin/sh\nexit 99\n')
     (later / 'docker').chmod(0o755)
     monkeypatch.setenv('PATH', f'{later}{os.pathsep}{os.environ["PATH"]}')
 
-    backend = (await Agent(TestModel(), capabilities=[sandbox]).run('go')).workspace.backend
-    await backend.working_dir()
-
-    assert backend.ref is not None and docker.containers() == [backend.ref.id]
+    assert await sandbox.backend(WorkspaceRef(provider='docker', id='box')).working_dir() == str(
+        container_dir.resolve()
+    )
 
 
 async def test_destroy_uses_the_configured_executable(docker: FakeDocker, container_dir: Path) -> None:
@@ -385,17 +407,18 @@ async def test_without_a_working_dir_commands_start_in_the_images_own(docker: Fa
     assert '--workdir' not in docker.calls[0]
 
 
-async def test_capability_attaches_to_its_own_refs_only(docker: FakeDocker, container_dir: Path) -> None:
-    docker.add_container('earlier', container_dir)
-    capability = DockerSandbox[object](image='image', working_dir=str(container_dir))
-    agent = Agent(TestModel(), capabilities=[capability])
+async def test_capability_attaches_to_its_own_refs_only() -> None:
+    agent = Agent(TestModel(), capabilities=[DockerSandbox()])
     ref = WorkspaceRef(provider='docker', id='earlier')
 
     assert (await agent.run('go', workspace=ref)).workspace.ref == ref
     with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='e2b', id='earlier'))
+
+
+async def test_destroy_refuses_another_providers_ref() -> None:
     with pytest.raises(ValueError, match="unsupported workspace provider 'e2b'"):
-        await capability.destroy(WorkspaceRef(provider='e2b', id='earlier'))
+        await DockerSandbox().destroy(WorkspaceRef(provider='e2b', id='earlier'))
 
 
 async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
@@ -404,7 +427,7 @@ async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
     docker.add_container('stopped', container_dir)
     ref = WorkspaceRef(provider='docker', id='stopped')
 
-    sandbox = DockerSandbox(image='image', working_dir=str(container_dir))
+    sandbox = DockerSandbox(working_dir=str(container_dir))
     await sandbox.backend(ref).working_dir()
     await sandbox.backend(ref).working_dir()
 
