@@ -24,6 +24,7 @@ from pydantic_clai2.builtin_plugins.web.local_client import LocalClient
 from pydantic_clai2.builtin_plugins.web.protocol import Item, SessionsChanged
 from pydantic_clai2.builtin_plugins.web.workspaces import enabled, workspace_session
 from pydantic_clai2.builtin_plugins.workspaces import Workspaces, describe
+from pydantic_clai2.builtin_plugins.workspaces.manager import works_in
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
@@ -142,7 +143,7 @@ class WorkspaceTools:
         """The workspace's session, followed from first use until it closes; with `start`, a new one if it has none."""
         async with self._locks[workspace_id]:
             link = self.links.get(workspace_id)
-            if link is not None and not link.view.closed:
+            if link is not None and not link.view.closed and await self._in_checkout(workspace_id, link.view):
                 return link.view
             await self.disconnect(workspace_id)
             channel = await workspace_session(self.service, workspace_id, start=start)
@@ -155,6 +156,11 @@ class WorkspaceTools:
                 await self.disconnect(workspace_id)
                 raise RuntimeError(f'Could not follow the session of workspace {workspace_id}.')
             return view
+
+    async def _in_checkout(self, workspace_id: str, view: SessionView) -> bool:
+        """Whether the followed session still works in the checkout: `/workspace` or a `/resume` there may move it."""
+        session = view.session
+        return session is not None and works_in(session.workspace, (await self.workspaces().get(workspace_id)).path)
 
     async def disconnect(self, workspace_id: str) -> None:
         """Stop following a workspace's session, which stays open until it is idle."""
@@ -218,7 +224,6 @@ class WorkspaceTools:
         async with self._locks[workspace], service.workspace_locks[workspace]:
             await self.disconnect(workspace)
             destroyed = await self.workspaces().destroy(workspace, live=service.live)
-            service.workspace_sessions.pop(workspace, None)
         del self._locks[workspace], service.workspace_locks[workspace]
         service.hub.publish(SessionsChanged())
         kept = 'removed' if destroyed.teardown == 'remove' else 'kept'

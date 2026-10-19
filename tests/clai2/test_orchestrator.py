@@ -61,6 +61,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LiveSession
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.session_workspace import SessionWorkspace
 
 from .test_web import HOSTS, TOKEN, static_dir
 
@@ -197,7 +198,7 @@ async def parent(
     def build(directory: Path | None) -> SessionRuntime[None, str]:
         assert directory is not None, 'every workspace session starts in its checkout'
         built.append(directory)
-        return create_shell(
+        runtime = create_shell(
             child,
             deps=None,
             plugins=(),
@@ -212,6 +213,15 @@ async def parent(
             process=shell.process,
             signals=False,
         )
+        # As `clai2 --web` does: `/workspace DIRECTORY` and `/resume` move it.
+        SessionWorkspace(
+            session=runtime.session,
+            context=runtime.context,
+            loader=runtime.loader,
+            status=runtime.status,
+            settings=lambda project: runtime.context.settings,
+        ).attach(sessions=runtime.sessions, commands=runtime.commands)
+        return runtime
 
     shell.process.live.build = build
     await shell.loader.load_all()
@@ -689,13 +699,17 @@ async def test_the_sidebar_and_one_session_per_workspace(tmp_path: Path, reposit
             ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[confirmed])
             assert (await tools.workspace_destroy(ctx, workspace)).startswith(f'Destroyed workspace {workspace};')
             await published(client.queue, SessionsChanged)
-        assert workspace not in service.workspace_sessions and workspace not in service.workspace_locks
+        assert workspace not in service.workspace_locks
 
 
 async def test_the_workspace_session_is_the_users_too(
     tmp_path: Path, repository: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The user can type in the workspace's session: a `/new` there is followed, and a destroy there is refused."""
+    """The user can type in the workspace's session too.
+
+    A destroy there is refused. A `/new` there is the workspace's from then on, even after it closed; moved to
+    another folder with `/workspace`, it is not, and the workspace gets a session in its checkout again.
+    """
     async with parent(tmp_path) as made:
         tools, service = made.tools, made.service
         workspace = await created(tools, repository)
@@ -720,12 +734,31 @@ async def test_the_workspace_session_is_the_users_too(
         channel.send('/new')
         with anyio.fail_after(10):
             await switched.wait()
-        assert await tools.view(workspace) is view, 'still followed, in its new conversation'
         assert view.session is not None and view.session.id != before
-        # The page's Open shows that session too, not the conversation it held before, and the record names it.
-        assert await open_workspace(service, workspace) == view.session.id
-        assert (await tools.workspaces().get(workspace)).conversation == view.session.id
-        await tools.disconnect(workspace)
-        assert (await tools.view(workspace)).session == view.session and made.sessions_in(path) == [session]
+        renewed = view.session.id
+        assert (await tools.workspaces().get(workspace)).conversation == renewed, 'recorded as the page saw it'
+        assert await tools.view(workspace) is view, 'still followed'
+        assert await open_workspace(service, workspace) == renewed, 'the page opens it too'
         await tools.session_send(workspace, 'again')
         assert 'Hello from the workspace: again.' in await tools.session_wait(workspace, timeout=10)
+        # Closed, it opens again in the conversation the user switched to.
+        await tools.disconnect(workspace)
+        await service.live.close(session.id)
+        view = await tools.view(workspace)
+        assert view.session is not None and view.session.id == renewed and made.built == [path, path]
+
+        [session] = made.sessions_in(path)
+        elsewhere = tmp_path / 'elsewhere'
+        elsewhere.mkdir()
+        moved = applied(
+            view,
+            lambda message: isinstance(message, Snapshot) and message.session.workspace == str(elsewhere.resolve()),
+            monkeypatch,
+        )
+        service.channel(session).send(f'/workspace {elsewhere}')
+        with anyio.fail_after(10):
+            await moved.wait()
+        assert (await tools.workspaces().get(workspace)).conversation == renewed, "not the workspace's any more"
+        again = await tools.view(workspace)
+        assert again is not view and again.session is not None and again.session.workspace == str(path)
+        assert made.built == [path, path, path], 'a session in the checkout again'

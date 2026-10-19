@@ -23,13 +23,18 @@ def new_id(repo: str) -> str:
     return f'{repo_slug(repo)}-{secrets.token_hex(3)}'
 
 
+def works_in(directory: Path | str, folder: Path) -> bool:
+    """Whether a session working in `directory` works in `folder` or below it."""
+    return Path(directory).resolve().is_relative_to(folder)
+
+
 async def close_sessions_in(live: LiveSessions, folder: Path) -> None:
     """Close each live session working in `folder` or below it; each opens again from its saved state.
 
     Raises `ValueError`, closing none, when the session asking is one of them, since closing it would cancel
     the asking itself, and `ValueError` for one only its own driver closes, such as the terminal's.
     """
-    inside = [session for session in live.listing() if session.workspace.resolve().is_relative_to(folder)]
+    inside = [session for session in live.listing() if works_in(session.workspace, folder)]
     current = live.current()
     if current is not None and any(session.id == current.id for session in inside):
         raise ValueError(f'This session works in {folder}. Run this from a session outside it.')

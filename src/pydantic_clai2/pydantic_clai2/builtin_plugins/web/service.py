@@ -109,8 +109,6 @@ class WebService:
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
         """One per workspace, so the page and the orchestrator opening its session at once start one, not two."""
-        self.workspace_sessions: dict[str, str] = {}
-        """The live session of each workspace, by live ID, which stays the workspace's through `/new` or `/resume`."""
         self.frames = FrameCheck()
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
