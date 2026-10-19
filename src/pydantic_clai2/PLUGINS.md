@@ -1085,6 +1085,17 @@ read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
 
+`disabled_skills` is a JSON list of skill names that are off, `[]` by default.
+Names are saved NFKC-normalized, the form harness compares skill names in.
+A skill that is off is left out of the model's catalog and gets no `/command`.
+`coder` passes the list as harness `Skills(exclude=...)` with
+`unknown_names='skip'`: the list applies in every project, so a name no folder
+here has is skipped rather than failing the run. The commands and the settings
+menu read every skill, including the ones that are off. The **Skills** row in `/plugins configure coder` lists the skills `coder` found when
+it loaded, plus any name that is off but not found, and each pick turns one on
+or off. The setting is tagged `coder-disabled-skills`, so a build without it
+offers every skill instead of failing to load `coder`.
+
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
 changes are refused while managed children run. Exit/reload drains them before
@@ -2978,6 +2989,9 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 - `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
   `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
   and may block, such as on the keyring, so CLAI calls them off the event loop.
+  The typed editor opens holding `current(row)` unless it equals the row's `default`,
+  so return text the user could type back, or the default, and mark a row whose
+  value must stay hidden `secret=True`.
   `apply` and `reset` save the change with `self.host.save_settings(model)` as the
   user makes it and return a line to show.
 - `actions`, for rows that need more than one value typed or picked, such as
