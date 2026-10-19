@@ -349,7 +349,7 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   stopped container comes back. The container outlives the run: `await DockerSandbox(...).destroy(ref)`.
   Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
 - No network unless `allow_internet_access=True` (Docker's default bridge: internet plus LAN and host
-  services). `docker_args` come after the defaults (`['--memory', '2g']`,
+  services). `docker_args` come after the defaults, so a `--network` there wins (`['--memory', '2g']`,
   `['--volume', f'{project}:/workspace']` to work on a host directory).
 - A background child holding stdout/stderr open keeps `run()` waiting (`docker exec` waits for the
   output): redirect it.

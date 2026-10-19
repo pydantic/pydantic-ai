@@ -219,6 +219,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._runner = _runner()
         self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
+        self._create_failed = False
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -278,13 +279,15 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             self._ref = WorkspaceRef(provider=PROVIDER, id=name)
             raise
         self._ref = WorkspaceRef(provider=PROVIDER, id=name)
-        if result.exit_code != 0:
+        self._create_failed = result.exit_code != 0
+        if self._create_failed:
             raise WorkspaceUnavailableError(f'could not create a container from {self._image}: {result.stderr.strip()}')
 
     async def _start(self) -> None:
         state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
-        if state == 'missing' and self._image is not None:
-            # An earlier create failed or was cancelled before the container existed: try again.
+        if state == 'missing' and self._create_failed:
+            # The earlier `docker run` finished without creating the container: try again. After a cancelled
+            # one the daemon may still be creating it, so that ref stays as it is.
             await self._create()
             return
         if state == 'missing':

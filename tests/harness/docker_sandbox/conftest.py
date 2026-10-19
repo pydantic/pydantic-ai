@@ -17,7 +17,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         return
     if os.getenv('PYDANTIC_AI_HARNESS_DOCKER_LIVE') == '1':  # pragma: no cover - live tier
         return
-    reason = 'requires PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 on a POSIX machine with a Docker daemon'
+    reason = 'requires PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 with a Docker daemon'
     if os.getenv('DOCKER_REQUIRE_LIVE') == '1':  # pragma: no cover - live job
         pytest.fail(f'DOCKER_REQUIRE_LIVE=1 but the live tier cannot run: it {reason}.')
     pytest.skip(reason)

@@ -50,7 +50,7 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine the commands can change. The container has no network unless you pass `allow_internet_access=True`, which uses Docker's default bridge: the internet, but also your local network and services on this machine. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
+The mount is the only part of your machine the commands can change. The container has no network unless you pass `allow_internet_access=True`, which uses Docker's default bridge: the internet, but also your local network and services on this machine. A `--network` in `docker_args` replaces either. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
 
 ## How commands run
 
