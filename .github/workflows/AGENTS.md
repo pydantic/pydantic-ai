@@ -7,7 +7,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
@@ -238,8 +238,10 @@ with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
 `TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
 window, and unit `6` / number `1` is the weekly window. `percentage` is the
 percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. A missing or malformed required window makes health unknown
-and keeps agent workflows gated. No quota-resource repository variable is needed.
+epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
+a missing reset field or a null reset with consumed quota is invalid. A missing
+or malformed required window makes health unknown and keeps agent workflows
+gated. No quota-resource repository variable is needed.
 
 Unknown quota results may include one of these fixed diagnostic categories:
 `missing_api_key`, `invalid_request`, `http_error`, `timeout`, `tls_error`, `network_error`,
@@ -252,7 +254,7 @@ request headers, URL, credential, or exception message. Version 1 artifacts with
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
 change gate or recovery policy.
 
-To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
+For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
@@ -261,8 +263,32 @@ rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy 
 once the recorded reset time has passed or, when none was recorded, once the incident
 is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
 and closes within minutes of opening were followed by a new incident within minutes.
-Credentials/configuration incidents and workflow/task incidents need operator attention
-rather than automatic recovery.
+Credential and configuration incidents need operator attention rather than automatic recovery.
+
+For a workflow-scoped incident, dispatch the affected workflow from the repository's
+default branch and set `recovery_issue` to its incident number. This lets one fresh
+manual run bypass that matching workflow blocker; it does not close the incident.
+
+Task incidents block only the exact task key in their marker. Manual task keys include
+the run ID, so a fresh dispatch has a new identity and can run with healthy quota
+without `recovery_issue`. This input never closes an incident.
+
+For **CI Review**, provide `aw_context` as JSON with `item_type` set to
+`pull_request` and `item_number` set to the PR number. Verify the fresh run executed
+the agent and model.
+
+For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
+Manual dispatch does not provide `github.event.pull_request.number`, which this
+workflow requires to run its agent and publish results. After the corrected workflow
+is deployed, complete the existing UI Security review Environment approval for the
+fresh PR run.
+
+For workflow and task incidents, inspect the affected host stage and output, link that
+evidence to the incident, and close it manually. A green run that skips the model or
+affected stage is not proof.
+Resolve closed-PR tasks as retired only after API verification and representative
+workflow recovery. Record why each task is retired. Do not describe retired tasks as
+same-target recoveries.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
@@ -286,6 +312,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy or Z.ai credential exclusion | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
 | `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
+| `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:
