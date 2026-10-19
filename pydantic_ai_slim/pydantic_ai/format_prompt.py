@@ -197,12 +197,11 @@ class _ToXml:
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
             child_path = f'{path}.{key}' if path else key
-            if _XML_NAME.fullmatch(key):
-                element.append(self._to_xml(value=value, path=child_path, tag=key))
-            else:
-                child = self._to_xml(value=value, path=child_path, tag=self.item_tag)
+            is_name = _XML_NAME.fullmatch(key) is not None
+            child = self._to_xml(value=value, path=child_path, tag=key if is_name else self.item_tag)
+            if not is_name:
                 child.set('key', key)
-                element.append(child)
+            element.append(child)
 
     def _parse_data_structures(
         self,
