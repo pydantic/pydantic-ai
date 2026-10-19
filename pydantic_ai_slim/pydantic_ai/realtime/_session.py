@@ -22,6 +22,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
@@ -502,7 +503,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
             elif isinstance(part, SystemPromptPart):
-                texts.append(f'<system>{part.content}</system>')
+                texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
