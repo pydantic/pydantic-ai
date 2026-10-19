@@ -37,7 +37,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 
 Give the agent a project directory with `DaytonaSandbox(working_dir='/home/daytona/project')`: a new sandbox gets it created for you, and commands and relative paths start there.
 
-Daytona's default snapshot comes with git and Python, but not ripgrep (`rg`); `Coder` searches with its built-in search then. For faster searches or your project's dependencies, build a Daytona snapshot with them installed and pass `DaytonaSandbox(snapshot='my-snapshot')`. A snapshot Daytona doesn't know fails on first use with `WorkspaceUnavailableError`.
+Daytona's default snapshot comes with git, Python, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, build a Daytona snapshot with them installed and pass `DaytonaSandbox(snapshot='my-snapshot')`. A snapshot Daytona doesn't know fails on first use with `WorkspaceUnavailableError`.
 
 ## Continue in the same sandbox
 

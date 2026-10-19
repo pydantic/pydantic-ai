@@ -73,10 +73,25 @@ class TestLiveDaytonaSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no co
         # Daytona keeps the session command open while a background child holds its output pipes.
         return False
 
+    # Destructive rules need their own sandbox, not the shared class-scoped one. Each is deleted
+    # here if a failed rule left it behind, and the client it opened is closed rather than left to
+    # the garbage collector with a connection still open.
     @pytest.fixture
-    def destructive_backend(self) -> Callable[[], WorkspaceBackend]:
-        # Destructive rules need their own sandbox, not the shared class-scoped fixture.
-        return lambda: DaytonaSandboxBackend(auto_stop_interval=LIVE_AUTO_STOP_INTERVAL)
+    async def destructive_backend(self) -> AsyncIterator[Callable[[], WorkspaceBackend]]:
+        created: list[DaytonaSandboxBackend] = []
+
+        def create() -> WorkspaceBackend:
+            backend = DaytonaSandboxBackend(auto_stop_interval=LIVE_AUTO_STOP_INTERVAL)
+            created.append(backend)
+            return backend
+
+        yield create
+        for backend in created:
+            try:
+                if backend.ref is not None:
+                    await _delete_if_live(backend.ref.id)
+            finally:
+                await backend.aclose()
 
     # Class-scoped so the rules share one sandbox instead of starting one each; the suite runs
     # its destroy rule last.
@@ -94,9 +109,20 @@ class TestLiveDaytonaSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no co
             finally:
                 await backend.aclose()
 
+    # The suite drops the backend it attaches; each one opened its own SDK client, which is closed
+    # here rather than left to the garbage collector with a connection still open.
     @pytest.fixture
-    def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return _attach
+    async def attach_backend(self) -> AsyncIterator[Callable[[WorkspaceRef], WorkspaceBackend]]:
+        attached: list[DaytonaSandboxBackend] = []
+
+        def attach(ref: WorkspaceRef) -> WorkspaceBackend:
+            backend = DaytonaSandboxBackend(ref=ref)
+            attached.append(backend)
+            return backend
+
+        yield attach
+        for backend in attached:
+            await backend.aclose()
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:

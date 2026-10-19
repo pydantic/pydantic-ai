@@ -254,15 +254,15 @@ async def test_coder_tools_run_in_the_sandbox(client: daytona.AsyncDaytona) -> N
 async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -> None:
     """Validates the fake-encoded assumption that a command sees the snapshot's `PATH` and `HOME`, and
     what the docs say the default snapshot has: the non-root `daytona` user in `/home/daytona`, git and
-    Python but no ripgrep. A per-call `env` adds to the environment rather than replacing it."""
+    Python and ripgrep. A per-call `env` adds to the environment rather than replacing it."""
     async with _owned(client) as backend:
         result = await backend.run(
-            'echo "$PATH"; echo "$HOME"; whoami; pwd -P; git --version; python3 --version; command -v rg || echo no-rg',
+            'echo "$PATH"; echo "$HOME"; whoami; pwd -P; git --version; python3 --version; command -v rg',
             shell=True,
             timeout=60,
         )
         path, home, user, cwd, git, python, rg = result.stdout.splitlines()
-        assert (home, user, cwd, rg) == ('/home/daytona', 'daytona', '/home/daytona', 'no-rg')
+        assert (home, user, cwd, rg) == ('/home/daytona', 'daytona', '/home/daytona', '/usr/bin/rg')
         assert path and git.startswith('git version') and python.startswith('Python 3')
         assert await backend.working_dir() == '/home/daytona'
 
