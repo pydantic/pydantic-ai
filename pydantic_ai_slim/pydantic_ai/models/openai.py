@@ -2370,8 +2370,18 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+# Application-only fields, which are never sent to the model: they can hold values that don't serialize to JSON,
+# and changing them doesn't change what the server holds, so the history digest leaves them out.
+_HISTORY_DIGEST_EXCLUDE = {
+    '__all__': {
+        'metadata': True,
+        'parts': {'__all__': {'metadata': True, 'content': {'metadata': True, '__all__': {'metadata': True}}}},
+    }
+}
+
+
 def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
-    serialized = ModelMessagesTypeAdapter.dump_json(list(history))
+    serialized = ModelMessagesTypeAdapter.dump_json(list(history), exclude=_HISTORY_DIGEST_EXCLUDE)
     if key is None:
         return hashlib.sha256(serialized).hexdigest()
     return hmac.new(key, serialized, hashlib.sha256).hexdigest()

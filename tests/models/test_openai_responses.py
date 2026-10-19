@@ -48,6 +48,7 @@ from pydantic_ai import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -127,6 +128,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
+        _HISTORY_DIGEST_EXCLUDE,  # pyright: ignore[reportPrivateUsage]
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
@@ -4830,6 +4832,36 @@ async def test_openai_previous_response_id_auto_continues_an_unchanged_history_a
     assert [item.get('content') for item in second_request['input']] == ['Again']
 
 
+async def test_openai_previous_response_id_auto_ignores_application_only_metadata(allow_model_requests: None):
+    """Metadata is never sent to the model, so it may hold anything, and changing it doesn't break the chain."""
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'}),
+            _text_reply('resp_2', 'two'),
+            _text_reply('resp_3', 'three'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    @agent.tool_plain
+    def lookup() -> ToolReturn:
+        return ToolReturn('42', metadata=object())
+
+    first = await agent.run([TextContent('Hello', metadata={'app': object()})])
+    history = [
+        replace(message, metadata={'app': object()}) if isinstance(message, ModelRequest) else message
+        for message in first.all_messages()
+    ]
+    await agent.run('Again', message_history=history)
+
+    assert [request.get('previous_response_id') for request in get_mock_responses_kwargs(mock_client)] == [
+        None,
+        'resp_1',
+        'resp_2',
+    ]
+
+
 async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_key(allow_model_requests: None):
     """With a key the digest is an HMAC, and a model with another key resends rather than continuing."""
     mock_client = MockOpenAIResponses.create_mock(
@@ -4844,7 +4876,9 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     assert isinstance(response, ModelResponse)
     assert (
         response.history_digest
-        == hmac.new(b'secret', ModelMessagesTypeAdapter.dump_json([request]), hashlib.sha256).hexdigest()
+        == hmac.new(
+            b'secret', ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE), hashlib.sha256
+        ).hexdigest()
     )
 
     await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
@@ -4917,7 +4951,10 @@ async def test_openai_previous_response_id_records_the_history_on_a_streamed_res
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    assert (
+        response.history_digest
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE)).hexdigest()
+    )
 
 
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
@@ -16990,7 +17027,10 @@ async def test_background_response_keeps_its_history_across_the_resume(allow_mod
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert response.history_digest == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request])).hexdigest()
+    assert (
+        response.history_digest
+        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude=_HISTORY_DIGEST_EXCLUDE)).hexdigest()
+    )
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):
