@@ -96,6 +96,9 @@ class AudioCommit:
     join the conversation before the turn the commit makes."""
     has_audio: bool
     """Whether audio went out since the buffer was last committed or cleared: a commit of nothing makes no turn."""
+    raced_vad: bool = False
+    """Whether server VAD reported a stop while it was waiting for its acknowledgement: VAD then committed the buffer
+    too, so which of the two committed the audio (and whether this one committed anything) is unknown."""
 
 
 class OpenAILifecycle:
@@ -206,7 +209,7 @@ class OpenAILifecycle:
                 # conversation here, unless it already had (xAI adds it at speech start).
                 events += self._place(speaking)
                 self._speaking.pop(speaking)
-            elif not self._commits_need_speech:
+            elif not self._commits_need_speech and not commit.raced_vad:
                 self._unacknowledged_turns += 1
                 events += self._place(f'pydantic_ai_audio_commit_{self._unacknowledged_turns}')
         return events
@@ -396,6 +399,8 @@ class OpenAILifecycle:
         if not item_id:
             return []
         self._vad_committed()
+        for commit in self._commits:
+            commit.raced_vad = True
         events = self._place(item_id)
         self._speaking.pop(item_id, None)
         return events

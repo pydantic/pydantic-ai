@@ -716,6 +716,42 @@ def test_hand_commit_of_nothing_after_a_vad_commit_is_no_turn(dialect: Dialect, 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
+@known('SIM-40')
+def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.send_audio()
+        sim.commit_audio()
+        sim.deliver(3)
+        sim.close()
+        sim.settle()
+
+    reproduce('SIM-40', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect, ending: str) -> None:
+    """A hand commit that went out as server VAD committed the same audio, with neither acknowledgement read when the
+    session ends, isn't taken for a second turn: it may well have committed nothing."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.commit_audio()
+        sim.deliver(3 if dialect == 'xai' else 2)
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
 def test_turn_committed_after_a_racing_clear_is_recorded() -> None:
     """SIM-26, fixed by the session core."""
 
