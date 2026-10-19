@@ -25,6 +25,8 @@ Each MCP server instance is a [toolset](../toolsets.md) and can be registered wi
 
 You can use the [`async with agent`][pydantic_ai.agent.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you'd like to use it with multiple agents. If you don't explicitly enter one of these context managers to set up the server, this will be done automatically when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect the servers to be used.
 
+Note that a shared MCP server instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
+
 ### Streamable HTTP Client
 
 [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] connects over HTTP using the
@@ -456,6 +458,50 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+
+## Per-user authentication
+
+In a multi-user or multi-tenant application, each user typically has their own credentials for the MCP server, such as a tenant-scoped bearer token.
+
+!!! warning "A shared MCP server instance is a single identity"
+    An MCP server instance (and likewise a [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset]) maintains one MCP session that's shared by all concurrent agent runs using it: the connection is established (and authentication resolved) by whichever run needs it first, and only torn down once the last one finishes. Deriving credentials per request from task-local state like a [`ContextVar`][contextvars.ContextVar] inside an `httpx.Auth` or `http_client` does not work on a shared instance: overlapping runs will silently send their requests with the credentials of whichever run opened the session.
+
+To make requests with the credentials of the user in question, give each concurrent run its own MCP server instance, so that it establishes its own authenticated session. The recommended way to do this is to build the server [dynamically](../toolsets.md#dynamically-building-a-toolset) using the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorated function is passed the [run context][pydantic_ai.tools.RunContext] and can read the user's credentials from the run's [dependencies](../dependencies.md):
+
+```python {title="mcp_per_user_auth.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.mcp import MCPServerStreamableHTTP
+
+
+@dataclass
+class UserDeps:
+    mcp_token: str
+
+
+agent = Agent('openai:gpt-5.2', deps_type=UserDeps)
+
+
+@agent.toolset(per_run_step=False)  # (1)!
+def user_mcp_server(ctx: RunContext[UserDeps]) -> MCPServerStreamableHTTP:
+    return MCPServerStreamableHTTP(
+        'http://localhost:8000/mcp',
+        headers={'Authorization': f'Bearer {ctx.deps.mcp_token}'},
+    )
+
+
+async def main():
+    result = await agent.run('What is 7 plus 5?', deps=UserDeps(mcp_token='<token>'))
+    print(result.output)
+    #> The answer is 12.
+```
+
+1. `per_run_step=False` builds the server once per run instead of ahead of each run step, so the whole run shares a single MCP session.
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+As an alternative to a dynamic toolset, you can construct a new MCP server instance yourself for each request and pass it to the [`toolsets` argument](../toolsets.md) of the agent run methods.
 
 ## Custom TLS / SSL configuration
 
