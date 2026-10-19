@@ -6098,7 +6098,6 @@ async def test_evicted_output_audio_is_released() -> None:
         assert evicted is not None and evicted() is None
 
 
-@pytest.mark.anyio
 async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
     """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
 

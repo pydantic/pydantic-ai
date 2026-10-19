@@ -401,8 +401,8 @@ model = OpenAIRealtimeModel(
 )
 ```
 
-[`all_messages()`](history.md) still holds every tool round, and a reconnect's replay leaves the pruned
-ones out. The trace records each deletion as a [`prune tool items` span](observability.md). Azure OpenAI's GA endpoint
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] still holds every tool round
+(see [history](history.md)), and a reconnect's replay leaves the pruned ones out. The trace records each deletion as a [`prune tool items` span](observability.md). Azure OpenAI's GA endpoint
 supports the setting too; [Azure Voice Live](azure.md) ignores it.
 
 Input transcription defaults to `'auto'`, which uses `gpt-live-transcribe`; set a supported
