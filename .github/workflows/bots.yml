@@ -1,6 +1,7 @@
 name: PR Bots
 
 on:
+  workflow_dispatch: {}
   # zizmor: ignore[dangerous-triggers] -- pull_request_target is needed for fork PRs; inputs are validated before use
   pull_request_target:
     types: [opened, synchronize, labeled, unlabeled]
@@ -12,6 +13,34 @@ concurrency:
   cancel-in-progress: ${{ github.event.action == 'synchronize' || (github.event.action == 'unlabeled' && github.event.label.name == 'douwebot:review-agent-config') }}
 
 jobs:
+  claude-auth-health:
+    name: Claude OAuth health check
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          persist-credentials: false
+
+      # Fixed prompt and no tools: full output exposes the provider error without
+      # reading PR content or asking the model to inspect credentials.
+      - uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          show_full_output: 'true'
+          claude_args: |
+            --model claude-sonnet-4-6
+            --max-turns 1
+            --tools ""
+            --setting-sources user
+            --no-session-persistence
+          prompt: Reply with exactly OK. Do not use tools.
+
   size-label:
     name: Size Label
     if: github.event.action == 'opened' || github.event.action == 'synchronize'
