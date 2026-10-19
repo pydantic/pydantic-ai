@@ -16,18 +16,16 @@ sensitive to request bodies, so a VCR test could pass green without pinning the 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai._agent_graph import (
-    SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
-    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
-)
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -39,6 +37,8 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    repair_messages,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -46,7 +46,7 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts
 
-TS = datetime(2024, 1, 1, tzinfo=timezone.utc)
+TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
@@ -58,6 +58,71 @@ def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
         return ModelResponse(parts=[TextPart('All done.')])
 
     return Agent(FunctionModel(model_function)), received
+
+
+async def test_repair_messages_repairs_last_response_by_default():
+    """The public helper accepts any sequence, returns a list, and repairs the live frontier by default."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+
+    repaired = repair_messages(history)
+    unrepaired = repair_messages(history, repair_last_response=False)
+
+    assert isinstance(repaired, list)
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='get_weather',
+                content='The tool call was interrupted before a result was produced.',
+                tool_call_id='call_1',
+                metadata={'pydantic_ai_synthesized_tool_return': True},
+                timestamp=TS,
+                outcome='interrupted',
+            )
+        ]
+    )
+    assert unrepaired == list(history)
+
+
+async def test_repair_messages_allows_new_user_prompt():
+    """Repairing the final response closes calls that would otherwise block a new user prompt."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+    agent, received = capture_agent()
+
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls',
+    ):
+        await agent.run('Never mind.', message_history=history)
+
+    result = await agent.run('Never mind.', message_history=repair_messages(history))
+
+    assert result.output == 'All done.'
+    assert isinstance(received[0][-1], ModelRequest)
+    assert isinstance(received[0][-1].parts[-1], UserPromptPart)
+
+
+async def test_repair_messages_is_idempotent():
+    """Repairing an already-repaired history is a no-op."""
+    history: tuple[ModelMessage, ...] = (
+        ModelResponse(
+            parts=[ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1')], timestamp=TS
+        ),
+    )
+
+    repaired = repair_messages(history)
+
+    assert repair_messages(repaired) == repaired
 
 
 async def test_dangling_tool_call_gets_synthesized_return():
@@ -867,6 +932,117 @@ async def test_reused_tool_call_id_shadowed_open_call_repaired():
     later_result = received[0][4]
     assert isinstance(later_result, ModelRequest)
     assert later_result.parts == [ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS)]
+
+
+async def test_same_response_repeated_tool_call_id_both_answered_no_synthesized_return():
+    """Both calls repeating an ID within one response are answered FIFO by their real results."""
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is the weather?', timestamp=TS)], timestamp=TS),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+                ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+            ],
+            timestamp=TS,
+        ),
+        ModelResponse(parts=[TextPart('Rainy!')], timestamp=TS),
+    ]
+
+    result = await agent.run('Thanks.', message_history=message_history)
+
+    assert result.output == 'All done.'
+    request = received[0][2]
+    assert isinstance(request, ModelRequest)
+    # Both real results reach the model, in order, and no synthesized return is inserted anywhere.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_1', timestamp=TS),
+    ]
+    all_parts = [part for message in received[0] for part in message.parts]
+    assert not any(
+        isinstance(part, ToolReturnPart) and part.metadata and SYNTHESIZED_TOOL_RETURN_METADATA_KEY in part.metadata
+        for part in all_parts
+    )
+
+
+async def test_repair_messages_idempotent_with_same_response_repeated_tool_call_id():
+    """Repeated `repair_messages` calls on a same-response repeated-ID history are stable."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_weather', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+    ]
+
+    repaired = repair_messages(history)
+    repaired_again = repair_messages(repaired)
+
+    assert repaired_again == repaired
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == [
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+        ToolReturnPart(
+            'get_weather',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
+
+
+async def test_same_response_repeated_tool_call_id_partially_answered_binds_fifo():
+    """A single result answers the first same-response call FIFO; the second is the dangling one."""
+    history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Mexico City'}, tool_call_id='call_1'),
+                ToolCallPart('get_forecast', {'city': 'Amsterdam'}, tool_call_id='call_1'),
+            ],
+            timestamp=TS,
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS)], timestamp=TS),
+    ]
+
+    repaired = repair_messages(history)
+
+    assert len(repaired) == 2
+    request = repaired[-1]
+    assert isinstance(request, ModelRequest)
+    # FIFO: the real result answers the first call; the synthesized return closes the second.
+    assert request.parts == [
+        ToolReturnPart('get_weather', 'Sunny', tool_call_id='call_1', timestamp=TS),
+        ToolReturnPart(
+            'get_forecast',
+            'The tool call was interrupted before a result was produced.',
+            tool_call_id='call_1',
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=TS,
+            outcome='interrupted',
+        ),
+    ]
 
 
 async def test_dangling_tool_call_followed_by_response():

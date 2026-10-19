@@ -45,12 +45,14 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
+    InputLost,
     LifecycleEvent,
+    OutputItemDetails,
     ResponseEnded,
+    ResponseRequestRefused,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -95,6 +97,7 @@ class LifecycleChecker:
     _added_inputs: set[int] = field(default_factory=set[int])
     _turns: set[str] = field(default_factory=set[str])
     _open_turns: set[str] = field(default_factory=set[str])
+    _joined_turns: set[str] = field(default_factory=set[str])
 
     def feed(self, event: RealtimeCodecEvent | LifecycleEvent) -> list[ConformanceIssue]:
         position = self.events
@@ -104,7 +107,7 @@ class LifecycleChecker:
         def issue(code: str, detail: str) -> None:
             found.append(ConformanceIssue(code, detail, position))
 
-        if isinstance(event, LIFECYCLE_EVENT_TYPES):
+        if isinstance(event, LifecycleEvent):
             self._feed_lifecycle(event, issue)
         elif self.lifecycle:
             # The codec rules are checked on the codec stream; this one carries the same events, minus stale ones.
@@ -168,21 +171,38 @@ class LifecycleChecker:
                 issue('lifecycle.end_without_start', f'{event.response_id!r} ended without starting')
             self._open_responses.discard(event.response_id)
             self._responses_ended.add(event.response_id)
-        elif isinstance(event, UserTurnStarted):
-            if event.turn_id in self._turns:
-                issue('lifecycle.turn_started_twice', f'spoken turn {event.turn_id!r} started twice')
-            self._turns.add(event.turn_id)
-            self._open_turns.add(event.turn_id)
-        elif isinstance(event, UserTurnEnded | UserTurnDiscarded):
-            if event.turn_id not in self._open_turns:
-                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} ended without starting')
-            self._open_turns.discard(event.turn_id)
+        elif isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnClosed)):
+            self._feed_turn(event, issue)
         elif isinstance(event, InputAdded):
             if event.input_id in self._added_inputs:
                 issue('lifecycle.input_added_twice', f'input {event.input_id} joined the conversation twice')
             self._added_inputs.add(event.input_id)
+        elif isinstance(event, OutputItemDetails):
+            if event.response_id not in self._open_responses:
+                issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
         else:
+            assert isinstance(event, (InputLost, ResponseRequestRefused)), f'unknown lifecycle event {event!r}'
             self._settle(event.input_ids, issue)
+
+    def _feed_turn(
+        self, event: UserTurnStarted | UserTurnEnded | UserTurnClosed, issue: Callable[[str, str], None]
+    ) -> None:
+        if isinstance(event, UserTurnStarted):
+            if event.turn_id in self._turns:
+                issue('lifecycle.turn_started_twice', f'spoken turn {event.turn_id!r} started twice')
+            self._turns.add(event.turn_id)
+            self._open_turns.add(event.turn_id)
+        elif isinstance(event, UserTurnEnded):
+            if event.turn_id not in self._open_turns:
+                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} ended without starting')
+            self._open_turns.discard(event.turn_id)
+            self._joined_turns.add(event.turn_id)
+        else:
+            # A turn can be closed once it joined, too: it just gets no more audio or transcript.
+            if event.turn_id not in self._open_turns and event.turn_id not in self._joined_turns:
+                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} closed without starting')
+            self._open_turns.discard(event.turn_id)
+            self._joined_turns.discard(event.turn_id)
 
     def _settle(self, input_ids: tuple[int, ...], issue: Callable[[str, str], None]) -> None:
         # Checked one at a time, so an event naming an input twice settles it twice too.

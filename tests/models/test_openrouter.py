@@ -147,7 +147,7 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.provider_details is not None
         assert stream.provider_details == snapshot(
             {
-                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.UTC),
                 'finish_reason': 'completed',
                 'cost': 0.00333825,
                 'upstream_inference_cost': None,
@@ -252,7 +252,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
                 'type': 'function',
                 'function': {
                     'name': 'divide',
-                    'arguments': '{"numerator": 123, "denominator": 456, "on_inf": "infinity"}',
+                    'arguments': '{"numerator":123,"denominator":456,"on_inf":"infinity"}',
                 },
             }
         ]
@@ -644,9 +644,31 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
         {
             'downstream_provider': 'TestProvider',
             'finish_reason': 'stop',
-            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC),
         }
     )
+
+
+@pytest.mark.parametrize('native_finish_reason', ['end_turn', 'stop'])
+async def test_openrouter_missing_finish_reason_keeps_native_finish_reason(
+    openrouter_api_key: str, native_finish_reason: str
+) -> None:
+    """A missing finish reason is treated as `'stop'`, without hiding the downstream provider's own one."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key=openrouter_api_key))
+
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test'},
+        finish_reason=None,
+        native_finish_reason=native_finish_reason,
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.finish_reason == 'stop'
+    assert result.provider_details == {'downstream_provider': 'TestProvider', 'finish_reason': native_finish_reason}
 
 
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -855,7 +877,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
 
     # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
     assert result.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
 
 
@@ -869,13 +891,13 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
 
-    class LevelType(str, Enum):
+    class LevelType(str, Enum):  # noqa: UP042
         ground = 'ground'
         basement = 'basement'
         floor = 'floor'
         attic = 'attic'
 
-    class SpaceType(str, Enum):
+    class SpaceType(str, Enum):  # noqa: UP042
         entryway = 'entryway'
         living_room = 'living-room'
         kitchen = 'kitchen'
@@ -1086,7 +1108,6 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                     allowed_domains=['pydantic.dev'],
                     blocked_domains=['example.com'],
                     max_uses=2,
-                    external_web_access=False,
                 )
             )
         ],
@@ -1924,7 +1945,7 @@ def test_openrouter_nested_provider_response() -> None:
         {
             'downstream_provider': 'Google',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -1964,7 +1985,7 @@ def test_openrouter_nested_provider_null_name() -> None:
         {
             'downstream_provider': 'unknown',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -2260,10 +2281,6 @@ async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: N
     """The point of `ModelAPIError`: a no-completion body now reaches `FallbackModel`.
 
     `fallback_on` defaults to `(ModelAPIError,)`, which a bare `ValidationError` never matched.
-
-    Non-streamed only, deliberately: `FallbackModel`'s window is `Model.request_stream`'s own
-    `__aenter__`, which returns before any chunk is validated, so the streamed twin raises instead of
-    falling back. That asymmetry is `FallbackModel`'s, not OpenRouter's, and the test below pins it.
     """
     mock_client = MockOpenAI.create_mock(_null_choices_completion())
     openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
@@ -2273,23 +2290,18 @@ async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: N
     assert result.output == snapshot('fallback used')
 
 
-async def test_openrouter_null_choices_streaming_does_not_trigger_fallback(allow_model_requests: None) -> None:
-    """The streamed half of the same composition raises instead of falling back.
+async def test_openrouter_null_choices_streaming_triggers_fallback(allow_model_requests: None) -> None:
+    """The streamed twin of the test above also falls back.
 
-    `FallbackModel.request_stream` only guards `__aenter__`; once it has yielded, its own docstring says
-    mid-stream failures propagate. `OpenAIChatModel._process_streamed_response` peeks the raw SDK chunk,
-    so OpenRouter's validation runs later, during iteration — after the guard has closed. Pinned because
-    this PR's first attempt at the test above asserted the streamed path *does* fall back, and failed.
+    OpenRouter's validation only runs while the stream is iterated, but `FallbackModel` waits for a
+    candidate's first event before handing its stream over, so the error is still raised in time.
     """
     mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
     openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
     agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
 
-    with pytest.raises(ModelAPIError) as exc_info:
-        async with agent.run_stream('hello'):
-            pass
-
-    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == snapshot('fallback used')
 
 
 def test_openrouter_error_with_metadata() -> None:

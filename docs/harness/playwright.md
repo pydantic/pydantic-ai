@@ -53,7 +53,7 @@ binary automatically on the first miss instead.
 from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[PlaywrightBrowser()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[PlaywrightBrowser()])
 result = await agent.run('Open https://example.com and tell me the page title.')
 ```
 
@@ -199,7 +199,7 @@ from pydantic_ai_harness.playwright import PlaywrightBrowser
 state = ...  # captured above
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         PlaywrightBrowser(storage_state=state, allowed_domains=['example.com']),
     ],
@@ -235,7 +235,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.playwright import PlaywrightBrowser
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[PlaywrightBrowser(cdp_url='http://localhost:9222')],
 )
 ```

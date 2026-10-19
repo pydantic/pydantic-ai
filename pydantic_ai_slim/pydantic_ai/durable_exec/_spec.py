@@ -86,6 +86,13 @@ class DurabilityEngineSpec:
     tool_config_key: str | None = None
     """Tool metadata key containing engine-specific durable configuration, if supported."""
 
+    cancellation_error_types: tuple[type[BaseException], ...] = ()
+    """Exceptions the engine aborts a run with when the durable container is cancelled, if not `asyncio.CancelledError`.
+
+    The run attaches its state to them as it does to an external `CancelledError`, so
+    [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
+    """
+
     def __post_init__(self) -> None:
         errors: list[str] = []
         if not self.durable_unit_noun:

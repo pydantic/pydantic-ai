@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
+from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
@@ -495,10 +497,27 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     def _default_run_id(self) -> str | None:
-        if self._has_get_workspace:
-            for capability in reversed(self.capabilities):
-                if (run_id := capability._default_run_id()) is not None:
-                    return run_id
+        for capability in reversed(self.capabilities):
+            if (run_id := capability._default_run_id()) is not None:
+                return run_id
+        return None
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        for capability in reversed(self.capabilities):
+            if (conversation_id := capability._default_conversation_id(run_id)) is not None:
+                return conversation_id
+        return None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        for capability in reversed(self.capabilities):
+            if (clock := capability._run_clock()) is not None:
+                return clock
+        return None
+
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        for capability in reversed(self.capabilities):
+            if (start := await capability._run_start_time(run_id)) is not None:
+                return start
         return None
 
     # --- Run lifecycle hooks ---
@@ -654,7 +673,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         for capability in self.capabilities:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                messages = request_context.messages
                 request_context = await capability.before_model_request(cap_ctx, request_context)
+                keep_mirroring(messages, request_context)
         return request_context
 
     async def after_model_request(

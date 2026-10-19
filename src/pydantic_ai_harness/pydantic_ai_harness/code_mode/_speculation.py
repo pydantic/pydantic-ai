@@ -60,6 +60,7 @@ from pydantic_ai_harness.code_mode._streaming import (
     MAX_SCAN_WORK_CHARS,
     closed_statements,
     decode_partial_args,
+    parse_code,
 )
 from pydantic_ai_harness.code_mode._toolset import (
     NestedCallOutcome,
@@ -380,7 +381,7 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
                 break
             walked += end - match.start()
             try:
-                expression = ast.parse(code[match.start() : end], mode='eval')
+                expression = parse_code(code[match.start() : end], mode='eval')
             except (SyntaxError, ValueError, RecursionError, MemoryError):
                 # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
                 # a `SyntaxError`, and adversarial nesting can exhaust the parser.
@@ -625,7 +626,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final:
             return len(closed_statements(code))
         try:
-            return len(ast.parse(code).body)
+            return len(parse_code(code).body)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return len(closed_statements(code))
 
@@ -722,7 +723,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             # sandbox parser applies its own resource limits at dispatch.
             return
         try:
-            body = ast.parse(self._ordered_prefix(code)).body
+            body = parse_code(self._ordered_prefix(code)).body
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return
         extracted_calls = _literal_calls(body, step.eligible)

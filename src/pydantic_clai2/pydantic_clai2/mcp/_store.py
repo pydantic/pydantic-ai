@@ -17,10 +17,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..credential_store import write_private
-from ..project_settings import find_project_file
-from ..settings_store import config_dir
-from ._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
+from pydantic_clai2.config.credential_store import write_private
+from pydantic_clai2.config.project_settings import find_project_file
+from pydantic_clai2.config.settings_store import config_dir
+from pydantic_clai2.mcp._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
 
 PROJECT_MCP_FILE = Path('.clai') / 'mcp_servers.json'
 CLAUDE_MCP_FILE = Path('.mcp.json')
@@ -141,6 +141,15 @@ class MCPStore:
             trusted = {k: v for k, v in data.trusted_projects.items() if k not in keys}
             self.save(data.model_copy(update={'trusted_projects': trusted}))
         return revoked
+
+    def review(self, path: Path) -> str:
+        """A project file's text, to read before trusting it, or why it cannot be read."""
+        if not _regular(path):
+            return 'A symlink, which is never trusted.'
+        try:
+            return _read_regular(path).decode(errors='replace')
+        except OSError as exc:
+            return f'Cannot read it: {exc}'
 
     def project_servers(self) -> dict[Path, Servers]:
         """Each trusted project file's servers, in precedence order; absent and untrusted files are left out."""

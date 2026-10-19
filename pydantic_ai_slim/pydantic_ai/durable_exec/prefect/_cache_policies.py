@@ -139,6 +139,20 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
                 **({'workspace': value.workspace.ref} if value.workspace.ref is not None else {}),
+                # A dynamic toolset's discovery, validation and call tasks list it again under this
+                # path and read retry counts by the names it gives the tools, so one toolset listed
+                # under two prefixes must not share a cache entry. Projected only when set, so other
+                # keys are unchanged.
+                **(
+                    {'_tool_name_path': tool_name_path}
+                    if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
+                    else {}
+                ),
+                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
+                # a different time budget. A flow retry records the run's start time, so a retried run with
+                # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
+                # keys of runs without a deadline are unchanged.
+                **({'deadline': value.deadline} if value.deadline is not None else {}),
             }
 
     return inputs

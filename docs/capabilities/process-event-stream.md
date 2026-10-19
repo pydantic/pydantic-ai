@@ -20,7 +20,7 @@ async def log_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -
         print(event)  # (1)!
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessEventStream(log_events)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessEventStream(log_events)])
 ```
 
 1. For example, forward events to a websocket, progress bar, or audit log.
@@ -29,6 +29,8 @@ The handler comes in two forms:
 
 - An [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler] — an `async def` returning `None`, as above. Events are forwarded to the handler and passed through unchanged, so multiple handlers (and a top-level `event_stream_handler` argument) can all observe the same stream. Events are delivered synchronously, so a slow handler back-pressures the rest of the stream.
 - An `EventStreamProcessor` — an async generator that yields events. What it yields replaces the stream for downstream consumers, so it can modify, drop, or add events.
+
+When the stream ends, including when the consumer stops early, an error is raised, or the run is cancelled, a processor is closed and an observer is awaited before the stream closes. Release resources in a `finally` block, and wrap async cleanup that must finish under cancellation in `with anyio.CancelScope(shield=True):`. If the stream ends early, async work an observer is in the middle of can be interrupted even inside a shielded scope, such as cleanup after it stopped iterating. For cleanup to finish, keep iterating to the end of the stream and skip the events you don't need instead of breaking out of the loop, then run the shielded cleanup in `finally`. A shielded write in the loop can still be interrupted.
 
 Registering the capability composes with other streaming mechanisms: see [Streaming all events](../agent.md#streaming-all-events) for the event vocabulary and handler examples.
 
