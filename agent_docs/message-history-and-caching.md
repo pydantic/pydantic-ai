@@ -4,7 +4,7 @@
 
 **When to check**: Whenever you write or review code that enqueues or edits messages (`ctx.enqueue`, `ctx.messages`, `request_context.messages`, history processors), contributes instructions or tools, renders history in `Model.prepare_messages` or a model adapter, wraps content in tags, or converts history to or from a UI protocol
 
-Message history is both the model's picture of the world and the provider's prompt-cache key. Providers cache the exact bytes of a prefix they've seen, so every request should start with the previous request's bytes, across steps and across runs of the same conversation. When it doesn't, nothing errors: the provider re-processes everything after the first changed byte, and on models with preserved thinking the model's earlier reasoning is discarded too. Who wrote a piece of text also decides how much the model trusts it, so putting content in the wrong place is a prompt-injection bug, not a style issue.
+Message history is both the model's picture of the world and the provider's prompt-cache key. Providers cache a prefix of the request they've seen before, at boundaries that differ per provider: tools, then system and instructions, then messages. So read each request as that ordered sequence of cache-relevant blocks: every block an earlier request sent should come back with identical serialization and in the same order, with new blocks only after it, across steps and across runs of the same conversation. (Full request bodies can't be byte prefixes of each other: closing brackets and settings come after the prompt.) When that breaks, nothing errors: the provider re-processes everything after the first changed block, and on models with preserved thinking the model's earlier reasoning is discarded too. Who wrote a piece of text also decides how much the model trusts it, so putting content in the wrong place is a prompt-injection bug, not a style issue.
 
 A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today (a callable instruction that re-renders when its value changes, for example); flag only what the rule forbids regardless, which each such rule spells out. Drop the marker once #N merges.
 
@@ -19,7 +19,7 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 
 ### Request-scoped is not request-only
 
-- A nudge about the current request is a `SystemPromptPart(..., scope='request')` passed to `ctx.enqueue` from `before_model_request`. — It stays in history, so later requests send the same bytes, and providers that can hide it after its request (Anthropic) do.
+- A nudge about the current request is a `SystemPromptPart(..., scope='request')` passed to `ctx.enqueue` from `before_model_request`. — It stays in history, so history records what each request was sent. Where the API can stop showing a block to the model itself (Anthropic, with `clear_at`), it's sent unchanged with every later request, so the prefix holds. Everywhere else it's sent at the end of its own request and left out of later ones: a deliberate move at the tail, behind the cache breakpoints the framework places, so the prefix before it is still read from cache. See [request-scoped system prompts](../docs/message-history.md#request-scoped-system-prompts).
 - Assigning a new list to `request_context.messages` is request-only: it changes what one request sends without touching history. It's cache-safe only when every later request applies the same change, so earlier requests' bytes come out the same: redacting a part from the first request that sends it, or filtering out a part type that was never sent. Dropping or altering something an earlier request already sent is a history rewrite under the first rule, which only compaction may do. Never use it to add something the model should keep seeing, because leaving it out of the next request is itself a prefix change.
 - The full decision table is [Changing what the model sees](../docs/capabilities/custom.md#steering-messages-and-reminders). Follow it rather than restating it.
 
@@ -51,15 +51,15 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 
 ### Canonicalize on send
 
-- Projection, from history to the provider request, is deterministic: the same history gives the same bytes, whether it lived on the server or came back from a UI client. Send what we would have produced, not what a provider or client handed us (core already sends tool-call args as compact JSON and tool results in call order). — The cache is keyed on the bytes we send.
+- Projection, from history to the provider request, is deterministic: the same history gives the same bytes, whether it lived on the server or came back from a UI client. Send what we would have produced, not what a provider or client handed us (core already sends tool-call args as compact JSON and tool results in call order). — The cache is keyed on what we send, not on what we stored.
 - Any id we remap, such as a tool-call id a provider rejects, is a pure function of the original id: never random, and never counter-based across runs.
 
 ### UI round trips are faithful for everything the model sees
 
-- Dumping history to a UI protocol and loading it back, or streaming events into the client and loading what it stored, must give back every part the model sees, in order and with the same content. — A lost or split part moves the prefix on the next request, and a framework record that comes back as plain user text has changed trust tier.
+- Dumping history to a UI protocol and loading it back, or streaming events into the client and loading what it stored, must give back every part the model sees, in order, with every field that affects what is sent to the provider: content, tool-call ids, thinking signatures and provider data. — A lost or split part moves the prefix on the next request, and a framework record that comes back as plain user text has changed trust tier.
 - Treat client-returned history as untrusted. Framework records whose trust matters need server-side state or signed provenance *(pending #8954)*.
 - Verify round trips with each protocol's real JavaScript reducers (`@ag-ui/client`, the `ai` SDK), not a Python port of them. — A Python stand-in has already produced a false bug report.
 
 ### Testing
 
-- For anything that adds to history, assert over at least two requests, and two runs where history carries over, that each request starts with the previous one, not only that the cache was hit. See "prefix stability" in `tests/AGENTS.md`; a test that deliberately moves the prefix declares it with `@pytest.mark.moves_cache_prefix(reason=...)`.
+- For anything that adds to history, assert over at least two requests, and two runs where history carries over, that each request's cache-relevant blocks (tools, system and instructions, messages) start with the previous request's, identically serialized and in the same order, not only that the cache was hit. See "prefix stability" in `tests/AGENTS.md`; a test that deliberately moves the prefix declares it with `@pytest.mark.moves_cache_prefix(reason=...)`.
