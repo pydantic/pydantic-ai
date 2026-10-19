@@ -26,8 +26,6 @@ from pydantic_ai._instrumentation import (
     event_to_dict,
     get_instructions,
     open_model_request_span,
-    redact_sensitive_ids,
-    request_telemetry_sensitive_ids,
     serialize_any,
 )
 
@@ -179,18 +177,13 @@ class InstrumentationSettings:
         )
 
     def messages_to_otel_events(
-        self,
-        messages: list[ModelMessage],
-        parameters: ModelRequestParameters | None = None,
-        *,
-        sensitive_ids: set[str] | None = None,
+        self, messages: list[ModelMessage], parameters: ModelRequestParameters | None = None
     ) -> list[LogRecord]:
         """Convert a list of model messages to OpenTelemetry events.
 
         Args:
             messages: The messages to convert.
             parameters: The model request parameters.
-            sensitive_ids: MCP identities to redact when converting response-only events.
 
         Returns:
             A list of OpenTelemetry events.
@@ -222,13 +215,6 @@ class InstrumentationSettings:
 
         for event in events:
             event.body = serialize_any(event.body)
-            ids = (
-                sensitive_ids
-                if sensitive_ids is not None
-                else (request_telemetry_sensitive_ids(parameters) if parameters is not None else set[str]())
-            )
-            if ids:
-                event.body = json.loads(redact_sensitive_ids(json.dumps(event.body), ids))
         return events
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
@@ -259,10 +245,9 @@ class InstrumentationSettings:
         span: Span,
         parameters: ModelRequestParameters | None = None,
     ):
-        sensitive_ids = request_telemetry_sensitive_ids(parameters) if parameters is not None else set[str]()
         if self.version == 1:
             events = self.messages_to_otel_events(input_messages, parameters)
-            for event in self.messages_to_otel_events([response], sensitive_ids=sensitive_ids):
+            for event in self.messages_to_otel_events([response]):
                 events.append(
                     LogRecord(
                         attributes={'event.name': 'gen_ai.choice'},
@@ -287,14 +272,9 @@ class InstrumentationSettings:
             system_instructions_attributes = self.system_instructions_attributes(instructions)
 
             attributes: dict[str, AttributeValue] = {
-                'gen_ai.input.messages': redact_sensitive_ids(
-                    json.dumps(self.messages_to_otel_messages(input_messages)), sensitive_ids
-                ),
-                'gen_ai.output.messages': redact_sensitive_ids(json.dumps([output_message]), sensitive_ids),
-                **{
-                    key: redact_sensitive_ids(value, sensitive_ids)
-                    for key, value in system_instructions_attributes.items()
-                },
+                'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
+                'gen_ai.output.messages': json.dumps([output_message]),
+                **system_instructions_attributes,
                 'logfire.json_schema': json.dumps(
                     {
                         'type': 'object',

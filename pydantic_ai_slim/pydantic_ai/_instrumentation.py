@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import itertools
-import json
-import traceback
 import warnings
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
@@ -225,20 +223,7 @@ def model_request_parameters_attributes(
         serialized = _redact_model_request_parameters(serialized)
         if serialized is None:
             return {}
-    return {
-        'model_request_parameters': redact_sensitive_ids(
-            to_json(serialized).decode(), request_telemetry_sensitive_ids(model_request_parameters)
-        )
-    }
-
-
-def redact_sensitive_ids(text: str, sensitive_ids: set[str]) -> str:
-    """Remove framework-derived MCP identities from serialized telemetry, leaving request data intact."""
-    for identity in sensitive_ids:
-        if identity:
-            for encoded in {identity, json.dumps(identity)[1:-1], to_json(identity).decode()[1:-1]}:
-                text = text.replace(encoded, '[REDACTED]')
-    return text
+    return {'model_request_parameters': to_json(serialized).decode()}
 
 
 def mcp_telemetry_sensitive_ids(capabilities: Iterable[AbstractCapability[Any]]) -> set[str]:
@@ -447,14 +432,7 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
-def record_exception(
-    span: Span,
-    error: BaseException,
-    *,
-    include_content: bool,
-    escaped: bool = True,
-    sensitive_ids: set[str] | None = None,
-) -> None:
+def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
     """Record `error` on `span` as an `exception` event.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
@@ -470,7 +448,7 @@ def record_exception(
     # would surface that failure in place of the original error.
     if not span.is_recording():
         return
-    if include_content and not sensitive_ids:
+    if include_content:
         span.record_exception(error, escaped=escaped)
         return
     error_type = type(error)
@@ -480,19 +458,10 @@ def record_exception(
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    attributes = {'exception.type': type_name, 'exception.escaped': str(escaped)}
-    if include_content:
-        assert sensitive_ids is not None
-        attributes['exception.message'] = redact_sensitive_ids(str(error), sensitive_ids)
-        attributes['exception.stacktrace'] = redact_sensitive_ids(
-            ''.join(traceback.format_exception(type(error), error, error.__traceback__)), sensitive_ids
-        )
-    span.add_event('exception', attributes=attributes)
+    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
 
 
-def set_error_status(
-    span: Span, error: BaseException, *, include_content: bool, sensitive_ids: set[str] | None = None
-) -> None:
+def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
     """Set `span`'s status to ERROR, describing it the way `use_span` would have.
 
     The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
@@ -501,14 +470,7 @@ def set_error_status(
     if not span.is_recording():
         return
     span.set_status(
-        Status(
-            StatusCode.ERROR,
-            description=(
-                redact_sensitive_ids(f'{type(error).__name__}: {error}', sensitive_ids or set[str]())
-                if include_content
-                else None
-            ),
-        )
+        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
     )
 
 
@@ -548,9 +510,7 @@ def span_include_content(span: Span) -> bool:
 
 
 @contextmanager
-def record_uncaught_errors(
-    span: Span, *, include_content: bool, sensitive_ids: set[str] | None = None
-) -> Generator[None]:
+def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
     For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
@@ -560,8 +520,8 @@ def record_uncaught_errors(
     try:
         yield
     except Exception as error:
-        record_exception(span, error, include_content=include_content, escaped=False, sensitive_ids=sensitive_ids)
-        set_error_status(span, error, include_content=include_content, sensitive_ids=sensitive_ids)
+        record_exception(span, error, include_content=include_content, escaped=False)
+        set_error_status(span, error, include_content=include_content)
         raise
 
 
@@ -607,9 +567,7 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = redact_sensitive_ids(
-            to_json(tool_definitions).decode(), request_telemetry_sensitive_ids(prepared_parameters)
-        )
+        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:
@@ -698,19 +656,8 @@ def open_model_request_span(
                 # `use_span` exactly: it records only `Exception`, does not mark what it records as
                 # escaped, and describes the status with the exception. A provider's error response
                 # body travels in that message, so it follows `include_content`.
-                record_exception(
-                    span,
-                    e,
-                    include_content=settings.include_content,
-                    escaped=False,
-                    sensitive_ids=request_telemetry_sensitive_ids(prepared_parameters),
-                )
-                set_error_status(
-                    span,
-                    e,
-                    include_content=settings.include_content,
-                    sensitive_ids=request_telemetry_sensitive_ids(prepared_parameters),
-                )
+                record_exception(span, e, include_content=settings.include_content, escaped=False)
+                set_error_status(span, e, include_content=settings.include_content)
                 raise
     finally:
         include_content_ctx.set(previous_include_content)

@@ -273,58 +273,8 @@ async def test_mcp_url_derived_identity_never_reaches_request_telemetry(include_
     assert any(tool.capability_id == capability.id for tool in observed_parameters[0].function_tools)
 
 
-@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
-@pytest.mark.parametrize('include_content', [True, False])
-@pytest.mark.parametrize('mode', ['fallback', 'local'])
 @pytest.mark.parametrize('version', [1, 5])
-@pytest.mark.parametrize('repeat_load', [False, True])
-@pytest.mark.parametrize('wrapped', [False, True])
-async def test_deferred_mcp_url_derived_identity_never_reaches_telemetry(
-    include_content: bool, mode: str, version: Literal[1, 5], repeat_load: bool, wrapped: bool
-) -> None:
-    class NoNative(FunctionModel):
-        @classmethod
-        def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
-            return frozenset()
-
-    server = FastMCP('test', instructions='server guidance')
-
-    @server.tool
-    def ping() -> str:
-        return 'pong'
-
-    capability = MCP(
-        'https://mcp.example.test/private/SENTINEL-mcp-path-token',
-        native=mode == 'fallback',
-        local=server,
-        defer_loading=True,
-    )
-    responses = 0
-
-    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal responses
-        responses += 1
-        if responses == 1 or (repeat_load and responses == 2):
-            assert any(tool.name == 'load_capability' for tool in info.model_request_parameters.function_tools)
-            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': capability.id})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    settings, exporter = redacted_setup(include_content)
-    settings.version = version
-    registered_capability = capability.prefix_tools('ns') if wrapped else capability
-    agent = Agent(NoNative(respond), capabilities=[registered_capability, Instrumentation(settings=settings)])
-    await agent.run('go')
-
-    assert responses == (3 if repeat_load else 2)
-    assert capability.id is not None and 'SENTINEL-mcp-path-token' in capability.id
-    leaking_spans = [
-        span.name for span in exporter.get_finished_spans() if 'SENTINEL-mcp-path-token' in _span_text(span)
-    ]
-    assert leaking_spans == []
-
-
-@pytest.mark.parametrize('version', [1, 5])
-async def test_direct_instrumented_model_masks_native_mcp_identity(version: Literal[1, 5]) -> None:
+async def test_direct_instrumented_model_preserves_provider_authored_arguments(version: Literal[1, 5]) -> None:
     tool = MCPServerTool(id='SENTINEL-mcp-server-id', url='https://mcp.example.test/private')
     parameters = ModelRequestParameters(native_tools=[tool])
 
@@ -336,11 +286,15 @@ async def test_direct_instrumented_model_masks_native_mcp_identity(version: Lite
     model = InstrumentedModel(FunctionModel(respond), settings)
     await model.request([ModelRequest(parts=[UserPromptPart('go')])], None, parameters)
 
-    assert 'SENTINEL-mcp-server-id' not in '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
+    spans = exporter.get_finished_spans()
+    chat = next(span for span in spans if 'model_request_parameters' in (span.attributes or {}))
+    assert chat.attributes is not None
+    assert tool.id not in str(chat.attributes['model_request_parameters'])
+    assert tool.id in '\n'.join(_span_text(span) for span in spans)
 
 
 @pytest.mark.parametrize('version', [1, 5])
-async def test_native_tool_capability_masks_mcp_identity_in_agent_telemetry(version: Literal[1, 5]) -> None:
+async def test_native_tool_capability_preserves_model_text_and_run_metadata(version: Literal[1, 5]) -> None:
     class SupportsMCP(FunctionModel):
         @classmethod
         def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
@@ -356,7 +310,41 @@ async def test_native_tool_capability_masks_mcp_identity_in_agent_telemetry(vers
     agent = Agent(SupportsMCP(respond), capabilities=[NativeTool(tool), Instrumentation(settings=settings)])
     await agent.run('go', metadata={'mcp_id': tool.id})
 
-    assert 'SENTINEL-mcp-server-id' not in '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
+    spans = exporter.get_finished_spans()
+    chat = next(span for span in spans if 'model_request_parameters' in (span.attributes or {}))
+    run = next(span for span in spans if span.attributes and 'metadata' in span.attributes)
+    assert chat.attributes is not None
+    assert run.attributes is not None
+    assert tool.id not in str(chat.attributes['model_request_parameters'])
+    assert tool.id in str(run.attributes['metadata'])
+    assert tool.id in '\n'.join(_span_text(span) for span in spans)
+
+
+@pytest.mark.parametrize('version', [1, 5])
+def test_short_mcp_id_preserves_ordinary_content(version: Literal[1, 5]) -> None:
+    capability = MCP('https://id', native=True, local=False)
+    assert capability.id == 'id'
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+    parameters = ModelRequestParameters(native_tools=[tool])
+    response = ModelResponse(parts=[TextPart('The id is 42.')])
+    settings, exporter = redacted_setup(include_content=True)
+    settings.version = version
+
+    with settings.tracer.start_as_current_span('chat') as span:
+        span.set_attributes(model_request_parameters_attributes(parameters))
+        settings.handle_messages(
+            [ModelRequest(parts=[UserPromptPart('What is my id?')])], response, 'openai', span, parameters
+        )
+
+    attributes = exporter.get_finished_spans()[0].attributes
+    assert attributes is not None
+    serialized = attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+    exported = str(attributes)
+    assert 'What is my id?' in exported
+    assert 'The id is 42.' in exported
 
 
 def test_v1_response_telemetry_does_not_repeat_system_instructions_as_choice() -> None:
