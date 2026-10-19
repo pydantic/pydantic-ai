@@ -4746,6 +4746,58 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
 
+async def test_a_tool_batch_response_request_lost_to_a_drop_is_not_asked_for_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `response.create` a caller's last tool result sends for its batch is taken back too when it fails.
+
+    The caller was told the result failed (and the session expects no reply for that batch), so the
+    reconnect mustn't ask for one.
+    """
+
+    class _DropsOnCreate(_DroppableWebSocket):
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                self.drop()
+            await super().send(data)
+
+    first, second = _DropsOnCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        events = conn.__aiter__()
+        call = {'type': 'function_call', 'id': 'fc1', 'call_id': 'call_1', 'name': 't', 'arguments': '{}'}
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        first.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'A',
+                'item_id': 'fc1',
+                'output_index': 0,
+                'call_id': 'call_1',
+                'name': 't',
+                'arguments': '{}',
+            }
+        )
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': [call]}))
+        while not isinstance(await anext(events), ToolCall):
+            pass
+        while conn._response_active:  # pyright: ignore[reportPrivateUsage]
+            await anext(events)
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(ToolResult(tool_call_id='call_1', output='42'))
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        assert isinstance(await anext(events), RealtimeSessionReconnectEvent)
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
 async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5261,10 +5313,13 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     end_chat_span = SessionInstrumentation.end_chat_span
 
     def record(
-        self: SessionInstrumentation, input_messages: list[ModelMessage], response: ModelResponse | None
+        self: SessionInstrumentation,
+        response_id: str,
+        input_messages: list[ModelMessage],
+        response: ModelResponse | None,
     ) -> None:
         ended.append((input_messages, response))
-        end_chat_span(self, input_messages, response)
+        end_chat_span(self, response_id, input_messages, response)
 
     monkeypatch.setattr(SessionInstrumentation, 'end_chat_span', record)
     ws = _QueuedWebSocket()
@@ -5536,10 +5591,9 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
 
 @pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
-    """The session core's history keeps retained audio; the session's own record (what tools see) lets its copy go.
+    """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
 
-    The part streamed as an event keeps its audio, so recorded audio is bounded by `retain_audio_max_seconds` once
-    rather than twice.
+    The part streamed as an event keeps its audio too.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5581,7 +5635,7 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
                 streamed.append(event.part)
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
-        legacy = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        seen_by_tools = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         history = session.all_messages()
 
     def speech(messages: list[ModelMessage]) -> list[SpeechPart]:
@@ -5589,8 +5643,8 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
 
     assert [part.transcript for part in speech(history)] == ['Hello.']
     assert all(part.audio is not None for part in speech(history))
-    assert [part.transcript for part in speech(legacy)] == ['Hello.']
-    assert all(part.audio is None for part in speech(legacy))
+    # The same messages, not copies.
+    assert all(seen is recorded for seen, recorded in zip(seen_by_tools, history, strict=True))
     assert [part.audio is not None for part in streamed] == [True]
 
 
@@ -5924,7 +5978,7 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
                     stream.append(event)
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
 
     def text_of(part: ModelResponsePart) -> str | None:
         if isinstance(part, TextPart):
@@ -6031,7 +6085,7 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
                     ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
                 elif isinstance(event, RealtimeSessionErrorEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         recorded = session.all_messages()
 
     def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:
