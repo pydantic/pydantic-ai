@@ -14,6 +14,8 @@ Field numbers from `packages/sandboxd/spec/process/v1/process.proto`:
     message InitEvent { int32 process_id = 1; }
     message ExitEvent { int32 exit_code = 1; }
     message WriteStdinRequest { int32 process_id = 1; oneof payload { bytes input = 2; google.protobuf.Empty eof = 3; } }
+
+These messages use only varint and length-delimited fields, so those are the only wire types read.
 """
 
 from __future__ import annotations
@@ -23,14 +25,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 _VARINT = 0
-_I64 = 1
 _LEN = 2
-_I32 = 5
+
+_EVENTS: dict[int, Literal['init', 'stdout', 'stderr', 'exit']] = {1: 'init', 2: 'stdout', 3: 'stderr', 4: 'exit'}
 
 
 def _varint(value: int) -> bytes:
-    # Negative int32 values are sign-extended to 64 bits, as protobuf does.
-    value &= (1 << 64) - 1
     out = bytearray()
     while True:
         byte = value & 0x7F
@@ -62,8 +62,6 @@ def encode_close_stdin(process_id: int) -> bytes:
 def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
     result = shift = 0
     while True:
-        if pos >= len(data) or shift > 63:
-            raise ValueError('truncated or oversized varint in a sandboxd message')
         byte = data[pos]
         pos += 1
         result |= (byte & 0x7F) << shift
@@ -82,32 +80,22 @@ def _fields(data: bytes) -> Iterator[tuple[int, int | bytes]]:
             yield number, value
         elif wire_type == _LEN:
             length, pos = _read_varint(data, pos)
-            if pos + length > len(data):
-                raise ValueError('truncated field in a sandboxd message')
             yield number, data[pos : pos + length]
             pos += length
-        elif wire_type in (_I64, _I32):
-            pos += 8 if wire_type == _I64 else 4  # Unknown fixed-width field from a newer sandboxd.
-        else:
+        else:  # pragma: no cover - not sent by sandboxd's `process.v1` (see above)
             raise ValueError(f'unsupported wire type {wire_type} in a sandboxd message')
 
 
-def _int32(value: int) -> int:
-    value &= 0xFFFFFFFF
-    return value - (1 << 32) if value & 0x80000000 else value
-
-
 def _int32_field(message: bytes, number: int) -> int:
-    # proto3 omits a zero value, so an empty `ExitEvent` means exit code 0.
-    for field_number, value in _fields(message):
-        if field_number == number and isinstance(value, int):
-            return _int32(value)
-    return 0
+    # proto3 omits a zero value, so an empty `ExitEvent` means exit code 0. A negative int32 is
+    # sent sign-extended to 64 bits.
+    value = next((value for n, value in _fields(message) if n == number and isinstance(value, int)), 0)
+    return value - (1 << 64) if value >= 1 << 63 else value
 
 
 @dataclass(frozen=True)
 class StartEvent:
-    """One `StartResponse`: the process id, an output chunk, or the exit code."""
+    """One `StartResponse`: the process id, an output chunk, the exit code, or an event this module does not know."""
 
     kind: Literal['init', 'stdout', 'stderr', 'exit', 'unknown']
     data: bytes = b''
@@ -115,16 +103,11 @@ class StartEvent:
 
 
 def decode_start_response(data: bytes) -> StartEvent:
-    """Decode a `StartResponse`, ignoring fields a newer sandboxd may add."""
+    """Decode a `StartResponse`; an event a newer sandboxd adds decodes as `unknown`."""
     for number, value in _fields(data):
-        if not isinstance(value, bytes):
-            continue
-        if number == 1:
-            return StartEvent('init', number=_int32_field(value, 1))
-        if number == 2:
-            return StartEvent('stdout', data=value)
-        if number == 3:
-            return StartEvent('stderr', data=value)
-        if number == 4:
-            return StartEvent('exit', number=_int32_field(value, 1))
+        kind = _EVENTS.get(number)
+        if kind is not None and isinstance(value, bytes):
+            if kind in ('init', 'exit'):
+                return StartEvent(kind, number=_int32_field(value, 1))
+            return StartEvent(kind, data=value)
     return StartEvent('unknown')

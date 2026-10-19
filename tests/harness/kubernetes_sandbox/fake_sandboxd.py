@@ -91,8 +91,12 @@ def _messages() -> dict[str, Any]:
 MESSAGES = _messages()
 
 
+_UNKNOWN_EVENT = bytes([15 << 3 | 2, 0])
+"""A `StartResponse` holding only an event field this schema lacks, as a newer sandboxd may send."""
+
+
 def _serialize(message: Any) -> bytes:
-    return message.SerializeToString()
+    return message if isinstance(message, bytes) else message.SerializeToString()
 
 
 def _raw(data: bytes) -> bytes:
@@ -110,6 +114,8 @@ class FakeSandboxd:
         self._next_id = 0
         self.stdin_error: grpc.StatusCode | None = None
         """When set, `WriteStdin` fails with this code, as sandboxd's `INTERNAL: ... file already closed` race does."""
+        self.send_exit = True
+        """When false, `Start` ends its stream without the exit event."""
 
     async def start(self) -> None:
         self.server = grpc.aio.server()
@@ -168,6 +174,7 @@ class FakeSandboxd:
 
         finisher = asyncio.ensure_future(cut_off_after_exit())
         try:
+            yield _UNKNOWN_EVENT
             yield Response(init={'process_id': process_id})
             ended = 0
             while ended < 2:
@@ -177,7 +184,8 @@ class FakeSandboxd:
                 else:
                     yield event
             code = await waiter
-            yield Response(exit={'exit_code': 128 - code if code < 0 else code})
+            if self.send_exit:
+                yield Response(exit={'exit_code': 128 - code if code < 0 else code})
         finally:
             # Reached on cancellation too, which is how sandboxd stops a command whose call ends.
             if not waiter.done():
@@ -190,9 +198,7 @@ class FakeSandboxd:
     async def _write_stdin(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> bytes:
         if self.stdin_error is not None:
             await context.abort(self.stdin_error, 'failed to close stdin: close |1: file already closed')
-        process = self._processes.get(request.process_id)
-        if process is None:
-            await context.abort(grpc.StatusCode.NOT_FOUND, f'process {request.process_id} not found')
+        process = self._processes[request.process_id]
         assert request.WhichOneof('payload') == 'eof'
         process.close_stdin()
         return b''
@@ -214,7 +220,8 @@ class _Process:
 
     @classmethod
     async def spawn(cls, argv: list[str], *, cwd: Path, env: dict[str, str]) -> _Process:
-        program = argv[0] if '/' in argv[0] else shutil.which(argv[0], path=env.get('PATH'))
+        # A path with a slash is relative to the command's directory, as `execve` there resolves it.
+        program = str(cwd / argv[0]) if '/' in argv[0] else shutil.which(argv[0], path=env.get('PATH'))
         if program is None or not os.access(program, os.X_OK):
             raise FileNotFoundError(argv[0])
         stdin_r, stdin_w = os.pipe()
@@ -325,8 +332,9 @@ class FakeCluster:
         for key in list(self.claims):
             await self.delete(key)
 
-    def client(self, connection: str) -> FakeClient:
-        client = FakeClient(self, connection)
+    def client(self, *, connection_config: Any, cleanup: bool) -> FakeClient:
+        """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
+        client = FakeClient(self, connection_config, cleanup)
         self.clients.append(client)
         return client
 
@@ -334,9 +342,10 @@ class FakeCluster:
 class FakeClient:
     """The SDK's `AsyncSandboxClient`."""
 
-    def __init__(self, cluster: FakeCluster, connection: str) -> None:
+    def __init__(self, cluster: FakeCluster, connection_config: Any, cleanup: bool) -> None:
         self.cluster = cluster
-        self.connection = connection
+        self.connection_config = connection_config
+        self.cleanup = cleanup
         self.closed = False
         self.sandboxes: list[FakeSandbox] = []
 

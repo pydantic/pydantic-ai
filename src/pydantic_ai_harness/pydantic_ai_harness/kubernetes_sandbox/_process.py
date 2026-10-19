@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import anyio
 
-from pydantic_ai.workspaces import CommandResult, WorkspaceTimeoutError
+from pydantic_ai.workspaces import CommandResult, WorkspaceOutputLimitError, WorkspaceTimeoutError
 from pydantic_ai_harness.kubernetes_sandbox._wire import (
     decode_start_response,
     encode_close_stdin,
@@ -33,6 +33,10 @@ if TYPE_CHECKING:
     import grpc.aio
 
 _SERVICE = '/process.v1.ProcessService'
+
+# Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing it.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 
 
 def _identity(data: bytes) -> bytes:
@@ -48,7 +52,8 @@ async def start_command(
 ) -> CommandResult:
     """Run `argv` in sandboxd's root directory, returning its complete output.
 
-    Raises `WorkspaceTimeoutError` with the output that arrived when `timeout` passes.
+    Raises `WorkspaceTimeoutError` with the output that arrived when `timeout` passes, and
+    `WorkspaceOutputLimitError` when the output passes 10 MiB; either way the command is killed.
     """
     import grpc
 
@@ -67,12 +72,17 @@ async def start_command(
             async for event in call:
                 if event.kind == 'init':
                     await _close_stdin(write_stdin, event.number)
-                elif event.kind == 'stdout':
-                    stdout += event.data
-                elif event.kind == 'stderr':
-                    stderr += event.data
                 elif event.kind == 'exit':
                     exit_code = event.number
+                elif event.kind != 'unknown':
+                    (stdout if event.kind == 'stdout' else stderr).extend(event.data)
+                    if len(stdout) + len(stderr) > _MAX_OUTPUT_BYTES:
+                        raise WorkspaceOutputLimitError(
+                            'Command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                            limit=_MAX_OUTPUT_BYTES,
+                            stdout=stdout[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                            stderr=stderr[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                        )
         except grpc.aio.AioRpcError as error:
             # Workaround: sandboxd reports a program it cannot start as a `NOT_FOUND` error before
             # any event, where the workspace protocol (like a shell) wants exit code 127.

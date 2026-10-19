@@ -29,11 +29,18 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceCommand,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import absolute_path, check_timeout, command_argv, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
+    check_timeout,
+    command_argv,
+    run_to_completion,
+    running_on_asyncio,
+)
 from pydantic_ai_harness.kubernetes_sandbox._process import start_command
 
 
@@ -81,6 +88,11 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
     return AsyncSandboxClient(connection_config=config, cleanup=False)
 
 
+async def _close_client(client: AsyncSandboxClient[AsyncSandbox]) -> None:
+    # Finished even when the caller is cancelled, natively (`Task.cancel()`) too.
+    await run_to_completion(client.close)
+
+
 def _require_asyncio() -> None:
     # The SDK runs on `kubernetes_asyncio`, `grpc.aio` and asyncio subprocesses.
     if not running_on_asyncio():
@@ -124,9 +136,11 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._namespace = namespace
         self._connection: Connection = connection
         self._sandbox_timeout = sandbox_timeout
-        # `None`: sandboxd's `--root-dir`, where it starts every command, read from the sandbox on first use.
+        # `None`: sandboxd's `--root-dir`, where it starts every command.
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._resolved_working_dir = self._working_dir
+        # The directory commands start in as the sandbox resolves it (`pwd -P`), read on first use:
+        # the protocol reports a canonical path, and a configured one may go through a symlink.
+        self._resolved_working_dir: str | None = None
         self._env = dict(env or {})
         self._client: AsyncSandboxClient[AsyncSandbox] | None = None
         self._sandbox: AsyncSandbox | None = None
@@ -142,7 +156,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def working_dir(self) -> str:
         if self._resolved_working_dir is None:
-            # sandboxd has no API for its root directory, but commands start there.
+            # sandboxd has no API for its root directory, but commands start there (or in `working_dir`).
             result = await self.run(['pwd', '-P'])
             if result.exit_code != 0 or not result.stdout.startswith('/'):
                 raise WorkspaceUnavailableError(
@@ -181,7 +195,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             try:
                 channel = await sandbox.connector.grpc_channel()
                 return await start_command(channel, argv, env={**self._env, **(env or {})}, timeout=timeout)
-            except (WorkspaceTimeoutError, WorkspaceUnavailableError):
+            except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
                 raise
             except Exception as error:
                 await self._raise_if_gone(sandbox, error)
@@ -189,11 +203,16 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def aclose(self) -> None:
         """Close the connection to the sandbox (including a `kubectl port-forward`); the sandbox keeps running."""
-        async with self._lock:
-            client, self._client, self._sandbox = self._client, None, None
-        if client is not None:
-            with anyio.CancelScope(shield=True):
+
+        async def detach_and_close() -> None:
+            async with self._lock:
+                client, self._client, self._sandbox = self._client, None, None
+            if client is not None:
                 await client.close()
+
+        # Also called from a `finally:` after the run was cancelled, where waiting for the lock
+        # would raise before anything closed.
+        await run_to_completion(detach_and_close)
 
     @asynccontextmanager
     async def _operation(self) -> AsyncGenerator[None, None]:
@@ -202,8 +221,10 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             yield
         finally:
             self._operations -= 1
-            if self._operations == 0 and self._close_after_operation:
-                await self.aclose()
+            if self._operations == 0 and self._close_after_operation and self._client is not None:
+                # Detached before any await, so an operation starting meanwhile opens its own client.
+                client, self._client, self._sandbox = self._client, None, None
+                await _close_client(client)
 
     async def _acquire(self) -> AsyncSandbox:
         """Claim or attach on first use; the caller holds `_lock`, so concurrent first operations share one claim."""
@@ -228,13 +249,14 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         assert self._warm_pool is not None
         # Named here, not by the SDK, so the ref is known even if this task is cancelled while the
         # claim waits to become Ready; the SDK leaves an explicitly named claim in place on failure.
-        ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/pydantic-ai-{uuid.uuid4().hex[:16]}')
+        claim_name = f'pydantic-ai-{uuid.uuid4().hex[:16]}'
+        ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
         try:
             # The SDK types its unused `volume_claim_templates` parameter as a bare `list[dict]`.
             sandbox = await self._client.create_sandbox(  # pyright: ignore[reportUnknownMemberType]
                 self._warm_pool,
                 namespace=self._namespace,
-                claim_name=parse_ref(ref)[1],
+                claim_name=claim_name,
                 shutdown_after_seconds=self._sandbox_timeout,
             )
         except anyio.get_cancelled_exc_class():
@@ -271,6 +293,7 @@ async def destroy_sandbox(ref: WorkspaceRef, *, connection: Connection = 'port-f
     from k8s_agent_sandbox.exceptions import SandboxNotFoundError
 
     namespace, claim_name = parse_ref(ref)
+    _require_asyncio()
     client = _client(connection)
     try:
         # Workaround: `AsyncSandboxClient.delete_sandbox` logs and swallows every error, so a failed
@@ -282,5 +305,4 @@ async def destroy_sandbox(ref: WorkspaceRef, *, connection: Connection = 'port-f
             return
         await sandbox.terminate()
     finally:
-        with anyio.CancelScope(shield=True):
-            await client.close()
+        await _close_client(client)

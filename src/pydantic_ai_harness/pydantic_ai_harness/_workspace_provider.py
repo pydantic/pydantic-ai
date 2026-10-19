@@ -7,6 +7,7 @@ import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
@@ -57,6 +58,33 @@ def running_on_asyncio() -> bool:
 _pending_stops: set[asyncio.Task[None]] = set()
 # Extra wait past the stop grace so a stop cut off at the deadline can finish its cleanup.
 _STOP_SETTLE = 0.5
+
+_T = TypeVar('_T')
+
+
+async def run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Await `call` in a task of its own and see it finish even if the caller is cancelled meanwhile.
+
+    For work whose outcome must be recorded, such as a created Sprite or a closed client: the
+    caller's cancellation is re-raised only once `call` has finished, and nothing outlives this
+    await. `call` must be bounded; the caller waits for it.
+    """
+    # AnyIO has no detached task: keep this native task alive and referenced until its result is recorded.
+    task = asyncio.ensure_future(call())
+    # Preserve the native cancellation to re-raise after the provider call finishes.
+    cancelled: asyncio.CancelledError | None = None
+    # The AnyIO shield holds off cancel scopes, but native `Task.cancel()` can still interrupt the
+    # caller. `asyncio.wait` does not propagate that cancellation to the independent provider task.
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                await asyncio.wait([task])
+            except asyncio.CancelledError as error:
+                cancelled = error
+    if cancelled is not None:
+        task.exception()  # Retrieve a provider failure before the native cancellation takes precedence.
+        raise cancelled
+    return task.result()
 
 
 async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float = 2.0) -> None:

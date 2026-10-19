@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 _HAS_SDK = all(importlib.util.find_spec(name) is not None for name in ('k8s_agent_sandbox', 'grpc'))
-collect_ignore = [] if _HAS_SDK else ['test_conformance.py', 'test_kubernetes_sandbox.py', 'test_wire.py']
+collect_ignore = [] if _HAS_SDK else ['test_conformance.py', 'test_kubernetes_sandbox.py']
 
 if TYPE_CHECKING or _HAS_SDK:  # pragma: no branch - the SDK-installed and slim jobs take opposite branches
     from .fake_sandboxd import FakeCluster
@@ -25,9 +25,9 @@ if _HAS_SDK:  # pragma: no branch - the fixture cannot be defined without its SD
 
     @pytest.fixture
     async def cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FakeCluster]:
-        """Route the backend's SDK client to a fake cluster; every claim it makes is stopped afterwards."""
+        """Replace the SDK's client with one on a fake cluster; every claim it makes is stopped afterwards."""
         fake = FakeCluster(tmp_path)
-        monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._client', fake.client)
+        monkeypatch.setattr('k8s_agent_sandbox.async_sandbox_client.AsyncSandboxClient', fake.client)
         try:
             yield fake
         finally:

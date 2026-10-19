@@ -53,7 +53,6 @@ it runs on asyncio only.
 from __future__ import annotations
 
 # Native task cancellation can interrupt an AnyIO shield; the completion task below must stay independent.
-import asyncio
 import hashlib
 import logging
 import math
@@ -66,7 +65,6 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TypeVar
 
 import anyio
 import anyio.to_thread
@@ -91,6 +89,7 @@ from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     command_argv,
+    run_to_completion,
     running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
@@ -116,7 +115,6 @@ except ImportError as exc:
     raise ImportError('Install `pydantic-ai-harness[sprites]` to use SpritesSandbox.') from exc
 
 logger = logging.getLogger(__name__)
-_T = TypeVar('_T')
 _CLOSE_TIMEOUT = 6.0
 # Above the SDK's fixed 120-second creation request timeout, so the SDK's own error wins when it fires.
 _ACQUIRE_TIMEOUT = 150.0
@@ -257,31 +255,6 @@ async def _cleanup_call(call: Callable[[], Awaitable[object]], *, timeout: float
     return error
 
 
-async def _run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
-    """Await `call` in a task of its own and see it finish even if the caller is cancelled meanwhile.
-
-    For work whose outcome must be recorded, such as a created Sprite or a closed client: the
-    caller's cancellation is re-raised only once `call` has finished, and nothing outlives this
-    await. `call` must be bounded; the caller waits for it.
-    """
-    # AnyIO has no detached task: keep this native task alive and referenced until its result is recorded.
-    task = asyncio.ensure_future(call())
-    # Preserve the native cancellation to re-raise after the provider call finishes.
-    cancelled: asyncio.CancelledError | None = None
-    # The AnyIO shield holds off cancel scopes, but native `Task.cancel()` can still interrupt the
-    # caller. `asyncio.wait` does not propagate that cancellation to the independent provider task.
-    with anyio.CancelScope(shield=True):
-        while not task.done():
-            try:
-                await asyncio.wait([task])
-            except asyncio.CancelledError as error:
-                cancelled = error
-    if cancelled is not None:
-        task.exception()  # Retrieve a provider failure before the native cancellation takes precedence.
-        raise cancelled
-    return task.result()
-
-
 class _ExecCommand(WSCommand):
     """The SDK's exec WebSocket command, asking the Sprite to end the command soon after a disconnect.
 
@@ -332,7 +305,7 @@ async def _close_command(command: WSCommand) -> None:
 
     Finished even when the caller (a cancelled command) is cancelled meanwhile.
     """
-    error = await _run_to_completion(lambda: _cleanup_call(command.close, timeout=_CLOSE_TIMEOUT))
+    error = await run_to_completion(lambda: _cleanup_call(command.close, timeout=_CLOSE_TIMEOUT))
     if error is not None:
         logger.warning('Could not close a Sprite exec connection, aborting it: %r', error)
         # `close` has nothing to fail on before `start` opened the socket.
@@ -579,7 +552,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
-            return await (acquire() if ref is not None else _run_to_completion(acquire))
+            return await (acquire() if ref is not None else run_to_completion(acquire))
         except SpriteError as error:
             if (mapped := _map_error(error, None if ref is None else ref.id)) is None:
                 raise
@@ -607,7 +580,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             await _close_client(client)
 
         # Finished even when the caller (a run being cancelled) is cancelled meanwhile.
-        await _run_to_completion(close)
+        await run_to_completion(close)
 
     @asynccontextmanager
     async def _operation(self) -> AsyncGenerator[None, None]:
@@ -628,7 +601,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             if self._operations == 0 and self._close_after_operation and self._owns_client and self._client is not None:
                 # Detached before any await, so an operation starting meanwhile opens its own client.
                 client, self._client, self._sandbox = self._client, None, None
-                await _run_to_completion(lambda: _close_client(client))
+                await run_to_completion(lambda: _close_client(client))
 
     async def working_dir(self) -> str:
         async with self._operation():

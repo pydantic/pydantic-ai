@@ -8,8 +8,7 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
-from pydantic_ai_harness.kubernetes_sandbox._backend import destroy_sandbox
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 
 from .fake_sandboxd import FakeCluster
 
@@ -51,6 +50,6 @@ class TestKubernetesSandboxConformance(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await destroy_sandbox(backend.ref)
+            await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
 
         return destroy

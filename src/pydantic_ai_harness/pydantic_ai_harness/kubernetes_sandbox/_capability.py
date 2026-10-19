@@ -46,8 +46,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     A run with no reference claims a sandbox from `warm_pool` on first use; pass a `WorkspaceRef`
     to attach to an existing claim. Ending a run does not delete the sandbox; `destroy(ref)` does,
-    and `sandbox_timeout` deletes it in any case. Commands run under `sh -c` in the sandbox pod's
-    container that runs sandboxd.
+    and `sandbox_timeout` deletes it in any case. Commands run in the sandbox pod's container that
+    runs sandboxd.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
     as `Coder`, `Shell`, and `FileSystem`. See

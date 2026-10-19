@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Callable
-from typing import Any, cast
 
 import anyio
 import grpc
@@ -13,27 +11,33 @@ import pytest
 from k8s_agent_sandbox.exceptions import SandboxClaimFailedError
 from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.workspaces import WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend, Shell
-from pydantic_ai_harness.kubernetes_sandbox import _backend
-from pydantic_ai_harness.kubernetes_sandbox._capability import _SuppliedBackend  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness.kubernetes_sandbox._process import _close_stdin, start_command  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness.kubernetes_sandbox._wire import StartEvent
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceRef,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
+from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 
-from .fake_sandboxd import FakeCluster
+from .fake_sandboxd import FakeCluster, FakeSandboxd
 
 asyncio_only = pytest.mark.parametrize('anyio_backend', ['asyncio'])
 
 
+def _sandboxd(cluster: FakeCluster, ref: WorkspaceRef | None) -> FakeSandboxd:
+    assert ref is not None
+    namespace, _, claim_name = ref.id.partition('/')
+    return cluster.claims[namespace, claim_name]
+
+
 def test_refs_name_a_namespace_and_a_claim() -> None:
-    assert _backend.parse_ref(WorkspaceRef(provider='kubernetes', id='agents/claim')) == ('agents', 'claim')
+    assert KubernetesSandboxBackend(ref=WorkspaceRef(provider='kubernetes', id='agents/claim')).ref is not None
     for bad in ('claim', '/claim', 'agents/', 'a/b/c'):
         with pytest.raises(ValueError, match='<namespace>/<claim name>'):
-            _backend.parse_ref(WorkspaceRef(provider='kubernetes', id=bad))
+            KubernetesSandboxBackend(ref=WorkspaceRef(provider='kubernetes', id=bad))
     with pytest.raises(ValueError, match="expected 'kubernetes'"):
         KubernetesSandboxBackend(ref=WorkspaceRef(provider='modal', id='sb-1'))
 
@@ -57,15 +61,17 @@ def test_backend_arguments_are_checked_without_io() -> None:
 
 
 @asyncio_only
-async def test_client_matches_the_connection() -> None:
-    # Building the SDK client does no I/O: kubeconfig loads on its first request.
-    tunnel = _backend._client('port-forward')  # pyright: ignore[reportPrivateUsage]
-    in_cluster = _backend._client('in-cluster-pod-ip')  # pyright: ignore[reportPrivateUsage]
+async def test_the_sdk_client_matches_the_connection(cluster: FakeCluster) -> None:
+    for connection in ('port-forward', 'in-cluster-pod-ip'):
+        backend = KubernetesSandboxBackend(warm_pool='pool', connection=connection)
+        await backend.run(['true'])
+        await backend.aclose()
+    tunnel, in_cluster = cluster.clients
     assert isinstance(tunnel.connection_config, SandboxdPodTunnelConnectionConfig)
     assert isinstance(in_cluster.connection_config, SandboxdInClusterConnectionConfig)
     assert in_cluster.connection_config.mode == 'in-cluster-pod-ip'
-    await tunnel.close()
-    await in_cluster.close()
+    # The SDK would otherwise delete its claims when the interpreter exits.
+    assert not tunnel.cleanup and not in_cluster.cleanup
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
@@ -75,6 +81,8 @@ async def test_trio_is_refused() -> None:
         await backend.run(['true'])
     with pytest.raises(UserError, match='needs asyncio'):
         await backend.get_sandbox()
+    with pytest.raises(UserError, match='needs asyncio'):
+        await KubernetesSandbox(warm_pool='pool').destroy(WorkspaceRef(provider='kubernetes', id='agents/claim'))
 
 
 @asyncio_only
@@ -92,18 +100,33 @@ async def test_a_claim_uses_the_pool_namespace_and_timeout(cluster: FakeCluster)
 
 
 @asyncio_only
+async def test_aclose_in_a_cancelled_scope_still_closes(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    # As in a `finally:` after the caller was cancelled.
+    with anyio.CancelScope() as scope:
+        scope.cancel()
+        await backend.aclose()
+    [client] = cluster.clients
+    assert client.closed
+
+
+@asyncio_only
 async def test_working_dir_is_entered_from_a_shell(cluster: FakeCluster) -> None:
     probe = KubernetesSandboxBackend(warm_pool='pool')
     root = await probe.working_dir()
     sub = f'{root}/sub'
     assert (await probe.run(['mkdir', sub])).exit_code == 0
+    assert (await probe.run(['ln', '-s', sub, f'{root}/link'])).exit_code == 0
+    # Reported as the sandbox resolves it, not as configured.
+    via_link = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/link')
+    assert await via_link.working_dir() == sub
     backend = KubernetesSandboxBackend(ref=probe.ref, working_dir=sub)
-    assert await backend.working_dir() == sub
     assert (await backend.run(['pwd', '-P'])).stdout == f'{sub}\n'
     assert (await backend.run(['missing-program'])).exit_code == 127
     gone = KubernetesSandboxBackend(ref=probe.ref, working_dir=f'{root}/gone')
     assert (await gone.run(['true'])).exit_code == 1
-    for each in (probe, backend, gone):
+    for each in (probe, via_link, backend, gone):
         await each.aclose()
 
 
@@ -112,7 +135,7 @@ async def test_an_unreadable_working_dir_is_unavailable(cluster: FakeCluster, mo
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
     monkeypatch.setenv('PATH', '/nonexistent')  # `pwd` cannot be found, as in an image without coreutils.
-    cluster.claims[_backend.parse_ref(backend.ref)].root.rmdir()  # type: ignore[arg-type]
+    _sandboxd(cluster, backend.ref).root.rmdir()
     with pytest.raises(WorkspaceUnavailableError, match='working directory'):
         await backend.working_dir()
     await backend.aclose()
@@ -141,7 +164,7 @@ async def test_a_cancelled_claim_keeps_its_ref(cluster: FakeCluster) -> None:
     with anyio.move_on_after(0.5):
         await backend.run(['true'])
     # The claim exists although create never returned: the ref lets the application delete it.
-    assert backend.ref is not None and _backend.parse_ref(backend.ref) in cluster.claims
+    assert _sandboxd(cluster, backend.ref) is not None
 
 
 @asyncio_only
@@ -163,66 +186,25 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(cluster: FakeClust
 async def test_stdin_close_races_are_tolerated(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
-    sandboxd = cluster.claims[_backend.parse_ref(backend.ref)]  # type: ignore[arg-type]
-    # A process already unregistered: `NOT_FOUND`.
-    write_stdin = (await (await backend.get_sandbox()).connector.grpc_channel()).unary_unary(
-        '/process.v1.ProcessService/WriteStdin', request_serializer=bytes, response_deserializer=bytes
-    )
-    await _close_stdin(write_stdin, 999)
-    # A process sandboxd is still unregistering: `INTERNAL: ... file already closed`.
-    sandboxd.stdin_error = grpc.StatusCode.INTERNAL
-    assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
+    sandboxd = _sandboxd(cluster, backend.ref)
+    # A process already unregistered (`NOT_FOUND`), or still unregistering (`INTERNAL: ... file already closed`).
+    for code in (grpc.StatusCode.NOT_FOUND, grpc.StatusCode.INTERNAL):
+        sandboxd.stdin_error = code
+        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
     sandboxd.stdin_error = grpc.StatusCode.PERMISSION_DENIED
     with pytest.raises(grpc.aio.AioRpcError):
         await backend.run(['echo', 'ok'])
     await backend.aclose()
 
 
-class _ScriptedChannel:
-    """A `grpc.aio.Channel` whose `Start` call yields fixed events."""
-
-    def __init__(self, events: list[StartEvent]) -> None:
-        self.events = events
-
-    def unary_stream(self, *args: Any, **kwargs: Any) -> Callable[[bytes], _Call]:
-        return lambda request: _Call(self.events)
-
-    def unary_unary(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-
-class _Call:
-    def __init__(self, events: list[StartEvent]) -> None:
-        self._events = iter(events)
-
-    def __aiter__(self) -> _Call:
-        return self
-
-    async def __anext__(self) -> StartEvent:
-        try:
-            return next(self._events)
-        except StopIteration:
-            raise StopAsyncIteration from None
-
-    def cancel(self) -> bool:
-        return True
-
-
-def _channel(events: list[StartEvent]) -> grpc.aio.Channel:
-    return cast('grpc.aio.Channel', _ScriptedChannel(events))
-
-
 @asyncio_only
-async def test_a_stream_without_an_exit_event_is_an_error() -> None:
+async def test_a_stream_without_an_exit_event_is_an_error(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    _sandboxd(cluster, backend.ref).send_exit = False
     with pytest.raises(RuntimeError, match='without an exit event'):
-        await start_command(_channel([]), ['true'], env={}, timeout=None)
-
-
-@asyncio_only
-async def test_events_a_newer_sandboxd_adds_are_ignored() -> None:
-    events = [StartEvent('unknown'), StartEvent('stdout', data=b'ok'), StartEvent('exit', number=0)]
-    result = await start_command(_channel(events), ['true'], env={}, timeout=None)
-    assert (result.exit_code, result.stdout) == (0, 'ok')
+        await backend.run(['true'])
+    await backend.aclose()
 
 
 @asyncio_only
@@ -231,6 +213,16 @@ async def test_a_timeout_keeps_the_output_so_far(cluster: FakeCluster) -> None:
     with pytest.raises(WorkspaceTimeoutError) as info:
         await backend.run('echo before; sleep 30', shell=True, timeout=0.5)
     assert info.value.stdout == 'before\n'
+    await backend.aclose()
+
+
+@asyncio_only
+async def test_output_past_the_limit_stops_the_command(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as caught:
+        await backend.run('head -c 11000000 /dev/zero | tr "\\0" x; sleep 30', shell=True)
+    assert caught.value.limit == 10 * 1024 * 1024
+    assert caught.value.stdout == 'x' * 64 * 1024 and caught.value.stderr == ''
     await backend.aclose()
 
 
@@ -259,45 +251,59 @@ def test_capability_arguments_are_checked() -> None:
 
 def test_get_workspace_only_takes_kubernetes_refs() -> None:
     capability = KubernetesSandbox(warm_pool='pool', namespace='agents', connection='in-cluster-service')
-    ctx: Any = type('Ctx', (), {'run_id': 'run-1'})()
+    ctx = RunContext(deps=None, model=TestModel(), usage=None, run_id='run-1')  # type: ignore[arg-type]
     assert capability.get_workspace(ctx, ref=WorkspaceRef(provider='modal', id='sb')) is None
     backend = capability.get_workspace(ctx, ref=None)
-    assert isinstance(backend, _SuppliedBackend) and backend.run_id == 'run-1'
+    assert isinstance(backend, KubernetesSandboxBackend) and backend.ref is None
     attached = capability.backend(WorkspaceRef(provider='kubernetes', id='agents/claim'))
     assert type(attached) is KubernetesSandboxBackend and attached.ref is not None
-
-
-def _shell_model(command: str) -> FunctionModel:
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('run_command', {'command': command})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    return FunctionModel(respond)
 
 
 @asyncio_only
 async def test_a_run_keeps_its_connection_open_and_closes_it_at_the_end(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool', namespace='agents')
-    agent = Agent(_shell_model('echo hi > note.txt'), capabilities=[capability, Shell()])
+    agent = Agent(TestModel(), capabilities=[capability])
+
+    @agent.tool
+    async def write_note(ctx: RunContext[object]) -> str:
+        await ctx.workspace.run('echo hi > note.txt', shell=True)
+        return (await ctx.workspace.run(['cat', 'note.txt'])).stdout
+
     result = await agent.run('write a note')
-    ref = result.workspace.ref
-    assert ref is not None and ref.provider == 'kubernetes'
     # One client for the whole run, closed when the run ended; the sandbox keeps running.
     [client] = cluster.clients
-    assert client.closed and _backend.parse_ref(ref) in cluster.claims
+    assert client.closed and _sandboxd(cluster, result.workspace.ref) is not None
     # A later run attaches by ref and sees the file.
-    agent = Agent(_shell_model('cat note.txt'), capabilities=[capability, Shell()])
-    result = await agent.run('read it', workspace=ref)
-    assert 'hi' in str(result.all_messages()[2])
-    await capability.destroy(ref)
+    backend = capability.backend(result.workspace.ref)  # type: ignore[arg-type]
+    assert (await backend.run(['cat', 'note.txt'])).stdout == 'hi\n'
+    await backend.aclose()
+    await capability.destroy(result.workspace.ref)  # type: ignore[arg-type]
+
+
+@asyncio_only
+async def test_a_cancelled_run_still_closes_its_connection(cluster: FakeCluster) -> None:
+    agent = Agent(TestModel(), capabilities=[KubernetesSandbox(warm_pool='pool')])
+    used = anyio.Event()
+
+    @agent.tool
+    async def hang(ctx: RunContext[object]) -> None:
+        await ctx.workspace.run(['true'])
+        used.set()
+        await anyio.sleep_forever()
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(agent.run, 'hang')
+        await used.wait()
+        group.cancel_scope.cancel()
+    [client] = cluster.clients
+    assert client.closed
 
 
 @asyncio_only
 async def test_a_backend_outside_a_run_closes_after_each_operation(cluster: FakeCluster) -> None:
-    ctx: Any = type('Ctx', (), {'run_id': 'run-1'})()
+    ctx = RunContext(deps=None, model=TestModel(), usage=None, run_id='run-1')  # type: ignore[arg-type]
     backend = KubernetesSandbox(warm_pool='pool').get_workspace(ctx, ref=None)
-    assert isinstance(backend, _SuppliedBackend)
+    assert isinstance(backend, KubernetesSandboxBackend)
     await backend.run(['true'])
     await backend.run(['true'])
     # Nothing would call `aclose()` (Temporal builds one per activity), so each operation closed its own client.
@@ -305,15 +311,23 @@ async def test_a_backend_outside_a_run_closes_after_each_operation(cluster: Fake
 
 
 @asyncio_only
-async def test_a_parent_runs_workspace_is_not_closed_by_a_subagent(cluster: FakeCluster) -> None:
+async def test_a_subagent_does_not_close_its_parents_workspace(cluster: FakeCluster) -> None:
     capability = KubernetesSandbox(warm_pool='pool')
-    ctx: Any = type('Ctx', (), {'run_id': 'parent'})()
-    parent = capability.get_workspace(ctx, ref=None)
-    assert isinstance(parent, _SuppliedBackend)
-    parent.claim(True)
-    await parent.run(['true'])
-    agent = Agent(_shell_model('true'), capabilities=[capability, Shell()])
-    await agent.run('child', workspace=parent)
-    assert not cluster.clients[0].closed
-    parent.claim(False)
-    await parent.aclose()
+    child = Agent(TestModel(), capabilities=[capability])
+
+    @child.tool
+    async def touch(ctx: RunContext[object]) -> None:
+        await ctx.workspace.run(['touch', 'from-child'])
+
+    parent = Agent(TestModel(), capabilities=[capability])
+
+    @parent.tool
+    async def delegate(ctx: RunContext[object]) -> str:
+        await ctx.workspace.run(['true'])
+        await child.run('child', workspace=ctx.workspace)
+        return (await ctx.workspace.run(['ls'])).stdout
+
+    await parent.run('go')
+    # The child used the parent's connection and left it open; the parent's run closed it.
+    [client] = cluster.clients
+    assert client.closed

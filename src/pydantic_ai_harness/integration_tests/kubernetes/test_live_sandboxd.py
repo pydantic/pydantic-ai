@@ -21,6 +21,7 @@ binary fails instead: a job that tested nothing must not pass as a silent skip.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -37,8 +38,7 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
-from pydantic_ai_harness.kubernetes_sandbox._backend import destroy_sandbox
+from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 
 SANDBOXD = os.environ.get('SANDBOXD_BIN') or shutil.which('sandboxd')
 
@@ -96,8 +96,12 @@ class Daemon:
                     await anyio.sleep(0.05)
 
     def stop(self) -> None:
-        # Deleting a pod kills its processes and drops its `emptyDir`; commands sandboxd started
-        # run in their own process groups, so removing the root is what ends one still running.
+        # Deleting a pod kills its processes and drops its `emptyDir`. sandboxd starts each command
+        # in its own process group, which killing the daemon leaves running, so kill those first.
+        children = subprocess.run(['pgrep', '-P', str(self.process.pid)], capture_output=True, text=True).stdout
+        for pid in children.split():
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(int(pid), signal.SIGKILL)
         self.process.send_signal(signal.SIGKILL)
         self.process.wait()
         shutil.rmtree(self.root, ignore_errors=True)
@@ -110,7 +114,8 @@ class Cluster:
         self.base = base
         self.claims: dict[tuple[str, str], Daemon] = {}
 
-    def client(self, connection: str) -> Client:
+    def client(self, **config: Any) -> Client:
+        """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
         return Client(self)
 
     def close(self) -> None:
@@ -173,9 +178,9 @@ class Sandbox:
 
 @pytest.fixture
 def cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Cluster]:
-    """Route the backend's SDK client to claims served by real sandboxd processes."""
+    """Replace the SDK's client with one whose claims are served by real sandboxd processes."""
     fake = Cluster(tmp_path.resolve())
-    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._client', fake.client)
+    monkeypatch.setattr('k8s_agent_sandbox.async_sandbox_client.AsyncSandboxClient', fake.client)
     yield fake
     fake.close()
 
@@ -216,6 +221,6 @@ class TestLiveSandboxdConformance(WorkspaceBackendSuite):
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await destroy_sandbox(backend.ref)
+            await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
 
         return destroy
