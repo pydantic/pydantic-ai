@@ -355,6 +355,12 @@ class XaiModel(Model[AsyncClient]):
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters xAI's web search applies."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+        return frozenset()
+
     async def _map_messages(
         self,
         messages: list[ModelMessage],
