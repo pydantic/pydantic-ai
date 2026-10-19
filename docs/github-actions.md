@@ -51,7 +51,7 @@ jobs:
       - id: agent
         uses: pydantic/pydantic-ai-action@v1
         with:
-          model: openai:gpt-5.6-sol
+          model: {{ openai:medium }}
           prompt: Summarize what changed in this pull request.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -82,7 +82,7 @@ instructions out of the workflow file, and is read relative to `working-director
 ```yaml {test="skip" lint="skip"}
 - uses: pydantic/pydantic-ai-action@v1
   with:
-    model: anthropic:claude-sonnet-4-5
+    model: {{ anthropic:medium }}
     prompt-file: .github/prompts/review.md
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -101,7 +101,7 @@ and install the project that defines it with `pip-install`:
 - uses: pydantic/pydantic-ai-action@v1
   with:
     agent: my_project.agents:reviewer
-    model: openai:gpt-5.6-sol
+    model: {{ openai:medium }}
     prompt: Review the current checkout.
     pip-install: .
   env:
@@ -134,7 +134,7 @@ workflow running its own agent doesn't wait for it or resolve its dependencies. 
 | `prompt` | | The prompt to send. Set exactly one of `prompt` and `prompt-file`. |
 | `prompt-file` | | A prompt file, read relative to `working-directory`. |
 | `agent` | `pydantic_ai_harness.coder:coder_agent` | A `module:variable` target, or a `.yml`, `.yaml` or `.json` agent spec file. |
-| `model` | | A [model](models/overview.md) identifier such as `openai:gpt-5.6-sol`. Overrides the model the agent carries. |
+| `model` | | A [model](models/overview.md) identifier such as `{{ openai:medium }}`. Overrides the model the agent carries. |
 | `python-version` | `3.12` | The Python the agent runs on: 3.10 or later, or 3.11 or later for the Harness, which the default agent comes from. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
 | `pydantic-ai-version` | `>=2.44.0` | The `pydantic-ai-slim` version specifier to install. |
@@ -189,7 +189,7 @@ before the run starts:
 ```yaml {test="skip" lint="skip"}
 - uses: pydantic/pydantic-ai-action@v1
   with:
-    model: openai:gpt-5.6-sol
+    model: {{ openai:medium }}
     prompt: Summarize what changed in this pull request.
   env:
     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
