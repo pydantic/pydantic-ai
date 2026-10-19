@@ -105,6 +105,8 @@ export function applyItem(entries: Entry[], message: ItemMessage): Entry[] {
   switch (message.type) {
     case 'delta':
       return change((item) => ({ ...item, text: item.text + message.text }))
+    case 'text_done':
+      return change((item) => ({ ...item, streaming: false }))
     case 'tool_output':
       return change((item) => ({ ...item, output: item.output + message.text }))
     case 'tool_done':
@@ -179,6 +181,7 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, update: message.update }
     case 'item':
     case 'delta':
+    case 'text_done':
     case 'tool_output':
     case 'tool_done':
     case 'args_delta':
@@ -211,7 +214,10 @@ export function reduce(state: State, message: ServerMessage): State {
               state: entry.state === 'running' ? ('interrupted' as const) : entry.state,
               calls: entry.calls.map((call) => (call.state === 'running' ? { ...call, state: 'interrupted' as const } : call)),
             }
-          : entry,
+          : // An answer the turn cut off mid-part never hears that it ended.
+            (entry.kind === 'assistant' || entry.kind === 'thinking') && entry.streaming
+            ? { ...entry, streaming: false }
+            : entry,
       )
       const summary: TurnSummary = {
         id: nextId('turn'),

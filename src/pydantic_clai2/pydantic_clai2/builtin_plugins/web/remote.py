@@ -57,6 +57,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TaskEntry,
     TaskTranscript,
     TextDelta,
+    TextDone,
     ThemeChanged,
     ThemeInfo,
     TitleChanged,
@@ -231,7 +232,9 @@ class Remote:
         for message in self._translator.translate(event):
             if by_user:
                 # Only the cell itself: the scripted model's closing text is not the user's.
-                if isinstance(message, TextDelta) or (isinstance(message, ItemAdded) and message.item.kind != 'tool'):
+                if isinstance(message, TextDelta | TextDone) or (
+                    isinstance(message, ItemAdded) and message.item.kind != 'tool'
+                ):
                     continue
                 if isinstance(message, ItemAdded):
                     message = ItemAdded(item=replace(message.item, by_user=True))

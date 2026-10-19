@@ -80,6 +80,12 @@ function rows(entries: Entry[], orchestrating: boolean): Row[] {
   )
 }
 
+/** Whether `entry` shows the model writing right now; the working dots stand in for anything it does unseen, such as
+ * writing a tool call's arguments or thinking without a summary. */
+function writing(entry: Entry | undefined, running: boolean): boolean {
+  return running && (entry?.kind === 'assistant' || entry?.kind === 'thinking') && entry.streaming && !!entry.text.trim()
+}
+
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
 }
@@ -154,7 +160,7 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
     entries,
     entries.findLast((entry) => entry.kind === 'user'),
   )
-  const last = entries[entries.length - 1]
+  const shown = entries.filter((entry) => !(entry.kind === 'tool' && entry.by_user))
   const orchestrating = useContext(WorkspaceLinkContext) !== null
   return (
     <OpenCardsContext.Provider value={cards}>
@@ -162,14 +168,14 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
       <div className="column">
         {entries.length === 0
           ? empty
-          : rows(entries.filter((entry) => !(entry.kind === 'tool' && entry.by_user)), orchestrating).map((row) =>
+          : rows(shown, orchestrating).map((row) =>
               row.kind === 'group' ? (
                 <ToolGroup key={row.id} tools={row.tools} />
               ) : (
-                <EntryView key={row.entry.id} entry={row.entry} live={running && row.entry === last} />
+                <EntryView key={row.entry.id} entry={row.entry} live={writing(row.entry, running)} />
               ),
             )}
-        {running && last?.kind !== 'assistant' && last?.kind !== 'thinking' && (
+        {running && !writing(shown[shown.length - 1], running) && (
           <div className="working">
             <span className="dot" />
             <span className="dot" />
