@@ -133,29 +133,27 @@ async def test_supervisor_output_bound_preserves_captured_prefix(
     assert (await backend.run(['printf', 'usable'])).stdout == 'usable'
 
 
-async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(workspace_harness: WorkspaceHarness) -> None:
+async def test_remote_deadline_stops_command_when_provider_stop_is_delayed(
+    workspace_harness: WorkspaceHarness, tmp_path: Path
+) -> None:
     backend = workspace_harness.backend()
     await backend.working_dir()
     workspace_harness.drain_before_stop = True
-    pending = asyncio.create_task(backend.run(['sh', '-c', 'echo $$; exec sleep 60'], timeout=0.2))
-    pid: int | None = None
+    # A PID file, not stdout: the host deadline can abandon the stream before the command prints.
+    pid_file = tmp_path / 'pid'
     try:
-        async with asyncio.timeout(10):
-            pid = int(await workspace_harness.output.get())
         with pytest.raises(WorkspaceTimeoutError):
-            await pending
+            await backend.run(['sh', '-c', f'echo $$ > {pid_file}; exec sleep 60'], timeout=0.2)
+        # The supervisor's own deadline, counted from spawn, stops the group before the delayed stop arrives.
         await workspace_harness.wait_supervisors()
+        pid = int(pid_file.read_text())
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
     finally:
-        # This fallback still owns the process if its remote deadline regresses.
         workspace_harness.drain_before_stop = False
-        if pid is not None:  # pragma: no branch - missing PID only follows an earlier test failure
-            with suppress(ProcessLookupError):
-                os.killpg(pid, signal.SIGKILL)
-        if not pending.done():  # pragma: no cover - independent cleanup after a regression
-            pending.cancel()
-        await asyncio.gather(pending, return_exceptions=True)
+        if pid_file.exists():  # pragma: no branch - the file only goes missing after an earlier failure
+            with suppress(ProcessLookupError, ValueError):
+                os.killpg(int(pid_file.read_text()), signal.SIGKILL)
 
 
 async def test_supervisor_drains_closed_stdout_and_separate_stderr(workspace_harness: WorkspaceHarness) -> None:
