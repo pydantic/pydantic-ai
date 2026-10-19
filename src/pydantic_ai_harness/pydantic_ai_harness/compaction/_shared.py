@@ -6,7 +6,7 @@ preservation, and in-place tool-result clearing -- anything used by more than on
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
@@ -47,6 +47,8 @@ from pydantic_ai_harness.compaction._receipts import (
 )
 
 if TYPE_CHECKING:
+    from opentelemetry.util.types import AttributeValue
+
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.tools import ToolDefinition
 
@@ -594,6 +596,7 @@ async def compact_with_span(
     messages: list[ModelMessage],
     compact: Callable[[], Awaitable[list[ModelMessage]]],
     tokenizer: Callable[[str], int] | None = None,
+    attributes: Mapping[str, AttributeValue] | None = None,
 ) -> list[ModelMessage]:
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 
@@ -609,6 +612,7 @@ async def compact_with_span(
         compact: Zero-argument async callable returning the compacted message list.
         tokenizer: Optional tokenizer for the `compaction.tokens_*` estimates. When `None`,
             uses the same ~4 characters-per-token heuristic as `estimate_token_count`.
+        attributes: Strategy-specific attributes added to the span, such as why it fired.
     """
     token = open_receipt_scope()
     try:
@@ -629,6 +633,7 @@ async def compact_with_span(
                     'compaction.messages_after': len(compacted),
                     'compaction.tokens_before': estimate_token_count(messages, tokenizer),
                     'compaction.tokens_after': estimate_token_count(compacted, tokenizer),
+                    **(attributes or {}),
                 }
             )
             for receipt in receipts:

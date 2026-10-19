@@ -256,14 +256,14 @@ class TestCompactOnCacheExpiry:
         margin = timedelta(minutes=1)
 
         warm = _Local(model)
-        result = await _agent(warm, *caching, CompactOnCacheExpiry(), **kwargs).run(
+        result = await _agent(warm, *caching, CompactOnCacheExpiry(max_fraction=None), **kwargs).run(
             'next', message_history=_idle(history, case.retention - margin)
         )
         assert _cleared(warm.sent[0]) == []
         assert _cleared(result.all_messages()) == []
 
         cold = _Local(model)
-        result = await _agent(cold, *caching, CompactOnCacheExpiry(), **kwargs).run(
+        result = await _agent(cold, *caching, CompactOnCacheExpiry(max_fraction=None), **kwargs).run(
             'next', message_history=_idle(history, case.retention + margin)
         )
         # The 5 newest of the 8 tool results stay, as in Claude Code's idle clearing.
@@ -295,7 +295,7 @@ class TestCompactOnCacheExpiry:
             await _conversation(_anthropic() if isinstance(model, FallbackModel) else model), timedelta(days=1)
         )
         local = _Local(model)
-        await _agent(local, CompactOnCacheExpiry()).run('next', message_history=history)
+        await _agent(local, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
         assert _cleared(local.sent[0]) == []
 
     @pytest.mark.moves_cache_prefix(
@@ -305,7 +305,7 @@ class TestCompactOnCacheExpiry:
     async def test_fallback_retention_covers_an_undocumented_provider(self) -> None:
         model = _google()
         history = await _conversation(model)
-        capability = CompactOnCacheExpiry(fallback_retention=timedelta(hours=1))
+        capability = CompactOnCacheExpiry(max_fraction=None, fallback_retention=timedelta(hours=1))
 
         warm = _Local(model)
         await _agent(warm, capability).run('next', message_history=_idle(history, timedelta(minutes=59)))
@@ -321,7 +321,7 @@ class TestCompactOnCacheExpiry:
         model = _anthropic()
         history = await _conversation(model)
         local = _Local(model)
-        capability = CompactOnCacheExpiry(fallback_retention=timedelta(hours=1))
+        capability = CompactOnCacheExpiry(max_fraction=None, fallback_retention=timedelta(hours=1))
         await _agent(local, capability).run('next', message_history=_idle(history, timedelta(minutes=6)))
         assert len(_cleared(local.sent[0])) == TOOL_STEPS - 5
 
@@ -332,7 +332,7 @@ class TestCompactOnCacheExpiry:
         settings = OpenAIChatModelSettings(openai_prompt_cache_retention='24h')
         history = _idle(await _conversation(model, model_settings=settings), timedelta(hours=23))
         local = _Local(model)
-        capability = CompactOnCacheExpiry(fallback_retention=timedelta(minutes=1))
+        capability = CompactOnCacheExpiry(max_fraction=None, fallback_retention=timedelta(minutes=1))
         await _agent(local, capability, model_settings=settings).run('next', message_history=history)
         assert _cleared(local.sent[0]) == []
 
@@ -349,7 +349,7 @@ class TestCompactOnCacheExpiry:
             return replace(request_context, model=anthropic)
 
         # The agent's own `TestModel` has no documented retention, so without the swap nothing would be cleared.
-        await _agent(TestModel(), hooks, CompactOnCacheExpiry()).run('next', message_history=history)
+        await _agent(TestModel(), hooks, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
         assert len(_cleared(anthropic.sent[0])) == TOOL_STEPS - 5
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -361,7 +361,7 @@ class TestCompactOnCacheExpiry:
         """
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
-        capability = CompactOnCacheExpiry[None]()
+        capability = CompactOnCacheExpiry[None](max_fraction=None)
 
         async def sent(messages: list[ModelMessage]) -> list[ModelMessage]:
             ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
@@ -376,6 +376,31 @@ class TestCompactOnCacheExpiry:
         assert len(_cleared(await sent([*history, ModelRequest(parts=[UserPromptPart('next')])]))) == TOOL_STEPS - 5
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_measures_the_gap_to_the_request_being_sent(self) -> None:
+        """The gap ends at the request's own timestamp, not the wall clock, so the stored history shows why it fired.
+
+        Naive timestamps, as an older or hand-built history may carry, are read as UTC.
+        """
+        model = _anthropic()
+        history = [
+            replace(message, timestamp=message.timestamp.replace(tzinfo=None))
+            if isinstance(message, ModelResponse)
+            else message
+            for message in await _conversation(model)
+        ]
+        last_response = history[-1]
+        assert isinstance(last_response, ModelResponse)
+        request = ModelRequest(parts=[UserPromptPart('next')], timestamp=last_response.timestamp + timedelta(minutes=6))
+        messages = [*history, request]
+        ctx = RunContext(deps=None, model=model, usage=RunUsage(), messages=messages)
+        request_context = ModelRequestContext(
+            model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
+        )
+        sent = (await CompactOnCacheExpiry[None](max_fraction=None).before_model_request(ctx, request_context)).messages
+        # By the wall clock the last response is seconds old, so only the request's timestamp makes this expired.
+        assert len(_cleared(sent)) == TOOL_STEPS - 5
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_one_hour_cache_point_extends_the_window(self) -> None:
         """A `CachePoint(ttl='1h')` the provider already received keeps a 30-minute-old cache warm."""
         model = _anthropic()
@@ -384,7 +409,9 @@ class TestCompactOnCacheExpiry:
         assert isinstance(first, ModelRequest)
         history[0] = replace(first, parts=[UserPromptPart(['investigate', CachePoint(ttl='1h')])])
         local = _Local(model)
-        await _agent(local, CompactOnCacheExpiry()).run('next', message_history=_idle(history, timedelta(minutes=30)))
+        await _agent(local, CompactOnCacheExpiry(max_fraction=None)).run(
+            'next', message_history=_idle(history, timedelta(minutes=30))
+        )
         assert _cleared(local.sent[0]) == []
 
     @pytest.mark.moves_cache_prefix(reason='The first request of the turn clears tool results after the cache expired.')
@@ -394,7 +421,7 @@ class TestCompactOnCacheExpiry:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
         local = _Local(model, tool_steps=3)
-        result = await _agent(local, CompactOnCacheExpiry()).run('next', message_history=history)
+        result = await _agent(local, CompactOnCacheExpiry(max_fraction=None)).run('next', message_history=history)
 
         cleared = [_cleared(messages) for messages in local.sent]
         assert [len(ids) for ids in cleared] == [TOOL_STEPS - 5] * 4
@@ -404,9 +431,25 @@ class TestCompactOnCacheExpiry:
         assert result.output == 'done'
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    async def test_size_floor_leaves_a_small_expired_history_alone(self) -> None:
+    async def test_default_size_floor_leaves_a_small_expired_history_alone(self) -> None:
+        """By default only a history above a fifth of the window is cleared: a short chat keeps its tool results."""
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
+
+        default = _Local(model)
+        await _agent(default, CompactOnCacheExpiry()).run('next', message_history=history)
+        assert _cleared(default.sent[0]) == []
+
+        # The same history is above a fifth of a 1,000-token window.
+        small_window = _Local(model)
+        await _agent(small_window, CompactOnCacheExpiry(context_window=1_000)).run('next', message_history=history)
+        assert len(_cleared(small_window.sent[0])) == TOOL_STEPS - 5
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_max_tokens_replaces_the_default_floor(self) -> None:
+        model = _anthropic()
+        history = _idle(await _conversation(model), timedelta(minutes=6))
+        assert CompactOnCacheExpiry(max_tokens=100).max_fraction is None
 
         small = _Local(model)
         await _agent(small, CompactOnCacheExpiry(max_tokens=100_000)).run('next', message_history=history)
@@ -425,7 +468,8 @@ class TestCompactOnCacheExpiry:
         history = _idle(history, timedelta(minutes=6))
         local = _Local(model)
         capability = CompactOnCacheExpiry(
-            SlidingWindowCompaction(max_messages=1, keep_messages=2, preserve_first_user_message=False)
+            SlidingWindowCompaction(max_messages=1, keep_messages=2, preserve_first_user_message=False),
+            max_fraction=None,
         )
         await _agent(local, capability).run('next', message_history=history)
 
@@ -477,11 +521,14 @@ class TestCompactOnCacheExpiry:
     async def test_emits_compact_messages_span(self, capfire: CaptureLogfire) -> None:
         model = _anthropic()
         history = _idle(await _conversation(model), timedelta(minutes=6))
-        agent = _agent(_Local(model), CompactOnCacheExpiry())
+        agent = _agent(_Local(model), CompactOnCacheExpiry(max_fraction=None))
         agent.instrument = InstrumentationSettings()
         await agent.run('next', message_history=history)
 
         spans = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
+        (span,) = spans
+        # The history was moved back 6 minutes, so the gap is 360 seconds plus the test's own run time.
+        assert 360 <= span['attributes']['compaction.idle_seconds'] < 420
         assert [
             {k: v for k, v in s['attributes'].items() if k.startswith(('compaction.strategy', 'compaction.messages'))}
             for s in spans
