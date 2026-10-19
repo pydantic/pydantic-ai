@@ -9,7 +9,7 @@ from pydantic import SecretStr
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.models import vllm
 from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('token', ['', 'test-secret'])
@@ -114,7 +114,7 @@ async def test_provider_menu_connection(tmp_path: Path, monkeypatch: pytest.Monk
         return next(results)
 
     monkeypatch.setattr(vllm, 'connect', connect)
-    assert await open_add_model_menu(context) == 'Saved model. Applied.'
+    assert await open_add_model_menu(context, console=QUIET) == 'Saved model. Applied.'
 
 
 async def test_corrupt_connection_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
