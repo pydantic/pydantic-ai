@@ -272,8 +272,10 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   `get_page` stays available on every model. `include_domains` and
   `exclude_domains` become the native tool's `allowed_domains` and
   `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  You.com's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means You.com
+  searches.
 - Or pass You.com's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
