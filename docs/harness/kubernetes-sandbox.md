@@ -21,7 +21,7 @@ The `anthropic` extra is there because the examples use an Anthropic model; swap
 
 ## Set up the cluster
 
-Install agent-sandbox (v1.0.6 or later) with its extensions:
+Install agent-sandbox (v1.0.7 or later) with its extensions:
 
 ```bash
 kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.7/sandbox-with-extensions.yaml
@@ -145,8 +145,8 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
 ## Limitations
 
 - Commands run on the asyncio event loop only; under Trio, `run` raises `UserError`.
-- File operations run as shell commands in the sandbox, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`). sandboxd's own file API only serves its root directory, so it cannot stand in for the whole filesystem the agent's commands see.
-- A command's timeout or cancellation kills its process group; a job that detaches with `setsid` keeps running. A background job that keeps the command's output open delays the result by about 5 seconds; redirect its output to a file.
+- Commands start through `/bin/sh` and file operations run as shell commands, so the image needs a POSIX shell with coreutils (`base64`, `dd`, `find`). sandboxd's own file API only serves its root directory, so it cannot stand in for the whole filesystem the agent's commands see.
+- A command's timeout or cancellation kills its process group; a job that detaches with `setsid` may keep running. A background job that keeps the command's output open delays the result by about 5 seconds; redirect its output to a file.
 - A command whose combined output passes 10 MiB is stopped the same way and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large output to a file instead.
 - sandboxd's optional bearer token is not supported yet; rely on the NetworkPolicy to restrict who can reach the pods.
 

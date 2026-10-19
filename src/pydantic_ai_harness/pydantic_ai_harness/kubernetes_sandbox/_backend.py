@@ -3,10 +3,14 @@
 SDK assumptions verified 2026-10-19 against `k8s-agent-sandbox` 1.0.6 and 1.0.7 and sandboxd from
 agent-sandbox v1.0.7:
 
-* `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool` and waits until it is
-  Ready; `get_sandbox` attaches to a claim by name; `AsyncSandbox.terminate` deletes the claim;
-* `AsyncSandbox.connector.grpc_channel()` returns a `grpc.aio` channel to the pod's sandboxd, over a
-  `kubectl port-forward` or an in-cluster address, depending on the connection config;
+* `AsyncSandboxClient.create_sandbox` claims a sandbox from a `SandboxWarmPool`, waits until it is
+  Ready, and deletes the claim it named if that fails or is cancelled; `get_sandbox` attaches to a
+  claim by name and raises `SandboxNotFoundError` for any failed lookup;
+* `client.k8s_helper.get_sandbox_claim` returns `None` only for a 404, and `delete_sandbox_claim`
+  ignores only a 404;
+* `AsyncSandbox.connector.connect()` (re)opens the transport and `grpc_channel()` returns a `grpc.aio`
+  channel to the pod's sandboxd, over a `kubectl port-forward` or an in-cluster address, depending
+  on the connection config;
 * sandboxd runs commands in its `--root-dir` (`/workspace` by default).
 
 Re-check these before changing the integration.
@@ -16,7 +20,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import uuid
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Literal
@@ -35,6 +38,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
+    EXEC_SCRIPT,
     absolute_path,
     check_timeout,
     command_argv,
@@ -59,6 +63,8 @@ if TYPE_CHECKING:
     from k8s_agent_sandbox.async_sandbox_client import AsyncSandboxClient
 
 PROVIDER = 'kubernetes'
+
+DEFAULT_SANDBOX_TIMEOUT = 24 * 60 * 60
 
 Connection = Literal['port-forward', 'in-cluster-service', 'in-cluster-pod-ip']
 """How the client reaches a sandbox's sandboxd: a `kubectl port-forward` to the pod (from outside the
@@ -86,6 +92,24 @@ def _client(connection: Connection) -> AsyncSandboxClient[AsyncSandbox]:
     # `cleanup=False`: by default the SDK deletes the claims it created when the interpreter exits,
     # and a backend never destroys its environment; whoever holds the ref does.
     return AsyncSandboxClient(connection_config=config, cleanup=False)
+
+
+async def _start_command(
+    sandbox: AsyncSandbox, argv: list[str], *, env: Mapping[str, str], timeout: float | None
+) -> CommandResult:
+    import grpc
+
+    # As the SDK's own command executor does: `connect()` restarts a `kubectl port-forward` that died
+    # and re-reads the sandbox's address, and an unreachable in-cluster address is dropped so the
+    # next command resolves it again.
+    await sandbox.connector.connect()
+    channel = await sandbox.connector.grpc_channel()
+    try:
+        return await start_command(channel, argv, env=env, timeout=timeout)
+    except grpc.aio.AioRpcError as error:
+        if error.code() == grpc.StatusCode.UNAVAILABLE:
+            await sandbox.connector.invalidate_sandboxd_transport(channel)
+        raise
 
 
 async def _close_client(client: AsyncSandboxClient[AsyncSandbox]) -> None:
@@ -121,7 +145,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         warm_pool: str | None = None,
         namespace: str = 'default',
         connection: Connection = 'port-forward',
-        sandbox_timeout: int | None = None,
+        sandbox_timeout: int | None = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
     ) -> None:
@@ -185,16 +209,20 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_timeout(timeout)
         argv = command_argv(command, shell)
         _require_asyncio()
-        if self._working_dir is not None:
-            # sandboxd starts every command in its root directory and moves a `cwd` outside it under
-            # the root instead of refusing it, so another directory is entered from a shell.
-            argv = ['/bin/sh', '-c', 'cd -- "$1" || exit 1; shift; exec "$@"', 'sh', self._working_dir, *argv]
+        # Workaround: sandboxd's `Start` leaves stdin open and reports a program it cannot start as a
+        # gRPC error, where the protocol wants stdin at EOF and exit codes 127 and 126, so every
+        # command goes through `sh`. sandboxd also starts every command in its root directory and
+        # moves a `cwd` outside it under the root instead of refusing it, so another directory is
+        # entered from the shell. Not tracked upstream yet.
+        if self._working_dir is None:
+            argv = ['/bin/sh', '-c', EXEC_SCRIPT, 'sh', *argv]
+        else:
+            argv = ['/bin/sh', '-c', f'cd -- "$1" || exit 1\nshift\n{EXEC_SCRIPT}', 'sh', self._working_dir, *argv]
         async with self._operation():
             async with self._lock:
                 sandbox = await self._acquire()
             try:
-                channel = await sandbox.connector.grpc_channel()
-                return await start_command(channel, argv, env={**self._env, **(env or {})}, timeout=timeout)
+                return await _start_command(sandbox, argv, env={**self._env, **(env or {})}, timeout=timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
                 raise
             except Exception as error:
@@ -243,30 +271,25 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             try:
                 sandbox = await self._client.get_sandbox(claim_name, namespace=namespace)
             except SandboxNotFoundError as error:
-                raise WorkspaceUnavailableError(f'Kubernetes sandbox {self._ref.id!r} no longer exists') from error
+                # The SDK raises this for any failed lookup, an unreachable API server too, so only a
+                # claim the API server reports missing is gone for good.
+                if await self._client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
+                    raise WorkspaceUnavailableError(f'Kubernetes sandbox {self._ref.id!r} no longer exists') from error
+                raise
             self._sandbox = sandbox
             return sandbox
         assert self._warm_pool is not None
-        # Named here, not by the SDK, so the ref is known even if this task is cancelled while the
-        # claim waits to become Ready; the SDK leaves an explicitly named claim in place on failure.
-        claim_name = f'pydantic-ai-{uuid.uuid4().hex[:16]}'
-        ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
         try:
+            # Named by the SDK, which deletes the claim again if this fails or is cancelled before it is Ready.
             # The SDK types its unused `volume_claim_templates` parameter as a bare `list[dict]`.
             sandbox = await self._client.create_sandbox(  # pyright: ignore[reportUnknownMemberType]
-                self._warm_pool,
-                namespace=self._namespace,
-                claim_name=claim_name,
-                shutdown_after_seconds=self._sandbox_timeout,
+                self._warm_pool, namespace=self._namespace, shutdown_after_seconds=self._sandbox_timeout
             )
-        except anyio.get_cancelled_exc_class():
-            self._ref = ref
-            raise
         except (SandboxWarmPoolNotFoundError, SandboxClaimFailedError) as error:
             raise WorkspaceUnavailableError(
                 f'Could not claim a sandbox from warm pool {self._warm_pool!r}: {error}'
             ) from error
-        self._ref = ref
+        self._ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{sandbox.claim_name}')
         self._sandbox = sandbox
         return sandbox
 
@@ -288,21 +311,15 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             ) from error
 
 
-async def destroy_sandbox(ref: WorkspaceRef, *, connection: Connection = 'port-forward') -> None:
+async def destroy_sandbox(ref: WorkspaceRef) -> None:
     """Delete the claim a ref names, and with it the sandbox; a claim that is already gone returns quietly."""
-    from k8s_agent_sandbox.exceptions import SandboxNotFoundError
-
     namespace, claim_name = parse_ref(ref)
     _require_asyncio()
-    client = _client(connection)
+    client = _client('port-forward')  # Talks only to the API server, so the connection is never used.
     try:
         # Workaround: `AsyncSandboxClient.delete_sandbox` logs and swallows every error, so a failed
-        # delete would look like success. Attaching and calling `terminate()` raises instead.
-        # Not tracked upstream yet (the OpenAI integration hit the same in #1932).
-        try:
-            sandbox = await client.get_sandbox(claim_name, namespace=namespace)
-        except SandboxNotFoundError:
-            return
-        await sandbox.terminate()
+        # delete would look like success. The SDK's Kubernetes helper ignores only a 404. Use
+        # `delete_sandbox` once it raises (https://github.com/kubernetes-sigs/agent-sandbox/pull/1856).
+        await client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
     finally:
         await _close_client(client)

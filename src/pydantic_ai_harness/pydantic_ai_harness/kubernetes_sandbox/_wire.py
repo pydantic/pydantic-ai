@@ -2,7 +2,7 @@
 
 Workaround: the SDK's generated stubs (`k8s_agent_sandbox._proto`) need protobuf 7 at runtime, which
 `xai-sdk` still excludes, and they load only after the SDK puts its private `_proto` directory on
-`sys.path`. Encoding these four messages by hand needs no protobuf at all. Drop this module once the
+`sys.path`. Encoding these few messages by hand needs no protobuf at all. Drop this module once the
 SDK exposes `Start` itself (https://github.com/kubernetes-sigs/agent-sandbox/issues/1603) and its
 stubs work with protobuf 6 (not tracked upstream yet).
 
@@ -11,9 +11,7 @@ Field numbers from `packages/sandboxd/spec/process/v1/process.proto`:
     message ProcessConfig { repeated string command = 1; map<string, string> env_vars = 2; optional string cwd = 3; }
     message StartRequest { ProcessConfig config = 1; optional PTY pty = 2; }
     message StartResponse { oneof event { InitEvent init = 1; bytes stdout = 2; bytes stderr = 3; ExitEvent exit = 4; } }
-    message InitEvent { int32 process_id = 1; }
     message ExitEvent { int32 exit_code = 1; }
-    message WriteStdinRequest { int32 process_id = 1; oneof payload { bytes input = 2; google.protobuf.Empty eof = 3; } }
 
 These messages use only varint and length-delimited fields, so those are the only wire types read.
 """
@@ -27,7 +25,7 @@ from typing import Literal
 _VARINT = 0
 _LEN = 2
 
-_EVENTS: dict[int, Literal['init', 'stdout', 'stderr', 'exit']] = {1: 'init', 2: 'stdout', 3: 'stderr', 4: 'exit'}
+_EVENTS: dict[int, Literal['stdout', 'stderr', 'exit']] = {2: 'stdout', 3: 'stderr', 4: 'exit'}
 
 
 def _varint(value: int) -> bytes:
@@ -52,11 +50,6 @@ def encode_start_request(command: Sequence[str], env: Mapping[str, str]) -> byte
     for key, value in env.items():
         config += _field(2, _field(1, key.encode()) + _field(2, value.encode()))
     return _field(1, config)
-
-
-def encode_close_stdin(process_id: int) -> bytes:
-    """Encode a `WriteStdinRequest` that closes the process's stdin (`eof`)."""
-    return _varint(1 << 3 | _VARINT) + _varint(process_id) + _field(3, b'')
 
 
 def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -95,19 +88,19 @@ def _int32_field(message: bytes, number: int) -> int:
 
 @dataclass(frozen=True)
 class StartEvent:
-    """One `StartResponse`: the process id, an output chunk, the exit code, or an event this module does not know."""
+    """One `StartResponse`: an output chunk, the exit code, or another event (`init` included), which the backend ignores."""
 
-    kind: Literal['init', 'stdout', 'stderr', 'exit', 'unknown']
+    kind: Literal['stdout', 'stderr', 'exit', 'unknown']
     data: bytes = b''
     number: int = 0
 
 
 def decode_start_response(data: bytes) -> StartEvent:
-    """Decode a `StartResponse`; an event a newer sandboxd adds decodes as `unknown`."""
+    """Decode a `StartResponse`; `init` and any event a newer sandboxd adds decode as `unknown`."""
     for number, value in _fields(data):
         kind = _EVENTS.get(number)
         if kind is not None and isinstance(value, bytes):
-            if kind in ('init', 'exit'):
+            if kind == 'exit':
                 return StartEvent(kind, number=_int32_field(value, 1))
             return StartEvent(kind, data=value)
     return StartEvent('unknown')

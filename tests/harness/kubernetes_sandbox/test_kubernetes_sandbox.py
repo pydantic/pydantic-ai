@@ -7,8 +7,9 @@ import sys
 
 import anyio
 import grpc
+import grpc.aio
 import pytest
-from k8s_agent_sandbox.exceptions import SandboxClaimFailedError
+from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxNotFoundError
 from k8s_agent_sandbox.models import SandboxdInClusterConnectionConfig, SandboxdPodTunnelConnectionConfig
 
 from pydantic_ai import Agent, RunContext
@@ -90,7 +91,7 @@ async def test_a_claim_uses_the_pool_namespace_and_timeout(cluster: FakeCluster)
     backend = KubernetesSandboxBackend(warm_pool='pool', namespace='agents', sandbox_timeout=60, env={'A': 'base'})
     result = await backend.run('printf "$A $B"', shell=True, env={'B': 'call'})
     assert result.stdout == 'base call'
-    assert backend.ref is not None and backend.ref.id.startswith('agents/pydantic-ai-')
+    assert backend.ref is not None and backend.ref.id.startswith('agents/sandbox-claim-')
     [(pool, namespace, kwargs)] = cluster.created
     assert (pool, namespace, kwargs['shutdown_after_seconds']) == ('pool', 'agents', 60)
     sandbox = await backend.get_sandbox()
@@ -158,13 +159,47 @@ async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(cluster: Fake
 
 
 @asyncio_only
-async def test_a_cancelled_claim_keeps_its_ref(cluster: FakeCluster) -> None:
+async def test_a_cancelled_claim_is_deleted(cluster: FakeCluster) -> None:
     cluster.create_gate = anyio.Event()  # type: ignore[assignment]
     backend = KubernetesSandboxBackend(warm_pool='pool', namespace='agents')
     with anyio.move_on_after(0.5):
         await backend.run(['true'])
-    # The claim exists although create never returned: the ref lets the application delete it.
-    assert _sandboxd(cluster, backend.ref) is not None
+    # Created, then deleted again when the wait for it to become Ready was cancelled.
+    assert len(cluster.created) == 1 and not cluster.claims
+    assert backend.ref is None
+
+
+@asyncio_only
+async def test_a_failed_lookup_of_an_existing_claim_propagates(cluster: FakeCluster) -> None:
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    await probe.run(['true'])
+    assert probe.ref is not None
+    cluster.lookup_error = True
+    # Not `WorkspaceUnavailableError`: the claim still exists, so a retry may attach to it.
+    with pytest.raises(SandboxNotFoundError):
+        await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
+    await probe.aclose()
+
+
+@asyncio_only
+async def test_a_dropped_connection_is_reopened(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    cluster.drop_connections()
+    cluster.reconnect_fails = True
+    with pytest.raises(grpc.aio.AioRpcError) as caught:
+        await backend.run(['true'])
+    assert caught.value.code() == grpc.StatusCode.UNAVAILABLE
+    # Dropped from the SDK's cache, as its own command executor does.
+    assert len(cluster.invalidated) == 1
+    cluster.reconnect_fails = False
+    assert (await backend.run(['true'])).exit_code == 0
+    # Any other gRPC error leaves the connection cached.
+    _sandboxd(cluster, backend.ref).start_error = grpc.StatusCode.INTERNAL
+    with pytest.raises(grpc.aio.AioRpcError):
+        await backend.run(['true'])
+    assert len(cluster.invalidated) == 1
+    await backend.aclose()
 
 
 @asyncio_only
@@ -183,17 +218,11 @@ async def test_a_lost_connection_to_a_live_sandbox_propagates(cluster: FakeClust
 
 
 @asyncio_only
-async def test_stdin_close_races_are_tolerated(cluster: FakeCluster) -> None:
+async def test_a_program_that_cannot_run_exits_126(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
-    await backend.run(['true'])
-    sandboxd = _sandboxd(cluster, backend.ref)
-    # A process already unregistered (`NOT_FOUND`), or still unregistering (`INTERNAL: ... file already closed`).
-    for code in (grpc.StatusCode.NOT_FOUND, grpc.StatusCode.INTERNAL):
-        sandboxd.stdin_error = code
-        assert (await backend.run(['echo', 'ok'])).stdout == 'ok\n'
-    sandboxd.stdin_error = grpc.StatusCode.PERMISSION_DENIED
-    with pytest.raises(grpc.aio.AioRpcError):
-        await backend.run(['echo', 'ok'])
+    root = await backend.working_dir()
+    assert (await backend.run(['touch', f'{root}/not-executable'])).exit_code == 0
+    assert (await backend.run([f'{root}/not-executable'])).exit_code == 126
     await backend.aclose()
 
 
@@ -237,6 +266,18 @@ async def test_destroying_a_missing_claim_returns_quietly(cluster: FakeCluster) 
     assert not cluster.claims
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
         await capability.backend(backend.ref).run(['true'])
+
+
+@asyncio_only
+async def test_a_failed_destroy_raises(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    assert backend.ref is not None
+    cluster.delete_error = RuntimeError('403 Forbidden')
+    with pytest.raises(RuntimeError, match='Forbidden'):
+        await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
+    assert cluster.claims
+    await backend.aclose()
 
 
 def test_capability_arguments_are_checked() -> None:

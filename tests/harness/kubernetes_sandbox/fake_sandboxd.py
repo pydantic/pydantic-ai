@@ -1,10 +1,9 @@
 """An in-process sandboxd and agent-sandbox SDK fake for `KubernetesSandboxBackend` tests.
 
-`FakeSandboxd` serves sandboxd's `process.v1.ProcessService` `Start` and `WriteStdin` over a real
-`grpc.aio` server and runs each command as a host process in its root directory, with sandboxd's
-semantics: the command gets its own process group, which is SIGKILLed when the call is cancelled;
-stdin stays open until `WriteStdin(eof)`; a program that cannot start fails with `NOT_FOUND`; a
-signal death exits 128+n. Messages are built with protobuf from a descriptor matching
+`FakeSandboxd` serves sandboxd's `process.v1.ProcessService` `Start` over a real `grpc.aio` server
+and runs each command as a host process in its root directory, with sandboxd's semantics: the
+command gets its own process group, which is SIGKILLed when the call is cancelled; stdin is an
+open pipe; a signal death exits 128+n. Messages are built with protobuf from a descriptor matching
 `process.proto`, independently of the backend's hand-written encoding, so the two check each other.
 
 `FakeCluster` stands in for the SDK's `AsyncSandboxClient`: each claim gets its own `FakeSandboxd`
@@ -16,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-import shutil
 import signal
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -69,19 +67,9 @@ def _messages() -> dict[str, Any]:
     response.oneof_decl.add(name='event')
     for proto_field in response.field:
         proto_field.oneof_index = 0
-    message('Empty')
-    stdin = message(
-        'WriteStdinRequest',
-        ('process_id', 1, F.TYPE_INT32, opt, ''),
-        ('input', 2, F.TYPE_BYTES, opt, ''),
-        ('eof', 3, F.TYPE_MESSAGE, opt, '.fake.process.v1.Empty'),
-    )
-    stdin.oneof_decl.add(name='payload')
-    stdin.field[1].oneof_index = 0
-    stdin.field[2].oneof_index = 0
     pool = descriptor_pool.DescriptorPool()
     pool.Add(file)  # pyright: ignore[reportUnknownMemberType]
-    names = ('StartRequest', 'StartResponse', 'WriteStdinRequest')
+    names = ('StartRequest', 'StartResponse')
     return {
         name: message_factory.GetMessageClass(pool.FindMessageTypeByName(f'fake.process.v1.{name}'))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         for name in names
@@ -99,10 +87,6 @@ def _serialize(message: Any) -> bytes:
     return message if isinstance(message, bytes) else message.SerializeToString()
 
 
-def _raw(data: bytes) -> bytes:
-    return data
-
-
 class FakeSandboxd:
     """A sandboxd `ProcessService` serving host processes in `root`."""
 
@@ -112,18 +96,15 @@ class FakeSandboxd:
         self.target = ''
         self._processes: dict[int, _Process] = {}
         self._next_id = 0
-        self.stdin_error: grpc.StatusCode | None = None
-        """When set, `WriteStdin` fails with this code, as sandboxd's `INTERNAL: ... file already closed` race does."""
         self.send_exit = True
         """When false, `Start` ends its stream without the exit event."""
+        self.start_error: grpc.StatusCode | None = None
+        """When set, `Start` fails with this code."""
 
     async def start(self) -> None:
         self.server = grpc.aio.server()
         handlers: dict[str, grpc.RpcMethodHandler[Any, Any]] = {
             'Start': grpc.unary_stream_rpc_method_handler(self._start, MESSAGES['StartRequest'].FromString, _serialize),
-            'WriteStdin': grpc.unary_unary_rpc_method_handler(
-                self._write_stdin, MESSAGES['WriteStdinRequest'].FromString, _raw
-            ),
         }
         self.server.add_generic_rpc_handlers(
             [grpc.method_handlers_generic_handler('process.v1.ProcessService', handlers)]
@@ -140,13 +121,10 @@ class FakeSandboxd:
 
     async def _start(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> AsyncIterator[Any]:
         Response = MESSAGES['StartResponse']
+        if self.start_error is not None:
+            await context.abort(self.start_error, 'failed')
         env = {**os.environ, **dict(request.config.env_vars)}
-        try:
-            process = await _Process.spawn(list(request.config.command), cwd=self.root, env=env)
-        except FileNotFoundError as error:
-            await context.abort(
-                grpc.StatusCode.NOT_FOUND, f'failed to start command: command or path not found: {error}'
-            )
+        process = await _Process.spawn(list(request.config.command), cwd=self.root, env=env)
         self._next_id += 1
         process_id = self._next_id
         self._processes[process_id] = process
@@ -195,16 +173,6 @@ class FakeSandboxd:
             process.close()
             self._processes.pop(process_id, None)
 
-    async def _write_stdin(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> bytes:
-        if self.stdin_error is not None:
-            await context.abort(self.stdin_error, 'failed to close stdin: close |1: file already closed')
-        process = self._processes.get(request.process_id)
-        if process is None:  # pragma: no cover - only when the command exits before stdin is closed
-            await context.abort(grpc.StatusCode.NOT_FOUND, f'process {request.process_id} not found')
-        assert request.WhichOneof('payload') == 'eof'
-        process.close_stdin()
-        return b''
-
 
 class _Process:
     """A command started with `posix_spawn` in its own process group, as sandboxd starts it, so the group can be killed.
@@ -215,24 +183,20 @@ class _Process:
 
     def __init__(self, pid: int, stdin: int, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader) -> None:
         self.pid = pid
-        self._stdin: int | None = stdin
+        self._stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
         self._transports: list[asyncio.BaseTransport] = []
 
     @classmethod
     async def spawn(cls, argv: list[str], *, cwd: Path, env: dict[str, str]) -> _Process:
-        # A path with a slash is relative to the command's directory, as `execve` there resolves it.
-        program = str(cwd / argv[0]) if '/' in argv[0] else shutil.which(argv[0], path=env.get('PATH'))
-        if program is None or not os.access(program, os.X_OK):
-            raise FileNotFoundError(argv[0])
         stdin_r, stdin_w = os.pipe()
         stdout_r, stdout_w = os.pipe()
         stderr_r, stderr_w = os.pipe()
         # `posix_spawn` has no working directory argument before Python 3.13, so a shell enters it.
         pid = os.posix_spawn(
             '/bin/sh',
-            ['sh', '-c', 'cd "$0" && exec "$@"', str(cwd), program, *argv[1:]],
+            ['sh', '-c', 'cd "$0" && exec "$@"', str(cwd), *argv],
             env,
             file_actions=[
                 (os.POSIX_SPAWN_DUP2, stdin_r, 0),
@@ -257,17 +221,12 @@ class _Process:
         _, status = await asyncio.to_thread(os.waitpid, self.pid, 0)
         return os.waitstatus_to_exitcode(status)
 
-    def close_stdin(self) -> None:
-        if self._stdin is not None:
-            os.close(self._stdin)
-            self._stdin = None
-
     def kill_group(self) -> None:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(self.pid, signal.SIGKILL)
 
     def close(self) -> None:
-        self.close_stdin()
+        os.close(self._stdin)
         for transport in self._transports:
             transport.close()
 
@@ -292,22 +251,33 @@ class FakeSandbox:
             return 'SandboxNotFound', 'Sandbox object not found in Kubernetes.'
         return 'SandboxReady', ''
 
-    async def terminate(self) -> None:
-        await self.cluster.delete((self.namespace, self.claim_name or ''))
-        self.claim_name = None
-
 
 class FakeConnector:
+    """`connect()` reopens a dropped connection, as the SDK restarts a `kubectl port-forward` that died."""
+
     def __init__(self, sandbox: FakeSandbox) -> None:
         self.sandbox = sandbox
         self.channel: grpc.aio.Channel | None = None
+        self.channels: list[grpc.aio.Channel] = []
+        self.dropped = False
+        """When set, the channel points at an address nothing listens on until `connect()` reopens it."""
+
+    async def connect(self) -> None:
+        if self.dropped and not self.sandbox.cluster.reconnect_fails:
+            self.dropped = False
+            self.channel = None
 
     async def grpc_channel(self) -> grpc.aio.Channel:
         if self.sandbox.cluster.channel_error is not None:
             raise self.sandbox.cluster.channel_error
         if self.channel is None:
-            self.channel = grpc.aio.insecure_channel(self.sandbox.sandboxd.target)
+            target = '127.0.0.1:1' if self.dropped else self.sandbox.sandboxd.target
+            self.channel = grpc.aio.insecure_channel(target)
+            self.channels.append(self.channel)
         return self.channel
+
+    async def invalidate_sandboxd_transport(self, channel: grpc.aio.Channel) -> None:
+        self.sandbox.cluster.invalidated.append(channel)
 
 
 class FakeCluster:
@@ -324,9 +294,22 @@ class FakeCluster:
         self.create_error: Exception | None = None
         self.create_gate: asyncio.Event | None = None
         """When set, `create_sandbox` creates the claim, then waits for it (to test cancellation mid-create)."""
+        self.lookup_error = False
+        """When set, `get_sandbox` fails although the claim exists, as the SDK reports any failed lookup."""
+        self.delete_error: Exception | None = None
+        self.reconnect_fails = False
+        self.invalidated: list[grpc.aio.Channel] = []
+        self.deleted: list[FakeSandboxd] = []
 
     def root(self, namespace: str, claim_name: str) -> Path:
         return (self.base / namespace / claim_name).resolve()
+
+    def drop_connections(self) -> None:
+        """Point every open connection at an address nothing listens on, as when a port-forward dies."""
+        for client in self.clients:
+            for sandbox in client.sandboxes:
+                sandbox.connector.dropped = True
+                sandbox.connector.channel = None
 
     async def delete(self, key: tuple[str, str]) -> None:
         await self.claims.pop(key).stop()
@@ -334,6 +317,8 @@ class FakeCluster:
     async def close(self) -> None:
         for key in list(self.claims):
             await self.delete(key)
+        for sandboxd in self.deleted:
+            await sandboxd.stop()
 
     def client(self, *, connection_config: Any, cleanup: bool) -> FakeClient:
         """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
@@ -351,6 +336,7 @@ class FakeClient:
         self.cleanup = cleanup
         self.closed = False
         self.sandboxes: list[FakeSandbox] = []
+        self.k8s_helper = FakeK8sHelper(cluster)
 
     async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> FakeSandbox:
         from k8s_agent_sandbox.exceptions import SandboxWarmPoolNotFoundError
@@ -359,7 +345,7 @@ class FakeClient:
             raise self.cluster.create_error
         if warmpool not in self.cluster.pools:
             raise SandboxWarmPoolNotFoundError(f"SandboxWarmPool '{warmpool}' not found in namespace '{namespace}'")
-        claim_name = kwargs['claim_name']
+        claim_name = f'sandbox-claim-{len(self.cluster.created)}'
         root = self.cluster.root(namespace, claim_name)
         root.mkdir(parents=True)
         sandboxd = FakeSandboxd(root)
@@ -367,14 +353,20 @@ class FakeClient:
         self.cluster.claims[namespace, claim_name] = sandboxd
         self.cluster.created.append((warmpool, namespace, kwargs))
         if self.cluster.create_gate is not None:
-            await self.cluster.create_gate.wait()
+            try:
+                await self.cluster.create_gate.wait()
+            except asyncio.CancelledError:
+                # The SDK deletes a claim it named when creating it fails or is cancelled; the
+                # server stops with the cluster, as awaiting here would be cancelled again.
+                self.cluster.deleted.append(self.cluster.claims.pop((namespace, claim_name)))
+                raise
         return self._handle(claim_name, namespace, sandboxd)
 
     async def get_sandbox(self, claim_name: str, namespace: str = 'default') -> FakeSandbox:
         from k8s_agent_sandbox.exceptions import SandboxNotFoundError
 
         sandboxd = self.cluster.claims.get((namespace, claim_name))
-        if sandboxd is None:
+        if sandboxd is None or self.cluster.lookup_error:
             raise SandboxNotFoundError(f"SandboxClaim '{claim_name}' not found in namespace '{namespace}'")
         return self._handle(claim_name, namespace, sandboxd)
 
@@ -386,5 +378,21 @@ class FakeClient:
     async def close(self) -> None:
         self.closed = True
         for sandbox in self.sandboxes:
-            if sandbox.connector.channel is not None:
-                await sandbox.connector.channel.close()
+            for channel in sandbox.connector.channels:
+                await channel.close()
+
+
+class FakeK8sHelper:
+    """The SDK's `AsyncK8sHelper`: claims read and deleted through the API server."""
+
+    def __init__(self, cluster: FakeCluster) -> None:
+        self.cluster = cluster
+
+    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
+        return {'metadata': {'name': name}} if (namespace, name) in self.cluster.claims else None
+
+    async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
+        if self.cluster.delete_error is not None:
+            raise self.cluster.delete_error
+        if (namespace, name) in self.cluster.claims:  # A 404 is ignored.
+            await self.cluster.delete((namespace, name))

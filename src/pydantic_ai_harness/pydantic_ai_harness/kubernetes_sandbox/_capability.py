@@ -13,6 +13,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
+    DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
     Connection,
     KubernetesSandboxBackend,
@@ -21,8 +22,6 @@ from pydantic_ai_harness.kubernetes_sandbox._backend import (
 
 if TYPE_CHECKING:
     from pydantic_ai.agent import AgentRunResult
-
-DEFAULT_SANDBOX_TIMEOUT = 24 * 60 * 60
 
 
 class _SuppliedBackend(KubernetesSandboxBackend):
@@ -96,7 +95,7 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
         A claim that no longer exists is already gone, so destroying it returns quietly.
         """
-        await destroy_sandbox(ref, connection=self.connection)
+        await destroy_sandbox(ref)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it claims or attaches on first use."""

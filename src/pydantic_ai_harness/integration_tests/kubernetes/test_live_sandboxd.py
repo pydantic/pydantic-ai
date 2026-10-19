@@ -129,9 +129,10 @@ class Client:
     def __init__(self, cluster: Cluster) -> None:
         self.cluster = cluster
         self.channels: list[grpc.aio.Channel] = []
+        self.k8s_helper = self
 
     async def create_sandbox(self, warmpool: str, namespace: str = 'default', **kwargs: Any) -> Sandbox:
-        claim_name = kwargs['claim_name']
+        claim_name = f'sandbox-claim-{len(self.cluster.claims)}'
         daemon = Daemon(self.cluster.base / namespace / claim_name)
         self.cluster.claims[namespace, claim_name] = daemon
         await daemon.ready()
@@ -144,6 +145,14 @@ class Client:
             raise SandboxNotFoundError(f"SandboxClaim '{claim_name}' not found")
         return Sandbox(self, namespace, claim_name)
 
+    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
+        return {} if (namespace, name) in self.cluster.claims else None
+
+    async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
+        daemon = self.cluster.claims.pop((namespace, name), None)
+        if daemon is not None:
+            daemon.stop()
+
     async def close(self) -> None:
         for channel in self.channels:
             await channel.close()
@@ -155,25 +164,25 @@ class Sandbox:
     def __init__(self, client: Client, namespace: str, claim_name: str) -> None:
         self.client = client
         self.namespace = namespace
-        self.claim_name: str | None = claim_name
+        self.claim_name = claim_name
         self.connector = self
 
+    async def connect(self) -> None:
+        pass
+
+    async def invalidate_sandboxd_transport(self, channel: grpc.aio.Channel) -> None:
+        pass
+
     async def grpc_channel(self) -> grpc.aio.Channel:
-        daemon = self.client.cluster.claims[self.namespace, self.claim_name or '']
+        daemon = self.client.cluster.claims[self.namespace, self.claim_name]
         channel = grpc.aio.insecure_channel(f'127.0.0.1:{daemon.grpc_port}')
         self.client.channels.append(channel)
         return channel
 
     async def status(self) -> tuple[str, str]:
-        if (self.namespace, self.claim_name or '') in self.client.cluster.claims:
+        if (self.namespace, self.claim_name) in self.client.cluster.claims:
             return 'SandboxReady', ''
         return 'SandboxNotFound', 'Sandbox object not found in Kubernetes.'
-
-    async def terminate(self) -> None:
-        daemon = self.client.cluster.claims.pop((self.namespace, self.claim_name or ''), None)
-        if daemon is not None:
-            daemon.stop()
-        self.claim_name = None
 
 
 @pytest.fixture
