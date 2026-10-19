@@ -123,6 +123,8 @@ async def research(ctx: RunContext, topic: str) -> str:
 
 1. The sub-agent run stops at the same deadline as the run that called this tool.
 
+The [UI adapters](ui/overview.md)' [`run_stream()`][pydantic_ai.ui.UIAdapter.run_stream], [`run_stream_native()`][pydantic_ai.ui.UIAdapter.run_stream_native] and [`dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] take `timeout=` too. `run_stream()` and `dispatch_request()` report a run that runs out of time to the client the same way as a first-party cancellation (see [Vercel AI](ui/vercel-ai.md#cancellation) and [AG-UI](ui/ag-ui.md#usage)), and pass the `RunTimedOut` to their `on_cancel` callback. `run_stream_native()` raises it.
+
 Under [durable execution](durable_execution/overview.md), the deadline is stored as wall-clock time, so a run that's replayed or recovered keeps the deadline it started with. The `TemporalDurability`, `DBOSDurability` and `PrefectDurability` capabilities take care of this; the deprecated wrapper agents reject `timeout=`. See the notes for [Temporal](durable_execution/temporal.md#run-timeouts), [DBOS](durable_execution/dbos.md#run-timeouts) and [Prefect](durable_execution/prefect.md#run-timeouts).
 
 ## Ending a run from inside a tool
