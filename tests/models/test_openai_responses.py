@@ -109,7 +109,6 @@ with try_import() as imports_successful:
         CompactedResponse,
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
-        ResponseOutputTextAnnotationAddedEvent,
         ResponseQueuedEvent,
     )
     from openai.types.responses.response import IncompleteDetails
@@ -118,7 +117,6 @@ with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import (
-        Annotation,
         AnnotationContainerFileCitation,
         AnnotationURLCitation,
         ResponseOutputText,
@@ -16220,7 +16218,6 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
     from openai.types.responses import (
         ResponseContentPartAddedEvent,
         ResponseOutputItemDoneEvent,
-        ResponseOutputTextAnnotationAddedEvent,
         ResponseTextDeltaEvent,
         ResponseTextDoneEvent,
     )
@@ -16292,43 +16289,6 @@ async def test_openai_code_execution_download_multiple_files_stream(allow_model_
             type='response.output_text.delta',
             logprobs=[],
             sequence_number=4,
-        ),
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation_1)),
-            annotation_index=0,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=5,
-        ),
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation_2)),
-            annotation_index=1,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=6,
-        ),
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation_3)),
-            annotation_index=2,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=7,
-        ),
-        # The same file cited a second time should not be downloaded again.
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation_1)),
-            annotation_index=3,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=8,
         ),
         ResponseTextDoneEvent(
             content_index=0,
@@ -16698,7 +16658,6 @@ async def test_openai_code_execution_download_stream_failure_skips_file(allow_mo
     from openai.types.responses import (
         ResponseContentPartAddedEvent,
         ResponseOutputItemDoneEvent,
-        ResponseOutputTextAnnotationAddedEvent,
         ResponseTextDeltaEvent,
         ResponseTextDoneEvent,
     )
@@ -16747,15 +16706,6 @@ async def test_openai_code_execution_download_stream_failure_skips_file(allow_mo
             type='response.output_text.delta',
             logprobs=[],
             sequence_number=3,
-        ),
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation)),
-            annotation_index=0,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=4,
         ),
         ResponseTextDoneEvent(
             content_index=0,
@@ -16850,15 +16800,6 @@ async def test_openai_code_execution_download_skipped_on_refusal_stream(allow_mo
             type='response.output_item.added',
             sequence_number=1,
         ),
-        ResponseOutputTextAnnotationAddedEvent(
-            annotation=cast(Annotation, cast(object, annotation)),
-            annotation_index=0,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            type='response.output_text.annotation.added',
-            sequence_number=2,
-        ),
         ResponseRefusalDeltaEvent(
             content_index=0,
             delta="I can't help with that.",
@@ -16878,15 +16819,12 @@ async def test_openai_code_execution_download_skipped_on_refusal_stream(allow_mo
         resp.ResponseOutputItemDoneEvent(
             item=ResponseOutputMessage(
                 id='msg_001',
-                content=cast(
-                    list[Content],
-                    [
-                        ResponseOutputText(
-                            text='Here is your file.', type='output_text', annotations=cast(list[Any], [annotation])
-                        ),
-                        ResponseOutputRefusal(refusal="I can't help with that.", type='refusal'),
-                    ],
-                ),
+                content=[
+                    ResponseOutputText(
+                        text='Here is your file.', type='output_text', annotations=cast(list[Any], [annotation])
+                    ),
+                    ResponseOutputRefusal(refusal="I can't help with that.", type='refusal'),
+                ],
                 role='assistant',
                 status='completed',
                 type='message',

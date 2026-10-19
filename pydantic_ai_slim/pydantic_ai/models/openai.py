@@ -5341,11 +5341,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             finalized_function_calls.add(item_id)
                         elif event := finalize_function_call(item_id, chunk.item.arguments):
                             yield event
-                    elif isinstance(chunk.item, responses.ResponseOutputMessage):
-                        # Collect the citations for files the code interpreter wrote to disk from the final,
-                        # typed message, the same way `_process_response` does, to download them below.
-                        if self._model_settings.get('openai_download_code_execution_files'):
-                            _file_citations.extend(_container_file_citations(chunk.item))
                     elif isinstance(chunk.item, responses.ResponseReasoningItem):
                         if signature := chunk.item.encrypted_content:  # pragma: no branch
                             # Add the signature to the part corresponding to the first summary/raw CoT
@@ -5463,6 +5458,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=chunk.item.id,
                             part=_map_compaction_item(chunk.item, self.provider_name),
                         )
+                    elif isinstance(chunk.item, responses.ResponseOutputMessage) and self._model_settings.get(
+                        'openai_download_code_execution_files'
+                    ):
+                        # Collect the citations for files the code interpreter wrote to disk from the final,
+                        # typed message, the same way `_process_response` does, to download them below.
+                        _file_citations.extend(_container_file_citations(chunk.item))
 
                 elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                     # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart

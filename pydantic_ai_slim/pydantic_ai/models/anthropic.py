@@ -4583,29 +4583,20 @@ async def _download_anthropic_files(
         return []
     file_parts: list[FilePart] = []
     for file_id in file_ids:
-        if file_part := await _download_anthropic_file(client, file_id=file_id, provider_name=provider_name):
-            file_parts.append(file_part)
+        # Code execution containers are short-lived, so a download can fail (expired container, rate limit,
+        # transient error). In that case we skip the file with a warning rather than discarding the
+        # otherwise-successful response.
+        try:
+            file_content = await client.beta.files.download(file_id=file_id)
+            metadata = await client.beta.files.retrieve_metadata(file_id=file_id)
+            # The download isn't streamed, so the body was already read (and any transport error raised) above.
+            file_bytes = await file_content.read()
+        except (APIStatusError, APIConnectionError) as e:
+            warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning, stacklevel=2)
+            continue
+        content = BinaryContent(data=file_bytes, media_type=metadata.mime_type, identifier=metadata.filename)
+        file_parts.append(FilePart(content=BinaryContent.narrow_type(content), id=file_id, provider_name=provider_name))
     return file_parts
-
-
-async def _download_anthropic_file(
-    client: AsyncAnthropicClient, *, file_id: str, provider_name: str
-) -> FilePart | None:
-    """Download a file from the Anthropic Files API, or `None` if it can no longer be retrieved.
-
-    Code execution containers are short-lived, so a download can fail (expired container, rate limit, transient
-    error). In that case we skip the file with a warning rather than discarding the otherwise-successful response.
-    """
-    try:
-        file_content = await client.beta.files.download(file_id=file_id)
-        metadata = await client.beta.files.retrieve_metadata(file_id=file_id)
-        # The download isn't streamed, so the body was already read (and any transport error raised) above.
-        file_bytes = await file_content.read()
-    except (APIStatusError, APIConnectionError) as e:
-        warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning, stacklevel=3)
-        return None
-    content = BinaryContent(data=file_bytes, media_type=metadata.mime_type, identifier=metadata.filename)
-    return FilePart(content=BinaryContent.narrow_type(content), id=file_id, provider_name=provider_name)
 
 
 def _effective_thinking_type(
