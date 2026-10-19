@@ -26,6 +26,7 @@ from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallPara
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -187,6 +188,7 @@ class _RequestParams:
     # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
+    telemetry_sensitive_ids: set[str] | None = None
     serialized_run_context: Any
     model_id: str | None = None
 
@@ -236,6 +238,7 @@ class _CompactMessagesParams:
     messages: list[ModelMessage]
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
+    telemetry_sensitive_ids: set[str] | None = None
     streaming: bool
     instructions: str | None
     serialized_run_context: Any
@@ -255,6 +258,31 @@ class _EventStreamHandlerParams:
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
+def restore_telemetry_sensitive_ids(parameters: ModelRequestParameters, sensitive_ids: set[str] | None) -> None:
+    """Restore the sidecar omitted from the provider payload, including pre-sidecar Temporal histories.
+
+    Older activity payloads have no sidecar. Their request parameters still carry the structural
+    identities, so conservatively withhold all such identities from request telemetry on replay.
+    """
+    if sensitive_ids is None:
+        sensitive_ids = {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
+        for tool in (*parameters.function_tools, *parameters.output_tools):
+            if tool.toolset_id:
+                sensitive_ids.add(tool.toolset_id)
+            if tool.capability_id:
+                sensitive_ids.add(tool.capability_id)
+            for native_name in (tool.unless_native, tool.with_native):
+                if native_name and native_name.startswith('mcp_server:'):
+                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
+        sensitive_ids.update(parameters.deferred_capability_ids)
+        for part in parameters.instruction_parts or ():
+            if part.id is not None:
+                for source in ('toolset:', 'capability:'):
+                    if str(part.id).startswith(source):
+                        sensitive_ids.add(str(part.id).removeprefix(source).partition(':')[0])
+    parameters.telemetry_sensitive_ids = sensitive_ids
+
+
 class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tuple[_RequestParams, Any]]):
     wire_type = _RequestParams
 
@@ -269,6 +297,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
                 messages=params.messages,
                 model_settings=cast(dict[str, Any] | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
+                telemetry_sensitive_ids=params.model_request_parameters.telemetry_sensitive_ids,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
                 model_id=params.model_id,
             ),
@@ -277,6 +306,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
 
     def load(self, payload: tuple[_RequestParams, Any], *, runtime: object) -> ModelRequestParams:
         request, deps = payload
+        restore_telemetry_sensitive_ids(request.model_request_parameters, request.telemetry_sensitive_ids)
         ctx = self._durability.deserialize_operation_run_context(request.serialized_run_context, deps)
         return ModelRequestParams(
             request.model_id,
@@ -303,6 +333,7 @@ class _CompactMessagesTransport(
                 messages=params.request_context.messages,
                 model_settings=cast(dict[str, Any] | None, params.request_context.model_settings),
                 model_request_parameters=params.request_context.model_request_parameters,
+                telemetry_sensitive_ids=params.request_context.model_request_parameters.telemetry_sensitive_ids,
                 streaming=params.request_context.streaming,
                 instructions=params.instructions,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
@@ -313,6 +344,7 @@ class _CompactMessagesTransport(
 
     def load(self, payload: tuple[_CompactMessagesParams, Any], *, runtime: object) -> ModelCompactMessagesParams:
         params, deps = payload
+        restore_telemetry_sensitive_ids(params.model_request_parameters, params.telemetry_sensitive_ids)
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         request_context = ModelRequestContext(
             model=cast(Model[Any], None),

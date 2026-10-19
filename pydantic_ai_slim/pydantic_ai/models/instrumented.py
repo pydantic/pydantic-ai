@@ -109,9 +109,9 @@ class InstrumentationSettings:
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
-                model request spans. This serializes the full `ModelRequestParameters` (output configuration
-                and every tool definition, including fields that are not sent to the model such as tool
-                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
+                model request spans. This includes a reviewed subset of `ModelRequestParameters`, such as
+                output configuration and tool definitions. Opaque tool metadata and uploaded-file references
+                are omitted; MCP server URLs and credentials are redacted. Defaults to `True`. Set to `False` to
                 omit it entirely, which is useful when large tool output schemas make the attribute big enough
                 to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
                 description, and parameters) is always emitted regardless of this setting.

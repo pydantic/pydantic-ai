@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import uuid
@@ -42,6 +43,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
@@ -58,6 +60,9 @@ from pydantic_ai.messages import (
     CUSTOM_EVENT_TYPES,
     CapabilityEvent,
     CustomEvent,
+    InstructionId,
+    InstructionPart,
+    ToolsetInstructionSource,
     UnknownCustomEvent,
     UploadedFile,
 )
@@ -125,6 +130,11 @@ try:
     )
     from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
+        _CompactMessagesTransport,
+        _ModelRequestTransport,
+    )
 
     from .sandbox_workflow import PydanticAIPluginSandboxWorkflow
 except ImportError:  # pragma: lax no cover
@@ -1853,6 +1863,113 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('streaming', [True, False])
+async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    observed_ids: list[set[str]] = []
+
+    def check_parameters(info: AgentInfo) -> None:
+        parameters = info.model_request_parameters
+        observed_ids.append(parameters.telemetry_sensitive_ids)
+        attributes = model_request_parameters_attributes(parameters)
+        assert identity not in str(attributes)
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        check_parameters(info)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def respond_stream(_messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+        check_parameters(info)
+        yield 'ok'
+
+    async def handle_stream(_ctx: RunContext[object], _stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    model = FunctionModel(respond, stream_function=respond_stream)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        event_stream_handler=handle_stream,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[
+                ToolDefinition(
+                    name='ping',
+                    toolset_id=identity,
+                    capability_id=identity,
+                    unless_native=f'mcp_server:{identity}',
+                )
+            ],
+            instruction_parts=[
+                InstructionPart(
+                    'server guidance', id=InstructionId(ToolsetInstructionSource(identity), name='instructions')
+                )
+            ],
+            deferred_capability_ids={identity},
+            telemetry_sensitive_ids={identity},
+        ),
+        telemetry_sensitive_ids={identity},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
+    if legacy_payload:
+        wire.pop('telemetry_sensitive_ids')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    if streaming:
+        await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            decoded,
+            deps,  # pyright: ignore[reportArgumentType]  # Temporal's activity wrapper erases the deps generic.
+        )
+    else:
+        await ActivityEnvironment().run(temporal_model.request_activity, decoded, deps)
+
+    assert observed_ids == [{identity}]
+
+
+@pytest.mark.parametrize('compact', [True, False])
+def test_legacy_temporal_transport_restores_request_telemetry_ids(compact: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    model = TestModel()
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    parameters = ModelRequestParameters(function_tools=[ToolDefinition(name='ping', capability_id=identity)])
+    common: dict[str, Any] = {
+        'messages': [ModelRequest.user_text_prompt('hello')],
+        'model_settings': None,
+        'model_request_parameters': parameters,
+        'serialized_run_context': TemporalRunContext.serialize_run_context(ctx),
+    }
+    durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+    if compact:
+        payload = _CompactMessagesParams(**common, streaming=False, instructions=None)
+        wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
+        wire.pop('telemetry_sensitive_ids')
+        decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
+        loaded = _CompactMessagesTransport(durability).load((decoded, None), runtime=object())
+        restored = loaded.request_context.model_request_parameters
+    else:
+        payload = _RequestParams(**common)
+        wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+        wire.pop('telemetry_sensitive_ids')
+        decoded = TypeAdapter(_RequestParams).validate_python(wire)
+        loaded = _ModelRequestTransport(durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+        restored = loaded.model_request_parameters
+
+    assert restored.telemetry_sensitive_ids == {identity}
+    assert identity not in str(model_request_parameters_attributes(restored))
 
 
 async def test_temporal_activity_does_not_manage_registered_models() -> None:

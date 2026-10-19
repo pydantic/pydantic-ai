@@ -39,6 +39,7 @@ from ._durability import (
 )
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import model_response_payload_errors
+from ._transports import restore_telemetry_sensitive_ids
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -101,6 +102,7 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            restore_telemetry_sensitive_ids(params.model_request_parameters, params.telemetry_sensitive_ids)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -124,6 +126,7 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
+            restore_telemetry_sensitive_ids(params.model_request_parameters, params.telemetry_sensitive_ids)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -223,6 +226,7 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_sensitive_ids=model_request_parameters.telemetry_sensitive_ids,
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -269,6 +273,7 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
+                        telemetry_sensitive_ids=model_request_parameters.telemetry_sensitive_ids,
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),

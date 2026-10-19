@@ -38,6 +38,7 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -80,8 +81,14 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from ..conftest import try_import
 from ..realtime_connections import InferredConnection
 from .test_session import FakeRealtimeModel, make_tool_manager
+
+with try_import() as mcp_installed:
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
@@ -586,6 +593,44 @@ async def test_session_and_chat_spans_carry_request_config() -> None:
     assert chat_attributes is not None
     assert chat_attributes['gen_ai.operation.name'] == 'chat'
     assert chat_attributes['logfire.msg'] == 'response gpt-realtime'
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('direct_toolset', [False, True])
+async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config(
+    include_content: bool, direct_toolset: bool
+) -> None:
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    settings, exporter = _settings(include_content=include_content)
+    capability = MCP('https://mcp.example.test/private/SENTINEL-mcp-path-token', native=False, local=server)
+    assert isinstance(capability.local, MCPToolset)
+    toolset = capability.get_toolset()
+    assert toolset is not None
+    agent = (
+        Agent(toolsets=[toolset], capabilities=[Instrumentation(settings=settings)])
+        if direct_toolset
+        else Agent(capabilities=[capability, Instrumentation(settings=settings)])
+    )
+    async with agent.realtime(
+        _Model(_Connection([OutputTranscript(text='done', is_final=True), ResponseDone()]))
+    ).session() as session:
+        _ = [event async for event in session]
+
+    assert capability.id is not None and 'SENTINEL-mcp-path-token' in capability.id
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    for name in ('invoke_agent agent', 'chat gpt-realtime'):
+        attributes = spans[name].attributes
+        assert attributes is not None
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert 'SENTINEL-mcp-path-token' not in serialized
+        assert json.loads(serialized)['function_tools']
 
 
 async def test_tool_call_otel_metadata_comes_from_definition() -> None:
