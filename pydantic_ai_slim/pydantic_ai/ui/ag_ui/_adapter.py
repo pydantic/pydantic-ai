@@ -550,11 +550,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
-                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
-                    # results stay untyped — typed return parts imply success to their readers.
-                    # A non-success outcome claim (the return would otherwise reload as `'success'`,
-                    # changing how it serializes to the provider) also keeps the return untyped.
-                    tool_kind = None
+                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. A
+                    # non-success return keeps its kind too: it is never promoted to a typed return
+                    # part, so the kind can't pass it off as a success. A non-success outcome claim
+                    # keeps the return from reloading as `'success'`, which would change how it
+                    # serializes to the provider.
+                    encrypted_tool_kind = (
+                        parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
                     outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
@@ -563,11 +567,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         outcome = encrypted_outcome
                     elif tool_msg.error is not None:
                         outcome = 'failed'
-                    else:
-                        encrypted_tool_kind = (
-                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                        )
-                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -584,8 +583,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     else:
                         # The final `narrow_message_parts` pass parses the rehydrated content into a typed
-                        # return subclass when the `tool_kind` claim validates, and leaves the base
-                        # `ToolReturnPart` (dropping the claim) when it doesn't.
+                        # return subclass when the return succeeded and the `tool_kind` claim validates,
+                        # and otherwise leaves the base `ToolReturnPart` (which keeps the claim, unless
+                        # it is one of core's kinds).
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
@@ -1000,8 +1000,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolReturnPart.provider_details` is lost.
         - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
           existed), so typed tool parts reload as their base classes.
-        - `tool_kind` is not restored on error/denied tool returns (a typed return implies
-          success to its readers), so those reload as plain `ToolReturnPart`.
+        - A failed, denied or interrupted (native) tool return keeps its `tool_kind`, but reloads as a
+          plain `ToolReturnPart` / `NativeToolReturnPart`: only successful returns are promoted to typed parts.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
