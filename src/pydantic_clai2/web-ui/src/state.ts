@@ -9,7 +9,9 @@ import type {
   StatusInfo,
   TaskEntry,
   ThemeInfo,
+  UpdateInfo,
   Usage,
+  UsageReport,
 } from './protocol'
 
 export interface NoticeEntry {
@@ -18,6 +20,8 @@ export interface NoticeEntry {
   text: string
   level: 'info' | 'error'
   command: string | null
+  /** For `/usage` and `/cost`: the figures their text reports, shown as a card. */
+  usage: UsageReport | null
 }
 
 export interface TurnSummary {
@@ -43,6 +47,8 @@ export interface State {
   sessionsVersion: number
   /** Bumped after every command, which may have changed a plugin; an open plugins panel lists them again. */
   pluginsVersion: number
+  /** Bumped after every command, or edit of a command's menu, which may have changed CLAI's settings. */
+  settingsVersion: number
   /** When the running turn started, by this page's clock. */
   turnStartedAt: number | null
   theme: ThemeInfo | null
@@ -52,6 +58,10 @@ export interface State {
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
   taskItems: Record<string, Entry[]>
+  /** The CLAI this page talks to, by version; `null` until it connects. */
+  version: string | null
+  /** `/update` installing a newer CLAI, until the install ends or the new build is back. */
+  update: UpdateInfo | null
 }
 
 export const initial: State = {
@@ -63,11 +73,14 @@ export const initial: State = {
   dialogs: [],
   sessionsVersion: 0,
   pluginsVersion: 0,
+  settingsVersion: 0,
   turnStartedAt: null,
   theme: null,
   followsWorkspace: false,
   tasks: [],
   taskItems: {},
+  version: null,
+  update: null,
 }
 
 let counter = 0
@@ -134,11 +147,21 @@ function taskChanged(state: State, task: TaskEntry): State {
 /** Apply one server message; every change makes new objects, so memoized rows re-render only when theirs changed. */
 export function reduce(state: State, message: ServerMessage): State {
   switch (message.type) {
-    case 'snapshot':
+    case 'snapshot': {
+      // A CLAI that `/update` restarted comes back as a new version, which the page says once it has reconnected.
+      const updated = state.version !== null && message.version !== state.version
+      const notice: NoticeEntry = {
+        id: nextId('notice'),
+        kind: 'notice',
+        text: `Updated CLAI to ${message.version}.`,
+        level: 'info',
+        command: null,
+        usage: null,
+      }
       return {
         ...state,
         session: message.session,
-        entries: message.items,
+        entries: updated ? [...message.items, notice] : message.items,
         running: message.running,
         status: message.status,
         questions: message.questions,
@@ -148,7 +171,12 @@ export function reduce(state: State, message: ServerMessage): State {
         followsWorkspace: message.follows_workspace,
         tasks: message.tasks,
         taskItems: message.task_items,
+        version: message.version,
+        update: message.update,
       }
+    }
+    case 'update':
+      return { ...state, update: message.update }
     case 'item':
     case 'delta':
     case 'tool_output':
@@ -214,6 +242,7 @@ export function reduce(state: State, message: ServerMessage): State {
         text: message.text,
         level: message.level,
         command: message.command,
+        usage: message.usage,
       }
       return { ...state, entries: [...state.entries, notice] }
     }
@@ -225,6 +254,8 @@ export function reduce(state: State, message: ServerMessage): State {
       return { ...state, sessionsVersion: state.sessionsVersion + 1 }
     case 'plugins':
       return { ...state, pluginsVersion: state.pluginsVersion + 1 }
+    case 'settings':
+      return { ...state, settingsVersion: state.settingsVersion + 1 }
     case 'orchestrator':
       // The orchestrator chat keeps its own state, with `reduceOrchestrator`.
       return state

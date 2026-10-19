@@ -270,5 +270,5 @@ async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/

@@ -228,6 +228,20 @@ class SystemPromptPart:
     Only set if system prompt is dynamic, see [`system_prompt`][pydantic_ai.agent.Agent.system_prompt] for more information.
     """
 
+    scope: Literal['conversation', 'request'] = 'conversation'
+    """How long the model sees this prompt.
+
+    * `'conversation'` (the default): from where it sits in the history for the rest of the conversation.
+    * `'request'`: only for the model request it's part of, including a continuation of that same request
+      (such as an Anthropic `pause_turn`). Once a later request exists, the model no longer sees it.
+
+    A request-scoped prompt stays in the message history like any other part. Use one for a nudge about the
+    current moment (a reminder against instruction fade, a note that tool output was hidden, a remaining
+    budget), not for something that stays true. See
+    [request-scoped system prompts](../message-history.md#request-scoped-system-prompts) for how each provider
+    renders it.
+    """
+
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -4005,6 +4019,11 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
             else:
                 clean_messages.append(message)
     return clean_messages
+
+
+def _is_request_scoped(part: ModelRequestPart) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether `part` is a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
+    return isinstance(part, SystemPromptPart) and part.scope == 'request'
 
 
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:

@@ -243,6 +243,13 @@ resuming the current conversation. Switching back to `stable` offers the latest 
 Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
 restarts into that.
 
+`/update` works from the [web UI](../PLUGINS.md#web-this-session-in-your-browser) too,
+typed in the page or in the terminal: the page shows uv's progress and the result. After
+an install, CLAI restarts with the web UI on the same port and token, so the page
+reconnects by itself and names the new version. `clai2 --web` keeps `--web`, `--port`,
+and `--token-file`; a terminal session that ran `/web` comes back with the web UI running.
+Like any command, `/update` entered while a turn runs waits for the turn to end.
+
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
@@ -251,6 +258,9 @@ The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
+
+In the web UI, `/update` opens the Settings window's **About** section instead: the running
+version and `updates.channel`, with an **Update…** button that asks before it runs `/update`.
 
 ### Environment variables
 
@@ -533,6 +543,11 @@ that cache implicitly or not at all ignore it. Set it to `false` to turn caching
 to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
 over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
+In the web UI, `/model` typed in the composer opens the Settings window's **Models** section
+instead: the model for the next prompt, each saved model's settings (this editor's rows), and
+adding and removing models. `/effort` opens a dialog with the active model's settings, effort
+among them. `/fast` still toggles, as in the terminal.
+
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
 removes the native effort override. Custom parameters stay unchanged: remove any
@@ -626,7 +641,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
@@ -789,6 +804,13 @@ GitHub Copilot (premium requests); plugins can report their own, as the Claude
 Code plugin does. `…` means it is still loading and `?` that the service did not
 answer; the right-hand panel says why.
 
+In the web UI, `/accounts` and `/login` open the Settings window's **Keys & accounts**
+section, beside the saved `/keys`, with the same steps behind each account's button. There,
+ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
+API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
+and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
+only in the terminal.
+
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
 as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
@@ -868,6 +890,9 @@ Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
+which lists the names, says what uses each, and asks the same steps as dialogs; a
+value goes from the page to CLAI, never back.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
@@ -1539,10 +1564,12 @@ and replace none of them.
 
 | Row | What it does |
 | --- | --- |
-| Edit your instructions | Opens your instructions in an editor. Saving an empty text removes them. |
-| Append to your instructions | Opens an empty editor; what you write is added as a new paragraph. |
-| Reset: remove your instructions | Removes them, so only CLAI's defaults are sent. Greyed out when you have none. |
-| View the full system prompt | The instructions sent with the conversation's latest request, yours included. Enter opens them in a scrollable view. |
+| Your instructions | Shows their first line and how many lines they have. Enter opens them in an editor; saving an empty text removes them. `r` removes them, so only CLAI's defaults are sent. |
+| Append to yours | Opens an empty editor; what you write is added as a new paragraph. |
+| Full system prompt | The instructions sent with the conversation's latest request, yours included, in a scrollable view. |
+
+The web UI shows the same menu as its Settings window's **System prompt** section, with a
+multi-line dialog for the editor.
 
 Editing opens `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, on a temporary
 Markdown file. Save and quit the editor to keep your changes. Unchanged text
@@ -1921,8 +1948,11 @@ The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
 `/plugins reload coder`. Choose different folders in `/plugins configure coder`
 under **Skill folders**, as a JSON list of paths; `~/` means your home directory
-and `[]` turns skills off. A folder CLAI cannot read when it starts, such as one
-without read permission, turns skills off, with a notice, until the next
+and `[]` turns skills off. To turn off single skills, choose **Skills** there:
+each pick turns a skill on or off. A skill that is off is hidden from the model
+and has no `/command`, in every project; skills you add later start on. A
+folder CLAI cannot read when it starts, such as one without read permission,
+turns skills off, with a notice, until the next
 `/reload`; the coding tools still load. A folder that becomes a file or a single
 skill mid-session is left out of the next turn's catalog.
 
@@ -1967,6 +1997,13 @@ unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
 keep the original saved path; resuming does not change directories or migrate
 saved data.
+
+In the browser, <kbd>a</kbd> archives the selected session: it leaves the list and
+the web UI's sidebar, and nothing is deleted. <kbd>h</kbd> lists archived sessions too,
+marked `(archived)`, and searches them; <kbd>a</kbd> on one unarchives it. The current
+session and one running in another CLAI cannot be archived. Resuming an archived
+session, or a new turn in it, unarchives it; `--fork-session` leaves it archived
+and continues in the copy.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -2358,7 +2395,9 @@ server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
-and project trust. `/plugins disable mcp` removes the command and tools.
+and project trust. `/plugins disable mcp` removes the command and tools. In the
+web UI, bare `/mcp` opens the Settings window's MCP servers section, which lists
+the servers and runs the same form and subcommands in the page.
 
 ### Desktop notifications
 

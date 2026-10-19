@@ -1,17 +1,20 @@
 """`Dialogs` and `SettingsMenu` in the terminal: termflow widgets, one `run_worker` each, under one hold."""
 
 import asyncio
+import textwrap
 import threading
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
 from anyio import to_thread
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui import MenuBuilder, MenuItem, PagerBuilder, TextInputBuilder
+from termflow.tui.pager import Pager
 
 from pydantic_clai2.plugins.menus import Action, Option, SettingsMenu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, Runners, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import full_terminal, menu_key, run_worker
 from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _REDRAW = 'dialogs:changed'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing the new text."""
@@ -64,8 +67,14 @@ class TerminalDialogs:
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
         description: str = '',
+        multiline: bool = False,
     ) -> str | None:
-        """A text input that checks non-empty text as you type; `secret` masks it, and `description` sits under the title."""
+        """A text input that checks non-empty text as you type; `secret` masks it, and `description` sits under the title.
+
+        `multiline` opens `Runners.edit` instead, `$EDITOR` or the built-in editor, on `initial`.
+        """
+        if multiline:
+            return await self._edit(title=title, initial=initial, check=check)
         builder = (
             TextInputBuilder(f'{title}\n\n{description}' if description else title)
             .style(markdown_style())
@@ -84,6 +93,24 @@ class TerminalDialogs:
         if result.cancelled or not isinstance(result.value, str):
             return None
         return result.value.strip()
+
+    async def _edit(self, *, title: str, initial: str, check: Callable[[str], str | None] | None) -> str | None:
+        """Edit until `check` accepts the text, reopening it with the reason in the title; `None` when cancelled."""
+        text, heading = initial, title
+        while True:
+            edited = await run_worker(partial(self._runners.edit, text, title=heading))
+            if edited is None:
+                return None
+            text = edited.strip()
+            problem = check(text) if check is not None and text else None
+            if problem is None:
+                return text
+            heading = f'{title}: {problem}'
+
+    async def view(self, *, title: str, text: str) -> None:
+        """A pager over `text`, wrapped to the terminal, until q or Esc."""
+        pager = build_pager(title, text)
+        await run_worker(lambda: self._runners.run_pager(pager))
 
     async def confirm(self, *, title: str, yes: str, no: str, description: str = '') -> bool:
         """Two rows, `no` first; Esc is `no`."""
@@ -144,6 +171,30 @@ class TerminalDialogs:
         return True
 
 
+def wrap(text: str, width: int) -> list[str]:
+    """`text` wrapped to `width`, keeping its line breaks and blank lines.
+
+    Control characters are made inert: the text can come from a repository's `AGENTS.md` or project file.
+    """
+    return [
+        wrapped
+        for line in text.splitlines()
+        for wrapped in textwrap.wrap(terminal_text(line, keep='\t'), width) or ['']
+    ]
+
+
+def build_pager(title: str, text: str) -> Pager:
+    """A scrollable, read-only view of `text`."""
+    return (
+        PagerBuilder(title)
+        .style(markdown_style())
+        .reflow(lambda width: wrap(text, width))
+        .footer_hint('↑↓ scroll - q close')
+        .key_source(menu_key)
+        .build()
+    )
+
+
 def _checked(check: Callable[[str], str | None], text: str) -> str | None:
     """Empty text is always accepted: it is how the user says "none"."""
     text = text.strip()
@@ -161,16 +212,30 @@ async def run_settings_menu(menu: SettingsMenu, runners: Runners | None = None) 
     nothing paints between one dialog and the next, even while an action awaits something.
     """
     runners = runners or RUNNERS
-    dialogs = TerminalDialogs(runners)
+    with full_terminal():
+        return await _run_menu(menu, runners, TerminalDialogs(runners))
 
-    def opens(action: Action) -> Callable[[], Awaitable[Sequence[str]]]:
+
+async def _run_menu(menu: SettingsMenu, runners: Runners, dialogs: TerminalDialogs) -> list[str]:
+    """One menu's list; a row that opens another menu shows it, then this list again."""
+
+    def acts(action: Action) -> Callable[[], Awaitable[Sequence[str]]]:
         return lambda: action(dialogs)
 
-    with full_terminal():
-        # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
-        fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))
-        return await run_flow_async(
-            fields,
-            runners,
-            submenus={key: opens(action) for key, action in menu.actions.items()},
-        )
+    async def open_menu(build: Callable[[], SettingsMenu]) -> list[str]:
+        # Building it may read files or the keyring, as its rows may.
+        return await _run_menu(await to_thread.run_sync(build), runners, dialogs)
+
+    def opens(build: Callable[[], SettingsMenu]) -> Callable[[], Awaitable[Sequence[str]]]:
+        return partial(open_menu, build)
+
+    # Building the list reads the rows, which may read the keyring or `/keys`: off the loop, as each step is.
+    fields = await to_thread.run_sync(partial(FieldMenu, menu.source, searchable=menu.searchable))
+    return await run_flow_async(
+        fields,
+        runners,
+        submenus={
+            **{key: acts(action) for key, action in menu.actions.items()},
+            **{key: opens(build) for key, build in menu.menus.items()},
+        },
+    )

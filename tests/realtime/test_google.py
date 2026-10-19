@@ -183,6 +183,22 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
     return GoogleRealtimeConnection(cast('AsyncSession', session))
 
 
+async def test_google_send_that_fails_answering_lost_tool_calls_takes_its_input_back() -> None:
+    """An input whose send fails while answering the calls a resumed session lost never went out."""
+
+    class _RefusesToolResponses(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            raise ConnectionClosed(None, None)
+
+    conn = _conn(_RefusesToolResponses())
+    conn._unanswered_lost_tool_calls = [('lookup', 'call-1')]  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ConnectionClosed):
+        await conn.send('Hello')
+    # The typed turn asks for no reply any more: nothing about it is pending.
+    assert conn._lifecycle.take_pending() == []  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._unanswered == []  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
     dial, _ = _dialer()  # every re-dial fails
     conn = GoogleRealtimeConnection(
@@ -512,6 +528,17 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         async with agent.realtime(
             GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
             capabilities=[NativeTool(ImageGenerationTool())],
+        ).session():
+            pass  # pragma: no cover
+
+
+async def test_agent_realtime_session_rejects_web_search_domain_filters() -> None:
+    # Gemini Live's `google_search` takes no domain filters, so sending it would search the whole web.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UserError, match=r'`WebSearchTool.allowed_domains` not supported by this model'):
+        async with agent.realtime(
+            GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+            capabilities=[NativeTool(WebSearchTool(allowed_domains=['pydantic.dev']))],
         ).session():
             pass  # pragma: no cover
 
@@ -2444,6 +2471,23 @@ async def test_connect_seed_skips_compaction_parts() -> None:
         pass
     turns = session.client_content[0]['turns']
     assert [part.text for turn in turns for part in turn.parts] == ['the answer']
+
+
+async def test_connect_seed_marks_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    session = _RecordingSession()
+    history = [
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='It leaves at')], state='interrupted'),
+    ]
+    async with _connect(_model(session), 'x', messages=history):
+        pass
+    turns = session.client_content[0]['turns']
+    assert [part.text for turn in turns for part in turn.parts] == snapshot(
+        ['Sure, the morning flight\n[Interrupted after 640 ms]', 'It leaves at\n[Interrupted]']
+    )
 
 
 async def test_connect_reconnect_auto_enables_session_resumption() -> None:
@@ -4387,7 +4431,7 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         with anyio.fail_after(5):
             await waiting
             await listening_again.wait()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     assert [response.id for response in provider_session.tool_responses] == ['c1', 'c2']
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]

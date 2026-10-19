@@ -81,12 +81,12 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
+from ..realtime_connections import InferredConnection
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -1225,10 +1225,10 @@ async def test_dbos_agent_realtime_signaling_in_step():
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -5018,8 +5018,8 @@ async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
     # Recovery re-executes the workflow function: the start-time step replays, so the tool, which runs in
     # the workflow, sees the same deadline even though time has moved on.
     await asyncio.sleep(0.01)
-    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
-    assert await asyncio.to_thread(handle.get_result) == '{"record_deadline":"ok"}'
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == '{"record_deadline":"ok"}'
     assert deadline_seen == [deadline, deadline]
 
 

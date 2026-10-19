@@ -130,7 +130,9 @@ release_skills = Skills(
 
 `include` and `exclude` cannot be used together. The constructor overloads catch
 this in typed code, and runtime validation covers agent specs and untyped
-callers. Unknown names fail at run start.
+callers. Unknown names fail at run start. Pass `unknown_names='skip'` to ignore
+them instead, for a selection shared by projects that do not all have every
+skill it names, such as a person's list of skills to hide.
 
 Selection happens before frontmatter is parsed. An unselected skill does not add
 instructions or frontmatter validation errors to that `Skills` instance.
@@ -362,6 +364,7 @@ Skills(
     exclude: Collection[str] | None = None,
     missing_directories: Literal['error', 'skip'] = 'error',
     duplicate_names: Literal['error', 'keep_first'] = 'error',
+    unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
 )
 ```
@@ -371,10 +374,11 @@ Skills(
 - `exclude` omits the named skills from the catalog.
 - `missing_directories='skip'` leaves out library paths that do not exist, and warns about and leaves out those that are files or skill packages.
 - `duplicate_names='keep_first'` keeps the first of two skills with one name, with a warning.
+- `unknown_names='skip'` ignores `include` and `exclude` names that no library has.
 - `workspace` reads the libraries from this backend instead of the run's workspace.
 
 Pass at least one library directory, not the path of an individual skill
-package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names` or `missing_directories` say otherwise.
+package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names warn and skip that skill. Unknown selections fail at run start, and so do duplicate selected names, missing libraries, and library paths that are files or skill packages, unless `duplicate_names`, `missing_directories`, or `unknown_names` say otherwise.
 
 Two `Skills` on one agent combine into one catalog.
 
