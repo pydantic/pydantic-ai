@@ -17,7 +17,7 @@ SDK supplies the event types the shared OpenAI codec is built on):
     pip install "pydantic-ai-slim[elevenlabs-realtime]"
 """
 
-# TODO(elevenlabs-launch): list the divergences found in the docstring above, as `xai.py`'s
+# TODO(elevenlabs-launch): list ElevenLabs' divergences in the docstring above, as `xai.py`'s
 # docstring lists xAI's (session shape, transcription, usage, reconnect, truncation, text output).
 
 from __future__ import annotations as _annotations

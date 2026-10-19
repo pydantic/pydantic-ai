@@ -263,7 +263,7 @@ class OpenAISimulation(Simulation):
         return True
 
 
-# TODO(elevenlabs-launch): the ElevenLabs launch model id.
+# TODO(elevenlabs-launch): the published ElevenLabs model id.
 _SERVED_MODELS: dict[Dialect, str] = {
     'openai': 'gpt-realtime',
     'azure': 'gpt-realtime',
