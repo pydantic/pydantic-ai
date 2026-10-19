@@ -26,7 +26,10 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    TextContent,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -35,7 +38,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
+from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
 
 READINESS_WAIT_TIMEOUT = 10
@@ -107,6 +110,143 @@ class TestInputGuardrail:
 
         assert result.output == 'ok'
         assert calls == ['hello']
+
+    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}])
+    async def test_singleton_textcontent_user_prompt_keeps_legacy_guardrail_behavior(self, metadata: object):
+        prompt: list[TextContent] = [TextContent('ordinary user content', metadata=metadata)]
+        seen: list[str] = []
+
+        agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda text: seen.append(text) or True)],
+        )
+        await agent.run(prompt)
+
+        assert seen == [str(prompt)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(prompt)
+
+    async def test_extracts_singleton_textcontent_from_resumed_prompt(self):
+        guard_calls: list[str] = []
+        model_prompts: list[list[object]] = []
+        model_calls = 0
+        completion = TextContent(
+            'background answer',
+            metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'task-1'},
+        )
+
+        def guard(prompt: str) -> bool:
+            guard_calls.append(prompt)
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            model_prompts.append(
+                [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+            )
+            if model_calls == 1:
+                return ModelResponse(parts=[ToolCallPart('queue_completion', '{}', tool_call_id='tc1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+
+        @agent.tool
+        def queue_completion(ctx: RunContext[object]) -> str:
+            ctx.enqueue(completion)
+            return 'queued'
+
+        first = await agent.run('initial')
+        assert guard_calls == ['initial']
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+        assert resumed.output == 'done'
+        assert guard_calls == ['initial', 'background answer']
+        assert model_prompts[1] == ['initial', [completion]]
+
+        await agent.run(None, message_history=first.all_messages())
+        assert guard_calls == ['initial', 'background answer']
+
+    async def test_redacts_background_completion_from_pending_tool_history(self):
+        guard_observations: list[tuple[object, int, str]] = []
+        model_user_prompts: list[object] = []
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
+
+        def guard(ctx: RunContext[object], prompt: str) -> GuardrailResult:
+            guard_observations.append((ctx.prompt, ctx.run_step, prompt))
+            return GuardrailResult.replace('[redacted]')
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            model_user_prompts.extend(
+                part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+            )
+            return ModelResponse(parts=[TextPart('done')])
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content=[completion])]),
+            ModelResponse(parts=[ToolCallPart(tool_name='some_tool', args='{}', tool_call_id='tc1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='some_tool', content='result', tool_call_id='tc1')]),
+        ]
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+        result = await agent.run(None, message_history=history)
+
+        assert result.output == 'done'
+        assert guard_observations == [(None, 1, 'background answer')]
+        assert model_user_prompts == [
+            [
+                TextContent(
+                    '[redacted]',
+                    metadata={
+                        'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                        'tool_call_id': 'task-1',
+                    },
+                )
+            ]
+        ]
+
+    async def test_background_completion_with_document_uses_multimodal_prompt_rules(self):
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
+        document = BinaryContent(data=b'background report\n', media_type='text/plain')
+        content: list[TextContent | BinaryContent] = [completion, document]
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=content)])]
+        seen: list[str] = []
+
+        allowing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda prompt: seen.append(prompt) or True)],
+        )
+        result = await allowing_agent.run(None, message_history=history)
+
+        assert result.output == 'ok'
+        assert seen == [str(content)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(None, message_history=history)
+
+        prompt = history[-1].parts[0]
+        assert isinstance(prompt, UserPromptPart)
+        assert prompt.content == content
 
     async def test_guard_result_allow(self):
         agent = Agent(
@@ -231,6 +371,56 @@ class TestInputGuardrailRedaction:
         part = list(result.all_messages())[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my *** value'
+
+    async def test_replace_background_completion_preserves_metadata(self):
+        guard_calls: list[str] = []
+        model_completions: list[tuple[str, object]] = []
+
+        def guard(prompt: str) -> bool | GuardrailResult:
+            guard_calls.append(prompt)
+            if prompt.startswith('Background tool'):
+                return GuardrailResult.replace('[redacted]')
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            completions = [
+                item
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+                for item in part.content
+                if isinstance(item, TextContent)
+                and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
+            ]
+            if completions:
+                model_completions.append((completions[-1].content, completions[-1].metadata))
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[BackgroundTools(), InputGuardrail(guard=guard)])
+
+        @agent.tool_plain(metadata={'background': True})
+        async def lookup() -> str:
+            return 'answer'
+
+        first = await agent.run('go')
+        assert first.output == 'done'
+        assert guard_calls == ['go']
+        assert model_completions == [
+            (
+                "Background tool 'lookup' (task tool-1) completed.\nResult: answer",
+                {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
+            )
+        ]
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+
+        assert resumed.output == 'done'
+        assert guard_calls == ['go', "Background tool 'lookup' (task tool-1) completed.\nResult: answer"]
+        assert model_completions[-1] == (
+            '[redacted]',
+            {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
+        )
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(
