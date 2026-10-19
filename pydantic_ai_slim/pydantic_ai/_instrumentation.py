@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import itertools
+import json
+import traceback
 import warnings
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from urllib.parse import urlparse
 
@@ -21,6 +24,7 @@ from pydantic_graph._utils import get_traceparent
 if TYPE_CHECKING:
     from typing_extensions import Self
 
+    from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -60,6 +64,106 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
+
+# New request fields are withheld from telemetry until explicitly reviewed here.
+_TELEMETRY_PARAMETER_FIELDS: set[str] = {
+    'function_tools',
+    'native_tools',
+    'output_mode',
+    'output_object',
+    'output_tools',
+    'prompted_output_template',
+    'allow_text_output',
+    'allow_image_output',
+    'instruction_parts',
+    'thinking',
+}
+_TELEMETRY_TOOL_FIELDS: set[str] = {
+    'name',
+    'parameters_json_schema',
+    'description',
+    'outer_typed_dict_key',
+    'strict',
+    'sequential',
+    'kind',
+    'timeout',
+    'defer_loading',
+    'unless_native',
+    'with_native',
+    'tool_kind',
+    'return_schema',
+    'include_return_schema',
+    'capability_id',
+}
+_TELEMETRY_NATIVE_FIELDS: dict[str, set[str]] = {
+    'web_search': {
+        'kind',
+        'optional',
+        'search_context_size',
+        'user_location',
+        'blocked_domains',
+        'allowed_domains',
+        'max_uses',
+    },
+    'x_search': {
+        'kind',
+        'optional',
+        'allowed_x_handles',
+        'excluded_x_handles',
+        'from_date',
+        'to_date',
+        'enable_image_understanding',
+        'enable_video_understanding',
+        'include_output',
+    },
+    'code_execution': {'kind', 'optional'},
+    'web_fetch': {
+        'kind',
+        'optional',
+        'max_uses',
+        'allowed_domains',
+        'blocked_domains',
+        'enable_citations',
+        'max_content_tokens',
+    },
+    'url_context': {
+        'kind',
+        'optional',
+        'max_uses',
+        'allowed_domains',
+        'blocked_domains',
+        'enable_citations',
+        'max_content_tokens',
+    },
+    'image_generation': {
+        'kind',
+        'optional',
+        'action',
+        'background',
+        'input_fidelity',
+        'moderation',
+        'model',
+        'output_compression',
+        'output_format',
+        'partial_images',
+        'quality',
+        'size',
+        'aspect_ratio',
+    },
+    'memory': {'kind', 'optional'},
+    'mcp_server': {
+        'kind',
+        'optional',
+        'id',
+        'url',
+        'authorization_token',
+        'description',
+        'allowed_tools',
+        'headers',
+    },
+    'file_search': {'kind', 'optional', 'file_store_ids'},
+    'tool_search': {'kind', 'optional', 'strategy'},
+}
 
 
 class CostCalculationFailedWarning(Warning):
@@ -114,34 +218,63 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    from pydantic_ai.native_tools import MCPServerTool
-
-    if any(isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools):
-        # Build a telemetry-only copy from approved fields so newly added MCP fields stay out by default.
-        model_request_parameters = replace(
-            model_request_parameters,
-            native_tools=[
-                MCPServerTool(
-                    id='[REDACTED]',
-                    url='[REDACTED]',
-                    authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
-                    description=tool.description,
-                    allowed_tools=tool.allowed_tools,
-                    headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
-                    kind=tool.kind,
-                    optional=tool.optional,
-                )
-                if isinstance(tool, MCPServerTool)
-                else tool
-                for tool in model_request_parameters.native_tools
-            ],
-        )
-    serialized = serialize_any(model_request_parameters)
+    serialized = _serialize_model_request_parameters(model_request_parameters)
+    if serialized is None:
+        return {}
     if not include_content:
         serialized = _redact_model_request_parameters(serialized)
         if serialized is None:
             return {}
-    return {'model_request_parameters': to_json(serialized).decode()}
+    return {
+        'model_request_parameters': redact_sensitive_ids(
+            to_json(serialized).decode(), request_telemetry_sensitive_ids(model_request_parameters)
+        )
+    }
+
+
+def redact_sensitive_ids(text: str, sensitive_ids: set[str]) -> str:
+    """Remove framework-derived MCP identities from serialized telemetry, leaving request data intact."""
+    for identity in sensitive_ids:
+        if identity:
+            for encoded in {identity, json.dumps(identity)[1:-1], to_json(identity).decode()[1:-1]}:
+                text = text.replace(encoded, '[REDACTED]')
+    return text
+
+
+def mcp_telemetry_sensitive_ids(capabilities: Iterable[AbstractCapability[Any]]) -> set[str]:
+    """Collect MCP IDs even when a capability wrapper is the registered proxy."""
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.capabilities.mcp import MCP
+    from pydantic_ai.capabilities.native_tool import NativeTool
+    from pydantic_ai.capabilities.wrapper import WrapperCapability
+    from pydantic_ai.native_tools import MCPServerTool
+
+    identities: set[str] = set()
+    pending = list(capabilities)
+    seen: set[int] = set()
+    while pending:
+        capability = pending.pop()
+        if id(capability) in seen:
+            continue
+        seen.add(id(capability))
+        if isinstance(capability, MCP) and capability.id:
+            identities.add(capability.id)
+        elif isinstance(capability, NativeTool) and isinstance(capability.tool, MCPServerTool):
+            identities.add(capability.tool.id)
+        elif isinstance(capability, WrapperCapability):
+            pending.append(capability.wrapped)
+        elif isinstance(capability, CombinedCapability):
+            pending.extend(capability.capabilities)
+    return identities
+
+
+def request_telemetry_sensitive_ids(parameters: ModelRequestParameters) -> set[str]:
+    """Include native MCP tool IDs even for direct model requests without an agent capability."""
+    from pydantic_ai.native_tools import MCPServerTool
+
+    return parameters.telemetry_sensitive_ids | {
+        tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)
+    }
 
 
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
@@ -151,9 +284,7 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
     the prompted-output template. Instruction parts keep their origin and ids. Tool and output
     *schemas* stay -- request structure rather than message content.
 
-    `serialize_any` infers a shape, which for a value it cannot walk -- a tool whose `metadata` holds
-    an arbitrary object, say -- is the request's string representation, instructions and all. There
-    is nothing to redact in a string, so that is reported as unredactable rather than exported.
+    The telemetry serializer withholds the whole attribute when it cannot serialize a field.
     """
     if not isinstance(serialized_parameters, dict):
         return None
@@ -166,6 +297,97 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
     return parameters
+
+
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> dict[str, Any] | None:  # noqa: C901
+    """Project only reviewed request fields; never use inferred serialization for this attribute."""
+    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES
+
+    try:
+        serialized = _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+    except Exception:
+        return None
+    if not isinstance(serialized, dict):
+        return None
+    serialized = cast('dict[str, Any]', serialized)
+
+    projected: dict[str, Any] = {key: value for key, value in serialized.items() if key in _TELEMETRY_PARAMETER_FIELDS}
+    sensitive_ids = request_telemetry_sensitive_ids(model_request_parameters)
+
+    for collection in ('function_tools', 'output_tools'):
+        tools = projected.get(collection)
+        if not isinstance(tools, list):
+            return None
+        projected_tools: list[dict[str, Any]] = []
+        for raw_tool in cast('list[Any]', tools):
+            if not isinstance(raw_tool, dict):
+                return None
+            tool = cast('dict[str, Any]', raw_tool)
+            entry: dict[str, Any] = {key: value for key, value in tool.items() if key in _TELEMETRY_TOOL_FIELDS}
+            if entry.get('capability_id') in sensitive_ids:
+                entry['capability_id'] = '[REDACTED]'
+            for key in ('unless_native', 'with_native'):
+                if any(entry.get(key) == f'mcp_server:{identity}' for identity in sensitive_ids):
+                    entry[key] = 'mcp_server:[REDACTED]'
+            projected_tools.append(entry)
+        projected[collection] = projected_tools
+
+    native_tools = projected.get('native_tools')
+    if not isinstance(native_tools, list) or len(cast('list[Any]', native_tools)) != len(
+        model_request_parameters.native_tools
+    ):
+        return None
+    projected_native: list[dict[str, Any]] = []
+    for tool, raw_tool in zip(model_request_parameters.native_tools, cast('list[Any]', native_tools)):
+        if not isinstance(raw_tool, dict):
+            return None
+        serialized_tool = cast('dict[str, Any]', raw_tool)
+        approved_fields = _TELEMETRY_NATIVE_FIELDS.get(tool.kind)
+        if approved_fields is None or type(tool) is not NATIVE_TOOL_TYPES.get(tool.kind):
+            continue
+        entry = {key: value for key, value in serialized_tool.items() if key in approved_fields}
+        if tool.kind == 'mcp_server':
+            entry['id'] = '[REDACTED]'
+            entry['url'] = '[REDACTED]'
+            if entry.get('authorization_token') is not None:
+                entry['authorization_token'] = '[REDACTED]'
+            if isinstance(headers := entry.get('headers'), dict):
+                entry['headers'] = {key: '[REDACTED]' for key in cast('dict[str, Any]', headers)}
+            elif headers is not None:
+                return None
+        projected_native.append(entry)
+    projected['native_tools'] = projected_native
+
+    if isinstance(output_object := projected.get('output_object'), dict):
+        output_object = cast('dict[str, Any]', output_object)
+        projected['output_object'] = {
+            key: value
+            for key, value in output_object.items()
+            if key in {'json_schema', 'name', 'description', 'strict'}
+        }
+    elif output_object is not None:
+        return None
+
+    if isinstance(parts := projected.get('instruction_parts'), list):
+        projected_parts: list[dict[str, Any]] = []
+        for raw_part in cast('list[Any]', parts):
+            if not isinstance(raw_part, dict):
+                return None
+            part = cast('dict[str, Any]', raw_part)
+            projected_parts.append(
+                {key: value for key, value in part.items() if key in {'content', 'dynamic', 'part_kind'}}
+            )
+        projected['instruction_parts'] = projected_parts
+    elif parts is not None:
+        return None
+    return projected
+
+
+@cache
+def _model_request_parameters_adapter() -> TypeAdapter[ModelRequestParameters]:
+    from pydantic_ai.models import ModelRequestParameters
+
+    return TypeAdapter(ModelRequestParameters)
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -225,7 +447,14 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
     return tool_definitions
 
 
-def record_exception(span: Span, error: BaseException, *, include_content: bool, escaped: bool = True) -> None:
+def record_exception(
+    span: Span,
+    error: BaseException,
+    *,
+    include_content: bool,
+    escaped: bool = True,
+    sensitive_ids: set[str] | None = None,
+) -> None:
     """Record `error` on `span` as an `exception` event.
 
     With content capture enabled this is the OTel SDK's own `Span.record_exception`. Without it,
@@ -241,7 +470,7 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
     # would surface that failure in place of the original error.
     if not span.is_recording():
         return
-    if include_content:
+    if include_content and not sensitive_ids:
         span.record_exception(error, escaped=escaped)
         return
     error_type = type(error)
@@ -251,10 +480,19 @@ def record_exception(span: Span, error: BaseException, *, include_content: bool,
         else error_type.__qualname__
     )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
-    span.add_event('exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped)})
+    attributes = {'exception.type': type_name, 'exception.escaped': str(escaped)}
+    if include_content:
+        assert sensitive_ids is not None
+        attributes['exception.message'] = redact_sensitive_ids(str(error), sensitive_ids)
+        attributes['exception.stacktrace'] = redact_sensitive_ids(
+            ''.join(traceback.format_exception(type(error), error, error.__traceback__)), sensitive_ids
+        )
+    span.add_event('exception', attributes=attributes)
 
 
-def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
+def set_error_status(
+    span: Span, error: BaseException, *, include_content: bool, sensitive_ids: set[str] | None = None
+) -> None:
     """Set `span`'s status to ERROR, describing it the way `use_span` would have.
 
     The SDK's description is `f'{type(exc).__name__}: {exc}'`, which repeats the message the
@@ -263,7 +501,14 @@ def set_error_status(span: Span, error: BaseException, *, include_content: bool)
     if not span.is_recording():
         return
     span.set_status(
-        Status(StatusCode.ERROR, description=f'{type(error).__name__}: {error}' if include_content else None)
+        Status(
+            StatusCode.ERROR,
+            description=(
+                redact_sensitive_ids(f'{type(error).__name__}: {error}', sensitive_ids or set[str]())
+                if include_content
+                else None
+            ),
+        )
     )
 
 
@@ -303,7 +548,9 @@ def span_include_content(span: Span) -> bool:
 
 
 @contextmanager
-def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[None]:
+def record_uncaught_errors(
+    span: Span, *, include_content: bool, sensitive_ids: set[str] | None = None
+) -> Generator[None]:
     """Record exceptions leaving `span`'s scope the way `use_span` would have.
 
     For spans opened with `record_exception=False` and `set_status_on_exception=False`, which hands
@@ -313,8 +560,8 @@ def record_uncaught_errors(span: Span, *, include_content: bool) -> Generator[No
     try:
         yield
     except Exception as error:
-        record_exception(span, error, include_content=include_content, escaped=False)
-        set_error_status(span, error, include_content=include_content)
+        record_exception(span, error, include_content=include_content, escaped=False, sensitive_ids=sensitive_ids)
+        set_error_status(span, error, include_content=include_content, sensitive_ids=sensitive_ids)
         raise
 
 
@@ -360,7 +607,9 @@ def open_model_request_span(
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = to_json(tool_definitions).decode()
+        attributes['gen_ai.tool.definitions'] = redact_sensitive_ids(
+            to_json(tool_definitions).decode(), request_telemetry_sensitive_ids(prepared_parameters)
+        )
 
     if prepared_settings:
         for key in MODEL_SETTING_ATTRIBUTES:
@@ -449,8 +698,19 @@ def open_model_request_span(
                 # `use_span` exactly: it records only `Exception`, does not mark what it records as
                 # escaped, and describes the status with the exception. A provider's error response
                 # body travels in that message, so it follows `include_content`.
-                record_exception(span, e, include_content=settings.include_content, escaped=False)
-                set_error_status(span, e, include_content=settings.include_content)
+                record_exception(
+                    span,
+                    e,
+                    include_content=settings.include_content,
+                    escaped=False,
+                    sensitive_ids=request_telemetry_sensitive_ids(prepared_parameters),
+                )
+                set_error_status(
+                    span,
+                    e,
+                    include_content=settings.include_content,
+                    sensitive_ids=request_telemetry_sensitive_ids(prepared_parameters),
+                )
                 raise
     finally:
         include_content_ctx.set(previous_include_content)

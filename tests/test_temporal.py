@@ -101,7 +101,10 @@ try:
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -4047,6 +4050,23 @@ def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> No
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is pydantic_data_converter
+
+
+async def test_request_params_preserve_telemetry_sensitive_ids() -> None:
+    sensitive_ids = {'SENTINEL-mcp-url-derived-id'}
+    request = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(telemetry_sensitive_ids=sensitive_ids),
+        serialized_run_context=None,
+        telemetry_sensitive_ids=sensitive_ids,
+    )
+
+    payloads = await pydantic_data_converter.encode([request])
+    [decoded] = await pydantic_data_converter.decode(payloads, [_RequestParams])
+
+    assert decoded.telemetry_sensitive_ids == sensitive_ids
+    assert decoded.model_request_parameters.telemetry_sensitive_ids == sensitive_ids
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:

@@ -16,9 +16,12 @@ from pydantic_ai._instrumentation import (
     event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
+    mcp_telemetry_sensitive_ids,
     open_model_request_span,
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
+    redact_sensitive_ids,
+    request_telemetry_sensitive_ids,
     serialize_any,
 )
 from pydantic_ai._utils import UNSET, Unset
@@ -35,6 +38,14 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
 )
+
+
+def _sensitive_mcp_ids(ctx: RunContext[Any], parameters: ModelRequestParameters | None = None) -> set[str]:
+    identities = mcp_telemetry_sensitive_ids(ctx.capabilities.values())
+    if parameters is not None:
+        identities.update(request_telemetry_sensitive_ids(parameters))
+    return identities
+
 
 if TYPE_CHECKING:
     from pydantic_ai._run_context import RunContext
@@ -135,6 +146,7 @@ class Instrumentation(AbstractCapability[Any]):
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
+        sensitive_ids = _sensitive_mcp_ids(ctx)
 
         span_attributes: dict[str, Any] = {
             'model_name': ctx.model.model_name if ctx.model else 'no-model',
@@ -161,7 +173,7 @@ class Instrumentation(AbstractCapability[Any]):
             # Stands in for what the two `..._on_exception=False` arguments turned off, over the
             # span's whole scope the way `use_span` covered it -- not just the run, but the
             # finalization below, whose failures have to keep marking the span.
-            _record_uncaught_errors(span, include_content=settings.include_content),
+            _record_uncaught_errors(span, include_content=settings.include_content, sensitive_ids=sensitive_ids),
         ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
@@ -170,16 +182,16 @@ class Instrumentation(AbstractCapability[Any]):
             result: AgentRunResult[Any] | None = None
             try:
                 result = await handler()
+                if self._last_model_request_parameters is not None:
+                    sensitive_ids.update(request_telemetry_sensitive_ids(self._last_model_request_parameters))
 
                 if settings.include_content and span.is_recording():
-                    span.set_attribute(
-                        'final_result',
-                        (
-                            result.output
-                            if isinstance(result.output, str)
-                            else to_json(serialize_any(result.output)).decode()
-                        ),
+                    output_text = (
+                        result.output
+                        if isinstance(result.output, str)
+                        else to_json(serialize_any(result.output)).decode()
                     )
+                    span.set_attribute('final_result', redact_sensitive_ids(output_text, sensitive_ids))
 
                 return result
             finally:
@@ -205,18 +217,32 @@ class Instrumentation(AbstractCapability[Any]):
         """Compute the end-of-run span attributes."""
         settings = self.settings
         new_message_index = self._new_message_index
+        sensitive_ids = _sensitive_mcp_ids(ctx, self._last_model_request_parameters)
 
         if settings.version == 1:
             attrs: dict[str, Any] = {
-                'all_messages_events': to_json(
-                    [event_to_dict(e) for e in settings.messages_to_otel_events(message_history)]
-                ).decode()
+                'all_messages_events': redact_sensitive_ids(
+                    to_json(
+                        [
+                            event_to_dict(e)
+                            for e in settings.messages_to_otel_events(
+                                message_history, self._last_model_request_parameters
+                            )
+                        ]
+                    ).decode(),
+                    sensitive_ids,
+                )
             }
         else:
             last_instructions = get_instructions(message_history, self._last_model_request_parameters)
             attrs = {
-                'pydantic_ai.all_messages': to_json(settings.messages_to_otel_messages(list(message_history))).decode(),
-                **settings.system_instructions_attributes(last_instructions),
+                'pydantic_ai.all_messages': redact_sensitive_ids(
+                    to_json(settings.messages_to_otel_messages(list(message_history))).decode(), sensitive_ids
+                ),
+                **{
+                    key: redact_sensitive_ids(value, sensitive_ids)
+                    for key, value in settings.system_instructions_attributes(last_instructions).items()
+                },
             }
 
             if new_message_index > 0:
@@ -226,7 +252,7 @@ class Instrumentation(AbstractCapability[Any]):
                 attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = redact_sensitive_ids(to_json(serialize_any(metadata)).decode(), sensitive_ids)
 
         usage_attrs = (
             {
@@ -291,7 +317,7 @@ class Instrumentation(AbstractCapability[Any]):
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
 
-    def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
+    def _tool_span_attributes(self, call: ToolCallPart, sensitive_ids: set[str]) -> dict[str, Any]:
         """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
 
         Both spans use `gen_ai.operation.name='execute_tool'` and the same `gen_ai.tool.*`
@@ -304,7 +330,11 @@ class Instrumentation(AbstractCapability[Any]):
             'gen_ai.operation.name': 'execute_tool',
             'gen_ai.tool.name': call.tool_name,
             'gen_ai.tool.call.id': call.tool_call_id,
-            **({names.tool_arguments_attr: call.args_as_json_str()} if include_content else {}),
+            **(
+                {names.tool_arguments_attr: redact_sensitive_ids(call.args_as_json_str(), sensitive_ids)}
+                if include_content
+                else {}
+            ),
             **get_agent_run_baggage_attributes(),
             'logfire.msg': f'running tool: {call.tool_name}',
             'logfire.json_schema': to_json(
@@ -333,6 +363,7 @@ class Instrumentation(AbstractCapability[Any]):
         attributes: dict[str, Any],
         action: Callable[[], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
+        sensitive_ids: set[str],
         handle_tool_control_flow: bool = False,
     ) -> Any:
         """Open a `gen_ai`-flavoured tool/output span around `action`.
@@ -362,7 +393,7 @@ class Instrumentation(AbstractCapability[Any]):
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
-                    _record_exception(span, exc, include_content=include_content)
+                    _record_exception(span, exc, include_content=include_content, sensitive_ids=sensitive_ids)
                     span.set_status(StatusCode.ERROR)
                     raise
                 # Deferrals are control flow, not errors: capture the deferral name (and
@@ -374,28 +405,35 @@ class Instrumentation(AbstractCapability[Any]):
                         metadata_str = to_json(exc.metadata).decode()
                     except (TypeError, ValueError):
                         metadata_str = repr(exc.metadata)
-                    span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
+                    span.set_attribute(
+                        names.tool_deferral_metadata_attr, redact_sensitive_ids(metadata_str, sensitive_ids)
+                    )
                 if settings.version < 5:
-                    _record_exception(span, exc, include_content=include_content)
+                    _record_exception(span, exc, include_content=include_content, sensitive_ids=sensitive_ids)
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
-                    span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
-                _record_exception(span, e, include_content=include_content)
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        redact_sensitive_ids(e.tool_retry.model_response(), sensitive_ids),
+                    )
+                _record_exception(span, e, include_content=include_content, sensitive_ids=sensitive_ids)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                _record_exception(span, e, include_content=include_content)
+                _record_exception(span, e, include_content=include_content, sensitive_ids=sensitive_ids)
                 span.set_status(StatusCode.ERROR)
                 raise
 
             if include_content and span.is_recording():
                 span.set_attribute(
                     names.tool_result_attr,
-                    result if isinstance(result, str) else serialize_result(result),
+                    redact_sensitive_ids(
+                        result if isinstance(result, str) else serialize_result(result), sensitive_ids
+                    ),
                 )
 
         return result
@@ -409,11 +447,13 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        sensitive_ids = _sensitive_mcp_ids(ctx, self._last_model_request_parameters)
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=self._tool_span_attributes(call, sensitive_ids),
             action=lambda: handler(args),
             serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            sensitive_ids=sensitive_ids,
             handle_tool_control_flow=True,
         )
 
@@ -442,6 +482,7 @@ class Instrumentation(AbstractCapability[Any]):
 
         names = self._instrumentation_names
         include_content = self.settings.include_content
+        sensitive_ids = _sensitive_mcp_ids(ctx, self._last_model_request_parameters)
         tool_call = output_context.tool_call
         # Tool-mode output: the registered tool name (e.g. `final_result`) is what the
         # model called, so use it as the span target. For non-tool output, fall back to
@@ -457,7 +498,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = to_json(output).decode()
+            attributes[names.tool_arguments_attr] = redact_sensitive_ids(to_json(output).decode(), sensitive_ids)
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -482,4 +523,5 @@ class Instrumentation(AbstractCapability[Any]):
             attributes=attributes,
             action=lambda: handler(output),
             serialize_result=lambda value: to_json(serialize_any(value)).decode(),
+            sensitive_ids=sensitive_ids,
         )

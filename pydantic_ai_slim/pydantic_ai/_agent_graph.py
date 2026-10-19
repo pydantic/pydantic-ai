@@ -16,7 +16,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION, mcp_telemetry_sensitive_ids
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, now_utc
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -527,6 +527,7 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        telemetry_sensitive_ids=mcp_telemetry_sensitive_ids(ctx.deps.capabilities.values()),
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
