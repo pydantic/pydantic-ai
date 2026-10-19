@@ -902,7 +902,8 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
     # `'sync'` mode: create the missing tool, update the differing one (its id resolved through the
     # workspace tool listing, since resolved agent tools don't carry ids), and re-point the agent's
     # `tool_ids` at the synced set behind the untouched server-side tools.
-    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.')
+    # A timeout raised on the ElevenLabs side survives the update, which would otherwise reset it.
+    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.', response_timeout_secs=60)
     webhook: dict[str, Any] = {'type': 'webhook', 'name': 'crm_lookup'}
     unchanged: dict[str, Any] = {
         'type': 'client',
@@ -968,6 +969,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
                 'properties': {'city': {'type': 'string', 'description': 'City name'}},
                 'required': ['city'],
             },
+            'response_timeout_secs': 60,
         }
     }
     repointed = json.loads(recorder.requests[5].content)

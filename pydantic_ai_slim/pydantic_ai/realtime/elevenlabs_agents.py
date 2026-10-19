@@ -786,9 +786,13 @@ def _convert_parameters(schema: dict[str, Any], *, path: str, root: bool, proble
     return result
 
 
-def _tool_config(tool: ToolDefinition) -> dict[str, Any]:
-    """Render a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] as an ElevenLabs client-tool config."""
-    return {
+def _tool_config(tool: ToolDefinition, remote: _AgentToolConfig | None = None) -> dict[str, Any]:
+    """Render a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] as an ElevenLabs client-tool config.
+
+    An update replaces the whole config, which resets a timeout raised on the ElevenLabs side to the default
+    (verified live), so the `remote` tool being updated keeps its own.
+    """
+    config: dict[str, Any] = {
         'type': 'client',
         'name': tool.name,
         'description': tool.description or '',
@@ -797,6 +801,9 @@ def _tool_config(tool: ToolDefinition) -> dict[str, Any]:
         'expects_response': True,
         'parameters': _elevenlabs_parameters(tool.name, _prepared_parameters(tool.parameters_json_schema)),
     }
+    if remote is not None and remote.response_timeout_secs is not None:
+        config['response_timeout_secs'] = remote.response_timeout_secs
+    return config
 
 
 def _schemas_match(local: dict[str, Any], remote: dict[str, Any]) -> bool:
@@ -1178,7 +1185,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         configs: dict[str, dict[str, Any]] = {}
         for tool in tools:
             try:
-                configs[tool.name] = _tool_config(tool)
+                configs[tool.name] = _tool_config(tool, remote_by_name.get(tool.name))
             except UserError as error:
                 problems.append(str(error))
         if problems:
