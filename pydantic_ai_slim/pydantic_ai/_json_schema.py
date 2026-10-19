@@ -288,9 +288,8 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
     when `type` is `'object'`, and array keywords (`items`, `prefixItems`, `contains`) only when it is `'array'`.
     On a schema with no `type`, or with a `type` list such as `['object', 'null']`, they are left as written,
     so a `$ref` inside them is not inlined and can point at a definition the output no longer contains.
-    If the schema is only meant to accept objects (or
-    arrays), set `type` to `'object'` (or `'array'`) to have it inlined; for a nullable one, put it in an `anyOf`
-    with `{'type': 'null'}` instead of using a `type` list.
+    If the schema is only meant to accept objects (or arrays), set `type` to `'object'` (or `'array'`) to have
+    it inlined; for a nullable one, put it in an `anyOf` with `{'type': 'null'}` instead of using a `type` list.
     """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):

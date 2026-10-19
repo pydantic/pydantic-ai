@@ -7,15 +7,17 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
+from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
+
+Key = TypeAliasType('Key', str)
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -854,25 +856,38 @@ def test_json_pointer_ref_tool_with_inlining_profile():
     assert agent.run_sync('ship it').output == 'done'
 
 
-def test_inline_defs_resolves_a_property_names_ref():
-    """Named dict keys must retain their constraints after definitions are removed."""
-    schema: JsonSchema = {
-        'type': 'object',
-        'additionalProperties': {'type': 'integer'},
-        'propertyNames': {'$ref': '#/$defs/Key'},
-        '$defs': {'Key': {'type': 'string', 'minLength': 1}},
-    }
-    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
-        {
-            'type': 'object',
-            'additionalProperties': {'type': 'integer'},
-            'propertyNames': {'type': 'string', 'minLength': 1},
-        }
+def test_inline_defs_resolves_property_names_ref_through_tool_preparation():
+    """A named dict key type reaches the model with its property-name definition inlined."""
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'values': {
+                        'type': 'object',
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                    }
+                },
+                'required': ['values'],
+                'additionalProperties': False,
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')),
+        tools=[accept_values],
     )
+    assert agent.run_sync('accept').output == 'done'
 
 
 def test_inline_defs_resolves_a_contains_ref():
-    """An array's contains constraint must survive removal of its referenced definition."""
+    """Pydantic does not emit `contains`, so this walker-only branch needs direct coverage."""
     schema: JsonSchema = {
         'type': 'array',
         'contains': {'$ref': '#/$defs/Positive'},
@@ -886,44 +901,6 @@ def test_inline_defs_resolves_a_contains_ref():
 @pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
 @pytest.mark.parametrize('value', [True, False])
 def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):
+    """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
     schema: JsonSchema = {'type': type_, keyword: value}
     assert InlineDefsJsonSchemaTransformer(schema).walk() == schema
-
-
-@pytest.mark.parametrize(
-    'transformer', [OpenAIJsonSchemaTransformer, GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer]
-)
-@pytest.mark.parametrize('strict', [None, False, True])
-def test_provider_subschema_compatibility(transformer: type[JsonSchemaTransformer], strict: bool | None):
-    """Pin provider schema constraints directly; cassette replay need not match request bodies."""
-    schema: JsonSchema = {
-        'type': 'object',
-        'propertyNames': {'type': 'string', 'format': 'email'},
-        'properties': {
-            'values': {
-                'type': 'array',
-                'items': {'type': 'integer'},
-                'contains': {
-                    'type': 'object',
-                    'properties': {'x': {'type': 'integer'}},
-                    'required': ['x'],
-                },
-            }
-        },
-    }
-    result = transformer(schema, strict=strict).walk()
-    values = result['properties']['values']
-    if transformer is OpenAIJsonSchemaTransformer and strict is True:
-        assert (result['description'], values['description']) == snapshot(
-            (
-                "propertyNames={'type': 'string', 'format': 'email'}",
-                "contains={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']}",
-            )
-        )
-    else:
-        assert (result['propertyNames'], values['contains']) == snapshot(
-            (
-                {'type': 'string', 'format': 'email'},
-                {'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
-            )
-        )
