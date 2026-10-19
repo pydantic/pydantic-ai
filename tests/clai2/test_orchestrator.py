@@ -708,8 +708,10 @@ async def test_the_workspace_session_is_the_users_too(
 ) -> None:
     """The user can type in the workspace's session too.
 
-    A destroy there is refused. A `/new` there is the workspace's from then on, even after it closed; moved to
-    another folder with `/workspace`, it is not, and the workspace gets a session in its checkout again.
+    A destroy there is refused. A `/new` there is the workspace's from then on, even after it closed (or a fork
+    of it, when the close beat its turn's last save). Moved to another folder with `/workspace`, it is not, even
+    before the orchestrator's view hears of the move, and the workspace gets a session in its checkout again.
+    The page follows a switch even when recording it for the workspace fails.
     """
     async with parent(tmp_path) as made:
         tools, service = made.tools, made.service
@@ -742,11 +744,11 @@ async def test_the_workspace_session_is_the_users_too(
         assert await open_workspace(service, workspace) == renewed, 'the page opens it too'
         await tools.session_send(workspace, 'again')
         assert 'Hello from the workspace: again.' in await tools.session_wait(workspace, timeout=10)
-        # Closed, it opens again in the conversation the user switched to.
+        # Closed, it opens again in the conversation the user switched to, or in a fork of it: closed right after
+        # its turn, before that turn's end was saved, it reads as still running elsewhere.
         await tools.disconnect(workspace)
         await service.live.close(session.id)
         view = await tools.view(workspace)
-        # Closed right after its turn, before that turn's end was saved, it may open again in a fork of it.
         reopened = view.session
         assert reopened is not None and reopened.title is not None and reopened.title.startswith('again')
         assert (await tools.workspaces().get(workspace)).conversation == reopened.id and made.built == [path, path]
