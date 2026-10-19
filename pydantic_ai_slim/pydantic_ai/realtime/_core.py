@@ -484,6 +484,8 @@ class SessionCore:
         self._next_index = 0
         """The stream index of the next part to start: one counter for the session, as both speakers' parts stream at
         once, so an index names a part in the event stream rather than a slot in a message."""
+        self._dropped_native: set[int] = set()
+        """Native parts the core dropped as they started, by the connection's index: their end is dropped too."""
         self._native_indexes: dict[int, int] = {}
         """The stream index of each native tool part under way, by the index the connection numbered it with."""
         self._part_items: OrderedDict[int, str | None] = OrderedDict()
@@ -861,9 +863,15 @@ class SessionCore:
         """
         if isinstance(event, PartStartEvent):
             if (response := self._open_response(None)) is None:
+                # No single response under way to lead: the part isn't recorded, so it doesn't stream, nor does its end.
+                self._dropped_native.add(event.index)
                 return
+            self._dropped_native.discard(event.index)
             response.native_parts.append(event.part)
             index = self._native_indexes[event.index] = self._take_index()
+        elif event.index in self._dropped_native:
+            self._dropped_native.remove(event.index)
+            return
         elif (index := self._native_indexes.pop(event.index, None)) is None:
             # An end with no start: it closes nothing, so it gets an index of its own.
             index = self._take_index()

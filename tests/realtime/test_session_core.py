@@ -1429,3 +1429,10 @@ def test_stripping_a_message_without_tracked_audio_frees_nothing() -> None:
     message = ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hi.')])
     budget = RetainedAudioBudget(10, input_sample_rate=24000, output_sample_rate=24000)
     assert budget.strip(message) == (message, 0)
+
+
+def test_a_native_part_with_no_response_to_join_streams_neither_its_start_nor_its_end() -> None:
+    """A native part the core drops (no single response under way) doesn't leave an end for a start never streamed."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(core(), PartStartEvent(index=7, part=call), PartEndEvent(index=7, part=call))
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == []
