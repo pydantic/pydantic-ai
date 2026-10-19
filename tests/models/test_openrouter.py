@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import httpx2
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -775,6 +776,56 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize('reasoning_field', ['reasoning', 'reasoning_content'])
+async def test_openrouter_streaming_reasoning_fallback(allow_model_requests: None, reasoning_field: str) -> None:
+    """Fallback reasoning reaches stream events and the response when details are absent or empty.
+
+    A mock transport supplies both fallback fields without relying on a provider to omit structured details.
+    """
+    deltas: list[dict[str, JsonValue]] = [
+        {'role': 'assistant', reasoning_field: 'Let me '},
+        {reasoning_field: 'think.', 'reasoning_details': []},
+        {'content': '42'},
+    ]
+    chunks = [
+        {
+            'id': 'gen-123',
+            'object': 'chat.completion.chunk',
+            'created': 1704067200,
+            'model': 'openai/gpt-4.1-mini',
+            'choices': [{'index': 0, 'delta': delta, 'finish_reason': 'stop' if i == len(deltas) - 1 else None}],
+        }
+        for i, delta in enumerate(deltas)
+    ]
+    content = b''.join(f'data: {json.dumps(chunk)}\n\n'.encode() for chunk in chunks) + b'data: [DONE]\n\n'
+    response = httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=httpx2.ByteStream(content))
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return response
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=client))
+        async with model_request_stream(model, [ModelRequest.user_text_prompt('What is the answer?')]) as stream:
+            events = [event async for event in stream]
+            assert stream.get().parts == snapshot(
+                [
+                    ThinkingPart(content='Let me think.', id=reasoning_field, provider_name='openrouter'),
+                    TextPart(content='42'),
+                ]
+            )
+        assert response.is_closed
+
+    assert events[0] == PartStartEvent(
+        index=0, part=ThinkingPart(content='Let me ', id=reasoning_field, provider_name='openrouter')
+    )
 
 
 async def test_openrouter_streamed_reasoning_details_are_preserved(
