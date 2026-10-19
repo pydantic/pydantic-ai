@@ -4028,10 +4028,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return auto_id, trimmed
         if setting == 'auto' or at_boundary:
             return None, messages
-        boundary = self._history_boundary(messages)
-        if boundary == 'compaction':
-            return None, messages
-        if boundary == 'transport':
+        if self._history_boundary(messages) == 'transport':
             for index in range(len(messages) - 1, -1, -1):
                 message = messages[index]
                 if (
@@ -4078,11 +4075,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return self._websocket is not None and response.provider_response_id == self._websocket.latest_response_id
         return self._websocket is None
 
-    def _history_boundary(self, messages: list[ModelMessage]) -> Literal['compaction', 'transport'] | None:
+    def _history_boundary(self, messages: list[ModelMessage]) -> Literal['transport'] | None:
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                if m.provider_details and m.provider_details.get('compaction'):
-                    return 'compaction'
                 if not self._is_response_id_reachable(m):
                     return 'transport'
                 return None
@@ -5191,6 +5186,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _last_sequence_number: int | None = field(default=None, init=False)
     _history: _Hasher | None = None
     """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
+    # Custom HTTP clients can return streams outside the SDK's AsyncStream class.
     _is_websocket: bool = False
 
     def get(self) -> ModelResponse:
