@@ -1985,6 +1985,7 @@ async def test_durability_continue_as_new_args_none_is_passthrough():
 
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
         patch(
             'pydantic_ai.durable_exec.temporal._durability.workflow.info',
             return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: True),
@@ -2015,6 +2016,7 @@ async def test_durability_continue_as_new_invokes_user_callable(stream: bool):
 
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
         patch(
             'pydantic_ai.durable_exec.temporal._durability.workflow.info',
             return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: True),
@@ -2187,6 +2189,7 @@ async def test_durability_continue_as_new_not_suggested_is_passthrough():
 
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
         patch(
             'pydantic_ai.durable_exec.temporal._durability.workflow.info',
             return_value=SimpleNamespace(is_continue_as_new_suggested=lambda: False),

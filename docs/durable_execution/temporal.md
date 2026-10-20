@@ -670,7 +670,7 @@ def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='investigator',
     capabilities=[TemporalDurability(continue_as_new_args=continue_as_new_args)],
 )

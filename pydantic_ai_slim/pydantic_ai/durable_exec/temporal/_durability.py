@@ -679,14 +679,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         """Continue the workflow as new when Temporal suggests it and arguments are configured."""
         if (
-            not self.in_durable_context
-            or self.continue_as_new_args is None
-            or not workflow.info().is_continue_as_new_suggested()
+            self.in_durable_context
+            and self.continue_as_new_args is not None
+            and workflow.info().is_continue_as_new_suggested()
         ):
-            return request_context
-
-        kwargs = self.continue_as_new_args(ctx)
-        workflow.continue_as_new(**kwargs)
+            workflow.continue_as_new(**self.continue_as_new_args(ctx))
+        return await super().before_model_request(ctx, request_context)
 
     def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
         if result_type is StreamedActivityResult:
