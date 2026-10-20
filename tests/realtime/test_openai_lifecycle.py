@@ -1068,3 +1068,10 @@ async def test_a_request_a_provider_response_overtook_and_then_refused_for_good_
     events = await stream.rest()
     assert ResponseRequestRefused(input_ids=(0,)) in events
     assert requests_sent(replacement) == []
+
+
+async def test_a_request_a_provider_response_overtook_is_lost_with_the_connection() -> None:
+    """Neither refused nor started when the connection closes for good: no response will answer it."""
+    stream = Stream(*SPOKEN_TURN, created('resp_vad'))
+    await stream.connection.send('Hello?')
+    assert InputLost(input_ids=(0,)) in await stream.rest()
