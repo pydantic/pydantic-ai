@@ -1608,7 +1608,7 @@ Note that returning an empty string will result in no instruction message added.
 Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [toolsets](toolsets.md#building-a-custom-toolset) via [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
 
 !!! tip "Instructions that change during a conversation"
-    By default, an instruction whose text changes rewrites the instruction prefix, so the provider can't reuse the cached conversation behind it. For state that changes as the conversation goes on, such as a todo list, memory, or the page a user is on, opt into `on_change='append'` so each change is appended to the history instead. See [Appending instruction changes](#appending-instruction-changes).
+    By default, an instruction whose text changes rewrites the instruction prefix, so the provider can't reuse the cached conversation behind it. For operator-controlled state that changes as the conversation goes on, such as a todo list, memory, or the app section a user is in, opt into `on_change='append'` so each change is appended to the history instead. See [Appending instruction changes](#appending-instruction-changes), and [keep untrusted text out of instructions](#untrusted-instruction-text).
 
 ### Instruction parts {#instruction-parts}
 
@@ -1687,7 +1687,7 @@ Two consequences worth knowing before you key configuration on an id:
 
 Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run, or that changes between runs of a conversation. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
 
-We recommend append mode for any instruction that changes partway through a conversation. The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
+We recommend append mode for instructions built from operator-controlled state that changes partway through a conversation. Never build instructions from untrusted text: see [Keep untrusted text out of instructions](#untrusted-instruction-text). The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
 
 ```python {title="instruction_changes.py"}
 from dataclasses import dataclass
@@ -1769,6 +1769,10 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
     [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
+
+#### Keep untrusted text out of instructions {#untrusted-instruction-text}
+
+Instructions carry operator authority, and appended changes are sent as system messages on models that support them, so the model treats their text as your instruction. Build instructions only from state you control: fixed strings, counts, values from a fixed set, or routing your application resolved. Never put tool arguments, tool output, user input, or retrieved content in them, even in append mode, where escaping closing tags only stops the text from breaking out of its element, not from being obeyed. Send untrusted values to the model in user messages or tool results instead.
 
 ## Reflection and self-correction
 

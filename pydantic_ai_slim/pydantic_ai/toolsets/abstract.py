@@ -171,6 +171,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         [`id`][pydantic_ai.toolsets.AbstractToolset.id], so changes are appended to the history
         instead of rewriting the cached instruction prefix. See
         [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
         Args:
             ctx: The run context for this agent run.

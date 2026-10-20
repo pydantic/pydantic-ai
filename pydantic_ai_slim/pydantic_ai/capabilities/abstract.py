@@ -486,6 +486,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         history instead of rewriting the cached instruction prefix. A returned callable can't opt
         in; register it with [`Capability.instructions`][pydantic_ai.capabilities.Capability.instructions]
         instead. See [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the

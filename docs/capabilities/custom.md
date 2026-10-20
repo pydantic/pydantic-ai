@@ -266,7 +266,7 @@ Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractC
 
 ### Instructions that change during a conversation
 
-When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of the block's complete new text being added to the history for each change. This needs the capability to have an `id`.
+When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of the block's complete new text being added to the history for each change. This needs the capability to have an `id`, and the text must come from state you control: [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 For text that changes between runs, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from `get_instructions()`. It's read when the agent is built and reused, except in a run where [`for_run`](#per-run-state-isolation) returns a replacement, which is read again. So a capability that `for_run` rebuilds from the run's dependencies can change it from one run to the next:
 
@@ -315,7 +315,7 @@ print(
 #> ['Reply in Spanish.']
 ```
 
-1. Only one of a fixed set of values reaches the instructions, never free-form text: see [keep untrusted text out of instructions](../toolsets.md#toolset-instructions-that-change).
+1. Only one of a fixed set of values reaches the instructions, never free-form text: see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 _(This example is complete, it can be run "as is")_
 

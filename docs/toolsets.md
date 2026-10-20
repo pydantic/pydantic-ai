@@ -258,7 +258,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Toolset instructions that change {#toolset-instructions-that-change}
 
-Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of the block's complete new text being added to the history for each change.
+Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of the block's complete new text being added to the history for each change. Build them only from state you control: [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
 
 To opt in, give the toolset an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions]. The `@toolset.instructions` decorator doesn't take `on_change`, so override the method on a `FunctionToolset` subclass:
 
@@ -309,12 +309,9 @@ print(
 #> ['Items in the cart: 1.']
 ```
 
-1. Only the count goes into the instructions, not the item names, which come from the model's tool arguments. See the warning below.
+1. Only the count goes into the instructions, not the item names, which come from the model's tool arguments: [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
 
 _(This example is complete, it can be run "as is")_
-
-!!! warning "Keep untrusted text out of instructions"
-    Instructions carry operator authority, and appended changes are sent as system messages where the model supports them. Build them from state you control, like the count above, never from tool arguments, tool output, or user content: those belong in tool results or user messages.
 
 ## Toolset Composition
 

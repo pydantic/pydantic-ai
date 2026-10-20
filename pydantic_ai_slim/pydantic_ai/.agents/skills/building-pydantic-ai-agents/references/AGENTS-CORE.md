@@ -98,7 +98,7 @@ def add_user_name(ctx: RunContext[str]) -> str:
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
-For instructions that change mid-conversation (operator state, todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is the block's complete new text added to history per change.
+For instructions built from operator-controlled state that changes mid-conversation (todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is the block's complete new text added to history per change.
 Use `@agent.instructions(name='state', on_change='append')` on the agent.
 The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
 Return `None` or an empty string to withdraw the block.
@@ -107,7 +107,7 @@ Toolsets can return `InstructionPart(content=..., name='state', on_change='appen
 A custom capability's `get_instructions()` can return such an `InstructionPart` for text that changes between runs, when `for_run` returns a replacement carrying the new text (otherwise the construction-time result is reused); a returned callable can't opt in, so use `Capability` and its decorator for text that changes during a run.
 Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` and `FunctionToolset(instructions=...)` opts in with `InstructionPart('...', name='config', on_change='append')`.
 Callables passed to `Agent(instructions=...)` and run-level `instructions=` can't opt in; use a named decorator instead.
-Build instruction text from operator-controlled state, never from tool arguments, tool output or user content.
+Build instruction text from operator-controlled state, never from tool arguments, tool output, user input or retrieved content, even in append mode; send untrusted values in user messages or tool results.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.

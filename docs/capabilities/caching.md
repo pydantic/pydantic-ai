@@ -163,7 +163,7 @@ So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour ca
 ### Changes under your control
 
 - Minute-precision timestamps or other per-request values in instructions or system prompts. Prefer date-only granularity when the exact time is not required.
-- Instructions whose text changes mid-conversation, such as a todo list or memory. Opt them into [`on_change='append'`](../agent.md#appending-instruction-changes) so changes are appended to the history instead of rewriting the prefix.
+- Instructions whose text changes mid-conversation, such as a todo list or memory. Opt them into [`on_change='append'`](../agent.md#appending-instruction-changes) so changes are appended to the history instead of rewriting the prefix, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 - Reordering or changing tool definitions between steps.
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
@@ -236,4 +236,4 @@ Tool, toolset, and capability authors should preserve the same contract:
 - Put per-turn dynamic content in the user message, in tool results, or after the last [`CachePoint`][pydantic_ai.messages.CachePoint].
 - Keep tool definitions and their ordering stable across steps.
 - Use date-only timestamps in instructions.
-- Give instructions that change mid-conversation [`on_change='append'`](../agent.md#appending-instruction-changes), which needs an `id` on your capability or toolset.
+- Give instructions that change mid-conversation [`on_change='append'`](../agent.md#appending-instruction-changes), which needs an `id` on your capability or toolset, and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
