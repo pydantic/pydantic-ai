@@ -22,6 +22,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._json_schema import JsonSchema
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, PydanticAIDeprecationWarning, UserError
 from pydantic_ai.messages import (
@@ -396,6 +397,18 @@ def test_schema_drops_false_any_of_member() -> None:
     )
 
     assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
+
+
+@pytest.mark.parametrize('root', [False, True])
+@pytest.mark.parametrize('siblings', [{}, {'description': 'value'}, {'not': {'type': 'string'}}])
+def test_tool_def_rejects_false_definition(root: bool, siblings: JsonSchema) -> None:
+    """Reject before opening a socket: the Live schema subset would erase the false constraint."""
+    reference: JsonSchema = {'$ref': '#/$defs/X', **siblings}
+    schema: JsonSchema = reference if root else {'type': 'object', 'properties': {'x': reference}, 'required': ['x']}
+    schema['$defs'] = {'X': False}
+    tool = ToolDefinition(name='accept', parameters_json_schema=schema)
+    with pytest.raises(UserError, match='cannot represent a boolean `false` definition'):
+        rt_google._tool_def_to_genai(tool)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_schema_handles_boolean_property_schemas() -> None:

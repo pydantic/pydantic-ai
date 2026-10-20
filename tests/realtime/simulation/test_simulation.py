@@ -398,6 +398,32 @@ def test_tool_result_over_request_limit_ends_the_wait() -> None:
     run_clean(OpenAISimulation(options=SessionOptions(request_limit=2)), scenario)
 
 
+@pytest.mark.parametrize('ending', ['request_limit', 'tool_error'])
+def test_turn_held_behind_a_reply_is_recorded_when_a_session_ended_on_its_own_closes(ending: str) -> None:
+    """A turn committed while a reply streams is held behind that reply, which a session that ended on its own settles as it closes.
+
+    Here the session ends on the reply's tool call: the request its result would make passes `request_limit`, or the
+    tool raises.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.send_image(respond=True)
+        sim.commit_audio()
+        sim.call_tool()
+        if ending == 'tool_error':
+            sim.finish_tool(outcome='error')
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(
+            options=SessionOptions(request_limit=1 if ending == 'request_limit' else None),
+            openai=OpenAIOptions(turn_detection='manual', dialect='azure'),
+        ),
+        scenario,
+    )
+
+
 def test_cleared_barge_in_releases_the_dropped_request() -> None:
     """SIM-16, fixed by the session core."""
 
@@ -911,6 +937,35 @@ def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect,
         sim.settle()
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@known('SIM-41')
+def test_known_xai_reopening_a_turn_after_its_own_stop() -> None:
+    """Recorded live (`xai_race_then_speech` probe): xAI hears the user stop, they speak again before it commits the
+    turn, and it reports `speech_started` for the same item, then stops and commits it once."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(commit=False)
+        sim.send_audio()
+        # The same item starts again: the lifecycle starts the turn it already placed a second time.
+        sim.speech_start()
+
+    reproduce('SIM-41', OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
+
+
+def test_xai_commits_a_stopped_turn_nobody_reopens() -> None:
+    """The simulated xAI commits a turn whose stop it didn't commit at once, once nobody speaks again (as it comes to
+    rest)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(commit=False)
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
 
 
 def test_turn_committed_after_a_racing_clear_is_recorded() -> None:
@@ -1544,6 +1599,30 @@ def test_baseline_openai_barge_in_and_reconnect() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('cut', ['speech', 'cancel'])
+def test_baseline_reply_cut_off_without_a_truncation_and_reconnect(dialect: Dialect, cut: str) -> None:
+    """A reply cut off before any of it was played (by the user speaking, or a cancel) has nothing to truncate:
+    a reconnect replays its transcript marked as interrupted, which restores it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        if cut == 'speech':
+            sim.speech_start()
+        else:
+            sim.interrupt(mode='cancel')
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.settle()
+        session = sim.server.session
+        assert session is not None and 'assistant:r1w1 [Interrupted]' in session.conversation
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+
+
 @pytest.mark.parametrize('fault', ['ambiguous', 'lost'])
 @pytest.mark.parametrize(
     'mode,finished',
@@ -1959,6 +2038,22 @@ def test_scenario_wait_after_a_drop_cut_into_a_tool_round() -> None:
         sim.advance_time(0.1)
 
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_scenario_wait_for_a_turn_whose_tool_round_a_drop_cut_into(dialect: Dialect) -> None:
+    """The same for a wait on a turn's reply: the drop cut into the tool round it called, which the reconnect settles."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.fail_next_send()
+        sim.finish()
+        sim.clear_audio()
+        sim.wait_for_reply()
+        sim.advance_time(0.1)
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
 
 
 def test_scenario_openai_server_vad_edges() -> None:
