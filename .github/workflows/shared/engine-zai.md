@@ -38,4 +38,15 @@ engine:
     GH_AW_MAX_OUTPUT_TOKENS: '16384'
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+pre-agent-steps:
+  - name: Prepare reviewer output settings support
+    # gh-aw restores .github from the base branch before these steps.
+    # Bootstrap the reviewed settings support only for the known v1 runtime;
+    # an updated base runtime remains authoritative.
+    run: |
+      runtime=.github/scripts/pydantic_ai_gh_aw_shim/cli.py
+      if [ "$(git hash-object "$runtime")" = aa6f9359ef548c2038c6a5eb7bd70e50a20cf321 ]; then
+        git show 8e8222e3279c12d823960c1d20618508b3437c9c:"$runtime" > "${RUNNER_TEMP}/review-cli.py"
+        install -m 644 "${RUNNER_TEMP}/review-cli.py" "$runtime"
+      fi
 ---
