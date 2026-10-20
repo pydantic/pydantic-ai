@@ -93,7 +93,9 @@ In `auto` mode, a `Model` instance runs locally and keeps its own provider, clie
 
 Use `mode='native'` when the consultation must stay inside the executor provider, or `mode='local'` when the configured advisor provider must receive a separate request. Native mode requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. It does not fall back when the executor lacks support.
 
-`max_uses` caps consultations per executor model request, the same scope as Anthropic's native tool, and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails, and parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits are what bound local consultations within one request. OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit, so on OpenRouter `max_uses` selects the local fallback, and combining it with `mode='native'` raises `ValueError`.
+`max_uses` caps consultations per executor model request, the same scope as Anthropic's native tool, and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
+
+OpenRouter's native tool ignores `max_uses` and applies its own fixed per-request limit. In `auto` mode, setting `max_uses` with an OpenRouter advisor therefore selects the local fallback. With `mode='native'`, it raises `ValueError`.
 
 `caching` is an opportunistic Anthropic-native optimization. OpenRouter and the local fallback have no equivalent control.
 
@@ -131,7 +133,7 @@ During streaming, the executor stream pauses while an advisor consultation runs 
 
 Native advice is compatible with durable execution because it remains part of the executor model request. Local execution cannot yet preserve the same semantics across every durable backend. Temporal and Prefect can checkpoint the returned advice, but changes to the activity-local or task-local `RunUsage` do not merge back into the outer run. DBOS does not checkpoint ordinary function-tool calls, so a local advisor request could run again during workflow replay.
 
-Use `mode='native'` with a supported provider in durable runs. Local execution, including an `auto` fallback, is unsupported there. `Advisor` does not detect durable runs, so it does not reject local execution in them.
+Use `mode='native'` with a supported provider in durable runs. Local execution, including an `auto` fallback, is unsupported there. `Advisor` cannot detect durable runs, because Pydantic AI does not yet expose a public durable-context contract, so it does not reject local execution in them.
 
 ## Pydantic AI references
 
