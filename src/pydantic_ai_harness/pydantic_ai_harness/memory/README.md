@@ -71,7 +71,7 @@ from pydantic_ai_harness.memory import FileStore
 memory = Memory(FileStore('.agent-memory'), inject_memory=False)
 ```
 
-With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only: in the tools, workspace failures are returned as tool errors and other store errors end the run.
+With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only. In the tools, a path that resolves outside the store asks the model to retry, and a workspace failure during `write_memory` or `delete_memory` is returned as a failed tool call unless the workspace is unavailable. Any other store error ends the run.
 
 ## Persistence and concurrency
 
