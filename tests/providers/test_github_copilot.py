@@ -64,7 +64,7 @@ def test_github_copilot_provider_client_headers(env: TestEnv):
 
 
 def test_github_copilot_provider_integration_id_from_env(env: TestEnv):
-    """`GITHUB_COPILOT_INTEGRATION_ID` is the name the Copilot CLI reads for the same header."""
+    """`GITHUB_COPILOT_INTEGRATION_ID` is believed to be the name the Copilot CLI reads for the same header."""
     env.set('GITHUB_COPILOT_INTEGRATION_ID', 'agentic-workflows')
     provider = GitHubCopilotProvider(api_key='gho_test_token')
     assert provider.client.default_headers['copilot-integration-id'] == 'agentic-workflows'

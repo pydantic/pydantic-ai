@@ -675,8 +675,8 @@ async def test_github_copilot_responses_only_model(allow_model_requests: None, g
     reason="Blocked on GitHub. A fine-grained PAT with Copilot Requests is listed by GitHub's Copilot "
     'SDK docs but returns `401 unauthorized: AuthenticateToken authentication failed` under the default '
     '`vscode-chat` integration id — the recorded response here. Through the gh-aw api-proxy the same '
-    'kind of token is accepted under `agentic-workflows`. An XPASS after a re-record means GitHub '
-    'widened `vscode-chat` and the docs caveat can go.',
+    'kind of token is accepted, in our testing, under `agentic-workflows`. An XPASS after a '
+    're-record means GitHub widened `vscode-chat` and the docs caveat can go.',
 )
 async def test_github_copilot_fine_grained_pat_authenticates(allow_model_requests: None):
     """Recorded with a real `github_pat_` credential; VCR scrubs the `authorization` header."""
