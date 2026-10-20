@@ -792,6 +792,8 @@ Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.
 
 When you use the [`CodeExecutionTool`](../native-tools.md#code-execution-tool) native tool, enable [`AnthropicModelSettings.anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files] to automatically download the files it produces from the Anthropic Files API and add them to the response as [`FilePart`][pydantic_ai.messages.FilePart]s, whose contents are available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]. See [the `CodeExecutionTool` docs](../native-tools.md#code-execution-tool) for a usage example.
 
+The files downloaded for one response are limited to 100 MiB in total by default, which you can change with [`anthropic_download_code_execution_files_max_bytes`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files_max_bytes]. A file that doesn't fit in what's left of that limit is skipped with a warning.
+
 Automatic downloads require the direct Anthropic client and are not available through the Bedrock, Vertex, or Foundry transports, which do not expose the Files API. With one of those transports, a response that references files emits a warning and returns none of them.
 
 !!! note

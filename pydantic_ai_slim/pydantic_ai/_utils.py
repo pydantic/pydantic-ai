@@ -429,6 +429,16 @@ async def aclose_if_supported(stream: AsyncIterable[Any]) -> None:
         await aclose()
 
 
+async def read_at_most(chunks: AsyncIterable[bytes], max_bytes: int) -> bytes | None:
+    """Join a stream of byte chunks, or return `None` as soon as they exceed `max_bytes`, buffering no more than that."""
+    data = bytearray()
+    async for chunk in chunks:
+        data += chunk
+        if len(data) > max_bytes:
+            return None
+    return bytes(data)
+
+
 async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
     """Close every async iterable, then propagate any close failures."""
     errors: list[BaseException] = []

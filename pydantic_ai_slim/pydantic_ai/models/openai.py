@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
-from httpx2 import Timeout as HTTPX2Timeout
+from httpx2 import Timeout as HTTPX2Timeout, TransportError as HTTPX2TransportError
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
@@ -1101,6 +1101,15 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     This is distinct from
     [`openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs],
     which returns the outputs the interpreter produces inline (logs and generated images) without any extra API calls.
+    """
+
+    openai_download_code_execution_files_max_bytes: int
+    """The maximum total size, in bytes, of the files downloaded for one response when
+    [`openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files]
+    is enabled. Defaults to 100 MiB.
+
+    Downloads are read as they stream in, so a file that would exceed what's left of the budget is abandoned before it's
+    fully buffered and skipped with a warning; smaller files cited after it can still be downloaded.
     """
 
     openai_background: bool
@@ -2395,6 +2404,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
+_DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES = 100 * 1024 * 1024
+
 
 class _Hasher(Protocol):
     def update(self, data: bytes, /) -> None: ...
@@ -2814,7 +2825,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         if container_file_citations:
             file_parts = await _download_container_files(
-                self.client, container_file_citations, provider_name=self.system
+                self.client,
+                container_file_citations,
+                max_bytes=settings.get(
+                    'openai_download_code_execution_files_max_bytes', _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES
+                ),
+                provider_name=self.system,
             )
             model_response.parts = [*model_response.parts, *file_parts]
         return model_response
@@ -5728,7 +5744,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 # Download the files the code interpreter wrote to disk after the stream completes, so the resulting
                 # `parts` ordering matches the non-streaming path. Skip it entirely on a refused response.
                 for file_part in await _download_container_files(
-                    self._client, _file_citations, provider_name=self._provider_name
+                    self._client,
+                    _file_citations,
+                    max_bytes=self._model_settings.get(
+                        'openai_download_code_execution_files_max_bytes',
+                        _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                    ),
+                    provider_name=self._provider_name,
                 ):
                     yield self._parts_manager.handle_part(vendor_part_id=f'{file_part.id}-file', part=file_part)
 
@@ -6831,46 +6853,43 @@ async def _download_container_files(
     client: AsyncOpenAI,
     citations: list[responses.response_output_text.AnnotationContainerFileCitation],
     *,
+    max_bytes: int,
     provider_name: str | None,
 ) -> list[FilePart]:
-    """Download the files the code interpreter wrote to disk, downloading each only once even if cited repeatedly."""
+    """Download the files the code interpreter wrote to disk, up to `max_bytes` in total.
+
+    Each file is downloaded only once, even if cited repeatedly. Containers are short-lived, so a download can fail
+    (expired container, rate limit, transient error); such a file, or one that doesn't fit in what's left of
+    `max_bytes`, is skipped with a warning rather than discarding the otherwise-successful response.
+    """
     file_parts: list[FilePart] = []
     downloaded_file_ids: set[str] = set()
+    remaining_bytes = max_bytes
     for citation in citations:
         if citation.file_id in downloaded_file_ids:
             continue
         downloaded_file_ids.add(citation.file_id)
-        if file_part := await _download_container_file(client, citation, provider_name=provider_name):
-            file_parts.append(file_part)
+        file_name = f'{citation.filename!r} ({citation.file_id})'
+        try:
+            async with client.containers.files.content.with_streaming_response.retrieve(
+                file_id=citation.file_id, container_id=citation.container_id
+            ) as response:
+                data = await _utils.read_at_most(response.iter_bytes(), remaining_bytes)
+        except (APIStatusError, APIConnectionError, HTTPX2TransportError) as e:
+            warnings.warn(f'Failed to download code execution file {file_name}: {e}', UserWarning, stacklevel=2)
+            continue
+        if data is None:
+            warnings.warn(
+                f'Skipped code execution file {file_name}: it exceeds the {remaining_bytes} bytes left of '
+                '`openai_download_code_execution_files_max_bytes`.',
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        remaining_bytes -= len(data)
+        media_type = mimetypes.guess_type(citation.filename)[0] or 'application/octet-stream'
+        content = BinaryContent(data=data, media_type=media_type, identifier=citation.filename)
+        file_parts.append(
+            FilePart(content=BinaryContent.narrow_type(content), id=citation.file_id, provider_name=provider_name)
+        )
     return file_parts
-
-
-async def _download_container_file(
-    client: AsyncOpenAI,
-    citation: responses.response_output_text.AnnotationContainerFileCitation,
-    *,
-    provider_name: str | None,
-) -> FilePart | None:
-    """Download a file the code interpreter wrote to its container, or `None` if it can no longer be retrieved.
-
-    Containers are short-lived, so a download can fail (expired container, rate limit, transient error). In that case
-    we skip the file with a warning rather than discarding the otherwise-successful response.
-    """
-    try:
-        file = await client.containers.files.content.retrieve(
-            file_id=citation.file_id, container_id=citation.container_id
-        )
-    except (APIStatusError, APIConnectionError) as e:
-        warnings.warn(
-            f'Failed to download code execution file {citation.filename!r} ({citation.file_id}): {e}',
-            UserWarning,
-            stacklevel=2,
-        )
-        return None
-    media_type = mimetypes.guess_type(citation.filename)[0] or 'application/octet-stream'
-    content = BinaryContent(data=file.content, media_type=media_type, identifier=citation.filename)
-    return FilePart(
-        content=BinaryContent.narrow_type(content),
-        id=citation.file_id,
-        provider_name=provider_name,
-    )

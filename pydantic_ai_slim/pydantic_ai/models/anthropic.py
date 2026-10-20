@@ -332,6 +332,7 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
 # `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+_DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES = 100 * 1024 * 1024
 # The Files API used to download code execution files is only available on the direct `AsyncAnthropic` client,
 # not on the Bedrock/Vertex/Foundry transports.
 _FILES_API_UNSUPPORTED_CLIENTS = (
@@ -719,6 +720,16 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `identifier`. This costs two extra API calls per file (its content and its metadata).
 
     The Files API is only available on the direct Anthropic client, not on Bedrock, Vertex, or Foundry.
+    """
+
+    anthropic_download_code_execution_files_max_bytes: int
+    """The maximum total size, in bytes, of the files downloaded for one response when
+    [`anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files]
+    is enabled. Defaults to 100 MiB.
+
+    A file that would exceed what's left of the budget is skipped with a warning without being downloaded, based on the
+    size the Files API reports, and the cap is also enforced while reading; smaller files after it can still be
+    downloaded.
     """
 
 
@@ -1212,7 +1223,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ]
                 model_response.parts = [
                     *model_response.parts,
-                    *await _download_anthropic_files(self.client, file_ids, provider_name=self._provider.name),
+                    *await _download_anthropic_files(
+                        self.client,
+                        file_ids,
+                        max_bytes=model_settings.get(
+                            'anthropic_download_code_execution_files_max_bytes',
+                            _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                        ),
+                        provider_name=self._provider.name,
+                    ),
                 ]
             return model_response
         # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
@@ -3902,7 +3921,13 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             if self._model_settings.get('anthropic_download_code_execution_files'):
                 for file_part in await _download_anthropic_files(
-                    self._client, _file_ids, provider_name=self._provider_name
+                    self._client,
+                    _file_ids,
+                    max_bytes=self._model_settings.get(
+                        'anthropic_download_code_execution_files_max_bytes',
+                        _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                    ),
+                    provider_name=self._provider_name,
                 ):
                     yield self._parts_manager.handle_part(vendor_part_id=file_part.id, part=file_part)
 
@@ -4572,9 +4597,14 @@ def _code_execution_file_ids(block: BetaBashCodeExecutionToolResultBlock) -> lis
 
 
 async def _download_anthropic_files(
-    client: AsyncAnthropicClient, file_ids: list[str], *, provider_name: str
+    client: AsyncAnthropicClient, file_ids: list[str], *, max_bytes: int, provider_name: str
 ) -> list[FilePart]:
-    """Download the files code execution wrote to disk from the Anthropic Files API, skipping duplicate IDs."""
+    """Download the files code execution wrote to disk from the Anthropic Files API, up to `max_bytes` in total.
+
+    Duplicate IDs are downloaded only once. Code execution containers are short-lived, so a download can fail (expired
+    container, rate limit, transient error); such a file, or one that doesn't fit in what's left of `max_bytes`, is
+    skipped with a warning rather than discarding the otherwise-successful response.
+    """
     file_ids = list(dict.fromkeys(file_ids))
     if not file_ids:
         return []
@@ -4589,19 +4619,29 @@ async def _download_anthropic_files(
         )
         return []
     file_parts: list[FilePart] = []
+    remaining_bytes = max_bytes
     for file_id in file_ids:
-        # Code execution containers are short-lived, so a download can fail (expired container, rate limit,
-        # transient error). In that case we skip the file with a warning rather than discarding the
-        # otherwise-successful response.
         try:
-            file_content = await client.beta.files.download(file_id=file_id)
             metadata = await client.beta.files.retrieve_metadata(file_id=file_id)
-            # The download isn't streamed, so the body was already read (and any transport error raised) above.
-            file_bytes = await file_content.read()
-        except (APIStatusError, APIConnectionError) as e:
+            data: bytes | None = None
+            # The metadata's size lets us skip an oversized file without requesting it, but the cap is still enforced
+            # while reading in case the content is larger than reported.
+            if metadata.size_bytes <= remaining_bytes:
+                async with client.beta.files.with_streaming_response.download(file_id=file_id) as response:
+                    data = await _utils.read_at_most(response.iter_bytes(), remaining_bytes)
+        except (APIStatusError, APIConnectionError, httpx2.TransportError) as e:
             warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning, stacklevel=2)
             continue
-        content = BinaryContent(data=file_bytes, media_type=metadata.mime_type, identifier=metadata.filename)
+        if data is None:
+            warnings.warn(
+                f'Skipped code execution file {metadata.filename!r} ({file_id}): it exceeds the {remaining_bytes} bytes '
+                'left of `anthropic_download_code_execution_files_max_bytes`.',
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        remaining_bytes -= len(data)
+        content = BinaryContent(data=data, media_type=metadata.mime_type, identifier=metadata.filename)
         file_parts.append(FilePart(content=BinaryContent.narrow_type(content), id=file_id, provider_name=provider_name))
     return file_parts
 

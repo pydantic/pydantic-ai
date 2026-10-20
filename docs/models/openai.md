@@ -548,6 +548,8 @@ Because the request is queued server-side, the time to the first token is higher
 
 When you use the [`CodeExecutionTool`](../native-tools.md#code-execution-tool) native tool, the code interpreter can save files to disk in its sandbox. Enable [`openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files] to automatically download those files from OpenAI's container files API and add them to the response as [`FilePart`][pydantic_ai.messages.FilePart]s, whose contents are available via [`ModelResponse.files`][pydantic_ai.messages.ModelResponse.files]. See [the `CodeExecutionTool` docs](../native-tools.md#code-execution-tool) for a usage example.
 
+The files downloaded for one response are limited to 100 MiB in total by default, which you can change with [`openai_download_code_execution_files_max_bytes`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files_max_bytes]. A file that doesn't fit in what's left of that limit is skipped with a warning.
+
 This is distinct from [`openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs], which asks the API to return the outputs the interpreter produces inline — its logs and any generated images — without extra requests. Images surfaced that way are available as [`BinaryImage`][pydantic_ai.messages.BinaryImage] on [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images]. Enable both settings when you want inline images as well as the files written to disk.
 
 ## Chat Completions API
