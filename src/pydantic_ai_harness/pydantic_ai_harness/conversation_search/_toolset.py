@@ -296,6 +296,13 @@ class _RunSection:
         return f'[{self.first_index + index}] {line or "[no text content]"}'
 
 
+def _adds_instruction_change(message: ModelMessage, earlier: ModelMessage) -> bool:
+    """Whether `message` carries an instruction change that `earlier`, its hash-equal copy, lacks."""
+    return isinstance(message, ModelRequest) and any(
+        isinstance(part, InstructionDeltaPart) and part not in earlier.parts for part in message.parts
+    )
+
+
 def _construction_stacklevel() -> int:
     """The `warn_default_changed` stacklevel that reaches the code constructing the toolset.
 
@@ -470,15 +477,20 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         # own record, so without this each inherited message would be indexed once per later
         # run, crowding `max_matches` with copies. Runs arrive in `started_at` order, so only
         # the leading messages an earlier run already holds are left out; everything from the
-        # first new message on stays, repeats included.
-        seen: set[str] = set()
+        # first new message on stays, repeats included. The hash ignores instruction changes, so
+        # an inherited request that core gave a new one in this run counts as new.
+        seen: dict[str, ModelMessage] = {}
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)
             hashes = [message_hash(message) for message in messages]
             inherited = 0
-            while inherited < len(hashes) and hashes[inherited] in seen:
+            while (
+                inherited < len(hashes)
+                and hashes[inherited] in seen
+                and not _adds_instruction_change(messages[inherited], seen[hashes[inherited]])
+            ):
                 inherited += 1
-            seen.update(hashes)
+            seen.update(zip(hashes, messages))
             messages = messages[inherited:]
             if not messages:
                 continue
