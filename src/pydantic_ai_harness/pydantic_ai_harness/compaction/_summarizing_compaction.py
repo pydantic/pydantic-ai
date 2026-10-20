@@ -525,7 +525,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
         invalid_prompt = (
-            'summary_prompt must contain a `{messages}` placeholder and no other replacement field; '
+            '`summary_prompt` must contain a `{messages}` placeholder and no other replacement field; '
             'write a literal brace as `{{` or `}}`.'
         )
         try:
