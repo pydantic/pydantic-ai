@@ -87,7 +87,9 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   existing tag before a new one, an escape that matches every spelling of the
   closing tag (with tests for the variants), attributes limited to identity and
   outcome, no unframed framework preamble before a frame on a user turn, no
-  "the tag that follows" references, and a live probe for new framing. Calibration is Example 6 in
+  "the tag that follows" references, and a live probe for new framing. Code that
+  re-renders history for another model must render framework data parts as
+  labeled untrusted data, never as user turns. Calibration is Example 6 in
   `.review-context/review-instructions.md`.
 
 ## Review process

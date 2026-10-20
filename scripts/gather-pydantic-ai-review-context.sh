@@ -684,7 +684,8 @@ framework guidance enqueued as a plain `str` (it becomes a user message), for
 code that finds its own earlier parts by matching their text, and for a new
 wrapper that escapes only the exact `</name>` spelling (`</NAME >` or
 `< / name>` still closes it) or leaves `<system>` in its body unescaped, uses a `kebab-case` tag name, or puts an
-untagged "Tool X completed." line in front of the frame.
+untagged "Tool X completed." line in front of the frame. Likewise a summarizer or judge
+that renders a framework data part (a task report, a reminder) as a `user:` turn.
 
 **Don't flag this:**
 ```python
