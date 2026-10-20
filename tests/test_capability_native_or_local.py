@@ -5,6 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -721,21 +722,73 @@ class TestMCPCapability:
         assert cap.get_toolset() is None
 
     def test_mcp_id_from_url(self):
-        """MCP auto-derives id from URL including hostname to avoid collisions."""
+        """MCP derives its id from the URL's hostname alone, since a path can carry a credential."""
         cap = MCP(url='https://mcp.example.com/api', native=True)
         native = cap.get_native_tools()[0]
         assert isinstance(native, MCPServerTool)
-        assert native.id == 'mcp.example.com-api'
+        assert native.id == 'mcp.example.com'
 
-        # SSE URLs include hostname to avoid collisions between different servers
+        # Different hosts derive different ids
         cap_sse = MCP(url='https://server1.example.com/sse', native=True)
         native_sse = cap_sse.get_native_tools()[0]
         assert isinstance(native_sse, MCPServerTool)
-        assert native_sse.id == 'server1.example.com-sse'
+        assert native_sse.id == 'server1.example.com'
+
+    def test_mcp_capabilities_on_one_host_need_explicit_ids(self):
+        """Two servers on one host derive the same id, so the agent asks for an explicit one on each."""
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            Agent(
+                capabilities=[
+                    MCP(url='https://mcp.example.com/a', native=True, local=False),
+                    MCP(url='https://mcp.example.com/b', native=True, local=False),
+                ]
+            )
+        # An id the user chose is a name they repeated, so it gets the general advice.
+        with pytest.raises(UserError, match=r"Capability id 'docs' is used by multiple capabilities\. .*distinct `id`"):
+            Agent(
+                capabilities=[
+                    MCP(url='https://mcp.example.com/a', id='docs', native=True, local=False),
+                    MCP(url='https://mcp.example.com/b', id='docs', native=True, local=False),
+                ]
+            )
+        Agent(
+            capabilities=[
+                MCP(url='https://mcp.example.com/a', id='a', native=True, local=False),
+                MCP(url='https://mcp.example.com/b', id='b', native=True, local=False),
+            ]
+        )
+
+    async def test_run_level_mcp_on_the_same_host_must_be_the_same_server(self):
+        """A run-level `MCP` overrides the agent's under the same derived id only for the same server."""
+        seen: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(
+                [tool.url for tool in info.model_request_parameters.native_tools if isinstance(tool, MCPServerTool)]
+            )
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset({MCPServerTool})))
+        agent = Agent(model, capabilities=[MCP(url='https://mcp.example.com/a', native=True, local=False)])
+
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await agent.run('hi', capabilities=[MCP(url='https://mcp.example.com/b', native=True, local=False)])
+
+        # The same server stated again for a run replaces the agent's configuration of it.
+        await agent.run(
+            'hi', capabilities=[MCP(url='https://mcp.example.com/a', headers={'X-Run': '1'}, native=True, local=False)]
+        )
+        assert seen == [['https://mcp.example.com/a']]
 
     def test_mcp_local_toolset_id_derived(self):
         """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable
-        execution. Precedence: explicit `id` → native `MCPServerTool` id → host+slug from the URL,
+        execution. Precedence: explicit `id` → native `MCPServerTool` id → the URL's hostname,
         else `None` when there's nothing to derive from."""
         # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
         pytest.importorskip('fastmcp.server')
@@ -745,8 +798,8 @@ class TestMCPCapability:
 
         # (capability, expected local toolset id)
         cases: list[tuple[MCP[object], str | None]] = [
-            # id derived from the URL (host + path slug)
-            (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
+            # id derived from the URL's hostname
+            (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com'),
             # explicit id wins
             (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
             # native MCPServerTool id is reused for the local fallback
@@ -760,7 +813,7 @@ class TestMCPCapability:
             ),
             # `local='https://…'` override with no `url=`: id derived from the override URL,
             # exercising `_derive_id` deriving from the override URL even when `self.url` is `None`
-            (MCP[object](local='https://other.example.com/sse'), 'other.example.com-sse'),
+            (MCP[object](local='https://other.example.com/sse'), 'other.example.com'),
             # non-URL local input (in-process `FastMCP` server) wrapped into an `MCPToolset`,
             # inheriting the explicit id
             (MCP[object](id='local-mcp', local=FastMCP('test-server')), 'local-mcp'),

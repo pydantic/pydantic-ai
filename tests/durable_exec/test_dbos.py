@@ -988,14 +988,14 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
     # capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id are rejected by `Agent`.
 
-    Both would key their steps on `a.com-api` under DBOS, the second server returning the first's
+    Both would key their steps on `a.com` under DBOS, the second server returning the first's
     cached tools. DBOS used to be what caught it, because `MCP(url=...)` left the capability
     anonymous and only its toolset carried the derived id, so the agent-level capability-id
     uniqueness check had nothing to compare. Now the capability takes the same derived id, and a
@@ -1010,7 +1010,9 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """
     with pytest.raises(
         match=re.escape(
-            "Capability id 'a.com-api' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
+            "Capability id 'a.com' is used by multiple capabilities that derived it from their configuration, "
+            'such as `MCP` capabilities for servers on the same host. Ids identify one capability within a run, '
+            'so pass an explicit `id=` to each.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]

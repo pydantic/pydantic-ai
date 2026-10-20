@@ -1875,7 +1875,7 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('streaming', [True, False])
 async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     observed_ids: list[set[str]] = []
@@ -1987,7 +1987,7 @@ async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('compact', [True, False])
 def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     model = TestModel()
@@ -2049,7 +2049,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
 @pytest.mark.parametrize('derived_id', [True, False])
 def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token' if derived_id else 'chosen-id'
+    identity = 'mcp.example.test' if derived_id else 'chosen-id'
     model = TestModel()
     agent = Agent(
         model,
@@ -2147,7 +2147,7 @@ def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
 @pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
 def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     model = TestModel()
     if strategy == 'provided_native':
         capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)

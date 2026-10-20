@@ -1168,7 +1168,7 @@ async def test_native_mcp_combine_rebuilds_the_provider_tool() -> None:
         [
             [
                 MCPServerTool(
-                    id='example.com-mcp',
+                    id='example.com',
                     url='https://example.com/mcp',
                     headers={'X-First': '1'},
                     allowed_tools=['search'],
@@ -1378,7 +1378,7 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
     """
     capability = MCP[Any](url='https://mcp.example.com/sse')
 
-    assert capability.id == snapshot('mcp.example.com-sse')
+    assert capability.id == snapshot('mcp.example.com')
     assert cast('AbstractToolset[Any]', capability.get_toolset()).id == capability.id
 
     # An explicit `id=` still wins, and a client that carries its own connection has nothing to

@@ -4984,7 +4984,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         if owner is not None:
             _reject_class_crossing_id(cap.id, {owner, type(cap)})
             if not _declares_default_id(type(cap)):
-                raise exceptions.UserError(_repeated_id_message(cap.id))
+                raise exceptions.UserError(_repeated_id_message(cap.id, [cap]))
         owners.setdefault(cap.id, type(cap))
     return set(owners)
 
