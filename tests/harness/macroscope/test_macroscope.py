@@ -22,6 +22,7 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceCommand,
     WorkspaceError,
+    WorkspaceTimeoutError,
 )
 from pydantic_ai_harness.macroscope import (
     Macroscope,
@@ -42,12 +43,11 @@ def _fake_cli(
     *,
     name: str = 'macroscope',
     sleep: float | None = None,
-    hang: float | None = None,
     exit_code: int = 0,
 ) -> str:
     """Write an executable stand-in for `macroscope` that records argv and cwd and emits `lines` on stderr.
 
-    `sleep` waits before the lines and `hang` after them; the script then exits with `exit_code`.
+    `sleep` waits before the lines; the script then exits with `exit_code`.
     """
     directory.mkdir(parents=True, exist_ok=True)
     script = directory / name
@@ -60,8 +60,6 @@ def _fake_cli(
     if sleep is not None:
         body.append(f'sleep {sleep}')
     body += [f"printf '%s\\n' {shlex.quote(line)} >&2" for line in lines]
-    if hang is not None:
-        body.append(f'sleep {hang}')
     body.append(f'exit {exit_code}')
     script.write_text('\n'.join(body) + '\n')
     script.chmod(0o755)
@@ -84,6 +82,17 @@ def _ctx(workspace: Workspace | Path) -> RunContext[None]:
     return RunContext[None](
         deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0, workspace=workspace
     )
+
+
+class _TimingOutWorkspace(LocalWorkspaceBackend):
+    """A workspace whose commands time out after writing `stderr`."""
+
+    def __init__(self, root: Path, stderr: str) -> None:
+        super().__init__(root)
+        self._stderr = stderr
+
+    async def run(self, command: WorkspaceCommand, **kwargs: object) -> CommandResult:
+        raise WorkspaceTimeoutError('command timed out', stderr=self._stderr)
 
 
 class _FailingWorkspace(LocalWorkspaceBackend):
@@ -225,10 +234,15 @@ class TestRunReview:
 
     async def test_timeout_keeps_streamed_findings(self, tmp_path: Path) -> None:
         # Findings that arrived before the deadline are returned instead of being thrown away.
-        command = _fake_cli(tmp_path, ['review_id=rev-12', _ISSUE_LINE], hang=30)
-        review = await _toolset(command, timeout=0.5).run_macroscope_review(_ctx(tmp_path))
+        workspace = Workspace(_TimingOutWorkspace(tmp_path, f'review_id=rev-12\n{_ISSUE_LINE}\n'))
+        review = await _toolset('macroscope').run_macroscope_review(_ctx(workspace))
         assert (review.review_id, review.status) == ('rev-12', 'timed_out')
         assert [i.issue_id for i in review.issues] == ['i1']
+
+    async def test_timeout_after_a_reported_status_keeps_it(self, tmp_path: Path) -> None:
+        workspace = Workspace(_TimingOutWorkspace(tmp_path, 'review_id=rev-14\nissue_status=completed\n'))
+        review = await _toolset('macroscope').run_macroscope_review(_ctx(workspace))
+        assert review.status == 'completed'
 
     async def test_model_base_that_looks_like_an_option_is_rejected(self, tmp_path: Path) -> None:
         command = _fake_cli(tmp_path, ['review_id=rev-13', 'issue_status=completed'])
