@@ -63,7 +63,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponsePart,
+    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -82,6 +82,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
@@ -108,6 +109,9 @@ SESSION_CREATED_EVENT = 'session.created'
 SESSION_UPDATE_EVENT = 'session.update'
 SESSION_UPDATED_EVENT = 'session.updated'
 CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
+CONVERSATION_ITEM_DELETE_EVENT = 'conversation.item.delete'
+CONVERSATION_ITEM_ADDED_EVENTS = frozenset({'conversation.item.added', 'conversation.item.created'})
+"""The frames that say an item joined the conversation: GA's `.added`, and the beta protocol's `.created`."""
 INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
 INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
 INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
@@ -380,6 +384,8 @@ class ProtocolConversationItem(BaseModel):
     type: str
     role: str | None = None
     call_id: str | None = None
+    name: str | None = None
+    """The tool a function call item calls."""
     content: list[_ProtocolItemContent] | None = None
 
 
@@ -578,7 +584,7 @@ async def seed_items(
         else:
             items.extend(
                 _seed_response_items(
-                    message.parts,
+                    message,
                     provider_name=provider_name,
                     call_ids=call_ids,
                     seeded_calls=seeded_calls,
@@ -659,14 +665,14 @@ async def _seed_request_items(
 
 
 def _seed_response_items(
-    parts: Sequence[ModelResponsePart],
+    message: ModelResponse,
     *,
     provider_name: str,
     call_ids: dict[str, str],
     seeded_calls: set[str],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for part in parts:
+    for index, part in enumerate(message.parts):
         if isinstance(part, TextPart):
             if part.content:
                 items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
@@ -689,11 +695,12 @@ def _seed_response_items(
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider, so the audio-seeding capability
-            # doesn't apply here and the typed result is always a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                items.append(_message_item('assistant', [_text_content('output_text', content)]))
+            # Assistant audio can't be replayed on any provider, so the audio-seeding capability doesn't apply
+            # here: it's seeded as its transcript, marked where a barge-in cut it off, as the model never heard
+            # what came after.
+            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                text = assistant_speech_text(message, index)
+                items.append(_message_item('assistant', [_text_content('output_text', text)]))
         elif isinstance(part, CompactionPart):
             # Provider-session-bound compaction state can't round-trip into another session; classic
             # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
@@ -1016,6 +1023,16 @@ def client_item_id(input_index: int) -> str:
     around it (seeded history, a browser's items on a sideband).
     """
     return f'pydantic_ai_item_{input_index}'
+
+
+def tool_content_item_id(input_index: int) -> str:
+    """The id of the user message item carrying content a tool returned besides its output.
+
+    The connection chooses it so it can delete the item with the tool call (`openai_prune_tool_items`). It names no
+    input on purpose: under a `client_item_id`, `client_item_input` would take the item's joining the conversation for
+    input `input_index` being placed there, which the tool's output already reports.
+    """
+    return f'pydantic_ai_content_{input_index}'
 
 
 def client_item_input(item_id: str | None) -> int | None:

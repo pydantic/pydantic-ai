@@ -10,7 +10,6 @@ from pathlib import Path
 from sqlite3 import Error as SQLiteError
 from typing import TYPE_CHECKING, Generic
 
-import anyio
 from anyio import to_thread
 
 from pydantic_clai2.plugins import DepsT
@@ -26,12 +25,12 @@ _CHILD = 'open:'
 """Prefixes a subdirectory's name in the browser's option values, so no name collides with another option."""
 
 
-def _prose(text: str) -> str:
+def prose(text: str) -> str:
     """Sentences in short lines: the terminal cuts long ones off beside an 80-column list; the web UI joins them."""
     return '\n\n'.join(textwrap.fill(paragraph, width=36) for paragraph in text.split('\n\n'))
 
 
-_ADD_HELP = _prose(
+_ADD_HELP = prose(
     'Load sub-agent definitions (*.md and *.toml), not files for code search.\n\n'
     'Add a directory path, browse local directories, or add a folder name such as agents or global. '
     'Names search .agents, .claude and .codex in the project and home. '
@@ -101,7 +100,7 @@ class DirectoryPicker:
                 )
             except OSError as exc:
                 problem = f'Cannot list directory: {exc.strerror or exc}'
-        options = [Option(value='use', label='Use this directory', description=_prose(problem or ''))]
+        options = [Option(value='use', label='Use this directory', description=prose(problem or ''))]
         if self.current != self.current.parent:
             options.append(Option(value='parent', label='.. (parent directory)'))
         options += [
@@ -115,9 +114,9 @@ class DirectoryPicker:
         ]
         notice = problem or self.error or ('' if children else 'No subdirectories. This directory can be used.')
         description = (
-            (f'{_prose(_display(notice))}\n\n' if notice else '')
+            (f'{prose(_display(notice))}\n\n' if notice else '')
             + f'Current directory\n{_display(str(self.current))}\n\n'
-            + _prose(
+            + prose(
                 'Open a folder to look inside; Use this directory saves its absolute path, '
                 'the same in every project. Esc returns without changing settings.'
             )
@@ -191,11 +190,11 @@ class FolderMenu(Generic[DepsT]):
             return _display_lines(f'{value}\n\nCannot open directory: {exc}')
         if is_project_relative(value):
             details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
-            details += _prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
-            details += '\n\n' + _prose('Resolved against each project CLAI runs in.')
+            details += prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
+            details += '\n\n' + prose('Resolved against each project CLAI runs in.')
         else:
             details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
-            details += _prose(problem or 'Directory is readable.')
+            details += prose(problem or 'Directory is readable.')
         return _display_lines(details)
 
     def options(self) -> tuple[list[Option], str]:
@@ -216,7 +215,7 @@ class FolderMenu(Generic[DepsT]):
             Option(
                 value='close',
                 label=SAVE_AND_CLOSE,
-                description=_prose('Changes are already saved. Return to Coder settings.'),
+                description=prose('Changes are already saved. Return to Coder settings.'),
             ),
         ]
         notices = [
@@ -224,7 +223,7 @@ class FolderMenu(Generic[DepsT]):
             '' if folders else 'No folders selected. Disk agents are off.',
             '' if self.source.sub_agents_enabled() else 'Sub-agents are disabled in Coder settings.',
         ]
-        return options, '\n'.join(_prose(notice) for notice in notices if notice)
+        return options, '\n'.join(prose(notice) for notice in notices if notice)
 
     async def run(self, dialogs: Dialogs) -> list[str]:
         """Show the list until the user closes it, saving each change; the messages to show."""
@@ -341,5 +340,5 @@ class FolderMenu(Generic[DepsT]):
 
 
 async def edit_agent_folders(source: CoderSource[DepsT], dialogs: Dialogs) -> list[str]:
-    """The **Agent folders** row's action: the folder list for the directory CLAI runs in."""
-    return await FolderMenu(source, project=Path(await anyio.Path.cwd())).run(dialogs)
+    """The **Agent folders** row's action: the folder list for the directory the session works in."""
+    return await FolderMenu(source, project=source.host.workspace).run(dialogs)

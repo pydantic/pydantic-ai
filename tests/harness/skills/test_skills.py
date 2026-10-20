@@ -102,13 +102,14 @@ class TestSkills:
             'exclude',
             'missing_directories',
             'duplicate_names',
+            'unknown_names',
             'workspace',
         )
 
     def test_repr_only_exposes_skill_library_configuration(self) -> None:
         assert repr(Skills('skills')) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error')"
+            "missing_directories='error', duplicate_names='error', unknown_names='error')"
         )
 
     def test_construction_reads_nothing(self, tmp_path: Path) -> None:
@@ -337,6 +338,25 @@ class TestSkillValidation:
 
         with pytest.raises(ValueError, match=rf'Unknown skill in {selector}: missing.*Available skills: available'):
             await _run(skills, tmp_path)
+
+    async def test_unknown_names_can_be_skipped(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'alpha')
+        _write_skill(tmp_path / 'skills', 'beta')
+
+        included = Skills('skills', include=['beta', 'missing'], unknown_names='skip')
+        excluded = Skills('skills', exclude=['beta', 'missing'], unknown_names='skip')
+
+        assert await _names(included, tmp_path) == ['beta']
+        assert await _names(excluded, tmp_path) == ['alpha']
+
+    async def test_combined_configurations_keep_their_own_unknown_names(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'first', 'alpha')
+        _write_skill(tmp_path / 'second', 'beta')
+        tolerant = Skills('first', exclude=['missing'], unknown_names='skip')
+
+        assert await _names(_combined(tolerant, Skills('second')), tmp_path) == ['alpha', 'beta']
+        with pytest.raises(ValueError, match='Unknown skill in exclude: missing'):
+            await _run(_combined(tolerant, Skills('second', exclude=['missing'])), tmp_path)
 
     @pytest.mark.parametrize('selector', ['include', 'exclude'])
     def test_selector_must_not_be_a_string(self, selector: str) -> None:
@@ -635,6 +655,7 @@ class TestSkillLibraryLayering:
         [
             ('missing_directories', 'skips', "'error' or 'skip'"),
             ('duplicate_names', 'keep_frist', "'error' or 'keep_first'"),
+            ('unknown_names', 'ignore', "'error' or 'skip'"),
         ],
     )
     def test_options_are_validated_for_specs_and_untyped_callers(self, option: str, value: str, allowed: str) -> None:

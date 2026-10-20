@@ -85,6 +85,12 @@ DuplicateNames: TypeAlias = Literal['error', 'keep_first']
 Fail the run, or keep the first with a warning.
 """
 
+UnknownNames: TypeAlias = Literal['error', 'skip']
+"""What `Skills` does with an `include` or `exclude` name that no library has: fail the run, or skip the name.
+
+Skipping suits a selection shared by several projects, such as a person's list of skills to hide.
+"""
+
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
@@ -397,6 +403,7 @@ async def load_skill_libraries(
     exclude: Collection[str],
     missing_directories: MissingDirectories,
     duplicate_names: DuplicateNames,
+    unknown_names: UnknownNames,
 ) -> tuple[list[SkillDefinition], list[SkippedSkill]]:
     """Discover immediate child skill packages under configured directories in `workspace`.
 
@@ -410,8 +417,9 @@ async def load_skill_libraries(
     available_names = frozenset(name for name, _ in discovered)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
     normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
-    _validate_selection('include', normalized_include, available_names)
-    _validate_selection('exclude', normalized_exclude, available_names)
+    if unknown_names == 'error':
+        _validate_selection('include', normalized_include, available_names)
+        _validate_selection('exclude', normalized_exclude, available_names)
     selected_names = (
         normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
     )

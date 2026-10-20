@@ -95,7 +95,7 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
-| Google | ✅ | No parameter support. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
+| Google | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
@@ -186,6 +186,17 @@ _(This example is complete, it can be run "as is")_
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 * Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
+
+Google supports none of these parameters.
+
+#### Restricting parameters {#restricting-parameters}
+
+`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` restrict what the search may do, so
+Pydantic AI doesn't send the tool without them. When one is set and the model can't apply it (a ❌ above), the tool is
+treated as unsupported by that model: a [local fallback](capabilities/overview.md#provider-adaptive-tools) runs in its
+place if one is provided, an `optional=True` tool is left out, and otherwise a
+[`UserError`][pydantic_ai.exceptions.UserError] names the settings. The other parameters only tune results and are
+left out on models that don't support them.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.
@@ -687,6 +698,11 @@ _(This example is complete, it can be run "as is")_
 | `blocked_domains` | ✅ | ❌ |
 | `enable_citations` | ✅ | ❌ |
 | `max_content_tokens` | ✅ | ❌ |
+
+As with [web search](#restricting-parameters), `max_uses`, `allowed_domains`, and `blocked_domains` restrict what the
+tool may do: on a model that can't apply one that is set, the tool is treated as unsupported, so a local fallback runs
+in its place if one is provided, an `optional=True` tool is left out, and a
+[`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.

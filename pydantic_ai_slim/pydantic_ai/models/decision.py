@@ -467,6 +467,12 @@ class DecisionModel(Model[InterfaceClient]):
     See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
     """
 
+    # A decision model writes no text and makes at most one tool call, so `max_tokens`, `stop_sequences` and
+    # `parallel_tool_calls` hold without being sent and are not listed.
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'service_tier', 'temperature', 'top_k', 'top_p'}
+    )
+
     supports_image_input: ClassVar[bool] = False
     """Whether the backend can receive image evidence in `DecisionRequest.images`.
 

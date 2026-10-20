@@ -14,6 +14,7 @@ from ._warnings import (
     CostNotFoundWarning as CostNotFoundWarning,
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning as UsageLimitUnavailableWarning,
 )
 
 if TYPE_CHECKING:
@@ -42,9 +43,11 @@ __all__ = (
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
+    'UnsupportedSettingWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
+    'UsageLimitUnavailableWarning',
     'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
@@ -733,4 +736,27 @@ class MessageHistoryMutatedWarning(Warning):
     run, which covers messages still present in the final history. Errored runs aren't checked —
     with warnings configured as errors, the warning would displace the run's own exception. Its
     absence does not guarantee that no stale span was recorded.
+    """
+
+
+class UnsupportedSettingWarning(UserWarning):
+    """Warning emitted when a model ignores a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field that a request relies on.
+
+    Most settings a model doesn't support, like `temperature` or `seed`, are tuning knobs that are silently
+    ignored, so the same settings work across models. This warning covers the ones whose absence changes what
+    the request guarantees: `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False` (when the
+    request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
+    models that honor it.
+
+    It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
+    `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import UnsupportedSettingWarning
+
+    warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
     """

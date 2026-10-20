@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugins import DepsT, NoSettings, Plugin, PluginHost
+from pydantic_clai2.plugins import DepsT, NoSettings, Plugin, PluginHost, PluginScope
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
@@ -54,10 +54,22 @@ class _CapabilityPlugin(Plugin[NoSettings, DepsT]):
         return (self.capability,)
 
 
+def _target(module: ModuleType, declaration: PluginSettings) -> object:
+    """What the declaration's factory names in `module`: a `Plugin` or capability class, if it is valid."""
+    attr = declaration.factory.partition(':')[2]
+    return getattr(module, attr, None) if attr else _plugin_class(module, declaration.factory)
+
+
+def scope(module: ModuleType, declaration: PluginSettings) -> PluginScope:
+    """The declared plugin's `Plugin.scope`, read before building it; a capability class is per session."""
+    target = _target(module, declaration)
+    return target.scope if isinstance(target, type) and issubclass(target, Plugin) else 'session'
+
+
 def build(module: ModuleType, declaration: PluginSettings, host: PluginHost[DepsT]) -> Plugin[BaseModel, DepsT]:
     """Build the declared `Plugin` class, or wrap a capability class built from the declaration's settings."""
     attr = declaration.factory.partition(':')[2]
-    target: object = getattr(module, attr, None) if attr else _plugin_class(module, declaration.factory)
+    target = _target(module, declaration)
     if isinstance(target, type) and issubclass(target, Plugin):
         plugin_type: type[Plugin[BaseModel, DepsT]] = target  # pyright: ignore[reportUnknownVariableType]
         return plugin_type.from_host(host)

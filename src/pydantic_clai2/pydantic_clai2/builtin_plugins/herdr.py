@@ -184,15 +184,21 @@ class _Reporting(AbstractCapability[None]):
 
 
 class HerdrPlugin(Plugin):
-    """Report only inside a herdr pane. No IO or tasks outside herdr or on Windows."""
+    """Report only inside a herdr pane. No IO or tasks outside herdr, on Windows, or without a terminal."""
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
         socket_path = os.environ.get('HERDR_SOCKET_PATH')
         pane_id = os.environ.get('HERDR_PANE_ID')
+        # The pane shows the session in the terminal; another session in this process, such as one the
+        # browser opened, would report over it.
         self.reporter = (
             None
-            if os.environ.get('HERDR_ENV') != '1' or not socket_path or not pane_id or sys.platform == 'win32'
+            if os.environ.get('HERDR_ENV') != '1'
+            or not socket_path
+            or not pane_id
+            or sys.platform == 'win32'
+            or not host.console.is_terminal
             else _Reporter(
                 host=host,
                 client=HerdrClient(socket_path=socket_path, pane_id=pane_id, tab_id=os.environ.get('HERDR_TAB_ID')),

@@ -34,7 +34,7 @@ never discarded.
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
 | [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
-| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The model finished replying and no tool remains active. |
+| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed, and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
 
@@ -62,6 +62,13 @@ same stream; see [Capabilities and hooks](capabilities.md#the-event-stream).
 Use [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] as the exchange
 boundary. A model can speak, call a tool, and speak again, so receiving speech — or a tool result —
 does not imply that the turn is done.
+
+The event marks the end of what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
+waits for. When a response ends, the session emits it if the model owes nothing more: no reply to anything
+sent, no answer to a tool's result, and no response still under way. Text sent while the model is answering
+asks for a reply of its own, so the event comes once that reply ends too. A response the user cuts off ends
+the exchange, as does a response the provider started on its own (server-side voice activity detection).
+The user's transcript can still finish after it.
 
 ## Reading raw audio events
 
