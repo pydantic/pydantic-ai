@@ -120,7 +120,6 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
 ProductionGroqModelNames = Literal[
     'llama-3.1-8b-instant',
     'llama-3.3-70b-versatile',
-    'meta-llama/llama-guard-4-12b',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'whisper-large-v3',
@@ -129,12 +128,9 @@ ProductionGroqModelNames = Literal[
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
 PreviewGroqModelNames = Literal[
-    'meta-llama/llama-4-maverick-17b-128e-instruct',
     'meta-llama/llama-prompt-guard-2-22m',
     'meta-llama/llama-prompt-guard-2-86m',
     'openai/gpt-oss-safeguard-20b',
-    'playai-tts',
-    'playai-tts-arabic',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -727,6 +723,7 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -740,7 +737,10 @@ class GroqStreamedResponse(StreamedResponse):
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
                 async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                    self._usage += _map_usage(chunk, self._provider_name, self._provider_url, self._model_name)
+                    self._add_usage(
+                        _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
+                        reported=chunk.x_groq is not None and chunk.x_groq.usage is not None,
+                    )
 
                     if chunk.id:  # pragma: no branch
                         self.provider_response_id = chunk.id
@@ -866,7 +866,7 @@ def _map_usage(
         response_usage = completion.x_groq.usage
 
     if response_usage is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details: dict[str, int] = {

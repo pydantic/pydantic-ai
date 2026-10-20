@@ -22,7 +22,7 @@ from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
+from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
@@ -196,6 +196,7 @@ class LivePrompt:
                 self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
+                self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
             self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
 

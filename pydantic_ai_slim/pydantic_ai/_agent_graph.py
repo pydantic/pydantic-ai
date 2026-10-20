@@ -26,6 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
@@ -1051,6 +1054,9 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), ctx.deps.tool_manager.toolset),
+        _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
+        _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
@@ -1192,7 +1198,8 @@ def _check_continuation_usage(
         attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
         for attempt_usage in attempt_usages:
             provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
-        run_context.usage_limits.check_tokens(provisional)
+        # Provisional, so omitted usage is warned about once the merged response is recorded.
+        run_context.usage_limits._check_token_limits(provisional)  # pyright: ignore[reportPrivateUsage]
         if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
