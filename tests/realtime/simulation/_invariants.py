@@ -45,7 +45,8 @@ Checked at rest (`settle()`):
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
 - `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read
-  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement);
+  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement); for a session that
+  ended on its own, once it closes;
 - `history.not_restored`: a re-dialed provider conversation started a response without something history
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
@@ -720,6 +721,10 @@ class Checker:
         self.report('history.order', violations)
 
     def _check_spoken_turns(self, messages: list[ModelMessage]) -> None:
+        if self.sim.receive_ended and self.sim.close_requested is None:
+            # The session ended on its own: a turn it holds back for a response it will never read the end of is
+            # recorded when it closes, and checked then.
+            return
         # By count: a turn recorded without its transcript can't be told apart from another.
         committed = [
             input_.key
