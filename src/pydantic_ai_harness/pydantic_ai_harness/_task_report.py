@@ -17,8 +17,9 @@ _TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands. Same rule as `CodeMode`'s `</system>` neutralization.
 # The `<` of anything a model would read as the frame's end tag: `</task_output>`, with or without spaces,
-# attributes or a self-closing slash. The hyphenated `</task-output>` that older reports used is matched too.
-_CLOSING_TASK_OUTPUT_TAG_OPENER = re.compile(r'<(?=\s*/\s*task[-_]output(?=[\s/>]))', re.IGNORECASE)
+# attributes or a self-closing slash, or cut off at the end of the body, where the frame's own end tag would
+# complete it. The hyphenated `</task-output>` that older reports used is matched too.
+_CLOSING_TASK_OUTPUT_TAG_OPENER = re.compile(r'<(?=\s*/\s*task[-_]output(?=[\s/>]|$))', re.IGNORECASE)
 
 
 def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
