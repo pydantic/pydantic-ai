@@ -793,6 +793,21 @@ class TestErrorsAndFilesystem:
         with pytest.raises(WorkspaceError, match=r"^Could not resolve '/x': realpath: boom$"):
             await backend.realpath('/x')
 
+    async def test_a_realpath_request_failure_propagates(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        error = DaytonaConnectionError('offline')
+
+        async def offline(command: str, cwd: str | None = None, timeout: int | None = None) -> Any:
+            raise error
+
+        monkeypatch.setattr(sandbox.process, 'exec', offline)
+        with pytest.raises(DaytonaConnectionError) as exc_info:
+            await backend.realpath('/x')
+        assert exc_info.value is error
+
     async def test_a_directory_is_reported_when_its_type_lookup_fails(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -936,7 +951,7 @@ class TestErrorsAndFilesystem:
     async def test_path_authorization_error_is_permission_denied(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.fs_error = DaytonaForbiddenError('permission denied', status_code=403)
+        sandbox.fs_error = DaytonaForbiddenError('forbidden', status_code=403)
         with pytest.raises(PermissionError, match='Permission denied'):
             await backend.stat('/private')
 

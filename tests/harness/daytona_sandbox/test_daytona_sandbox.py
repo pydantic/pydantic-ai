@@ -214,8 +214,7 @@ async def _touch(ctx: RunContext[None]) -> str:
 
 async def test_cancelled_run_closes_owned_client_mid_command(fake_daytona: FakeDaytona) -> None:
     async def long_command(ctx: RunContext[None]) -> str:
-        await ctx.workspace.run(['sleep', '30'])
-        return 'unexpected'
+        return (await ctx.workspace.run(['sleep', '30'])).stdout
 
     agent = Agent(
         TestModel(call_tools=['long_command']),
