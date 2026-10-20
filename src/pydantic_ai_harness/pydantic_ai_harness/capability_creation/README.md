@@ -109,8 +109,8 @@ value this version does not accept) is read as empty, and `author_capability` an
 `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are
 kept until you repair or remove it.
 
-Every store over one `directory` in a process shares a lock, so agents in the same process
-do not lose each other's manifest updates. Separate processes are not coordinated: point
+Every store over one `directory` in a process shares a lock around each manifest update, so
+agents in the same process do not lose each other's updates. Separate processes are not coordinated: point
 each `directory` at one process at a time.
 
 Capability names are at most 64 lowercase letters, digits, and underscores, starting with a
@@ -157,9 +157,9 @@ Authored code first runs when the model calls `author_capability`, not on the ne
 validation executes the module body, the constructor, and the static getters in the current
 run, with the agent process's environment and permissions, even when validation then
 rejects the code. If that code blocks, cancelling the run stops waiting for it, but its
-worker thread runs until the code returns, and later authoring calls on the same
-`directory` wait for it. `store.load_active()` runs authored code the same way, in the
-calling thread.
+worker thread runs until the code returns. Other authoring, listing, and disabling calls
+are not held up by it. `store.load_active()` runs authored code in its calling thread, so
+an authored module that blocks also blocks that call.
 
 To have a person approve authored code before any of it runs, require approval for
 `author_capability` with a

@@ -55,6 +55,12 @@ def _check_model_settings_return(value: object) -> None:
         )
 
 
+def _module_name(path: Path) -> str:
+    """The `sys.modules` key for the authored file at `path`, derived from its resolved path."""
+    digest = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
+    return f'_authored_capability_{path.stem}_{digest}'
+
+
 def _load_module(path: Path) -> ModuleType:
     """Execute `path` as a fresh module.
 
@@ -69,10 +75,9 @@ def _load_module(path: Path) -> ModuleType:
     is derived from the file's resolved path, so reloading a file replaces its entry
     instead of adding one.
     """
-    resolved = str(path.resolve())
-    name = f'_authored_capability_{path.stem}_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}'
+    name = _module_name(path)
     module = ModuleType(name)
-    module.__file__ = resolved
+    module.__file__ = str(path.resolve())
     code = compile(path.read_bytes(), str(path), 'exec', dont_inherit=True)
     sys.modules[name] = module
     exec(code, module.__dict__)
@@ -131,5 +136,11 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
 
 
 def validate_capability_file(path: Path) -> str:
-    """Run the checks of `load_capability_instance` and return the capability class name."""
-    return type(load_capability_instance(path)).__name__
+    """Run the checks of `load_capability_instance` and return the capability class name.
+
+    Nothing from the module is kept, so it is removed from `sys.modules` again.
+    """
+    try:
+        return type(load_capability_instance(path)).__name__
+    finally:
+        sys.modules.pop(_module_name(path), None)

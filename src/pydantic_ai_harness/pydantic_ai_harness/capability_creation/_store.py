@@ -7,9 +7,10 @@ keyed by name. Reads are fail-soft: a broken entry is skipped rather than raised
 Writes refuse an unreadable manifest rather than replacing it, so its entries
 are not lost.
 
-Every store over one directory in this process shares a lock, so two agents or
-toolsets over the same directory do not lose each other's manifest updates.
-Separate processes are not coordinated.
+Every store over one directory in this process shares a lock around each
+manifest update, so two agents or toolsets over the same directory do not lose
+each other's updates. Authored code runs outside that lock. Separate processes
+are not coordinated.
 """
 
 from __future__ import annotations
@@ -125,31 +126,37 @@ class CapabilityStore:
                 f'invalid capability name {name!r}: use at most 64 lowercase letters, digits, and underscores, '
                 f'starting with a letter'
             )
-        with _directory_lock(self.directory):
-            manifest = self._load_manifest(for_update=True)
-            previous = next((record for record in manifest.capabilities if record.name == name), None)
-            self.directory.mkdir(parents=True, exist_ok=True)
-            live = self.directory / f'{name}.py'
-            rejected = self.directory / f'{name}.rejected.py'
-            candidate = self.directory / f'{name}.candidate.py'
-            candidate.write_text(code, encoding='utf-8')
+        self._load_manifest(for_update=True)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        live = self.directory / f'{name}.py'
+        rejected = self.directory / f'{name}.rejected.py'
+        # Authored code runs outside the directory lock, so code that blocks holds up only this call.
+        fd, candidate_name = tempfile.mkstemp(dir=self.directory, prefix=f'{name}.', suffix='.candidate.py')
+        candidate = Path(candidate_name)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as file:
+                file.write(code)
             try:
-                class_name = validate_capability_file(candidate)
+                class_name, error = validate_capability_file(candidate), None
             except CapabilityValidationError as exc:
-                if previous is not None and previous.last_error is None and live.exists():
+                class_name, error = '', str(exc)
+            with _directory_lock(self.directory):
+                manifest = self._load_manifest(for_update=True)
+                previous = next((record for record in manifest.capabilities if record.name == name), None)
+                if error is not None and previous is not None and previous.last_error is None and live.exists():
                     os.replace(candidate, rejected)
-                    return AuthoredCapability(name=name, module_file=rejected.name, class_name='', last_error=str(exc))
-                record = AuthoredCapability(name=name, module_file=live.name, class_name='', last_error=str(exc))
-            else:
-                record = AuthoredCapability(name=name, module_file=live.name, class_name=class_name)
+                    return AuthoredCapability(name=name, module_file=rejected.name, class_name='', last_error=error)
+                os.replace(candidate, live)
                 rejected.unlink(missing_ok=True)
-            os.replace(candidate, live)
-            if previous is None:
-                manifest.capabilities.append(record)
-            else:
-                manifest.capabilities[manifest.capabilities.index(previous)] = record
-            self._save_manifest(manifest)
-            return record
+                record = AuthoredCapability(name=name, module_file=live.name, class_name=class_name, last_error=error)
+                if previous is None:
+                    manifest.capabilities.append(record)
+                else:
+                    manifest.capabilities[manifest.capabilities.index(previous)] = record
+                self._save_manifest(manifest)
+                return record
+        finally:
+            candidate.unlink(missing_ok=True)
 
     def disable(self, name: str) -> bool:
         """Mark the named capability disabled so `load_active` stops returning it. Returns whether it existed."""
@@ -179,23 +186,32 @@ class CapabilityStore:
         its error, a re-fixed entry clears it, so the manifest stays truthful about
         which capabilities are actually active.
         """
+        manifest = self._load_manifest()
+        instances: list[AbstractCapability[object]] = []
+        changed: dict[str, AuthoredCapability] = {}
+        for record in manifest.capabilities:
+            if record.status != 'active':
+                continue
+            try:
+                instances.append(load_capability_instance(self._module_path(record)))
+                error = None
+            except CapabilityValidationError as exc:
+                error = str(exc)
+            if record.last_error != error:
+                changed[record.name] = record.model_copy(update={'last_error': error})
+        if changed:
+            self._record_load_errors(manifest.capabilities, changed)
+        return instances
+
+    def _record_load_errors(self, loaded: list[AuthoredCapability], changed: dict[str, AuthoredCapability]) -> None:
+        """Save the new `last_error` of each changed entry that no write replaced while it was loading."""
+        unchanged = {record.name: record for record in loaded}
         with _directory_lock(self.directory):
             manifest = self._load_manifest()
-            instances: list[AbstractCapability[object]] = []
-            changed = False
-            for record in manifest.capabilities:
-                if record.status != 'active':
-                    continue
-                try:
-                    instances.append(load_capability_instance(self._module_path(record)))
-                except CapabilityValidationError as exc:
-                    if record.last_error != str(exc):
-                        record.last_error = str(exc)
-                        changed = True
-                    continue
-                if record.last_error is not None:
-                    record.last_error = None
-                    changed = True
-            if changed:
+            updated = False
+            for index, record in enumerate(manifest.capabilities):
+                if record.name in changed and record == unchanged[record.name]:
+                    manifest.capabilities[index] = changed[record.name]
+                    updated = True
+            if updated:
                 self._save_manifest(manifest)
-            return instances

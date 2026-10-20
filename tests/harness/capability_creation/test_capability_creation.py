@@ -26,6 +26,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 from pydantic_ai_harness.capability_creation import (
+    AuthoredCapability,
     CapabilityCreation,
     CapabilityCreationToolset,
     CapabilityStore,
@@ -237,10 +238,17 @@ class UsesModels(AbstractCapability):
     def test_reload_replaces_module_registration(self, tmp_path: Path) -> None:
         path = _write(tmp_path, 'm', VALID_CODE)
         before = set(sys.modules)
-        validate_capability_file(path)
-        validate_capability_file(path)
+        load_capability_instance(path)
+        load_capability_instance(path)
         added = [name for name in set(sys.modules) - before if name.startswith('_authored_capability_m_')]
         assert len(added) == 1
+
+    def test_validation_keeps_no_module_registered(self, tmp_path: Path) -> None:
+        before = set(sys.modules)
+        validate_capability_file(_write(tmp_path, 'm', VALID_CODE))
+        with pytest.raises(CapabilityValidationError):
+            validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        assert set(sys.modules) - before == set()
 
     def test_load_leaves_bytecode_settings_and_cache_alone(self, tmp_path: Path) -> None:
         before = sys.dont_write_bytecode
@@ -319,6 +327,15 @@ class TestCapabilityStore:
         assert store.write('marker', _marker_code('Bar', 'V2')).class_name == 'Bar'
         assert sorted(path.name for path in tmp_path.iterdir() if path.suffix == '.py') == ['marker.py']
 
+    def test_replacing_the_source_removes_an_older_rejected_source(self, tmp_path: Path) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        store.write('marker', NO_SUBCLASS_CODE)
+        (tmp_path / 'marker.py').write_text(SYNTAX_ERROR_CODE, encoding='utf-8')
+        store.load_active()  # the kept version now fails, so the next attempt replaces it
+        assert store.write('marker', NO_SUBCLASS_CODE).module_file == 'marker.py'
+        assert not (tmp_path / 'marker.rejected.py').exists()
+
     def test_failed_reauthor_of_broken_entry_replaces_it(self, tmp_path: Path) -> None:
         # With no version that passed validation to keep, the new attempt is what gets recorded.
         store = CapabilityStore(tmp_path)
@@ -363,24 +380,77 @@ class TestCapabilityStore:
 
     def test_stores_over_one_directory_share_a_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Two agents over one directory each build their own store; their manifest updates must not interleave.
-        gate = _gate_module(monkeypatch, 'entered_first', 'release_first', 'entered_second')
-        first = f'import {gate.__name__} as g\ng.entered_first.set()\ng.release_first.wait(30)\n' + VALID_CODE
-        second = f'import {gate.__name__} as g\ng.entered_second.set()\n' + VALID_CODE
+        saving = [threading.Event(), threading.Event()]
+        release = threading.Event()
+        real_replace = os.replace
+
+        def held_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                first = not saving[0].is_set()
+                saving[0 if first else 1].set()
+                if first:
+                    release.wait(timeout=30)  # hang guard; the test sets it
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, 'replace', held_replace)
         writers = [
-            threading.Thread(target=CapabilityStore(tmp_path).write, args=('first', first)),
-            threading.Thread(target=CapabilityStore(tmp_path / '.').write, args=('second', second)),
+            threading.Thread(target=CapabilityStore(tmp_path).write, args=('first', VALID_CODE)),
+            threading.Thread(target=CapabilityStore(tmp_path / '.').write, args=('second', VALID_CODE)),
         ]
         writers[0].start()
         try:
-            assert _gate(gate, 'entered_first').wait(timeout=30)
+            assert saving[0].wait(timeout=30)
             writers[1].start()
-            # Correct code never sets it; overlapping writers would within this window.
-            assert not _gate(gate, 'entered_second').wait(timeout=0.2)
+            # Correct code never sets it; overlapping updates would within this window.
+            assert not saving[1].wait(timeout=0.2)
         finally:
-            _gate(gate, 'release_first').set()
+            release.set()
             for writer in writers:
                 writer.join(timeout=30)
         assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['first', 'second']
+
+    def test_blocking_authored_code_does_not_hold_up_other_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(60)\n' + VALID_CODE
+        writer = threading.Thread(target=CapabilityStore(tmp_path).write, args=('slow', code))
+        done = threading.Event()
+
+        def quick() -> None:
+            CapabilityStore(tmp_path).write('quick', VALID_CODE)
+            CapabilityStore(tmp_path).disable('quick')
+            CapabilityStore(tmp_path).load_active()
+            done.set()
+
+        writer.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=30)
+            threading.Thread(target=quick).start()
+            assert done.wait(timeout=30)  # well inside the slow write's 60s hang guard
+        finally:
+            _gate(gate, 'release').set()
+            writer.join(timeout=30)
+        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['quick', 'slow']
+
+    def test_load_active_keeps_an_entry_rewritten_while_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An error found by a load that started before a re-author must not overwrite the new entry.
+        store = CapabilityStore(tmp_path)
+        store.write('x', VALID_CODE)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        broken = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(30)\nraise ValueError("broken")\n'
+        (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
+        loader = threading.Thread(target=store.load_active)
+        loader.start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=30)
+            record = store.write('x', _marker_code('Fixed', 'V2'))
+        finally:
+            _gate(gate, 'release').set()
+            loader.join(timeout=30)
+        assert store.list_all() == [record]
 
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
         assert CapabilityStore(tmp_path / 'absent').list_all() == []
@@ -541,7 +611,16 @@ class TestCapabilityCreationToolset:
         # Authored code that blocks must not hold the run past cancellation; the write still completes afterwards.
         gate = _gate_module(monkeypatch, 'entered', 'release')
         code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(30)\n' + VALID_CODE
-        toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
+        written = threading.Event()
+
+        class SignallingStore(CapabilityStore):
+            def write(self, name: str, code: str) -> AuthoredCapability:
+                try:
+                    return super().write(name, code)
+                finally:
+                    written.set()
+
+        toolset = CapabilityCreationToolset(SignallingStore(tmp_path))
         try:
             with anyio.CancelScope() as scope:
                 async with anyio.create_task_group() as tg:
@@ -549,12 +628,11 @@ class TestCapabilityCreationToolset:
                     assert await anyio.to_thread.run_sync(_gate(gate, 'entered').wait, 30)
                     scope.cancel()
             assert scope.cancelled_caught
-            assert not (tmp_path / 'manifest.json').exists()  # the run stopped waiting before the write finished
+            assert not written.is_set()  # the run stopped waiting before the write finished
         finally:
             _gate(gate, 'release').set()
-        # A second write waits for the abandoned one, which then has saved its entry.
-        await anyio.to_thread.run_sync(CapabilityStore(tmp_path).write, 'after', VALID_CODE)
-        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow', 'after']
+        assert await anyio.to_thread.run_sync(written.wait, 30)
+        assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow']
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))

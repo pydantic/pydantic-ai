@@ -83,7 +83,7 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write does not leave a partial file. A manifest that cannot be read (malformed JSON, or a field value this version does not accept) is read as empty, and `author_capability` and `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are kept until you repair or remove it.
 
-Every store over one `directory` in a process shares a lock, so agents in the same process do not lose each other's manifest updates. Separate processes are not coordinated: point each `directory` at one process at a time.
+Every store over one `directory` in a process shares a lock around each manifest update, so agents in the same process do not lose each other's updates. Separate processes are not coordinated: point each `directory` at one process at a time.
 
 Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name already has a version that passed validation, that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
 
@@ -110,7 +110,7 @@ model that it changes nothing.
 
 `CapabilityCreation` executes arbitrary Python in-process at import, construction, and run time. That is the same trust boundary an agent that already runs shell commands and edits files operates under, which is the deliberate choice here. Do not point it at a directory whose contents you would not run yourself, and treat authored capabilities as code the agent is executing on your host.
 
-Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns, and later authoring calls on the same `directory` wait for it. `store.load_active()` runs authored code the same way, in the calling thread.
+Authored code first runs when the model calls `author_capability`, not on the next run: validation executes the module body, the constructor, and the static getters in the current run, with the agent process's environment and permissions, even when validation then rejects the code. If that code blocks, cancelling the run stops waiting for it, but its worker thread runs until the code returns. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so an authored module that blocks also blocks that call.
 
 To have a person approve authored code before any of it runs, require approval for `author_capability` with a [`ToolGuardrail`](guardrails.md). The run then ends with a `DeferredToolRequests` output for the call, which you approve or deny as described in [Human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval):
 
