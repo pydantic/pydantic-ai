@@ -15,6 +15,7 @@ import signal
 import subprocess
 import types
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, ClassVar
@@ -249,10 +250,15 @@ async def _replay(chunks: list[str]) -> AsyncIterator[str]:
 
 
 def _end(box: FakeBox) -> None:
-    # The runtime sends TERM to every process in a box it stops or removes.
+    # The runtime sends TERM to every process in a box it stops or removes, including the commands each
+    # script runs in a session of its own.
     for process in list(box.processes):
         # Never signal a reaped process: its pid may belong to another one by now.
         if process.returncode is None:  # pragma: no branch - reaped only when an ending races its wait
+            children = subprocess.run(['pgrep', '-P', str(process.pid)], capture_output=True, text=True, check=False)
+            for child in children.stdout.split():
+                with suppress(ProcessLookupError, PermissionError):
+                    os.killpg(int(child), signal.SIGTERM)
             os.kill(process.pid, signal.SIGTERM)
 
 

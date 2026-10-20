@@ -622,7 +622,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         Checked only after a failure, to keep the round trip off successful commands; a check that fails
         leaves the original error to propagate rather than ending the run on a guess.
         """
-        if (pending := lifecycle.get(box.name)) is not None and pending is not asyncio.current_task():
+        # Not while acquiring: an operation queued behind the acquisition waits for it to finish.
+        if (pending := lifecycle.get(box.name)) is not None and asyncio.current_task() is not self._acquisition:
             await asyncio.wait([pending])
         try:
             info = await runtime().get_info(box.name)

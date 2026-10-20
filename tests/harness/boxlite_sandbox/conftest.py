@@ -13,7 +13,7 @@ import pytest
 
 # BoxLite only has wheels for macOS on Apple silicon and Linux x86_64/aarch64, up to Python 3.14.
 _HAS_BOXLITE = importlib.util.find_spec('boxlite') is not None
-collect_ignore = [] if _HAS_BOXLITE else ['test_conformance.py', 'test_boxlite_sandbox.py']
+collect_ignore = [] if _HAS_BOXLITE else ['test_conformance.py', 'test_boxlite_sandbox.py', 'test_boxlite_live.py']
 
 if TYPE_CHECKING or _HAS_BOXLITE:  # pragma: no branch - the SDK-installed and other jobs take opposite branches
     from .fake_boxlite import FakeBoxLite

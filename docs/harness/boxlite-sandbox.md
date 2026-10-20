@@ -234,7 +234,7 @@ The VM is the boundary: it has its own kernel and filesystem, and unless `box_op
 
 ## Platforms
 
-BoxLite runs VMs with Apple's Hypervisor framework on macOS and with KVM on Linux, so it runs on macOS 14 or newer on Apple silicon and on Linux on x86_64 and aarch64 with glibc 2.28 or newer. On other platforms, and on Python 3.15, the `boxlite` extra installs nothing and importing `pydantic_ai_harness.boxlite_sandbox` raises `ImportError`. On Linux, check `ls -l /dev/kvm` before the first run: a host that can't run VMs fails when the run first uses the box.
+BoxLite runs VMs with Apple's Hypervisor framework on macOS and with KVM on Linux, so it runs on macOS 14 or newer on Apple silicon and on Linux on x86_64 and aarch64 with glibc 2.28 or newer. On other platforms, and on Python 3.15, the `boxlite` extra installs nothing and importing `pydantic_ai_harness.boxlite_sandbox` raises `ImportError`. On Linux, check `ls -l /dev/kvm` before the first run: a host that can't run VMs raises `WorkspaceUnavailableError` when the run first uses the box. On Ubuntu 24.04, AppArmor stops the bubblewrap that BoxLite runs its VM engine under from creating user namespaces, so boxes fail to start until you install `bubblewrap` and the AppArmor profile from BoxLite's [troubleshooting guide](https://github.com/boxlite-ai/boxlite/blob/main/docs/guides/troubleshooting.md); newer Ubuntu releases ship that profile.
 
 ## Telemetry
 

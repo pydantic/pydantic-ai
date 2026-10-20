@@ -25,7 +25,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend, _backend
+from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
 from pydantic_ai_harness.coder import Coder
 
 from .._tool_calls import call_tools
@@ -179,12 +179,11 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_boxlite: FakeBo
     result = await backend.run('printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2', shell=True, env={'OVERRIDE': 'run'})
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'base run', f'{working_dir}\n')
     program, args, env, cwd = fake_boxlite.commands[-2]
-    assert program == '/bin/sh' and args[:2] == ['-c', _backend._EXEC_SCRIPT]  # pyright: ignore[reportPrivateUsage]
-    assert args[4:] == ['/bin/sh', '-c', 'printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2']
+    assert program == '/bin/sh' and args[-3:] == ['/bin/sh', '-c', 'printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2']
     assert env == {'BASE': 'base', 'OVERRIDE': 'run'} and cwd == working_dir
     # The output is read back with the box's own environment, not the command's.
-    _, read_args, read_env, read_cwd = fake_boxlite.commands[-1]
-    assert read_args[3] == args[3] and read_env == {} and read_cwd is None
+    _, _, read_env, read_cwd = fake_boxlite.commands[-1]
+    assert read_env == {} and read_cwd is None
 
 
 async def test_the_command_env_does_not_break_the_backend(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -288,7 +287,13 @@ async def test_cancelled_destroy_still_deletes(fake_boxlite: FakeBoxLite, workin
     gate.set()
     with anyio.fail_after(5):
         await second
-    assert fake_boxlite.boxes == {} and _backend.lifecycle == {}
+    assert fake_boxlite.boxes == {}
+    # Nothing is left waiting: a new box with the same capability is created and deleted as usual.
+    fresh = BoxLiteSandboxBackend(working_dir=working_dir)
+    await fresh.get_sandbox()
+    assert fresh.ref is not None
+    await BoxLiteSandbox[None]().destroy(fresh.ref)
+    assert fake_boxlite.boxes == {}
 
 
 async def test_failed_start_deletes_the_box_and_can_retry(
@@ -355,6 +360,26 @@ async def test_a_timeout_while_the_command_starts_still_stops_it(fake_boxlite: F
         while len(fake_boxlite.spawned) == started:
             await asyncio.sleep(0.01)
         assert await asyncio.to_thread(fake_boxlite.spawned[started].wait) != 0
+
+
+async def test_a_failed_setup_does_not_wait_for_an_operation_queued_behind_it(
+    fake_boxlite: FakeBoxLite, working_dir: str
+) -> None:
+    # A deletion queued behind the creation waits for it, so the creation's own failure handling mustn't wait for the deletion.
+    fake_boxlite.start_gate = gate = asyncio.Event()
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    creating = asyncio.create_task(backend.get_sandbox())
+    await fake_boxlite.start_started.wait()
+    assert backend.ref is not None
+    deleting = asyncio.create_task(BoxLiteSandbox[None]().destroy(backend.ref))
+    await asyncio.sleep(0)
+    fake_boxlite.exec_error = boxlite.NetworkError('vsock reset')
+    gate.set()
+    with anyio.fail_after(5):
+        with pytest.raises(boxlite.NetworkError):
+            await creating
+        await deleting
+    assert fake_boxlite.boxes == {}
 
 
 async def test_a_box_stopped_while_starting_is_unavailable(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
