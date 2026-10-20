@@ -41,6 +41,7 @@ with try_import() as imports_successful:
     from ._openai_server import Dialect
     from ._openai_simulation import AzureMachine, OpenAIMachine, OpenAIOptions, OpenAISimulation, XaiMachine
     from ._simulation import FindingReproduced, SessionOptions, Simulation
+    from ._wire import SendFault
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs or hypothesis not installed')
 
@@ -1420,6 +1421,76 @@ def test_baseline_openai_barge_in_and_reconnect() -> None:
         sim.finish()
 
     run_clean(OpenAISimulation(), scenario)
+
+
+@pytest.mark.parametrize('fault', ['ambiguous', 'lost'])
+@pytest.mark.parametrize(
+    'mode,finished',
+    [
+        pytest.param('played_bytes', False, id='played_bytes-speaking'),
+        pytest.param('played_bytes', True, id='played_bytes-finished'),
+        # (A reply that finished keeps what history recorded under `played_ms`: see `interrupt()`.)
+        pytest.param('played_ms', False, id='played_ms-speaking'),
+    ],
+)
+def test_interrupt_whose_send_fails_records_the_cut(mode: str, finished: bool, fault: SendFault) -> None:
+    """The link dies while the truncation is sent, so `interrupt()` raises, and the session reconnects.
+
+    The truncation may have reached the provider (`ambiguous`) or not (`lost`): the session can't tell which. The
+    listener heard only what they heard either way, so history records the reply as cut off there, rather than as
+    heard in full or interrupted with no position, and the reconnect replays it as cut off.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak(chunks=2)
+        if finished:
+            sim.finish()
+            sim.settle()
+        sim.play()
+        sim.fail_next_send(fault=fault)
+        sim.interrupt(mode=mode)  # pyright: ignore[reportArgumentType]
+        sim.settle()
+        sim.send_text()
+
+    # (The failed interrupt is known finding G3b, `send.failed_across_reconnect`, tolerated here.)
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_interrupt_racing_the_end_of_the_reply_records_the_cut(dialect: str) -> None:
+    """The reply ends on the provider while `interrupt(played_ms=...)` is on its way: the truncation still applies.
+
+    The cancel comes too late to stop the reply, which the provider reports as completed, but the listener heard only
+    what they heard, so history records it as cut off, as it does a reply that had ended before the interrupt.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak()
+        sim.finish(deliver=False)
+        sim.interrupt(mode='played_ms')
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=False)),  # pyright: ignore[reportArgumentType]
+        scenario,
+    )
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_cancel_after_a_cut_keeps_the_cut(dialect: str) -> None:
+    """A plain `interrupt()` after one that truncated the reply: the reply stays cut where the first one cut it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak()
+        sim.interrupt(mode='played_ms')
+        sim.interrupt(mode='cancel')
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=False)),  # pyright: ignore[reportArgumentType]
+        scenario,
+    )
 
 
 def test_baseline_openai_barge_in_after_the_reply_finished_and_reconnect() -> None:
