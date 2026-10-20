@@ -1846,6 +1846,23 @@ class TestRunContextAuth:
         # The copy is the run's own toolset; it isn't copied again.
         assert await run_toolset.for_run(ctx) is run_toolset
 
+    async def test_function_and_fixed_auth_and_headers_combine(self):
+        ctx = RunContext[str](deps='alice', model=TestModel(), usage=RunUsage())
+
+        toolset = MCPToolset[str](
+            'http://localhost:8000/mcp', auth=lambda ctx: f'token-{ctx.deps}', headers={'X-Tenant': 'acme'}
+        )
+        run_toolset = await toolset.for_run(ctx)
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'X-Tenant': 'acme'}
+        assert run_toolset.client.transport.auth is not None
+
+        toolset = MCPToolset[str]('http://localhost:8000/mcp', auth='token', headers=lambda ctx: {'X-User': ctx.deps})
+        run_toolset = await toolset.for_run(ctx)
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'X-User': 'alice'}
+        assert run_toolset.client.transport.auth is not None
+
     async def test_toolset_resolving_auth_per_run_only_connects_within_a_run(self, run_context: RunContext):
         toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'token')
         async with toolset:

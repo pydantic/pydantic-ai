@@ -922,6 +922,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _client_options: _ClientOptions | None
     _auth_func: MCPAuthFunc[AgentDepsT] | None
     _headers_func: MCPHeadersFunc[AgentDepsT] | None
+    _static_auth: HTTPAuth | Literal['oauth'] | str | None
+    _static_headers: dict[str, str] | None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1087,6 +1089,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             self._client_options = None
             self._auth_func = None
             self._headers_func = None
+            self._static_auth = None
+            self._static_headers = None
         else:
             if sampling_handler is not None and sampling_model is not None:
                 raise ValueError('Pass either `sampling_model` or `sampling_handler`, not both.')
@@ -1131,6 +1135,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 http_client=http_client,
             )
             self.sampling_model = sampling_model
+            # Kept so a per-run copy also connects with whichever of the two isn't a function.
+            self._static_auth = static_auth
+            self._static_headers = static_headers
             self.client = self._build_client(auth=static_auth, headers=static_headers)
             self._user_message_handler = message_handler
             if sampling_handler is not None or sampling_model is not None:
@@ -1281,7 +1288,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if not self._resolves_per_run:
             return self
-        auth: HTTPAuth | str | None = None
+        auth = self._static_auth
         if self._auth_func is not None:
             resolved_auth = self._auth_func(ctx)
             auth = await resolved_auth if inspect.isawaitable(resolved_auth) else resolved_auth
@@ -1290,7 +1297,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 raise exceptions.UserError(
                     f'The `auth` function of {self.label} returned `"oauth"`, which is only supported as a fixed `auth`.'
                 )
-        headers: dict[str, str] | None = None
+        headers = self._static_headers
         if self._headers_func is not None:
             resolved_headers = self._headers_func(ctx)
             headers = await resolved_headers if inspect.isawaitable(resolved_headers) else resolved_headers
