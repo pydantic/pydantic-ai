@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 from collections.abc import Callable
+from contextlib import ExitStack
 from contextvars import copy_context
 from dataclasses import KW_ONLY, dataclass, field
 from html import parser as html_parser
@@ -218,9 +219,12 @@ class WebFetchLocalTool:
                         # A custom asyncio executor can keep running after its await is cancelled.
                         # Keep the slot until the independent conversion task actually completes.
                         await limiter.acquire()
-                        conversion: asyncio.Task[tuple[str, str]] = asyncio.create_task(
-                            run_in_executor(_convert_html, text)
-                        )
+                        with ExitStack() as rollback:
+                            rollback.callback(limiter.release)
+                            conversion_call = run_in_executor(_convert_html, text)
+                            rollback.callback(conversion_call.close)
+                            conversion: asyncio.Task[tuple[str, str]] = asyncio.create_task(conversion_call)
+                            rollback.pop_all()
                         conversion.add_done_callback(lambda task: limiter.release())
                         conversion.add_done_callback(lambda task: None if task.cancelled() else task.exception())
                         with anyio.CancelScope(shield=not _abandon_on_cancel.get()):
