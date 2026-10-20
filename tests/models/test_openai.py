@@ -6324,13 +6324,28 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         ) as exc_info:
             await Agent(model).run('bad prompt')
 
-    assert exc_info.value.body is not None
-    response = json.loads(exc_info.value.body)[0]
-    assert response['provider_name'] == provider_name
-    assert response['provider_details'] == {
-        'finish_reason': 'content_filter',
-        'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
-    }
+        assert exc_info.value.body is not None
+        response = json.loads(exc_info.value.body)[0]
+        assert response['provider_name'] == provider_name
+        assert response['provider_details'] == {
+            'finish_reason': 'content_filter',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        }
+
+        with pytest.raises(
+            ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+        ) as stream_exc_info:
+            async with Agent(model).run_stream('bad prompt') as result:
+                async for _ in result.stream_text():
+                    pass
+
+        assert stream_exc_info.value.body is not None
+        stream_response = json.loads(stream_exc_info.value.body)[0]
+        assert stream_response['provider_name'] == provider_name
+        assert stream_response['provider_details'] == {
+            'finish_reason': 'content_filter',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        }
 
 
 def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None:
