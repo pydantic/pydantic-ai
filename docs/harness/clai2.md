@@ -234,6 +234,10 @@ no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
 login-specific spans. Bare `/login` asks which sign-in to run.
 
+Set `GITHUB_COPILOT_INTEGRATION_ID` to change the integration id CLAI sends with
+every request; [Integration id](../models/github-copilot.md) covers what Copilot
+does with it.
+
 ## Settings and commands
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to

@@ -188,7 +188,7 @@ agent = Agent(model)
 
 ## Integration id
 
-Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. It can also decide whether a credential is accepted: through the GitHub Agentic Workflows api-proxy, Copilot rejects a fine-grained PAT under `vscode-chat` with `400 Personal Access Tokens are not supported for this endpoint`, and accepts it under `agentic-workflows`. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI reads; the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. It can also decide whether a credential is accepted: in our testing through the GitHub Agentic Workflows api-proxy, Copilot rejected a fine-grained PAT under `vscode-chat` with `400 Personal Access Tokens are not supported for this endpoint`, and accepted it under `agentic-workflows`. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, believed to be the name the Copilot CLI reads; the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
 
 ```python
 from pydantic_ai import Agent

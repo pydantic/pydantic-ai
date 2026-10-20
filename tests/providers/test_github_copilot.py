@@ -148,6 +148,18 @@ def test_github_copilot_provider_pass_openai_client():
     assert 'editor-version' not in provider.client.default_headers
 
 
+def test_github_copilot_provider_openai_client_is_exclusive():
+    openai_client = openai.AsyncOpenAI(api_key='gho_test_token', base_url='https://api.githubcopilot.com')
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `api_key`'):
+        GitHubCopilotProvider(openai_client=openai_client, api_key='gho_other')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
+        GitHubCopilotProvider(openai_client=openai_client, base_url='https://example.com')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `integration_id`'):
+        GitHubCopilotProvider(openai_client=openai_client, integration_id='other')  # type: ignore[call-overload]
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `http_client`'):
+        GitHubCopilotProvider(openai_client=openai_client, http_client=httpx2.AsyncClient())  # type: ignore[call-overload]
+
+
 def test_github_copilot_provider_claude_profile():
     """Claude ids get the Anthropic family profile, plus the Copilot overlay on top.
 
