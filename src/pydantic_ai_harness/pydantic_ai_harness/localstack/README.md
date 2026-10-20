@@ -74,11 +74,11 @@ Commands run as an argument vector (no shell), so shell operators and
 redirection in the command string have no effect. Each command runs with stdin
 closed and with its own empty AWS config and credentials files in place of
 `~/.aws/config` and `~/.aws/credentials`, so settings from `aws configure` last
-for that one command and never reach your own AWS configuration. Output is labelled with `[stdout]` / `[stderr]` markers and an
-`[exit code: N]` line on non-zero exit. When it exceeds `max_output_chars` the
-**tail** is kept (the head is dropped), so errors survive truncation. The cap
-applies to the command's result itself, so a durable execution record of it is
-bounded too.
+for that one command and never reach your own AWS configuration. Output is
+labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]` line on
+non-zero exit. When it exceeds `max_output_chars` the **tail** is kept (the head
+is dropped), so errors survive truncation. The cap applies to the command's
+result itself, so a durable execution record of it is bounded too.
 
 `aws_cli` takes an optional `timeout_seconds` that overrides `default_timeout`
 for one command. It must be a finite number greater than zero. To bound how long
