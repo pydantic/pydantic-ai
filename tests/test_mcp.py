@@ -34,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     InstructionDeltaPart,
@@ -892,6 +892,26 @@ A later <context> element with the same id replaces the earlier one and stays in
             for part in message.parts
         )
 
+    async def test_server_instructions_under_a_url_derived_id_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
+        """An id the `MCP` capability derived from the URL can carry a credential, so it's never sent as a `<context>` id."""
+        prefixes: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=fastmcp_server)
+        assert capability.id is not None and 'SENTINEL-path' in capability.id
+        result = await Agent(FunctionModel(model_fn), capabilities=[capability]).run('Continue.')
+
+        assert prefixes == ['You are an MCP test server.']
+        assert not any(
+            isinstance(part, InstructionDeltaPart)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
     async def test_server_instructions_in_a_deferred_capability_do_not_warn(self, fastmcp_server: FastMCP[None]):
         """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly."""
         calls = 0
@@ -908,7 +928,7 @@ A later <context> element with the same id replaces the earlier one and stays in
             defer_loading=True,
             toolsets=[MCPToolset(fastmcp_server, id='docs_server', include_instructions=True)],
         )
-        agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             result = await agent.run('Continue.')

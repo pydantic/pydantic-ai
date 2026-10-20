@@ -4024,7 +4024,7 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     # The instructions must actually reach the model, not just produce a step: they're captured
     # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
     # the server. Asserting only the step name let a silent `None` through.
-    assert 'Be a helpful assistant.' in seen_instructions
+    assert any('Be a helpful assistant.' in instructions for instructions in seen_instructions)
 
 
 async def test_dbos_durability_rejects_idless_mcp_toolset(dbos: DBOS) -> None:

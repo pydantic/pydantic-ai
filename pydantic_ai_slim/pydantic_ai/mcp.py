@@ -846,7 +846,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     [`id`][pydantic_ai.toolsets.AbstractToolset.id], they're keyed `toolset:<id>` and use
     [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: if a later connection
     brings different instructions, the new text is appended to the conversation rather than
-    rewriting the cached instruction prefix. Without an `id`, changed instructions rewrite the prefix.
+    rewriting the cached instruction prefix. Without an `id`, or with one the
+    [`MCP`][pydantic_ai.capabilities.MCP] capability derived from the server URL, changed
+    instructions rewrite the prefix, so a URL-derived id never reaches the prompt.
     """
 
     include_return_schema: bool | None
@@ -1313,16 +1315,25 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None
         # Instructions are captured during `__aenter__` and don't change while the toolset stays
         # entered, so they're static for prompt caching. A later connection can bring different text,
-        # which appends as a change rather than rewriting the prefix. Appending addresses the block by
-        # the toolset's `id`, so without one the text keeps rewriting the prefix as before.
+        # which appends as a change rather than rewriting the prefix.
         return messages.InstructionPart(
             content=self._instructions,
             dynamic=False,
-            on_change='append' if self.id is not None else 'rewrite',
+            on_change='append' if self._appends_instructions else 'rewrite',
         )
 
+    @property
+    def _appends_instructions(self) -> bool:
+        """Whether the server's instructions use `on_change='append'`, keyed by this toolset's `id`.
+
+        Appending sends the key to the model in each block's `<context id="...">` tag. That needs an
+        `id`, and one the caller chose: an id the `MCP` capability derived from the server URL can
+        carry a credential from the URL path, which telemetry masks and the prompt must not reveal.
+        """
+        return self.id is not None and self.id != self._telemetry_url_derived_id
+
     def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
-        if self.include_instructions and (source := self._instruction_source()) is not None:
+        if self.include_instructions and self._appends_instructions and (source := self._instruction_source()):
             return frozenset({messages.InstructionId(source)})
         return frozenset()
 

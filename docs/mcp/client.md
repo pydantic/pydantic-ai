@@ -367,7 +367,7 @@ agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 
 This is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust.
 
-The instructions are read each time the toolset connects, which by default is once per agent run. On a toolset with an `id`, they're keyed `toolset:<id>` and [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. Without an `id`, changed instructions rewrite the prefix.
+The instructions are read each time the toolset connects, which by default is once per agent run. On a toolset with an `id`, they're keyed `toolset:<id>` and [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. Without an `id`, changed instructions rewrite the prefix. So do the instructions of an [`MCP`](../capabilities/mcp.md) capability whose `id` was derived from the server URL, because the id is sent to the model with each appended change and a URL path can carry a credential. Pass `id=` to the capability to append instead.
 
 ## Tool metadata
 
