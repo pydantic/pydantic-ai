@@ -1002,9 +1002,10 @@ class OpenAIServer:
             self._audio_item_added(session, item_id)
         if session.transcription:
             session.pending_transcripts.append(key)
-        if answered:  # xAI started the reply at the stop already.
-            pass
-        elif not session.create_response:
+        if answered:
+            # xAI started the reply at the stop already.
+            return
+        if not session.create_response:
             # The turn is committed as it is under push-to-talk: the app asks for the reply itself.
             session.uncommitted_answers.append(key)
         elif session.active is None:
