@@ -13,7 +13,7 @@ description: "Load a repo's AGENTS.md and CLAUDE.md instruction files into a Pyd
 
 ## The problem
 
-A repo accumulates CE for whatever coding assistant worked in it: instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that loads only the top-level instruction file misses the ancestor context and has no idea the rest of the setup exists, so it can neither honor it nor translate it.
+A repo accumulates CE for whatever coding assistant worked in it: instruction files (`CLAUDE.md`/`AGENTS.md`) scattered across the tree, and assets under `.claude`/`.agents`/`.codex`/`.grok` (skills, sub-agents, hooks). An agent that loads only the top-level instruction file misses the ancestor context and has no idea the rest of the setup exists, so it cannot honor all of it.
 
 ## The solution
 
@@ -27,7 +27,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import RepoContext
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.'), RepoContext(home_dir=Path.home())],
 )
 
@@ -39,13 +39,13 @@ print(result.output)
 
 ### 1. Walk-up instruction autoload (on by default)
 
-Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by visited path and by content hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical content load once. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
+Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by the path a symlink resolves to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors sharing identical content load once. Where the workspace can resolve symlinks, a symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md` reaches the model as `AGENTS.md`. Symlinks to instruction files outside the directory being scanned are skipped, including shared dotfiles in another directory.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
 
-### 2. Asset inventory (on by default)
+### 2. Asset inventory (off by default)
 
-Exposes one tool, `inventory_agent_context()`, that reports where the repo's CE assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them, leaving translation to the orchestrator.
+Set `expose_inventory_tool=True` to expose `inventory_agent_context()`, which reports where the repo's CE assets live -- the `.claude`/`.agents`/`.codex`/`.grok` roots and, within each, the `skills/` (`SKILL.md`), `agents/` (`.md`), and `settings.json` (hooks) it contains. It returns a structured `AgentContextInventory`; it locates assets and does not parse them.
 
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
 Skill discovery goes at most eight directories deep.
@@ -63,7 +63,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem, RepoContext
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         LocalWorkspace('.'),
         FileSystem(),
@@ -79,6 +79,7 @@ result = agent.run_sync('List the source directory.')
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
+As with the walk-up, a symlinked instruction file is named after its target.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
@@ -96,11 +97,19 @@ tool-name and argument sniffing path active for hosts that do not emit events.
 With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
 the same note twice.
 
+## Trust
+
+Walk-up files become part of the agent's instructions, so the model gives them the same weight as the instructions you write yourself. That is what the strategy is for, and it means the working directory and `home_dir` should hold only instruction files you would put in your own instructions.
+
+Nested files are different: the model chooses which directories to read, and those can include vendored code or a checkout someone else wrote. Their contents and paths reach the model as a user message, not as instructions. The `'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart` (a system message where the model supports one mid-conversation, and `<system>`-tagged user text otherwise), followed by the file's path as a user-message `<context-file path="..." />` tag.
+
+Each file is wrapped in `<context-file path="...">` tags. A closing `</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the path is HTML-escaped, so a file cannot end its block early and continue as something else.
+
 ## Cache cost
 
 Injecting file contents into the system prompt costs prompt-cache stability: a changed prefix re-bills the whole cached region. `RepoContext` keeps the two cache-relevant paths separate:
 
-- Strategy 1 reads its files once at run start and injects them as static system instructions, so the cached prefix stays byte-identical across turns.
+- Strategy 1 reads its files once at run start and injects them as system instructions, so the cached prefix stays byte-identical across the turns of a run. If a file changes between runs of the same conversation, the change is [appended](../agent.md#appending-instruction-changes), as a diff when that's shorter, instead of rewriting the prefix.
 - Strategy 3 is volatile (it depends on which directory was just touched), so its note is enqueued in the message tail, never in the system prompt, and cannot invalidate the cached prefix.
 
 ## Configuration
@@ -110,7 +119,7 @@ RepoContext(
     home_dir=None,                  # str | Path | None -- shallowest workspace dir to stop walk-up at, inclusive
     filenames=('CLAUDE.md', 'AGENTS.md'),
     autoload_instructions=True,     # Strategy 1
-    expose_inventory_tool=True,     # Strategy 2
+    expose_inventory_tool=False,    # Strategy 2
     inventory_tool_name='inventory_agent_context',
     nested_traversal=False,         # Strategy 3
     nested_inject='pointer',        # 'pointer' | 'contents'
@@ -124,7 +133,7 @@ RepoContext(
 
 ## Scope
 
-`RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter or hook bodies, and it does not rewrite or translate assets. Strategy 1 reads its files once per run, so mid-run edits to those files are not reloaded.
+`RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter or hook bodies, and it does not modify assets. Strategy 1 reads its files once per run, so mid-run edits to those files are not reloaded.
 
 ## Further reading
 

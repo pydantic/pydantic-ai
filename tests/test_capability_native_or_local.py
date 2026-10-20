@@ -23,6 +23,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    NativeTool,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -61,8 +62,10 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
@@ -198,6 +201,14 @@ class TestXSearchCapability:
         assert cap.fallback_subagent_model is None
         assert cap.get_toolset() is None
 
+    def test_xsearch_native_false_without_local_raises(self):
+        """XSearch(native=False) without a local tool or `fallback_subagent_model` → UserError at construction.
+
+        It raises at construction, before any request, so this is not a VCR test.
+        """
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False)
+
     def test_xsearch_with_subagent_model(self):
         """XSearch(fallback_subagent_model=...) → native XSearchTool, local subagent fallback."""
         cap = XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning')
@@ -231,6 +242,23 @@ class TestXSearchCapability:
         """XSearch with handle constraints requires builtin."""
         assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
         assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
+
+    async def test_xsearch_native_false_local_callable(self):
+        """XSearch(native=False, local=some_function) → the user's function is the only tool offered.
+
+        It is decided at construction and toolset build, before any request, so this is not a VCR test.
+        """
+
+        def my_search(query: str) -> str:
+            return f'results for {query}'  # pragma: no cover
+
+        cap = XSearch(native=False, local=my_search)
+
+        assert cap.get_native_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert list(tools) == ['my_search']
 
     def test_xsearch_native_false_local_false_raises(self):
         """XSearch(native=False, local=False) → UserError."""
@@ -301,14 +329,15 @@ class TestXSearchCapability:
             XSearch(fallback_subagent_model='xai:grok-4.3', fallback_model='xai:grok-4-1-fast-non-reasoning')
 
     def test_xsearch_callable_native_with_fallback(self):
-        """Callable native with fallback_subagent_model still creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
+        """Callable native with fallback_subagent_model still provides the subagent tool.
 
+        The tool is derived when the toolset is requested, so `local` keeps what was declared.
+        """
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
             fallback_subagent_model='xai:grok-4-1-fast-non-reasoning',
         )
-        assert isinstance(cap.local, Tool)
+        assert cap.local is None
         assert cap.get_toolset() is not None
 
     async def test_xsearch_callable_subagent_model(self, allow_model_requests: None):
@@ -604,6 +633,63 @@ class TestWebFetchCapability:
 
         cap = WebFetch(local=my_fetch)
         assert isinstance(cap.local, Tool)
+
+
+class _NoRestrictionsModel(FunctionModel):
+    """A model with native web search and fetch that applies none of their restricting settings, like Gemini."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+class TestUnsupportedNativeToolSettings:
+    """A native tool whose restricting settings the model can't apply is treated as unsupported for the request."""
+
+    @staticmethod
+    def _model(sent: list[tuple[list[str], list[AbstractNativeTool]]]) -> _NoRestrictionsModel:
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(([tool.name for tool in info.function_tools], list(info.model_request_parameters.native_tools)))
+            return ModelResponse(parts=[TextPart('done')])
+
+        return _NoRestrictionsModel(
+            respond, profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool, WebFetchTool}))
+        )
+
+    async def test_unrestricted_native_tool_is_sent(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        await Agent(self._model(sent), capabilities=[WebSearch()]).run('search')
+        assert sent == [([], [WebSearchTool()])]
+
+    async def test_restricted_native_tool_without_fallback_raises(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(self._model(sent), capabilities=[WebSearch(allowed_domains=['pydantic.dev'], max_uses=2)])
+        with pytest.raises(UserError, match=r'`WebSearchTool.allowed_domains`, `WebSearchTool.max_uses` not supported'):
+            await agent.run('search')
+        assert sent == []
+
+    async def test_restricted_native_tool_uses_local_fallback(self):
+        """The local fallback runs in place of a native tool that would drop its domain filters."""
+
+        def web_fetch(url: str) -> str:
+            return url  # pragma: no cover
+
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(self._model(sent), capabilities=[WebFetch(allowed_domains=['pydantic.dev'], local=web_fetch)])
+        await agent.run('fetch')
+        assert sent == [(['web_fetch'], [])]
+
+    async def test_restricted_optional_native_tool_is_dropped(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(
+            self._model(sent),
+            capabilities=[NativeTool(WebSearchTool(blocked_domains=['example.com'], optional=True))],
+        )
+        await agent.run('search')
+        assert sent == [([], [])]
+
+    def test_wrapper_model_forwards_to_wrapped(self):
+        model = InstrumentedModel(self._model([]))
+        assert model.unsupported_native_tool_settings(WebSearchTool(max_uses=1)) == frozenset({'max_uses'})
 
 
 has_mcp = find_spec('mcp') is not None

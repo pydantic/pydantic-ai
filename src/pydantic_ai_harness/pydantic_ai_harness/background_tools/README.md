@@ -103,10 +103,18 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
-If a tool fails unexpectedly, the model sees the error type but not the error message, which may
-contain private information. Running out of retries or raising `CancelledError` ends the run. A tool
-can call `ctx.cancel()` to stop the run and the other background tools.
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata.
+
+Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
+other tool exception ends the run with the original exception, as it does for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
+to stop the run and the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their

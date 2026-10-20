@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
@@ -171,14 +171,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -189,13 +189,14 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -210,13 +211,14 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -276,13 +278,14 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -385,7 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -420,7 +423,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -442,13 +445,14 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=IsDatetime(),
                 provider_name='groq',
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -726,6 +730,40 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     assert 'Connection to https://api.groq.com timed out' in str(exc_info.value.message)
 
 
+async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> None:
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx` error.
+
+    The SDK wraps transport failures in `APIConnectionError` only until the response starts, and a cassette can't
+    replay a broken-off connection, so a mock transport raises it.
+    """
+    chunk = {
+        'id': '1',
+        'object': 'chat.completion.chunk',
+        'created': 0,
+        'model': 'llama-3.3-70b-versatile',
+        'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+    }
+
+    class StreamBreakingOff(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield f'data: {json.dumps(chunk)}\n\n'.encode()
+            raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=StreamBreakingOff())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        provider = GroqProvider(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'peer closed connection without sending complete message body'
+    assert isinstance(exc_info.value.__cause__, httpx.RemoteProtocolError)
+
+
 _STREAM_ERROR_SSE_CHUNK = (
     b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"llama-3.3-70b-versatile",'
     b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
@@ -803,7 +841,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 7, 16, 32, 53, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1078,7 +1116,7 @@ It's worth noting that the weather in San Francisco can be quite variable, and t
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 14, 13, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1252,7 +1290,7 @@ search(What is the weather in San Francisco today?)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 20, 46, tzinfo=UTC),
                 },
                 provider_response_id='stub',
                 finish_reason='stop',
@@ -1907,7 +1945,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1940,7 +1978,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -1968,7 +2006,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 19, 12, 3, 10, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2095,7 +2133,7 @@ Enjoy your homemade Uruguayan alfajores!\
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 29, 56, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3464,7 +3502,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 17, 21, 30, 1, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5472,7 +5510,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5726,7 +5764,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                     ),
                     TextPart(content='maybe'),
                 ],
-                usage=RequestUsage(cost=Decimal('0.000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
@@ -5852,7 +5890,7 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 5, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5902,7 +5940,7 @@ async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: st
                 provider_url='https://api.groq.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 2, 20, 1, 6, tzinfo=UTC),
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5990,3 +6028,64 @@ async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
 
     # The caller's dict is unchanged: no User-Agent leaked into it.
     assert user_headers == {'X-Custom': 'value'}
+
+
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type'),
+    [
+        pytest.param(False, b'   ', 'application/json', id='request'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"llama-3.3-70b-versatile",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param(True, b'data: {not json\n\n', 'text/event-stream', id='stream-first-chunk'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content, headers={'content-type': content_type})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A 200 response with a `text/plain` body, which the SDK returns as a `str`, raises `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9579
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b'upstream connect error', headers={'content-type': 'text/plain'})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = AsyncGroq(api_key='test', base_url='http://localhost', max_retries=0, http_client=http_client)
+        agent = Agent(GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            await agent.run('Hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")

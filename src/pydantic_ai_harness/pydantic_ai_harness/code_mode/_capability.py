@@ -11,8 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -20,10 +19,12 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
+    ToolSearchReturnPart,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,
     SpeculationCoordinator,
@@ -48,11 +49,9 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'New functions are now available inside `run_code`. Their signatures have been '
     'added to the available-functions catalog in the system prompt'
 )
-_DISCOVERY_ANNOUNCEMENT_RE = re.compile(
-    rf'{re.escape(_DISCOVERY_ANNOUNCEMENT_PREFIX)}: '
-    r'(?P<names>`[^`]+`(?:, `[^`]+`)*)\.'
-)
-_BACKTICKED_NAME_RE = re.compile(r'`([^`]+)`')
+# TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
+# (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
+_CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 
 
 @dataclass
@@ -176,6 +175,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     your agent executes, so anyone who can intercept it can choose what your tools run.
     """
 
+    repl_store: CodeModeReplStore[AgentDepsT] | None = None
+    """Keep the `run_code` REPL across agent runs in this store.
+
+    Unset, each agent run starts a fresh REPL. With a store, a run that calls `run_code` restores
+    the state the store returns and saves the REPL when it ends, so a conversation of several runs
+    keeps its variables, imports, and function definitions. After `restart: true` the run saves its
+    new REPL, or `None` when the restarted snippet failed before creating one. A state Monty cannot
+    load is dropped and the run starts fresh. Not used under durable execution. See the Code Mode
+    guide for an example.
+    """
+
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
 
@@ -266,6 +276,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 monty_sandbox_url=self.monty_sandbox_url,
+                repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -279,6 +290,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             monty_sandbox_url=self.monty_sandbox_url,
+            repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
         )
@@ -355,22 +367,35 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if not fresh:
             return
         self._in_flight_announcements.update(fresh)
-        listing = ', '.join(f'`{name}`' for name in fresh)
+        # A name can come from a remote MCP server, so one carrying `</system>` must not be able to end
+        # the `<system>` element that models without inline system prompts receive this in.
+        listing = ', '.join(f'`{_neutralize_closing_system_tag(name)}`' for name in fresh)
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
         ctx.enqueue(SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'))
 
 
+def _neutralize_closing_system_tag(text: str) -> str:
+    """Escape the `<` of every closing `system` tag in `text` as `&lt;`, and leave everything else as written."""
+    return _CLOSING_SYSTEM_TAG_OPENER.sub('&lt;', text)
+
+
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
-    """Read authored discovery announcements after the latest compaction boundary."""
+    """Read the names discovered by tool searches after the latest compaction boundary.
+
+    Each search return is announced as soon as it arrives, so the names it discovered are the ones the
+    model has been told about. The search returns are read rather than the announcements: an
+    announcement's text carries names a remote server chose, so a system prompt that merely reads like
+    one, or a name shaped like a list of names, must not count. A search return is identified by its type,
+    `ToolSearchReturnPart` or `NativeToolSearchReturnPart`, which survives serialization and the merging
+    of adjacent requests.
+    """
     announced: set[str] = set()
     for message in post_compaction_window(messages):
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
-                match = _DISCOVERY_ANNOUNCEMENT_RE.fullmatch(part.content)
-                if match:
-                    announced.update(_BACKTICKED_NAME_RE.findall(match.group('names')))
+            if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
+                announced.update(_extract_discovered_names(part.content))
     return announced
 
 

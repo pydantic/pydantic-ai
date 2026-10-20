@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` for an isolated cloud machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -14,6 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
+| Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -51,8 +52,9 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
-that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`.
+`ClearToolResults(max_fraction=0.7)`, a `ToolOutputLimits`
+that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`, and
+prompt caching (unified `cache=True`).
 
 ```bash
 uv add "pydantic-ai-harness[coder]"   # installs ripgrep (rg) on the agent host
@@ -86,7 +88,7 @@ log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outl
 
 Keyword-only options: `instructions=None` (appended to the default guidance),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
-`repo_context=True`, `sub_agents=True`.
+`repo_context=True`, `sub_agents=True`, `caching=True`.
 
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
@@ -97,6 +99,13 @@ Keyword-only options: `instructions=None` (appended to the default guidance),
 - File tools stay in the working directory with `.git`, `.env*`, keys, and `secrets*` read-only; `shell`
   bypasses all of that. To change a bundled setting (hashes, allowlist, `list_directory`), compose
   `FileSystem`/`Shell`/`RepoContext`/`SubAgents` yourself.
+- **Prompt caching is on by default** (`cache=True`): a coding run resends the same tools and
+  instructions plus a growing conversation on every request, so each request reads back the previous
+  one's prefix. What it does per provider and what it costs:
+  <https://pydantic.dev/docs/ai/capabilities/caching/#unified-caching-settings>. A `cache` set on
+  the model, in `Agent(model_settings=...)`, or by a `Caching` listed before `Coder` wins, as do a later
+  capability and run-level `model_settings`: `model_settings={'cache': False}` turns it off,
+  `{'cache': '1h'}` keeps it longer. `Coder(caching=False)` leaves the default out.
 - Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
   clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
   listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.
@@ -153,6 +162,10 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
+
+`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
+from its leading bytes, not its extension), and a text description (size, media type, and for other
+binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
@@ -303,6 +316,26 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
+### SmolSandbox
+
+`SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
+working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
+[smolvm](https://github.com/smol-machines/smolvm) microVM on first use. No credentials; needs macOS on
+Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
+
+- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
+  `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
+  egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
+  so a ref can't reach other tools' VMs. The name isn't proof of origin (any process of this OS user can
+  use it), so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
+  `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
+  in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
+- Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
+  not flush a VM's disk when the process exits, so stop it first:
+  `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
+- File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace
@@ -336,6 +369,9 @@ capability's commands in a Linux `bwrap` sandbox on that workspace's host:
   multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
 - File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
   swapped-in symlink can't lead a write outside the working dir.
+- A working dir containing `~` (SSH's default) gets `~/.ssh`, `~/.pam_environment`, `~/.bashrc`,
+  `~/.zshenv`, `~/.cshrc`, `~/.tcshrc`, `~/.config/fish` read-only (created if missing; a symlink there
+  is unavailable), since the next SSH login runs them on the host. Prefer a project `working_dir`.
 - The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
   sandboxed commands can see and signal the host user's processes.
 - Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with
@@ -364,7 +400,8 @@ every activity reattaches to that environment.
 
 ## RepoContext
 
-Loads `CLAUDE.md`/`AGENTS.md` into static instructions at run start and exposes
+Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
+runs of a conversation is appended rather than rewritten) and exposes
 `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents, hooks).
 
 ```python
@@ -404,6 +441,13 @@ CLI can read and write host files (`file://`, `s3 cp`).
 `clai2 --worktree NAME` starts in a new git worktree (not a sandbox). To chat with your own agent:
 `asyncio.run(chat(agent, deps=None))` with `from pydantic_clai2 import chat`.
 
+To run CLAI's stock coding agent from code or over ACP, without the terminal:
+`async with open_stock_agent(workspace=path, model=...) as agent:` from `pydantic_clai2`. It binds the
+`coder`, `repo_context`, and `compaction` built-ins plus your `capabilities`, and ignores the user's
+saved CLAI configuration. `plugin_settings={'coder': {...}}` overrides built-in settings. With a
+capability that requires approval over ACP, pass `{'coder': {'sub_agents': False}}`: a delegated
+task's approval fails the run.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/coder/
@@ -412,7 +456,8 @@ CLI can read and write host files (`file://`, `s3 cp`).
 - https://pydantic.dev/docs/ai/harness/modal-sandbox/
 - https://pydantic.dev/docs/ai/harness/e2b-sandbox/
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/harness/smol-sandbox/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/

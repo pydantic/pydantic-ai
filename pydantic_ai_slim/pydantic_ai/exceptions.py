@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
 import json
-import sys
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
@@ -15,16 +14,11 @@ from ._warnings import (
     CostNotFoundWarning as CostNotFoundWarning,
     PydanticAIDeprecationWarning as PydanticAIDeprecationWarning,
     UsageExtractionFailedWarning as UsageExtractionFailedWarning,
+    UsageLimitUnavailableWarning as UsageLimitUnavailableWarning,
 )
 
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
-
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -38,18 +32,22 @@ __all__ = (
     'UndrainedPendingMessagesError',
     'AgentRunError',
     'RunCancelled',
+    'RunTimedOut',
     'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
+    'UnsupportedSettingWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
+    'UsageLimitUnavailableWarning',
     'PydanticAIDeprecationWarning',
     'FallbackExceptionGroup',
     'ToolFailed',
@@ -271,14 +269,13 @@ class RunCancelled(AgentRunError):
     """Raised when the agent run was cancelled by the application itself.
 
     Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
-    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
+    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], and as its subclass
+    [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] when a run's `timeout=` expires.
     This is a normal, catchable application-level outcome: the run stopped because your own code
     asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
     a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
     keeps propagating as `asyncio.CancelledError` instead — it is never translated into this
-    exception, and when both race, the external cancellation wins. (On Python 3.10, which lacks
-    `Task.uncancel()`, the race cannot be disambiguated and a requested first-party cancellation
-    wins instead.)
+    exception, and when both race, the external cancellation wins.
 
     Everything the run completed before the cancellation took effect — including the partial
     response of an interrupted stream and the results of tool calls that finished — is preserved
@@ -328,7 +325,9 @@ class RunCancelled(AgentRunError):
         it with `except asyncio.CancelledError as exc`, then call
         `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
         AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
-        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`. An
+        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`, and with
+        the `KeyboardInterrupt` raised by pressing Ctrl-C during `agent.run_sync()` or
+        `agent.run_stream_sync()`. An
         external `CancelledError` must keep propagating for timeouts and task groups to tear down
         correctly, so re-raise it after capturing the state rather than returning from the handler;
         only a first-party `RunCancelled` is yours to consume.
@@ -336,11 +335,8 @@ class RunCancelled(AgentRunError):
         Passing a `RunCancelled` directly returns the same instance, providing uniform handling for
         first-party and external cancellation paths.
 
-        Python 3.11+ preserves the exception instance across an `await task` boundary. Python 3.10
-        recreates the `CancelledError` there, but chains the original exception — and the attached
-        run state — via `__context__`, which this method traverses; the chain is attached only to
-        the first `await` of the cancelled task, so later awaits of the same task see an unchained
-        exception. Use `capture_run_messages()` as the fallback when only message history is needed.
+        This method traverses `__context__` to find attached run state. Use
+        `capture_run_messages()` as the fallback when only message history is needed.
         """
         pending = [exc]
         visited: set[int] = set()
@@ -448,6 +444,18 @@ class RunCancelled(AgentRunError):
         return self._conversation_id
 
 
+class RunTimedOut(RunCancelled, TimeoutError):
+    """Raised when an agent run doesn't finish before its deadline.
+
+    The deadline comes from `timeout=` on the agent run methods, or is inherited from the run that
+    started this one from inside a tool (see [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline]).
+    The run is stopped exactly like [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], whose
+    subclass this is, so `except RunCancelled` sees every first-party stop and
+    [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] holds everything the run
+    completed, ready to resume from. It is also a `TimeoutError`, like the error `asyncio.timeout()` raises.
+    """
+
+
 class SuspendedResponseExpired(AgentRunError):
     """Raised when resuming a suspended response whose server-side job is no longer available.
 
@@ -524,6 +532,26 @@ class ModelAPIError(AgentRunError):
         return self.__class__, (self.model_name, self.message)
 
 
+class ModelRequestTimeout(ModelAPIError):
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+
+    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
+    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    default `fallback_on` falls back on this error.
+    """
+
+    timeout: float
+    """The `request_timeout` that ran out, in seconds."""
+
+    def __init__(self, model_name: str, timeout: float):
+        self.timeout = timeout
+        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.timeout)
+
+
 class ModelHTTPError(ModelAPIError):
     """Raised when a model provider response has a status code of 4xx or 5xx."""
 
@@ -544,6 +572,12 @@ class ModelHTTPError(ModelAPIError):
     suggested_model_id: str | None
     """A close known model identifier suggested from a provider-confirmed model-name error."""
 
+    hint: str | None
+    """Guidance on resolving the error, appended to the exception message.
+
+    For example, the account setting a provider requires.
+    """
+
     def __init__(
         self,
         status_code: int,
@@ -552,14 +586,18 @@ class ModelHTTPError(ModelAPIError):
         *,
         headers: Mapping[str, str] | None = None,
         suggested_model_id: str | None = None,
+        hint: str | None = None,
     ):
         self.status_code = status_code
         self.body = body
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
         self.suggested_model_id = suggested_model_id
+        self.hint = hint
         message = f'status_code: {status_code}, model_name: {model_name}, body: {body}'
         if suggested_model_id is not None:
             message += f'. Did you mean {suggested_model_id!r}?'
+        if hint is not None:
+            message += f'. {hint}'
         super().__init__(model_name=model_name, message=message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -569,14 +607,19 @@ class ModelHTTPError(ModelAPIError):
             {
                 'headers': self.headers,
                 'suggested_model_id': self.suggested_model_id,
+                'hint': self.hint,
             },
         )
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')
+        self.hint = state.get('hint')
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
+        if self.hint is not None:
+            self.message += f'. {self.hint}'
+        if self.suggested_model_id is not None or self.hint is not None:
             self.args = (self.message,)
 
     @property
@@ -604,15 +647,24 @@ class ModelHTTPError(ModelAPIError):
             assert isinstance(retry_time, datetime)
             # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
             if retry_time.tzinfo is None:
-                retry_time = retry_time.replace(tzinfo=timezone.utc)
-            wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
+                retry_time = retry_time.replace(tzinfo=UTC)
+            wait = (retry_time - datetime.now(UTC)).total_seconds()
             return max(0.0, wait)
-        except (ValueError, TypeError, AssertionError):
+        except (ValueError, TypeError, AssertionError, OverflowError):
             return None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
+
+    attempts: Sequence[ModelRequestAttempt] = ()
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+
+    Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
+    `fallback_on` response handler, which the agent also adds to the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage]. Only set on the group a `FallbackModel` raised itself: it
+    doesn't survive a durable execution boundary, such as a Temporal activity.
+    """
 
 
 class ToolRetryError(Exception):
@@ -684,4 +736,27 @@ class MessageHistoryMutatedWarning(Warning):
     run, which covers messages still present in the final history. Errored runs aren't checked —
     with warnings configured as errors, the warning would displace the run's own exception. Its
     absence does not guarantee that no stale span was recorded.
+    """
+
+
+class UnsupportedSettingWarning(UserWarning):
+    """Warning emitted when a model ignores a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field that a request relies on.
+
+    Most settings a model doesn't support, like `temperature` or `seed`, are tuning knobs that are silently
+    ignored, so the same settings work across models. This warning covers the ones whose absence changes what
+    the request guarantees: `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False` (when the
+    request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
+    models that honor it.
+
+    It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
+    `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import UnsupportedSettingWarning
+
+    warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
     """

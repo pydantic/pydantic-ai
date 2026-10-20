@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal
 
+import pydantic
+import pydantic_core
 from pydantic import ValidationError
 
 from . import _usage_attribution, messages as _messages
@@ -30,7 +33,13 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn
+from .messages import (
+    _TOOL_KINDS,  # pyright: ignore[reportPrivateUsage]
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturn,
+    _shape_name,  # pyright: ignore[reportPrivateUsage]
+)
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -54,6 +63,98 @@ InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResult
 
 ToolValidationHandler = Callable[[bool], Awaitable[None]]
 """Internal callback for observing a tool call's argument-validation result."""
+
+
+def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
+    """Refuse a tool whose `tool_kind` isn't defined, or whose parameters or return type don't fit its kind's shapes.
+
+    Checked when a run collects its tools rather than on `ToolDefinition` itself, so a definition
+    stored by durable execution still loads after the module defining its kind is gone.
+    """
+    for tool in tools.values():
+        tool_def = tool.tool_def
+        kind_id = tool_def.tool_kind
+        if kind_id is None:
+            continue
+        kind = _TOOL_KINDS.get(kind_id)
+        if kind is None:
+            raise UserError(
+                f'Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, which is not a defined `ToolKind`. '
+                'Import the module that defines the kind before running the agent.'
+            )
+        if kind.args is not None:
+            problems = _shape_mismatch(kind.args, pydantic_core.to_json(tool_def.parameters_json_schema), 'args')
+            if problems:
+                raise UserError(
+                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its parameters don't fit the "
+                    f'arguments the kind declares ({_shape_name(kind.args)}): {"; ".join(problems)}.'
+                )
+        if kind.content is not None and tool_def.return_schema:
+            problems = _shape_mismatch(kind.content, pydantic_core.to_json(tool_def.return_schema), 'content')
+            if problems:
+                raise UserError(
+                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
+                    f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
+                )
+
+
+@lru_cache(maxsize=256)
+def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'content']) -> tuple[str, ...]:
+    """How a tool's parameters or return JSON schema fails to fit the shape its kind declares.
+
+    Deliberately not full JSON Schema subsumption: every field the declared shape requires must be a
+    required field of the tool's, and where both give a field a JSON `type`, the types must overlap. A
+    return schema whose top-level type rules out the shape's is reported as such; one that isn't an
+    object with properties (a union, say) isn't checked field by field. Cached per shape and serialized
+    schema, as tools are collected on every step.
+    """
+    declared = pydantic.TypeAdapter(shape).json_schema()
+    schema: dict[str, Any] = pydantic_core.from_json(json_schema)
+    if payload == 'content':
+        ref = schema.get('$ref')
+        if isinstance(ref, str) and ref.startswith('#/$defs/'):
+            schema = schema.get('$defs', {}).get(ref.removeprefix('#/$defs/'), schema)
+        expected, actual = _json_types(declared), _json_types(schema)
+        if expected and actual and expected.isdisjoint(actual):
+            return (f'it returns {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}',)
+        if 'properties' not in schema:
+            return ()
+    properties: dict[str, Any] = schema.get('properties') or {}
+    required: list[str] = schema.get('required') or []
+    field = 'parameter' if payload == 'args' else 'field'
+    owner = 'its' if payload == 'args' else "its return value's"
+    problems: list[str] = []
+    for name in declared.get('required', []):
+        if name not in properties:
+            problems.append(
+                f'it has no {name!r} parameter' if payload == 'args' else f'its return value has no {name!r} field'
+            )
+        elif name not in required:
+            problems.append(f'{owner} {name!r} {field} is not required')
+    for name, declared_property in declared.get('properties', {}).items():
+        if name in properties:
+            expected, actual = _json_types(declared_property), _json_types(properties[name])
+            if expected and actual and expected.isdisjoint(actual):
+                problems.append(
+                    f'{owner} {name!r} {field} is of type {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}'
+                )
+    return tuple(problems)
+
+
+def _json_types(property_schema: dict[str, Any]) -> set[str]:
+    """The JSON types a property schema names at its top level or across a top-level `anyOf`; empty if unknown.
+
+    An `anyOf` option without a `type` (a reference to a model, say) makes the types unknown.
+    """
+    types: set[str] = set()
+    for option in property_schema.get('anyOf') or [property_schema]:
+        type_ = option.get('type')
+        if not type_:
+            return set()
+        types.update([type_] if isinstance(type_, str) else type_)
+    if 'number' in types:
+        types.add('integer')
+    return types
 
 
 @dataclass
@@ -246,11 +347,13 @@ class ToolManager(Generic[AgentDepsT]):
         # only re-run `get_tools`, which is what re-runs `prepare_tools`.
         toolset = self.toolset if same_step else await self.toolset.for_run_step(ctx)
 
+        tools = await toolset.get_tools(ctx)
+        _check_tool_kinds(tools)
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
-            tools=await toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
             availability_refused=self.availability_refused,
             resolved_capability_ids=resolved_capability_ids,
@@ -323,6 +426,7 @@ class ToolManager(Generic[AgentDepsT]):
             tool_name=name,
             content=error.message,
             tool_call_id=call.tool_call_id,
+            tool_kind=call.tool_kind,
             outcome='failed',
         )
         return ToolFailedError(m)
@@ -406,75 +510,75 @@ class ToolManager(Generic[AgentDepsT]):
         *,
         allow_partial: bool,
     ) -> dict[str, Any]:
-        """Run validation with before/wrap/after tool_validate hooks."""
+        """Run validation with `wrap_tool_validate` around the complete validation lifecycle."""
         cap = self.root_capability
         handler_validated_args: dict[str, Any] | None = None
-
-        async def do_validate(args: str | dict[str, Any]) -> dict[str, Any]:
-            nonlocal handler_validated_args
-            # Update call.args with the (possibly modified) args before validation
-            validated = await self._validate_tool_args(call, tool, ctx, allow_partial=allow_partial, args_override=args)
-            # Recorded so that a `wrap_tool_validate` hook deferring *after* it called the handler
-            # can be told apart from one deferring before: only the former has validated arguments.
-            handler_validated_args = validated
-            return validated
 
         # Output tools are internal — they don't fire user-facing tool hooks, matching how
         # `WrapperToolset` and `prepare_tools` exclude them.
         if cap is not None and tool.tool_def.kind != 'output':
             tool_def = tool.tool_def
 
-            # before_tool_validate runs before the arguments have been validated, so it can't defer.
-            raw_args: str | dict[str, Any] = call.args if call.args is not None else {}
-            try:
-                raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=raw_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                raise _validate_hook_deferral_error('before_tool_validate', e) from e
+            async def lifecycle(args: str | dict[str, Any]) -> dict[str, Any]:
+                nonlocal handler_validated_args
+                handler_validated_args = None
 
-            # wrap_tool_validate wraps the validation; on_tool_validate_error on failure
-            deferral: _ValidationDeferral | None = None
+                try:
+                    raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _validate_hook_deferral_error('before_tool_validate', e) from e
+
+                deferral: _ValidationDeferral | None = None
+                try:
+                    validated_args = await self._validate_tool_args(
+                        call, tool, ctx, allow_partial=allow_partial, args_override=raw_args
+                    )
+                except _ValidationDeferral as e:
+                    # Hold validator deferrals until the policy gate has accepted the validated args.
+                    deferral = e
+                    validated_args = e.validated_args
+                except (ValidationError, ModelRetry) as e:
+                    try:
+                        validated_args = await cap.on_tool_validate_error(
+                            ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                        )
+                    except (CallDeferred, ApprovalRequired) as hook_deferral:
+                        raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+
+                try:
+                    validated_args = await cap.after_tool_validate(
+                        ctx, call=call, tool_def=tool_def, args=validated_args
+                    )
+                except (CallDeferred, ApprovalRequired) as e:
+                    raise _ValidationDeferral(e, validated_args) from e
+
+                if deferral is not None:
+                    raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+
+                # A wrap deferral is valid only after its most recent handler call completed.
+                handler_validated_args = validated_args
+                return validated_args
+
             try:
                 validated_args = await cap.wrap_tool_validate(
-                    ctx, call=call, tool_def=tool_def, args=raw_args, handler=do_validate
+                    ctx,
+                    call=call,
+                    tool_def=tool_def,
+                    args=call.args if call.args is not None else {},
+                    handler=lifecycle,
                 )
-            except _ValidationDeferral as e:
-                # The `args_validator` deferred the call. Hold the deferral rather than letting it
-                # escape: `after_tool_validate` is a policy gate on validated arguments and has to
-                # run — and keep the ability to reject — before a call is queued for approval or
-                # external execution.
-                deferral = e
-                validated_args = e.validated_args
             except (CallDeferred, ApprovalRequired) as e:
-                # Whether this hook may defer depends on where it raised: after its `handler(args)`
-                # returned, the arguments are validated and the deferral is honored like an
-                # `args_validator`'s; before that, there's nothing valid to defer.
                 if handler_validated_args is None:
                     raise _validate_hook_deferral_error('wrap_tool_validate', e) from e
-                deferral = _ValidationDeferral(e, handler_validated_args)
-                validated_args = handler_validated_args
-            except (ValidationError, ModelRetry) as e:
-                try:
-                    validated_args = await cap.on_tool_validate_error(
-                        ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                    )
-                except (CallDeferred, ApprovalRequired) as hook_deferral:
-                    # Only reached because validation failed, so there are no validated arguments.
-                    raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
-
-            # after_tool_validate gates validated arguments, so it runs even when the call has
-            # already been deferred, and may still reject or defer it itself.
-            try:
-                validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
-            except (CallDeferred, ApprovalRequired) as e:
-                # This hook ran last and is the policy layer, so its deferral replaces a held one.
-                raise _ValidationDeferral(e, validated_args) from e
-
-            if deferral is not None:
-                # The hook accepted the call, so the held deferral stands. It carries the hook's
-                # args: they're what a call that wasn't deferred would have proceeded with.
-                raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
+                raise _ValidationDeferral(e, handler_validated_args) from e
         else:
-            validated_args = await do_validate(call.args if call.args is not None else {})
+            validated_args = await self._validate_tool_args(
+                call,
+                tool,
+                ctx,
+                allow_partial=allow_partial,
+                args_override=call.args if call.args is not None else {},
+            )
 
         return validated_args
 
@@ -485,7 +589,7 @@ class ToolManager(Generic[AgentDepsT]):
         usage: RunUsage,
         wrap_validation_errors: bool = True,
     ) -> Any:
-        """Run execution with before/wrap/after tool_execute hooks."""
+        """Run execution with `wrap_tool_execute` around the complete execution lifecycle."""
         assert validated.tool is not None
         assert validated.validated_args is not None
 
@@ -505,15 +609,11 @@ class ToolManager(Generic[AgentDepsT]):
         if cap is not None and validated.tool.tool_def.kind != 'output':
             tool_def = validated.tool.tool_def
 
-            try:
-                # before_tool_execute
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=validated.validated_args)
+            async def lifecycle(args: dict[str, Any]) -> Any:
+                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
 
-                # wrap_tool_execute wraps the execution; on_tool_execute_error on failure
                 try:
-                    tool_result = await cap.wrap_tool_execute(
-                        ctx, call=call, tool_def=tool_def, args=args, handler=do_execute
-                    )
+                    tool_result = await do_execute(args)
                 except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
                     raise  # Control flow, not errors
                 except (ToolFailed, ModelRetry):
@@ -521,9 +621,11 @@ class ToolManager(Generic[AgentDepsT]):
                 except Exception as e:
                     tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
 
-                # after_tool_execute
-                tool_result = await cap.after_tool_execute(
-                    ctx, call=call, tool_def=tool_def, args=args, result=tool_result
+                return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+
+            try:
+                tool_result = await cap.wrap_tool_execute(
+                    ctx, call=call, tool_def=tool_def, args=validated.validated_args, handler=lifecycle
                 )
             except (ValidationError, ModelRetry) as e:
                 # Hook raised ValidationError or ModelRetry (e.g. before/after_tool_execute
@@ -543,6 +645,22 @@ class ToolManager(Generic[AgentDepsT]):
             tool_result = await do_execute(validated.validated_args)
 
         return tool_result
+
+    def _with_tool_kind(self, call: ToolCallPart) -> ToolCallPart:
+        """Give a call its tool's `tool_kind` when it lacks one, promoted to the typed part registered for it.
+
+        Calls the model issues are promoted from the same `ToolDefinition.tool_kind` before they get here;
+        this covers calls a dispatcher builds itself, like code mode's sandboxed calls, so hooks and
+        deferred-call handlers see the same typed part however the tool was called.
+        """
+        if (
+            call.tool_kind is not None
+            or self.tools is None
+            or (tool := self.tools.get(call.tool_name)) is None
+            or (kind := tool.tool_def.tool_kind) is None
+        ):
+            return call
+        return ToolCallPart.narrow_type(call, tool_kind=kind)
 
     def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
         """Resolve tool name to ResolvedTool, raising ModelRetry for unknown or unavailable tools."""
@@ -703,6 +821,7 @@ class ToolManager(Generic[AgentDepsT]):
         assert self.ctx is not None
         ctx = self.ctx
         tool: ToolsetTool[AgentDepsT] | None = None
+        call = self._with_tool_kind(call)
 
         try:
             _name, tool = self._resolve_tool(call)
@@ -1134,6 +1253,7 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
+        call = self._with_tool_kind(call)
         try:
             validated = await self.validate_tool_call(
                 call,

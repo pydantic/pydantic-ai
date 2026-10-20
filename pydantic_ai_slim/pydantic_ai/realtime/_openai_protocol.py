@@ -23,7 +23,7 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, TypeVar, get_args
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Required, TypeGuard, TypeVar, assert_never, get_args
 from urllib.parse import quote
 
 import websockets
@@ -51,7 +51,7 @@ from openai.types.realtime import (
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pydantic_core import to_json
-from typing_extensions import Required, TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
@@ -60,10 +60,12 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponsePart,
+    ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     RealtimeInputSpeechEndEvent,
@@ -82,6 +84,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
@@ -108,9 +111,13 @@ SESSION_CREATED_EVENT = 'session.created'
 SESSION_UPDATE_EVENT = 'session.update'
 SESSION_UPDATED_EVENT = 'session.updated'
 CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
+CONVERSATION_ITEM_DELETE_EVENT = 'conversation.item.delete'
+CONVERSATION_ITEM_ADDED_EVENTS = frozenset({'conversation.item.added', 'conversation.item.created'})
+"""The frames that say an item joined the conversation: GA's `.added`, and the beta protocol's `.created`."""
 INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
 INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
 INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
+INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT = 'input_audio_buffer.timeout_triggered'
 RESPONSE_CREATE_EVENT = 'response.create'
 RESPONSE_CANCEL_EVENT = 'response.cancel'
 CONVERSATION_ITEM_TRUNCATE_EVENT = 'conversation.item.truncate'
@@ -245,7 +252,11 @@ class ServerVAD(TypedDict, total=False):
     """Whether to interrupt an in-progress response when the user starts speaking. Defaults to `True`."""
     idle_timeout_ms: int
     """If set, auto-trigger a response after this much idle time with no detected speech.
-    Defaults to the provider default."""
+    Defaults to the provider default.
+
+    The response follows up on the conversation so far: the silence that triggered it isn't recorded
+    as a user turn in the session's history.
+    """
 
 
 class SemanticVAD(TypedDict, total=False):
@@ -312,15 +323,29 @@ class _ProtocolAudioTranscriptDoneEvent(BaseModel):
     type: Literal['response.output_audio_transcript.done', 'response.audio_transcript.done']
 
 
+class ProtocolResponseStatus(BaseModel):
+    """SDK `RealtimeResponseStatus` with open `type` and `reason` strings.
+
+    The SDK closes both to the values documented today, so a value the server adds later would fail
+    validation of the whole `response.done`, losing the only terminal (and usage) the response gets.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    error: RealtimeResponseStatusError | None = None
+    reason: str | None = None
+    type: str | None = None
+
+
 class ProtocolRealtimeResponse(BaseModel):
-    """SDK response with cassette-proven xAI extensions kept typed."""
+    """SDK response with cassette-proven xAI extensions kept typed, and its closed enums left open."""
 
     model_config = ConfigDict(extra='allow')
 
     id: str | None = None
     output: list[ConversationItem | _ProtocolResponseOutputItem] | None = None
-    status: Literal['completed', 'cancelled', 'failed', 'incomplete', 'in_progress'] | None = None
-    status_details: RealtimeResponseStatus | str | None = None
+    status: str | None = None
+    status_details: ProtocolResponseStatus | str | None = None
     usage: RealtimeResponseUsage | None = None
     metadata: dict[str, Any] | None = None
 
@@ -361,6 +386,8 @@ class ProtocolConversationItem(BaseModel):
     type: str
     role: str | None = None
     call_id: str | None = None
+    name: str | None = None
+    """The tool a function call item calls."""
     content: list[_ProtocolItemContent] | None = None
 
 
@@ -462,6 +489,13 @@ def tool_def_to_openai(tool: ToolDefinition) -> dict[str, Any]:
     return result
 
 
+# What a spoken user turn with no transcript (transcription off, or the transcript never arrived)
+# replays as. Without it the turn would vanish and the fresh session would read the answer to it as the
+# model speaking unprompted. Written here, on the way to the provider, and never persisted: history
+# keeps the turn as the `SpeechPart` it was.
+_TRANSCRIPTLESS_SPEECH_MARKER = '[The user spoke; no transcript is available.]'
+
+
 async def replay_items(
     messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
 ) -> list[dict[str, Any]]:
@@ -472,8 +506,9 @@ async def replay_items(
 
     Media is deliberately left behind: what the model needs is the *conversation*, and re-uploading a
     long call's retained audio (or a stale video frame) would cost far more than it restores. Stripping
-    it also keeps replay total — a turn whose audio is dropped and has no transcript becomes a
-    content-less placeholder, which seeding already skips, where the strict path would rightly refuse it.
+    it also keeps replay total where the strict path would rightly refuse retained audio. A spoken user
+    turn with no transcript replays as a neutral text marker rather than nothing, so the model still
+    sees that the user spoke before the answer it gave.
     """
     return await seed_items(
         [replayable for message in messages if (replayable := _without_media(message)) is not None],
@@ -485,12 +520,19 @@ async def replay_items(
 
 
 def _without_media(message: ModelMessage) -> ModelMessage | None:
-    """Strip audio and images from a message, dropping it entirely when nothing is left to replay."""
+    """Strip audio and images from a message, dropping it entirely when nothing is left to replay.
+
+    A user `SpeechPart` without a transcript has nothing left once its audio goes, so it is replaced by
+    a marker saying the user spoke.
+    """
     if isinstance(message, ModelRequest):
         request_parts: list[ModelRequestPart] = []
         for part in message.parts:
             if isinstance(part, SpeechPart):
-                request_parts.append(replace(part, audio=None))
+                if part.transcript:
+                    request_parts.append(replace(part, audio=None))
+                else:
+                    request_parts.append(UserPromptPart(content=_TRANSCRIPTLESS_SPEECH_MARKER))
             elif isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                 if text := [item for item in part.content if isinstance(item, (str, TextContent))]:
                     request_parts.append(replace(part, content=text))
@@ -544,7 +586,7 @@ async def seed_items(
         else:
             items.extend(
                 _seed_response_items(
-                    message.parts,
+                    message,
                     provider_name=provider_name,
                     call_ids=call_ids,
                     seeded_calls=seeded_calls,
@@ -565,9 +607,12 @@ async def _seed_request_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for part in parts:
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
@@ -625,14 +670,14 @@ async def _seed_request_items(
 
 
 def _seed_response_items(
-    parts: Sequence[ModelResponsePart],
+    message: ModelResponse,
     *,
     provider_name: str,
     call_ids: dict[str, str],
     seeded_calls: set[str],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for part in parts:
+    for index, part in enumerate(message.parts):
         if isinstance(part, TextPart):
             if part.content:
                 items.append(_message_item('assistant', [_text_content('output_text', part.content)]))
@@ -655,11 +700,12 @@ def _seed_response_items(
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
-            # Assistant audio can't be replayed on any provider, so the audio-seeding capability
-            # doesn't apply here and the typed result is always a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                items.append(_message_item('assistant', [_text_content('output_text', content)]))
+            # Assistant audio can't be replayed on any provider, so the audio-seeding capability doesn't apply
+            # here: it's seeded as its transcript, marked where a barge-in cut it off, as the model never heard
+            # what came after.
+            if seed_speech_content(part=part, provider_name=provider_name, supports_audio=False):
+                text = assistant_speech_text(message, index)
+                items.append(_message_item('assistant', [_text_content('output_text', text)]))
         elif isinstance(part, CompactionPart):
             # Provider-session-bound compaction state can't round-trip into another session; classic
             # model adapters skip it when crossing APIs (e.g. Chat Completions), and seeding matches.
@@ -745,7 +791,9 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
 def _response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
-    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
+    return (
+        status_details.reason if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
+    )
 
 
 def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
@@ -773,7 +821,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
 def _response_status_error(response: ProtocolResponse) -> RealtimeResponseStatusError | None:
     """Return the `status_details.error` of a failed response, when present."""
     status_details = response.status_details
-    return status_details.error if isinstance(status_details, RealtimeResponseStatus) else None
+    return status_details.error if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
 
 
 def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEvent | None:
@@ -982,6 +1030,16 @@ def client_item_id(input_index: int) -> str:
     return f'pydantic_ai_item_{input_index}'
 
 
+def tool_content_item_id(input_index: int) -> str:
+    """The id of the user message item carrying content a tool returned besides its output.
+
+    The connection chooses it so it can delete the item with the tool call (`openai_prune_tool_items`). It names no
+    input on purpose: under a `client_item_id`, `client_item_input` would take the item's joining the conversation for
+    input `input_index` being placed there, which the tool's output already reports.
+    """
+    return f'pydantic_ai_content_{input_index}'
+
+
 def client_item_input(item_id: str | None) -> int | None:
     """The input an item was created by, when its id is one `client_item_id` chose."""
     if item_id is None or (match := _CLIENT_ITEM_ID_RE.fullmatch(item_id)) is None:
@@ -1106,15 +1164,13 @@ async def connect_openai_protocol(
         [ClientConnection, Callable[[], Awaitable[ClientConnection]], str | None, Callable[[], str | None]],
         _ConnectionT,
     ],
-    after_session_created: Callable[[ClientConnection, dict[str, Any]], Awaitable[None]] | None = None,
-    on_unexpected_during_update: Callable[[], Callable[[dict[str, Any]], None] | None] | None = None,
-    replay_on_redial: bool = False,
+    on_unexpected_during_update: Callable[[dict[str, Any]], None] | None = None,
 ) -> AsyncGenerator[_ConnectionT]:
     """Connect an OpenAI-protocol realtime model and own its socket lifecycle.
 
-    OpenAI supplies refreshable `dial_headers` and enables `replay_on_redial`. xAI supplies static
-    headers, a `dial_url` that adds its conversation ID, `after_session_created` to establish native
-    resumption, and `on_unexpected_during_update` to capture the server's replay burst.
+    OpenAI supplies refreshable `dial_headers`, and xAI static ones plus `on_unexpected_during_update`
+    to read the conversation ID from the frames that arrive while the session is configured. A re-dial
+    replays the message history a session has offered.
     """
     # Normalize history before opening a socket so unsupported content remains a caller `UserError`.
     seed = await seed_items(messages, profile=profile, provider_name=provider_name)
@@ -1133,12 +1189,11 @@ async def connect_openai_protocol(
         created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
         if served_model := session_model(created):
             server_model = served_model
-        if after_session_created is not None:
-            await after_session_created(ws, created)
         await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
-        on_unexpected = on_unexpected_during_update() if on_unexpected_during_update is not None else None
-        await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected)
-        if replay_on_redial and connection is not None and (message_history := connection.message_history) is not None:
+        await expect_event(
+            ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected_during_update
+        )
+        if connection is not None and (message_history := connection.message_history) is not None:
             replayed = await replay_items(message_history(), profile=profile, provider_name=provider_name)
             for item in replayed:
                 await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
@@ -1213,16 +1268,25 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     }
 
 
-def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
-    """Whether the session's configured VAD makes the server cancel the active response on speech onset.
+def _config_turn_detection(session_config: dict[str, Any]) -> dict[str, Any] | None:
+    """The `turn_detection` payload of an OpenAI-protocol session config.
 
-    Reads the `turn_detection` payload from either place an OpenAI-protocol session config carries
-    it: nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
+    It is nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
     """
-    turn_detection = session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
+    return session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
         'turn_detection'
     )
+
+
+def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
+    """Whether the session's configured VAD makes the server cancel the active response on speech onset."""
+    turn_detection = _config_turn_detection(session_config)
     return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
+
+
+def config_has_manual_turns(session_config: dict[str, Any]) -> bool:
+    """Whether the session's config turns turn detection off, leaving the client to commit every turn."""
+    return _config_turn_detection(session_config) is None
 
 
 def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:
@@ -1258,14 +1322,14 @@ async def expect_event(
 
     Unrelated events received during the handshake (e.g. rate limit notices) are skipped rather than
     treated as a protocol violation, and passed to `on_unexpected` when supplied (xAI uses this to
-    capture its resumption replay burst). `timeout` bounds the total wait so `connect()` fails
+    read its conversation ID). `timeout` bounds the total wait so `connect()` fails
     predictably instead of hanging if the expected event never arrives.
     """
     deadline = time.monotonic() + timeout
     while True:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RealtimeHandshakeError(f'timed out waiting for a {expected_type!r} event') from None
         if not isinstance(raw, str):
             raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')

@@ -57,8 +57,9 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
+from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.conftest import websocket_relay_server
-from tests.harness.conftest import ignore_source_reads_left_open
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
@@ -100,6 +101,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
             '--dynamic-config-value',
             'frontend.enableServerVersionCheck=false',
         ],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 

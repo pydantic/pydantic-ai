@@ -31,11 +31,11 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Operating System :: OS Independent",
@@ -45,7 +45,7 @@ classifiers = [
     "Framework :: Pydantic",
     "Framework :: Pydantic :: 2",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -85,6 +85,7 @@ realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
 google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
+elevenlabs-agents-realtime = ["pydantic-ai-slim[elevenlabs-agents-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://pydantic.dev/docs/ai/"
@@ -208,19 +209,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
-# TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
-termflow-md = "2026-09-24T16:36:46Z"
-# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
-# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
-# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-28T18:04:04Z"
-# OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
-# TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
-openai = "2026-09-23T00:08:49Z"
-# google-genai 2.25.0 is the `google-genai` floor: it sends Gemini blob fields as `mime_type`/`file_uri`.
-# TODO(adtyavrdhn): Remove after 2026-09-29 17:24 UTC.
-google-genai = "2026-09-22T17:23:02Z"
+# google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
+# TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
+google-genai = "2026-10-13T00:38:20Z"
 
 [dependency-groups]
 dev = [
@@ -259,6 +250,11 @@ dev = [
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
     # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
     "fastmcp>=3.3.0,<5",
+    # FastMCP 3 pulls in `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator`
+    # (removed in 3.15).
+    # Removable once beartype 0.23.0 final is released (tracked in #9455):
+    # https://github.com/beartype/beartype/issues/618
+    "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
@@ -274,7 +270,7 @@ dev = [
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
     # interleavings of client operations and provider events, shrunk to a minimal failing trace.
-    "hypothesis>=6.100",
+    "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -304,7 +300,7 @@ exclude = ["/tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
@@ -339,6 +335,8 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_ci_content_classifier.py",
+    ".github/scripts/test_gh_aw_engine_pin_bump.py",
 ]
 
 [tool.ruff.lint]
@@ -355,8 +353,10 @@ extend-select = [
     "I",
     "D",
     "TID251",
+    "TID253",
     "PLW1514", # https://docs.astral.sh/ruff/rules/unspecified-encoding/
     "PGH003", # https://docs.astral.sh/ruff/rules/blanket-type-ignore/
+    "BLE001", # https://docs.astral.sh/ruff/rules/blind-except/
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
 mccabe = { max-complexity = 15 }
@@ -375,9 +375,26 @@ known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydanti
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.flake8-tidy-imports]
+# Test modules are imported during collection, once per `pytest-xdist` worker, so a heavy dependency imported at
+# module level is paid by every test run that collects the module, whether or not its tests are selected. Each of
+# these adds 100ms or more (measured with `python -X importtime` on top of what `tests/conftest.py` already imports);
+# import them inside the test or fixture that needs them. Enforced for `tests/` only, see `per-file-ignores`.
+banned-module-level-imports = [
+    "dbos",
+    "e2b",
+    "prefect",
+    "sentence_transformers",
+    "sklearn",
+    "smol",
+    "temporalio",
+    "torch",
+    "transformers",
+    "voyageai",
+]
+
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
-"typing.assert_never".msg = "Use typing_extensions.assert_never instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
 
 [tool.ruff.format]
@@ -390,6 +407,8 @@ quote-style = "single"
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
+".github/scripts/shard_durations.py" = ["D"]
+".github/scripts/test_shard_durations.py" = ["D"]
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
@@ -403,10 +422,20 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_ci_content_classifier.py" = ["D"]
+".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
+"!src/pydantic_clai2/**/*.py" = ["BLE001"]
+"!tests/**/*.py" = ["TID253"]
+# Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
+# workflow definitions; the cost is paid only where that dependency is what is being tested.
+"tests/durable_exec/**/*.py" = ["TID253"]
+"tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
+"tests/harness/e2b_sandbox/*.py" = ["TID253"]
+"tests/harness/smol_sandbox/*.py" = ["TID253"]
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnnecessaryIsInstance = false
@@ -460,7 +489,10 @@ markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "smol_live: boots real smolvm VMs; needs a host that can run them",
     "temporal: starts or connects to a local Temporal dev server",
+    "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
+    "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
 ]
 filterwarnings = [
     "error",
@@ -505,6 +537,10 @@ filterwarnings = [
     "ignore:UnsupportedFieldAttributeWarning:UserWarning",
     # coolname (prefect dep) uses codecs.open(), deprecated in Python 3.14
     "ignore:codecs.open\\(\\) is deprecated:DeprecationWarning",
+    # Python 3.15 deprecates `isinstance()` against protocols without `@runtime_checkable`, which
+    # `py-key-value-aio`'s `AsyncKeyValue` (via FastMCP) lacks; this suite's `error` filter would fail on it.
+    # Removable once `py-key-value-aio` decorates its protocols (tracked in #9455).
+    "ignore:<class 'key_value\\.aio\\..*'> isn't explicitly decorated with @runtime_checkable:DeprecationWarning",
     # outlines' llamacpp backend calls llama-cpp-python's `Llama.from_pretrained`, which forwards
     # `local_dir_use_symlinks` to `hf_hub_download`; huggingface-hub >= 1.0 deprecated (and ignores)
     # that arg and warns about it. The arg is a no-op and the call site isn't ours to change.
@@ -521,6 +557,12 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
+    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
+    # carries no signal here; users still get it from the SDK.
+    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
+    # re-recording after that date needs the move first.
+    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -534,6 +576,7 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
     "tests/**/*.py",
 ]
 omit = [
@@ -603,7 +646,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'

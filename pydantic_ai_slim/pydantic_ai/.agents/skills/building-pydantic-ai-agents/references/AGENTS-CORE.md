@@ -4,11 +4,18 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
 
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -91,6 +98,18 @@ def add_user_name(ctx: RunContext[str]) -> str:
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
+For changing operator state, use `@agent.instructions(name='state', on_change='append')` to preserve the instruction prefix.
+The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
+Return `None` or an empty string to withdraw the block.
+Use the same decorator on an always-on capability with an explicit `id`.
+Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
+Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
+Compaction or loss of the baseline starts a new prefix from current instructions.
+Use a durable operation for instruction callbacks that read external state during durable execution.
+Deferred capabilities and realtime sessions do not support this update policy.
+Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
+
 ## Define Agents Declaratively with Specs
 
 Use YAML or JSON specs when configuration should live outside Python code.
@@ -130,6 +149,11 @@ Examples:
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
+
+Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
+
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
@@ -218,3 +242,31 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+- `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
+  retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
+  with an `UnsupportedSettingWarning`, so with one of those in the chain set it on the other candidates' `settings`
+
+The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
+`'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
+`FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
+cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
+`UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
+When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
+
+```python
+import warnings
+
+from pydantic_ai import UsageLimitUnavailableWarning
+
+warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+```
+
+
+To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
+`timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
+Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
+(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
+by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
+per-model deadlines run inside the activity instead.

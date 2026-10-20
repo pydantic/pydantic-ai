@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 7b6f65e0-2326-4e52-b00f-e3acb412f134
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "541"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Call final_result with values ["ok"].
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: final_result
+              inputSchema:
+                json:
+                  properties:
+                    values:
+                      items:
+                        type: string
+                      type:
+                      - array
+                      - "null"
+                      description: "contains={'type': 'string'}"
+                  required:
+                  - values
+                  type: object
+                  additionalProperties: false
+              description: The final response which ends this conversation
+              strict: true
+          toolChoice:
+            any: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "464"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2753
+        output:
+          message:
+            content:
+            - toolUse:
+                input:
+                  values:
+                  - ok
+                name: final_result
+                toolUseId: tooluse_cJ2aL83gKXyO9hqh5chtmT
+                type: tool_use
+            role: assistant
+        stopReason: tool_use
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 693
+          outputTokens: 40
+          serverToolUsage: {}
+          totalTokens: 733
+  recorded_at: 2026-10-20T16:17:24.779402+00:00

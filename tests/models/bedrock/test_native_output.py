@@ -445,7 +445,7 @@ async def test_bedrock_native_output_numerical_constraints(
 ):
     """NativeOutput with numeric constraints succeeds — transformer strips incompatible constraints."""
 
-    class Priority(str, Enum):
+    class Priority(str, Enum):  # noqa: UP042
         """Priority level."""
 
         LOW = 'low'

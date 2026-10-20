@@ -3,12 +3,13 @@ from __future__ import annotations as _annotations
 import json
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,7 +18,8 @@ if TYPE_CHECKING:
 
 import httpx2
 import pytest
-from pydantic import BaseModel, Field
+import yaml
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -106,6 +108,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import (
+        DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
@@ -142,6 +145,7 @@ with try_import() as imports_successful:
         BetaMessage,
         BetaMessageDeltaUsage,
         BetaMessageIterationUsage,
+        BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
         BetaRawContentBlockDeltaEvent,
@@ -170,6 +174,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
+        _is_expired_container_error,  # pyright: ignore[reportPrivateUsage]
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -263,9 +268,10 @@ async def test_anthropic_read_error_is_raised_when_not_cancelled():
         _enabled_server_tool_names=frozenset(),
     )
 
-    with pytest.raises(httpx2.ReadError):
+    with pytest.raises(ModelAPIError) as exc_info:
         async for _event in response:
             pass
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 @dataclass
@@ -275,6 +281,10 @@ class MockAnthropic:
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
+
+    @property
+    def timeout(self) -> Any:
+        return DEFAULT_TIMEOUT
 
     @cached_property
     def beta(self) -> AsyncBeta:
@@ -377,8 +387,8 @@ async def test_sync_request_text_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -391,7 +401,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -401,8 +411,8 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -415,7 +425,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -488,6 +498,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -575,6 +586,105 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
         await agent.run([CachePoint(), 'This should fail'])
 
 
+def _replayed_mcp_tool_result_history(padding: str) -> list[ModelMessage]:
+    """A conversation whose assistant turn ends in a replayed DeepWiki MCP tool result.
+
+    The opening prompt is padded past the model's minimum cacheable prefix, so a breakpoint on the
+    MCP result writes a cache entry the next request can read back. Each test pads with its own
+    sentence so one test's recording can't read the cache entry another one wrote.
+    """
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(content=f'{padding} ' * 150 + '\nWhat is the pydantic/pydantic-ai repository?')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {'repoName': 'pydantic/pydantic-ai', 'question': 'What is it?'},
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+
+@pytest.mark.vcr()
+async def test_cache_point_after_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A `CachePoint` opening a user message puts its boundary on a replayed MCP tool result ending the previous turn.
+
+    Run twice: the second request reads back the prefix the first one wrote, which pins that the API
+    accepts and honors `cache_control` on an `mcp_tool_result` block.
+    """
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-5', capture=True),
+        capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))],
+    )
+
+    usages: list[RunUsage] = []
+    for _ in range(2):
+        result = await agent.run(
+            [CachePoint(), 'Summarize that in five words.'],
+            message_history=_replayed_mcp_tool_result_history(
+                'A leading cache point lands on the replayed MCP result.'
+            ),
+        )
+        usages.append(result.usage)
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert content_blocks(request_capture.body('/v1/messages'), 'mcp_tool_result') == snapshot(
+        [
+            {
+                'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                'is_error': False,
+                'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                'type': 'mcp_tool_result',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(2907, 0), (0, 2907)])
+
+
+@pytest.mark.vcr()
+async def test_cache_messages_with_trailing_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Automatic caching handles a history ending in an assistant turn whose last block is a replayed MCP tool result.
+
+    The breakpoint lands on the MCP result and the API writes the prefix it ends to the cache.
+    `max_tokens` stops the continuation before the model can call the MCP server again, which would
+    fold that call's own cache traffic into the usage.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+
+    response = await model.request(
+        _replayed_mcp_tool_result_history('Automatic message caching ends on the replayed MCP result.'),
+        AnthropicModelSettings(anthropic_cache_messages=True, max_tokens=5),
+        ModelRequestParameters(native_tools=[MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')]),
+    )
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert (response.usage.cache_write_tokens, response.usage.cache_read_tokens) == snapshot((3057, 0))
+
+
 async def test_cache_point_with_image_content(allow_model_requests: None):
     """Test CachePoint works with image content."""
     c = completion_message(
@@ -636,6 +746,7 @@ def test_cache_control_unsupported_param_type():
 
     # Create a mock model instance
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__.__name__ = 'AsyncAnthropic'
     mock_client.base_url = 'https://api.anthropic.com'
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -708,6 +819,116 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
     assert ToolSearchTool in m.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
 
 
+@pytest.mark.parametrize(
+    ('client', 'model_name', 'supports_json_schema_output'),
+    [
+        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
+        pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
+    ],
+)
+def test_anthropic_structured_output_follows_legacy_bedrock_support(
+    client: Literal['bedrock', 'bedrock-mantle', 'claude-api'], model_name: str, supports_json_schema_output: bool
+):
+    """Only the legacy Bedrock client narrows structured output, and only for the models Bedrock withholds it from.
+
+    The Mantle client and the direct API keep the direct API's profile. These are profile checks that need no
+    request, so there is nothing to record.
+    """
+    client_cls, base_url = {
+        'bedrock': (AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com'),
+        'bedrock-mantle': (AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws'),
+        'claude-api': (AsyncAnthropic, 'https://api.anthropic.com'),
+    }[client]
+    m = AnthropicModel(
+        model_name, provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
+    )
+    assert m.profile.get('supports_json_schema_output', False) is supports_json_schema_output
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        pytest.param(
+            'global.anthropic.claude-sonnet-5',
+            snapshot(
+                {
+                    'output_config': None,
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add'}, {'name': 'final_result'}],
+                }
+            ),
+            id='withheld',
+        ),
+        pytest.param(
+            'global.anthropic.claude-sonnet-4-6',
+            snapshot(
+                {
+                    'output_config': {
+                        'format': {
+                            'type': 'json_schema',
+                            'schema': {
+                                'type': 'object',
+                                'properties': {'response': {'type': 'integer'}},
+                                'additionalProperties': False,
+                                'required': ['response'],
+                            },
+                        }
+                    },
+                    'tool_choice': {'type': 'auto'},
+                    'tools': [{'name': 'add', 'strict': True}],
+                }
+            ),
+            id='served',
+        ),
+    ],
+)
+async def test_anthropic_legacy_bedrock_structured_output_request(
+    allow_model_requests: None, model_name: str, expected: dict[str, JsonValue]
+):
+    """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
+
+    Bedrock answers `output_config.format` on Claude Sonnet 5 with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Sonnet 4.6, which Bedrock serves structured output
+    for, keeps Native Output and `strict`. A mock transport stands in for a cassette because the recording
+    account has no access to the models Bedrock withholds structured output from.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
+        return httpx2.Response(400, json={'message': 'captured'})
+
+    from anthropic import AsyncAnthropicBedrock
+
+    # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
+    async with AsyncAnthropicBedrock(
+        api_key='x',
+        aws_region='us-east-1',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)), output_type=int)
+
+        @agent.tool_plain(strict=True)
+        def add(a: int, b: int) -> int:
+            raise NotImplementedError
+
+        # Claude Sonnet 5 thinks by default; Sonnet 4.6 needs the setting to reach the same output mode choice.
+        with pytest.raises(ModelHTTPError):
+            await agent.run('1+1', model_settings={'thinking': True})
+
+    [body] = bodies
+    assert {
+        'output_config': body.get('output_config'),
+        'tool_choice': body.get('tool_choice'),
+        'tools': [
+            {key: tool[key] for key in ('name', 'strict') if key in tool} for tool in json_objects(body['tools'])
+        ],
+    } == expected
+
+
 def _tool_search_param(client_cls: Any, base_url: str, tool: ToolSearchTool) -> dict[str, Any]:
     m = AnthropicModel(
         'claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_anthropic_client(client_cls, base_url))
@@ -762,54 +983,6 @@ def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
         pytest.param('1h', '1h', id='custom-1h'),
     ],
 )
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
-    allow_model_requests: None,
-    cache_value: bool | Literal['1h'],
-    expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
-):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
-
-    On these platforms the top-level cache_control parameter is not supported,
-    so per-block cache_control is applied to the last user message instead.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
-
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
-
-    result = await agent.run('Hello')
-    assert result.output == 'Response'
-
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is OMIT
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
-
-
-@pytest.mark.parametrize(
-    'cache_value,expected_ttl',
-    [
-        pytest.param(True, '5m', id='default-5m'),
-        pytest.param('1h', '1h', id='custom-1h'),
-    ],
-)
 async def test_anthropic_cache_messages_uses_per_block_cache_control(
     allow_model_requests: None,
     cache_value: bool | Literal['1h'],
@@ -840,6 +1013,53 @@ async def test_anthropic_cache_messages_uses_per_block_cache_control(
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('client', 'expected'),
+    [pytest.param('bedrock', [(0, 0), (2, 11)], id='bedrock'), pytest.param('claude-api', [(2, 11)], id='claude-api')],
+)
+def test_anthropic_cache_messages_marks_previous_request_after_wide_turn(
+    client: Literal['bedrock', 'claude-api'], expected: list[tuple[int, int]]
+):
+    """On Bedrock, after a turn with 12 parallel tool calls, the end of the previous request gets a breakpoint too.
+
+    Bedrock's cache lookback spans only about 20 content blocks and doesn't collapse runs of tool blocks, so the
+    moving breakpoint alone would miss the previous request's cache entry
+    (https://github.com/pydantic/pydantic-ai/issues/9404); the live miss is recorded in
+    `test_unified_cache_reads_history_after_wide_turn_real_api` in `test_bedrock.py`. The Claude API collapses
+    those runs into one position, so it keeps a single message breakpoint. A unit test, since the property is the
+    placement relative to the previous request, which one recorded request can't show.
+    """
+    anthropic_client = (
+        mock_anthropic_client(AsyncAnthropicBedrock, 'https://bedrock-runtime.us-east-1.amazonaws.com')
+        if client == 'bedrock'
+        else mock_anthropic_client(AsyncAnthropic, 'https://api.anthropic.com')
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client))
+    messages: list[BetaMessageParam] = [
+        {'role': 'user', 'content': [{'type': 'text', 'text': 'Check the weather everywhere.'}]},
+        {
+            'role': 'assistant',
+            'content': [
+                {'type': 'text', 'text': 'Checking.'},
+                *({'type': 'tool_use', 'id': f'call_{i}', 'name': 'get_weather', 'input': {}} for i in range(12)),
+            ],
+        },
+        {
+            'role': 'user',
+            'content': [{'type': 'tool_result', 'tool_use_id': f'call_{i}', 'content': 'Sunny'} for i in range(12)],
+        },
+    ]
+
+    model._apply_message_cache_control(messages, '5m')  # pyright: ignore[reportPrivateUsage]
+
+    assert [
+        (index, block_index)
+        for index, message in enumerate(messages)
+        for block_index, block in enumerate(cast(list[dict[str, Any]], message['content']))
+        if 'cache_control' in block
+    ] == expected
 
 
 async def test_anthropic_cache_messages_preserves_existing_cache_point(allow_model_requests: None):
@@ -928,6 +1148,7 @@ async def test_anthropic_cache_fallback_preserves_existing_cache_control(allow_m
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
     mock_client.base_url = 'https://bedrock.amazonaws.com'
     mock_client.beta.messages.create = AsyncMock(return_value=c)
@@ -952,6 +1173,7 @@ def test_build_cache_control_standard_client_includes_ttl():
 
     # Create a mock client that looks like standard AsyncAnthropic
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__.__name__ = 'AsyncAnthropic'
     mock_client.base_url = 'https://api.anthropic.com'
 
@@ -1958,6 +2180,71 @@ async def test_anthropic_cache(allow_model_requests: None, setting: bool | Liter
     assert completion_kwargs['system'] == 'System instructions.'
 
 
+@pytest.mark.parametrize(
+    'setting,expected_ttl',
+    [
+        pytest.param(True, '5m', id='default-5m'),
+        pytest.param('1h', '1h', id='custom-1h'),
+        pytest.param('30m', '5m', id='30m-snaps-to-5m'),
+    ],
+)
+async def test_unified_cache_uses_automatic_caching(
+    allow_model_requests: None, setting: bool | Literal['5m', '30m', '1h'], expected_ttl: str
+):
+    """The unified `cache` setting reaches the wire as top-level automatic caching for the conversation, plus
+    breakpoints on the instructions and tool definitions so a new conversation can read back the prefix it shares
+    with earlier ones. A `CachePoint` in the conversation still fits in the remaining slot."""
+    c = completion_message(
+        [BetaTextBlock(text='Response', type='text')],
+        usage=BetaUsage(input_tokens=10, output_tokens=5),
+    )
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=setting))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(), 'User message'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    cache_control = {'type': 'ephemeral', 'ttl': expected_ttl}
+    assert completion_kwargs['cache_control'] == cache_control
+    assert completion_kwargs['system'][-1]['cache_control'] == cache_control
+    assert completion_kwargs['tools'][-1]['cache_control'] == cache_control
+    # The `CachePoint` defaults to five minutes, but comes before the automatic breakpoint, so it gets its TTL.
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        cache_control,
+        None,
+    ]
+
+
+async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None):
+    """With the instruction, tool definition and automatic breakpoints taking 3 of Anthropic's 4 slots, only the
+    newest `CachePoint` in the conversation is kept."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=ModelSettings(cache=True))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['tools'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert [block.get('cache_control') for block in completion_kwargs['messages'][-1]['content']] == [
+        None,
+        {'type': 'ephemeral', 'ttl': '5m'},
+        None,
+    ]
+
+
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
     """Test combining automatic caching with explicit cache breakpoints."""
     c = completion_message(
@@ -1993,6 +2280,182 @@ async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: N
     )
     tools = completion_kwargs['tools']
     assert tools[-1]['cache_control'] == snapshot({'type': 'ephemeral', 'ttl': '5m'})
+
+
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
+        pytest.param({'anthropic_cache': True}, '1h', id='automatic-5m-explicit-1h'),
+        pytest.param({'anthropic_cache': '1h'}, '5m', id='automatic-1h-explicit-5m'),
+        pytest.param({'cache': '1h'}, '5m', id='unified-1h-explicit-5m'),
+    ],
+)
+async def test_automatic_caching_yields_to_explicit_breakpoint_on_last_block(
+    allow_model_requests: None, settings: dict[str, Any], cache_point_ttl: Literal['5m', '1h']
+):
+    """A `CachePoint` on the last block takes the breakpoint automatic caching would place, so no top-level
+    `cache_control` is sent: Anthropic rejects automatic caching when the last block's explicit breakpoint has a
+    different TTL ("If the last block has an explicit `cache_control` with a different TTL, the API returns a
+    400 error", https://platform.claude.com/docs/en/build-with-claude/prompt-caching). A mocked client, since the
+    property is a request the API would reject."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(model, model_settings=cast(AnthropicModelSettings, settings)).run(
+        ['Some context', CachePoint(ttl=cache_point_ttl)]
+    )
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['messages'][-1]['content'][-1]['cache_control'] == {
+        'type': 'ephemeral',
+        'ttl': cache_point_ttl,
+    }
+
+
+def _cache_breakpoint_ttls(kwargs: Mapping[str, Any]) -> list[str]:
+    """The TTL of every breakpoint in a mocked request, in the order Anthropic processes them: tools, system,
+    messages, then the top-level automatic breakpoint, which lands on the last cacheable block."""
+    blocks = [
+        block for section in ('tools', 'system') if isinstance(kwargs[section], list) for block in kwargs[section]
+    ]
+    for wire_message in kwargs['messages']:
+        blocks.extend(wire_message['content'])
+    ttls = [block['cache_control']['ttl'] for block in blocks if 'cache_control' in block]
+    if kwargs['cache_control'] is not OMIT:
+        ttls.append(f'{kwargs["cache_control"]["ttl"]} (automatic)')
+    return ttls
+
+
+@pytest.mark.parametrize(
+    ('settings', 'cache_point_ttl', 'expected_ttls'),
+    [
+        # Plain dicts: parameters are built at collection time, also on installs without `anthropic`.
+        pytest.param(
+            {'anthropic_cache_tool_definitions': '5m', 'anthropic_cache_instructions': True},
+            '1h',
+            ['1h', '1h', '1h'],
+            id='explicit-5m-before-cache-point-1h',
+        ),
+        pytest.param(
+            {'anthropic_cache': '1h', 'anthropic_cache_instructions': '5m'},
+            '5m',
+            ['1h', '1h', '1h (automatic)'],
+            id='explicit-5m-before-automatic-1h',
+        ),
+        pytest.param(
+            {'cache': '1h'},
+            '5m',
+            ['1h', '1h', '1h', '1h (automatic)'],
+            id='unified-1h-after-cache-point-5m',
+        ),
+        pytest.param(
+            {'anthropic_cache': True, 'anthropic_cache_tool_definitions': '1h', 'anthropic_cache_instructions': '5m'},
+            '1h',
+            ['1h', '1h', '1h', '5m (automatic)'],
+            id='shorter-after-longer-unchanged',
+        ),
+    ],
+)
+async def test_earlier_cache_breakpoints_raised_to_later_longer_ttl(
+    allow_model_requests: None,
+    settings: dict[str, Any],
+    cache_point_ttl: Literal['5m', '1h'],
+    expected_ttls: list[str],
+):
+    """A five-minute breakpoint before a one-hour one is raised to an hour, since Anthropic rejects a request where
+    "a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block". A later five-minute
+    breakpoint stays as it is. `test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl` shows the API
+    accepting the raised request."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings=cast(AnthropicModelSettings, settings))
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run(['Some context', CachePoint(ttl=cache_point_ttl), 'Question'])
+
+    assert _cache_breakpoint_ttls(get_mock_chat_completion_kwargs(mock_client)[0]) == expected_ttls
+
+
+async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requests: None):
+    """The `count_tokens` request is built like the real one, so its breakpoints are raised the same way."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='5m'),
+    )
+
+    await agent.run(
+        ['Some context', CachePoint(ttl='1h'), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    count_tokens_kwargs, create_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    assert _cache_breakpoint_ttls(count_tokens_kwargs) == ['1h', '1h']
+    assert _cache_breakpoint_ttls(create_kwargs) == ['1h', '1h']
+
+
+@pytest.mark.parametrize(
+    ('client_cls', 'expected_ttls'),
+    [
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
+        pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
+        pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
+    ],
+)
+async def test_earlier_cache_breakpoints_raised_on_non_direct_clients(
+    allow_model_requests: None, client_cls: type[Any], expected_ttls: list[str]
+):
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
+    mock_client.__class__ = client_cls
+    mock_client.base_url = 'https://example.com'
+    mock_client.beta.messages.create = AsyncMock(return_value=c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=AnthropicModelSettings(anthropic_cache='1h', anthropic_cache_instructions='5m'),
+    )
+
+    await agent.run('Hello')
+
+    create_kwargs = mock_client.beta.messages.create.call_args.kwargs
+    assert _cache_breakpoint_ttls(create_kwargs) == expected_ttls
+
+
+async def test_unified_cache_stable_prefix_only(allow_model_requests: None):
+    """`cache={'messages': False}` breakpoints the instructions and tool definitions instead of using automatic
+    caching, which would breakpoint the end of the conversation."""
+    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
+    mock_client = MockAnthropic.create_mock(c)
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, instructions='System instructions.', model_settings={'cache': {'messages': False}})
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    await agent.run('User message')
+
+    completion_kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert completion_kwargs['cache_control'] is OMIT
+    assert completion_kwargs['system'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert completion_kwargs['tools'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '5m'}
+    assert not any(
+        'cache_control' in block for message in completion_kwargs['messages'] for block in message['content']
+    )
 
 
 async def test_limit_cache_points_with_cache(allow_model_requests: None):
@@ -2129,8 +2592,8 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2149,7 +2612,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -2164,10 +2627,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2208,10 +2671,10 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='hello', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2230,7 +2693,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000056'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -2245,11 +2708,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2268,7 +2731,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000104'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -2283,11 +2746,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2300,7 +2763,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
@@ -2418,20 +2881,23 @@ async def test_multiple_parallel_tool_calls(
     assert first_response.parts == snapshot(
         [
             TextPart(
-                content="I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve their entity information to compare their ages.",
+                content="I'll retrieve information about Alice, Bob, Charlie, and Daisy to determine who is the youngest.",
                 part_kind='text',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Alice'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Alice"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Bob'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Bob"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Charlie'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info',
+                args='{"name": "Charlie"}',
+                tool_call_id=IsStr(),
+                part_kind='tool-call',
             ),
             ToolCallPart(
-                tool_name='retrieve_entity_info', args={'name': 'Daisy'}, tool_call_id=IsStr(), part_kind='tool-call'
+                tool_name='retrieve_entity_info', args='{"name": "Daisy"}', tool_call_id=IsStr(), part_kind='tool-call'
             ),
         ]
     )
@@ -2552,6 +3018,7 @@ async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_request
     """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__ = client_cls
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
@@ -2751,7 +3218,16 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
         ]
     )
     assert result.output == snapshot(
-        "This is a potato. It's a yellow/golden-colored potato with a smooth, slightly bumpy skin typical of many potato varieties. The potato appears to be a whole, unpeeled tuber with a classic oblong or oval shape. Potatoes are starchy root vegetables that are widely consumed around the world and can be prepared in many ways, such as boiling, baking, frying, or mashing."
+        """\
+This is a **potato**, specifically a yellow or gold potato variety. You can tell by its characteristic:
+
+- Oval/oblong shape
+- Golden-yellow skin with small dark spots or "eyes"
+- Smooth, waxy appearance
+- Typical potato size and form
+
+This looks like it could be a Yukon Gold or similar yellow potato variety, which are popular for cooking due to their buttery texture and flavor.\
+"""
     )
 
 
@@ -2771,15 +3247,7 @@ async def test_image_url_input_force_download(
         ]
     )
     assert result.output == snapshot(
-        """\
-This is a **potato**, specifically a yellow or gold potato variety. You can identify it by its characteristic features:
-
-- **Oval/round shape** with smooth skin
-- **Golden-yellow color** with small dark spots or eyes
-- **Starchy appearance** typical of potatoes
-
-This appears to be a russet or similar yellow potato variety commonly used for cooking, baking, or making mashed potatoes.\
-"""
+        'This is a **potato**. It appears to be a yellow or gold-colored variety, possibly a Yukon Gold or similar cultivar, based on its tan-golden skin and oval shape. The dark spots visible on the surface are typical lenticels (natural pores) found on potato skin.'
     )
 
 
@@ -2802,13 +3270,21 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
     result = await agent.run(
         [
             'What animal is this?',
-            ImageUrl(
-                url='https://lh3.googleusercontent.com/proxy/YngsuS8jQJysXxeucAgVBcSgIdwZlSQ-HvsNxGjHS0SrUKXI161bNKh6SOcMsNUGsnxoOrS3AYX--MT4T3S3SoCgSD1xKrtBwwItcgexaX_7W-qHo-VupmYgjjzWO-BuORLp9-pj8Kjr'
-            ),
+            ImageUrl(url='https://images.unsplash.com/photo-1543466835-00a7907e9de1?w=400'),
         ]
     )
     assert result.output == snapshot(
-        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The image shows the owl perched on a log or branch, surrounded by soft yellow and green vegetation. The owl has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage in woodland and grassland environments. Great Horned Owls are known for their impressive size, sharp talons, and nocturnal hunting habits. They are formidable predators that can hunt animals as large as skunks, rabbits, and even other birds of prey.'
+        """\
+This is a **dog**, specifically a **Labrador Retriever** (or Lab). You can identify it by its characteristic features:
+
+- Golden/yellow coat color
+- Friendly, smiling expression with tongue out
+- Floppy ears
+- Broad head and muzzle
+- Athletic build
+
+Labrador Retrievers are one of the most popular dog breeds, known for being friendly, loyal, and intelligent companions.\
+"""
     )
 
 
@@ -2963,6 +3439,78 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ('error_type', 'expected'),
+    [
+        pytest.param('overloaded_error', ModelHTTPError, id='known-type'),
+        pytest.param('some_new_error', ModelAPIError, id='unknown-type'),
+    ],
+)
+def test_model_error_reported_in_stream(
+    allow_model_requests: None, error_type: str, expected: type[ModelAPIError]
+) -> None:
+    """An error event in a stream follows a 200 response, so the SDK raises it with that status.
+
+    Its `type` identifies the status the same error has on a non-streaming request. Mocked because an
+    overloaded or internal error can't be triggered on demand.
+    """
+    mock_client = MockAnthropic.create_mock(
+        APIStatusError(
+            'test error',
+            response=httpx2.Response(status_code=200, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body={'type': 'error', 'error': {'type': error_type, 'message': 'Overloaded'}},
+        )
+    )
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    with pytest.raises(expected) as exc_info:
+        Agent(m).run_sync('hello')
+    assert type(exc_info.value) is expected
+    if isinstance(exc_info.value, ModelHTTPError):
+        assert exc_info.value.status_code == 529
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'error_type', 'message', 'expected'),
+    [
+        pytest.param(500, 'api_error', 'Internal server error', True, id='500'),
+        pytest.param(
+            200,
+            'not_found_error',
+            'Container not found. The provided container has expired or does not exist.',
+            True,
+            id='404-in-stream',
+        ),
+        pytest.param(404, 'not_found_error', 'model: claude-unknown', False, id='404-other'),
+        pytest.param(
+            404,
+            None,
+            'Container not found. The provided container has expired or does not exist.',
+            True,
+            id='404-bedrock-shape',
+        ),
+        pytest.param(404, None, 'model: claude-unknown', False, id='404-bedrock-shape-other'),
+    ],
+)
+def test_expired_container_error(status_code: int, error_type: str | None, message: str, expected: bool) -> None:
+    """Anthropic answered an expired container with a 500 and now with a 404 `not_found_error`.
+
+    `test_anthropic_code_execution_files_rejected_container_is_dropped_and_retried` records the current 404;
+    the 500 can't be recorded anymore, so the check is pinned here. `error_type` of `None` is Bedrock's
+    envelope, which reports the message at the top level of the body with no `error` wrapper (#9479).
+    """
+    body: dict[str, object] = (
+        {'message': message}
+        if error_type is None
+        else {'type': 'error', 'error': {'type': error_type, 'message': message}}
+    )
+    error = APIStatusError(
+        'test error',
+        response=httpx2.Response(status_code=status_code, request=httpx2.Request('POST', 'https://example.com/v1')),
+        body=body,
+    )
+    assert _is_expired_container_error(error) is expected
+
+
 def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockAnthropic.create_mock(
         APIConnectionError(
@@ -2976,6 +3524,50 @@ def test_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'claude-sonnet-4-5'
     assert 'Connection to https://api.anthropic.com timed out' in str(exc_info.value.message)
+
+
+async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> None:
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error.
+
+    The SDK wraps transport failures in `APIConnectionError` only until the response starts, and a cassette can't
+    replay a broken-off connection, so a mock transport raises it.
+    """
+    events: list[dict[str, Any]] = [
+        {
+            'type': 'message_start',
+            'message': {
+                'id': 'msg_1',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-5',
+                'content': [],
+                'stop_reason': None,
+                'stop_sequence': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            },
+        },
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Hello'}},
+    ]
+
+    class StreamBreakingOff(httpx2.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield ''.join(f'event: {e["type"]}\ndata: {json.dumps(e)}\n\n' for e in events).encode()
+            raise httpx2.ReadError('connection reset')
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=StreamBreakingOff())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        client = AsyncAnthropic(api_key='test-key', base_url='http://localhost', http_client=http_client)
+        agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
 
 async def test_count_tokens_connection_error(allow_model_requests: None) -> None:
@@ -3001,7 +3593,7 @@ async def test_document_binary_content_input(
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
-        'The document simply contains the text "Dummy PDF file" at the top of what appears to be an otherwise blank page.'
+        'The main content on this document is simply the text "Dummy PDF file" displayed as a heading. The document appears to be a placeholder or test PDF file with minimal content - just a single title/heading and otherwise blank space.'
     )
 
 
@@ -3013,7 +3605,22 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
-        'This document appears to be a sample PDF file that mainly contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" as its title, followed by the line "This is a simple PDF file. Fun fun fun." The rest of the content consists of several paragraphs of Lorem ipsum text, which is Latin-looking but essentially meaningless text used to demonstrate the visual form of a document without the distraction of meaningful content.'
+        """\
+The main content of this document is:
+
+**A sample/demonstration PDF file** containing:
+
+1. **Title**: "Sample PDF" with the subtitle "This is a simple PDF file. Fun fun fun."
+
+2. **Body text**: Multiple paragraphs of **Lorem Ipsum** placeholder text - this is dummy text commonly used in design and publishing to demonstrate the visual form of a document without relying on meaningful content.
+
+This appears to be a test or example PDF file, likely used for:
+- Testing PDF readers or software
+- Demonstrating PDF formatting
+- Placeholder content for design purposes
+
+The Lorem Ipsum text itself has no actual meaning - it's derived from Latin but is intentionally scrambled to serve as neutral filler text.\
+"""
     )
 
 
@@ -3027,13 +3634,35 @@ async def test_text_document_url_input(
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot("""\
-This document is a TXT test file that contains example content about the use of placeholder names like "John Doe," "Jane Doe," and their variants in legal and cultural contexts. The main content is divided into three main paragraphs explaining:
+# Main Content Summary
 
-1. The use of "Doe" names as placeholders for unknown parties in legal actions
-2. The use of "John Doe" as a reference to a typical male in various contexts
-3. The use of variations like "Baby Doe" and numbered "John Doe"s in specific cases
+This is a **test/example TXT file** (Version 1.0) that demonstrates the plain text file format.
 
-The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
+## Primary Topic:
+The document explains the use of **placeholder names like "John Doe" and "Jane Doe"** in legal and everyday contexts.
+
+## Key Points Covered:
+
+1. **Legal Usage**: These names are used for parties whose identity is unknown or must be withheld in legal cases
+
+2. **Geographic Variations**: \n\
+   - Common in the US and Canada
+   - UK, Australia, and New Zealand use "Joe Bloggs" or "John Smith" instead
+
+3. **Various Applications**:
+   - Unidentified corpses or hospital patients
+   - Typical/generic person examples (like "John Q. Public")
+   - Form-filling examples
+   - Pop culture references (e.g., "Meet John Doe" film)
+
+4. **Related Names**: Baby Doe, Jane Roe, Precious Doe, and numbered variants (John Doe #1, #2, etc.)
+
+## Document Metadata:
+- Created by: online-convert.com
+- Content source: Wikipedia article on "John Doe"
+- License: Attribution-ShareAlike 4.0
+
+The document serves as a functional example file for demonstrating the TXT format while providing informative content about placeholder naming conventions.\
 """)
 
 
@@ -3376,7 +4005,7 @@ async def test_anthropic_model_instructions(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3418,36 +4047,38 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='This is a straightforward question about pedestrian safety. I should provide clear, practical advice about crossing the street safely.',
-                        signature='Eq8CCkYICxgCKkDdadQOXMzNBqjrNVAKWsgUfg49NpPg026zBGxIIGwEHVCq0JTW/P9fKHjZdjgO8Dyx03YDw6hN0w1HucifXFggEgzoVS5Gogi9nvJSOA8aDDYuCAX4nGGkeHQLayIw+MWbf/TYU4AqT1X89p4S7fe7LOO+B8o24yCHQ8cFK9QK9p5WMj2Y4oBFBfC9uL8ZKpYBDjoKceyqFJA56ewVH73lNY5szTvm52+CVXMZJCb8x0B1bf9LIOsFUoJD6F4gZBdKfMqJgFCcKFR6iZh09pwa0E8lHvEnUeF1A0AJ6z0j8gQd5NxgipxWrF9908qJbMSkVDdg1dT/3Rr0nbGguAYTYdoV4MrVxyk29dSkkjyAAZBMI3p+HOwiaT6GmYq4qVE3kWnSoiEJGAE=',
+                        content='This is a straightforward safety question about crossing the street. I should provide clear, helpful guidance on how to safely cross a street.',
+                        signature='Eo0DCpsBCBIYAipA69qyFi+sCo412EDny7YyS6bZCGAzKzIWQDi9+JvIkWrWp4Ln1nTCZk0bi+3+xTP29JUvmQwNsKw6B9ZbLhwRsjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB3Onv1QYSDKQh/pzKmKY3KNFRkxoMG0gjmaHZ364EjyD8IjAvY2ourooz1iaUcZzAgdPqsJg/1hUvJ8gC+htkUhMZaVrj8g7aQ2MeMK+3hBiG3SMqngHljUCYwl57tiMhfA/T55G+H7CQkUOpTTxnyDrnTbe1vHtaOVRukxsGeKYqa/8HnYHQD8x9H3mnnjy+KBj8GJyShxpSUCSv55If0NlHR2HiUT6MNCqWStfKsP9Ac5+jllBRcs8zfIgtvq6bNZbXiscyscYjV2T1OlQiBMPbbdksZTUHMiegl0mDlUwP1DY8fgR6fL88F9dy73fWLCE3bRgB',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=43,
-                    output_tokens=321,
+                    output_tokens=277,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 43,
-                        'output_tokens': 321,
+                        'output_tokens': 277,
+                        'thinking_tokens': 32,
                     },
-                    cost=Decimal('0.004944'),
+                    output_reasoning_tokens=32,
+                    cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01TGA8SWcHTTn5674cmicbnJ',
+                provider_response_id='msg_011CfY86N7So5nDSVMmT1gBt',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3468,7 +4099,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3476,41 +4107,31 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content="""\
-This is an interesting analogy question. The person is asking me to apply the safety principles and general approach from crossing a street to crossing a river. Let me think about the parallel elements:
+The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the similar principles but adapted to a different context.
 
-Street crossing principles:
-- Find safe crossing point
-- Assess conditions
-- Look for hazards
-- Use designated crossings when available
-- Wait for safe conditions
-- Cross carefully while staying alert
+Let me think about the key parallels:
+- Street crossing: safety, finding the right spot, looking for hazards, timing, method of crossing
+- River crossing: similar considerations but adapted to water
 
-River crossing would involve similar safety thinking:
-- Find safe crossing point (bridge, ford, ferry, shallow area)
-- Assess conditions (water depth, current, weather)
-- Look for hazards (rocks, debris, cold water, strong current)
-- Use established crossings when available
-- Wait for safe conditions (water levels, weather)
-- Cross carefully while staying alert
-
-I should provide practical advice for different methods of crossing a river.\
+I should provide practical advice for crossing a river safely.\
 """,
-                        signature='EvgHCkYICxgCKkBWep44ZkS8HkPkKt2q7OJir9S1aK8TFXpFjWz4yEEVk+2r0FCXIRwuIJBfrLI+kTWKzAFtjxpM+G+S8Btnle6sEgwSq3W1+WbBYHYolVYaDCbom89zf38EbOe8jCIwKz0NLPNu1XU3I3nREDwVSSBCe/u2C+Ryon6gXHWSWlM7r6M2jMVUNynufqiO9m+jKt8GDH5qCKJRfydyyKcS1muFqazBmHs8L3sUsHzj7s2XkvP+2yA789klS3DrrYj4H1kYbRWpmGlTxkpPAuXUr8u1U02sNS0zqh5HiIEu2LZesOj5l1jw68VXcVBPsYEdkSvarScNKzmDBOiw0vTV9EkoxZ/p/ZvoP4PUYSzFc1oJRPaLDCn7KW/aAsZBbsS55YDwHBXvjrDFFtcd2V04JuavcKi0EwomwCy95e0NAaOrA9aAFizZoG30V9KSiz0XUQ3+8ByxKILXk1qvtaV2HJgYahAuRcOpEoty4+Dqx96KsA4ifPaU0+MRwoVUwGUm+mK75ViBIAQdRFblkHbPHYHpK+P9SjdIb00h6PUH59pPyNFQOMJyav7c6dy2efTmiTdzejLHXjUzVvG2LaDnq7cFM2MpqvxlIxDULVG+N13xOTStjLJ9Siwq/zMPKTZYhbYYYC6INlMxwmvM0xz3ofsZbUVOAHv2Ti9jixmB38wyKaFiS7GkQvaK9r9AYl7b632bnsjexiHMe+HMAwfOiA9d2bfhGYCwnt59uNCPgXRihLqaeemq84tiHjSpXrYAieAHtiwEhh0Zz5/ztFgn9pDko5ZmfUvXW9kcZ/8nthmDJSD0z933gw5gITW5u+4S4ozqkGtQ4lGgHNzXLpAEs1A6lsqh2jC2iAskj4Mc/oihJbmAFT0UQ0uopcExyImY6maqKub7xYUseRiNjd1Y7hq7eLDlrMiOR8DDoUoTEIz1imI+KetpLXJoSorecGkYivZajx9ZY+L/R4VcA6olgJsjSpztEvlNextE8sAcAnwBK5l8+yBxWBflFf96wOcvbxE3xtEfR5+ISy6+A6kcxPkpj/31B0VM9y3EqMcDqKmMCF6r7MpwRzXxkHofWCG49N4SQKDJrRJSMldy/qGvd5TIVDghEK+8AoVhWZXqXl6y9z5NG72fOlXLdh3me1jtqMSBX3q0gxmljqzqii/r4F6Qmmmwl2szfryxwgUWAAPS6yDEWbDyUhQSmc24Q+uHrXhKIPKuDQljCsI2by2pyC8UV4RsEfvNLk0zs5CPR3+1kewb8TVB6S+IpmJHJnBZImkI2vt2IUgvnJb/5D+aezG2mA8O+4qjsnHsbT8Njk92tOI1wxOFSAO19SOEa+DD2bsYAQ==',
+                        signature='Es8FCpsBCBIYAipAwOMgDScktpRxOxezSKZlgDv0BuZLzd16JKHtifEj7Gexjinz1tHPsfOKFpDV5Ps2AcRHhy9FLlJ+2nrqsaKvxDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5env1QYSDOBsWwrA73Lhj5+pyRoM6yekk9bgiyOJWJKAIjBkzvQqpD2HN5Er+Xl6x18dSGuhTbDp7woRb0n2yIbwHSfOfZqVxdpNt8oj63ienHkq4APsDBEEUy7tLmZ0f4AmaHZER9BX9jH4+bYtPUGkBf+oF1a8j0T6v5tNpbG/4aNREh4tmpwYserqz+BiQHNPcnAFJNY9tNrifTHAl8e8xxMOxrTnZOi9SRf8dn/cuVvYbqa5dF7C28GhB1qdEyDaeuzUT1kMbtPytC1sWys4Keo4fpR9lULQynVL95Tt7UBjjjYymstvig2TYrIeBf7ha58fx13WmdM1iX2PnIIaCw6D0euszAwrTavz59RMvovTDcU5A5dQHWRXSB/7BsHu0nxfxSONrcVkgtM/lEraaj81zMXifj72/PRSob4FLzRPZTp1jTasCGJUwJzg6pjOdIBkUqaMrbxc4MLdocLPOkV9jtKiOMMB3VIVqp2Xt+85w9P6WqWJhB4TlT0vOYzOewIt454F+8wA0Jq35w0G2Bt3s4nvPDFxAKFAv5heaaTXE5X3AlmidVb6RlyDPq8+rVzq02tcMjJQicfj4i9nNNNjXJsl+NolxFw3pinctxUezmkNiUZNGto0OI1jsy9ZYWdnJessWUqzBayTmralzFgqpGr/+hxTYBnfdDJlzr9ljuHdkfffNvnAslNXxp0/KGGgcrldzp7G7YEYt4sg8c/8wZlFi2xE+P7yEHg/vEoHoiMYAQ==',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=354,
-                    output_tokens=525,
+                    input_tokens=307,
+                    output_tokens=440,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 354,
-                        'output_tokens': 525,
+                        'input_tokens': 307,
+                        'output_tokens': 440,
+                        'thinking_tokens': 98,
                     },
-                    cost=Decimal('0.008937'),
+                    output_reasoning_tokens=98,
+                    cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3529,7 +4150,9 @@ I should provide practical advice for different methods of crossing a river.\
 async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
     """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
     must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
-    It falls back to tagged text instead, like thinking parts from other providers.
+    It goes back as tagged text instead, carried in a user message ahead of the turn it was
+    produced in like any other reasoning that can't ride the native channel — see
+    `ModelProfile.mimics_assistant_message_formatting`.
     """
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -3551,13 +4174,13 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
         [
             {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
             {
-                'role': 'assistant',
+                'role': 'user',
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking provider="anthropic">
 I was interrupted mid-thought
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
@@ -3585,7 +4208,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3597,25 +4220,135 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         signature=IsStr(),
                         provider_name='anthropic',
                     ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAH9yMh50nMosxdP3q71FDdw6Z+ZPzJuiFuyaffpTU/yPwJKCH8ttFsqMvyZH2twka/lsjXMK1jFbdG5qjBV8q0jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDN/JD1GIwizBXdwOlRoMTCSBWHvFuekYqVgdIjAqoUhdlNp2sh+IK/10MHlg8vuBWmb9I0Y72d163jAsvWNqskMd8BW2PRS9aJOFAaYqGCO/sNubMbD6331RrE0kZGf9M9niUnbnERgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAMhzsaP6mP4XdG63xA9xBCXA8X+sESq1zK/stvJmXS3ev+N7ar8UA0jdX6PF/WOlLRR4djR1IjB7WuKcR3mpziTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDJHB2W2ajvHIqL4L9RoMcs+71e5vbnFmDNvMIjCR8+nYrnDVX+Q/6GpZBzk+xGZpyGh1omt0N91lOEWOT8/aBCMV2NZIeDTUH8UB3GYqHeHnj9JWwi8Gcl8vl2B85rL9oysLXUlFxDHfPJkoGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipA9tLhVJaBQbtE3U29zEYbjYweuKgSdgkQizI3MEo/B/bFZ9i3tpN7sqWwaFqbd1F6h+APjfEP4r2Da1oci3Ah2jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDDrL0GMq3DNCBNn2cRoMAz0dVLAK08yYeZYiIjDoNXTd1E4CD2cBDho/7A2ucaNvqLIfGnjOGbiCGfLupkcYGO3kAqx1xSmYMc5WblMqF8al8jeAXdPk2RZN3wCxzkt4xepNX5u+GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAZ7UyCtikcGzZiGrRmmIufMOmrbU7+z9Dm+IlSGh1hLETKjjWf6VaJyxRE8CZ/cUMnTygkCrHlY5ukSnGObdzGzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDBKJvFS5lWAlECEEwRoM6jBcAPREepa/UHvoIjByHVnQt16oZSf8ZZ3l4bbOwLbHdKS4IWuK+6jdETra5Oz2oN7Lh1z2eC85ugwViUoqHrl6h+pEaIZ0/333/HcVHe7NnkpCk6Kah06egoG46hgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EokCCpsBCBIYAipAKx8eKZujHCV966c6UCXUo05K2bs8qFRrHapEfp2uKqxOEFZGYMJnrMZgHF6snaDCdoAI1d9m+j8mmbwGRRaTsDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDMmEFEt6Yb27M53D2BoMFVctFNc9VPq7fkVIIjCreImFxft0OZVnhyT/AL8SFczrl9CyFN9+R9F1b7f/BIE64AEFVZ9IrJcr770vC4kqG5mnxkeUAMbM9iUnAmjuLmwC8CuW4yiDSyJpkRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAyDu/XQ65uve9leP7V/tGECftwrDje9O/QkbvC8eHaYpUB3S/29EFjUI9Vdnh+vHSf5DEo9qAFh1f0Fsrc3qh4jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDJuL9VQ8J5Uv1DwVoRoMcW0m0FKwo4wN+oq1IjDyUH7I1tVCXD7nju6eMx5i0sgEhMp7rh1oPEHkGcxCGUvAElB2sdAcHzLFzmTPsvMqHavkzmmwe6ixvQQecZBxNkjVVs7YFkOj/IntB1sFGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipA0WYzCYNjM2oGjFl4T1dFGdr9w+hVaI8347JSkxCM+IOIT8CU49JIbQ8JQJYV6qJtLOBkrUGWSwApx0VjuPuS7TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDMiU7iMqqwcqIoxQ0xoMdXS9D3UlRgSfkmS9IjBmOHhisyqb1ZKQdzxuZVMggrExFngcaJHnjLSujaTBI3/CA2iReSCNRkdz8DFhovUqGhUtgiHjF/Qpqjwuh/GICFHDxEJdUW9XjJnkGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoACCpsBCBIYAipAJnMI174JyUCIOY11FcIz/B4GPiJFw+w4SwCHkXDsC4KelPhF6G8TL3ZoXe49Nsespb8brIseI4wIOPwRtBFBjjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDCMPAsj14lcl1PCOkRoM65Jrg72CN8507qkGIjBtjaIfVYPQTg8CMEP/Al+rcmskgMF2Qoj8PVptj6rsUEd1gXW3vUCfqayoVX9H9BIqEvDg8/aGBauKnrnmptvzrhF0vhgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipApTZ3PubRBZVpnSYZjSYFcxo8UpecUYTIgWoYjZHIHNvuq9W1IQ/+EmXWqEmTcnTxYdsjC7PuW1BQKmfTvvi+7jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDO6QYLpsGX/hWfUdIxoMsXUsfObWEKr8TJ6JIjBXeazL4mkICqJ1319joWPSkxeJ6RyyXqATZIllUI8Nfe4tZlxrZifjZ+LtEIeCcSYqFyyedWZr5DyN93HPAVqY2O4R76PEoavOGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipAvzHQ5HJCoj0E50P+UzM64bDks/eRBw+ASICBtwLNqKSKgqp8TYrM6Va5ajuAPw0t4MC6Of3uORJr1eKvg6HtUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDEFbVGGsR5mhQg7qTBoMMuFNPuusDu/0kAWFIjAgHhFesAi3un5RwTMAmEZresDMHNRIz9Pb/z4c/FLNcOVl6JbDHH+TDkPq01v5yWsqFc0w8VWq0Gl08WO4N/U7jHKTvza+jRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpMCCpsBCBIYAipAHa2K3QqFoebycm1NBLg/+cjRroBct1eYa/Rzw2/jyorS87kn7sjsI5s3naJLY6yvTmBfZZpBC76AQf+YpYyZkDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFonsgg3dCBUZI9UVxoM/cdT4Jg58Oe+DA0xIjB5tomREdY5CWIkvDtPvfHi8vvBfitpfGk9L6F3FxQWDzZX9Rb/0ycydBGrLFAVc8cqJcr8u3nQnWjDpQeR5KjR+mZLdieZ0dg3lv2cQB1c9I9g9LLK2QwYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAExfpgI4F2YtR+6lHAp58CzScP6vtbYJxZ6KMqkGsl/2ZhzaJ81ijMgDD+TtYrDYlZ3/iWgUdWm2HZnm+vNQyJDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDOGbgDHw1PaZBOTFexoM+LZ/3gJHXwaXQx8OIjAjagjLQIuE4kS9R7iVoEz8Romsb+9iR/yKdaiUAmctr7N4o4vuQooj8Ke0+dKBzvkqGsm89B3wKvFu/xkmJq4fzurRPUV0b4gEOEvzGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipAkV8tYzRfHXqTJukKIzjZXs5UDumddyj5AOKlUA2iDOLA7rgKgs3/7xjg4DRvWN9VhoRUT3Y+vfRWgM1oiDqQezIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDK5vNYlKki5v5WyhGBoM0RCGMBZjwNArBs2sIjC69NXmdoDM8/s9ept8WMHEiMSaXggoBlGRXYfuieGde86d1WywtnfWWzncggKe9g4qFa2bqY+4sLapkplnKQu8jt7eR/ByRRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAMy/kklQeKU/8oIDybVe7ImQxtKLSaknRiapJRX8vEOfiZLdjbUPPG4T1nFgvUsrc5VCictQJ13MLrHmTjz0iKzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDPNzAMDp6R+/fNh6+hoMWGfqBZ/kRtPG0QjHIjBa+UxofJGR+dE/7jjK+01ofsSZc6ZkX4wtBiev67WMhNMIcXaELbfR2kW4tHgBBz0qGj9UwIUgBuZFVtxPp06aq7Fm8aYa4se6L9ZcGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpsCCpsBCBIYAipA9fh8Ro4ul8bGVq05BUDTlV28cDSy3YdhU0fAEGPryq8ZpopRPM8nlAbKR9HxjJi8U8/qfzKLR5lDoE8GMV+oeTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDKZ6xkp/m72qYG5d7hoMpBk6AgrY+EBBbkUXIjCCA1ckuZI95/t6nZuz7d0x9TAsn3y1Ylg0zzsIGNZ057dyQxtcxW92B6kyn3vdOr8qLfu1nnG8OoeEwmmR0JdGvTgWemY1kqQeo5/FEFUvXBWpJcexHKGtAx9fS2avexgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo4CCpsBCBIYAipAwtUEJEa2y4OFRqo4Y6EUCoPx3Ub5HrEqPN9WH483gpmB9cVjObm5gZRV4VT7oKL/MQEFkeYPG5iIS55i2PSyBjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFfvx1E6BuX0sENs+BoM86sJHteZ/EMd6jLeIjBRMlQXAyg23F4kVlOHtlDxdjLbtqINpGAl/Sw3lKK9fFwh6TT/oaF5xL7VeO+AZTMqIFi/Q80WfFis0rpnjhzxQer8F+ipppdsT72Z7tlCTNTgGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAbdIV/0v7ZMAefuPLxlDj5vnBhRA0GD+9LRN18KANXfomsCgL52r4saZDoVarLlMoEmmSP5HOc2j6fFmTnPHfPjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDAZKnqHTEPbClkeU3RoMlke45/mjdH8bpAmpIjCzLP3lAjpQq5goIOQyM1e37o2yll8D7kAMR7fexb0Ly1tZ98TiUknxJx5XTfntpEoqHjP2po2UsiEBgl77wzAWmbR5Q0RQ/nRUZuOPkzCY2hgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev8BCpsBCBIYAipAoFYas3ogS5mm18MY9nKWMr4/x75x5UsYB2kd4Wv3HylKFOtmBFAQROibk6aTgni673sAU2gScRN8onGQ4kIcSjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFBXiBSj05P9uE6T8BoMrcujKkkzhJdJeQHPIjCjd2TVa2/wb+ob7KleZ7Giq0L0DloriUO5Q+/vRJQqmaEb65Xf8eDB0PVzOOs6avoqEZqedGmWjmsdENQAnLo5JSyjGAE=',
+                        provider_name='anthropic',
+                    ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=92,
-                    output_tokens=196,
+                    input_tokens=93,
+                    output_tokens=91,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 92,
-                        'output_tokens': 196,
+                        'input_tokens': 93,
+                        'output_tokens': 91,
+                        'thinking_tokens': 42,
                     },
-                    cost=Decimal('0.003216'),
+                    output_reasoning_tokens=42,
+                    cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
+                provider_response_id='msg_011CfY87oKnoVeFkVVeHTV5U',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3636,7 +4369,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3648,25 +4381,417 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         signature=IsStr(),
                         provider_name='anthropic',
                     ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoICCpsBCBIYAipAtG/CbqI1VALktegtM5G511LDtXp17QNrWvfGLgPoScswSLy1Ew6MUJQWHC4/UFjoogDT2daKm2Ml7U4TIAwMUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDO1ugFssFGWdRKUWjBoMufHz5AoO/ny9siY3IjCXkXHqT3oAVmpcZj8aGieDlwHL5R2rjztl5m/CJa/IuxZAS8ZXNYDuNMa3E863gkcqFGj9G2ea++j4m5I30k9l1kgK1surGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAO9AiKamf4m3+be4zjVFq+QCp0y5bb5NebHlk+G8rCsHl9/P3zePg3Vj0X5Y6aVxGic0TxWzZ8b4A0DebNlgGszIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDJVTX/S/huc4n/XrVxoMY+C1FaNQU6LKzV9gIjDp2RYWeHP/2BqefCIZ8ugswEgpVQJhVUNMCMXC0zM5QB0SG0PBPmVQONfhbkexpeUqFyvmhtHGpz5VnPqF7TfP3yNPe6LLR8fFGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipAsWLzKZpQZZxRlz34GAU6GUjMnmu0ytF6oSctWJvbVjWoBGCtQ+WxczumYWeU55fyI3iDfAT56TnsDAErL8QRvjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKWkEiWtxR+Ag9jR5hoM6/BOs98KAU9TzS3bIjC2WIIr6PhWWRbDKdQ7nDM2cHB6gJaO69dhdZXFkMkcrxNEBd34M2+zujJdT3Xs8mcqFV0MKt5mwZd6XCb7rdSJxdgyAweceBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipAI3Qb0/Rkz0NqArF+7nP4GdYUFlCG/vDXNBiFxU63oDcLO9ij0v/6EoMPCyrPnH6NxXsQhn+CRJR0gFOSRashoTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDFoBxpa1R2+8HQDVLRoMdIUizQhQtCkqi1yxIjCOi9dSIyGrO+MNKObohm3NSsc8tsCKEPSVB9i7S8Q+QXRsJIOSwmIkr+VgvPJXso8qFfIhO0bZlcsE8n/Pa3C+of29AdOcrBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAdlMFD4w6RUxuSn5av0UHBgv9cNww/kWjsCevWt89xuk411+A7FNI5KPVHVz1k05YWOSeCeULInXDiskz18u8nzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDD8F33gL7aDjVSmbNBoMq/0rswgLxA5QMd2DIjCz8/hzz9YAJBQN6LTyS+Mf0ofekwVgykQJY1hmE4/0+JLU6KVV74kUgoM6aC+PVWAqE5mnLH67g/wQxbcbgwDcQiTu7IMYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EooCCpsBCBIYAipAAXAvskvZ0qPkPHAH/dz1SJpz76NFe49KjOGXEJEkmD3grxxJuP2E5SctUlPQ2jie9BbwWNh4Tcg0KTtVRLGudTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKQ5skKwNWMsCNZPIhoM2pE4TBV9dsxiM6PmIjCBQ/gCo5yqiOJREeVp3cHKgIYOweGoqg6CZD9xJJGGxhGpRWo4iGVCP8ttj8gJjugqHHx9XagzvC8VqXvNr6tQjavSxIg2ft3RT5Ri4B0YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAYhUKiHwJiHK2aojdXvhoD9ypMeemfzPYItoEU4lJ0lsiCT5B9N2nB/cqEN3Vs6Hc7kAwcSM6GFPtFS2x/+8ovjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDJ1E0S6A+DwcYWM/4BoMq9mO/QfDPaON7iBsIjAuGsm4pOvKqxr9RwO81WHXrbWq0D/C+uSbhjrqwJBrH2VB6D5xlAo2U+KG7Mr8zn0qHo+M+SMEw85LPl7NRWgKRYdeGBScGrhTVExMkPUh9RgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo0CCpsBCBIYAipAsf/WG0+efT6KOZ9aw6y5VOeUpYu0Z5lK28y2p1Eh0Qcf9Sg29aUqEYQNmQeHB0P5kY8yfdH7yjPwQbAmZCwy3DIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDL+YDL13uPdW9TdA2xoMWFNbEc/a+b7zucMqIjCtY5vPftC/JV5gpHBsuuIHl7VgARpF2HZaygFnBW2LlD6v2P4auwXjxPEuvYcY4WsqH9vk4Iybnv/FGlTVI9qrF/HWgAYxmEhOkxOnaLOQFn0YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAbSM7ZlmaYMJGETdkc7WChv+zWs59QHLShOZWbeXoEUhgBTwtiFSpoWpsoEfmlsN9i1KmRx08RpD/BIWWQ+u3KjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKPcfJM3oT+5j0ivhxoMOix+dZRf7E2pEQfRIjBdvshu/EPULeQRxusQZSHfvFTPiNSC8pgkfogmskpUHnql1cNv7fU3fJtlrS99NjoqHiL8mlAbehEE9cDwqTXEjOzLzf6fDiLx7mjabTkaQBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipACvZbQ+40Bh5imdlph6QkA3PZAmGpqdwHoxHdJdIbO/mpp0ZrpnFjAJaPZ4XbcEOiiimixdEt+rTtSzeHT7ckpDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKDCZRxNZVN9yVjSqRoMEJlEsGucmuP1VyniIjCPJ10RPncGbkyztrh6bS1V8YHTNNJ+Zg7IoE35aWoKYGyH/y1S2FJmyHoSMvkF6g0qE2qnrUeP0HAEyljG2hL+PqIrXG8YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpACCpsBCBIYAipA0VPH68XYX5ZvHe8VA3mRpfDvyAJNs09yyqMwSQq3otWsSg5unlQbSnxC53F+u01u6mNRHBpAT4Ni8AYN1NdUlzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDD3GDHRPGNEJf2QkLBoM0jT9cAJHvLgDhcaMIjCXphK9V2FsCANuvjn07+QTPhqR0McOungoxg+O0hepLG7DOBDNesWhp7RWv25Q6lwqIhvcF26i74YT0kXE+CU20kQCbRLHA41mbUnKKiSrRkKUzBIYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpUCCpsBCBIYAipAvgUxIXqfSREto7zpMAWCAqr2wna036aXi4NAFs4xA+OKJRNs4K8YpoA+98PTGRuQIdHaFSISrFM894CuaTKtkzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDDMwtKAU8stI9PjPtRoMqec5JXDPMjfgzRerIjCJXnDHnsayf4JO2BQ1BQGEUb69tOnpQLDi+z4tG7lhb1BZe51vbCapEzHwdhiL08YqJ3YFEJ3TQhAyJ9jDST8a/H0ajSfeobAk4vrC0jwo7js0cC25ue4nERgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAZp2qD/K44Y2ay6d74hpK0TX3Dfft8Q6hGmwMUlPL8SBIQ6bLRCdDgmWqBHggx7E9hg1bno7qjmqo97vBz4MFiDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDMuvzfvyDpDIUiMBNxoMZDdzGPEsAq+eeUrOIjCc8xVcVrXSBHoe1w/18XrTi0EnIIzl6CdbU+5+awNmBxPn7NMuUzSPkLTpK44C+/wqGuVrOKiZiOm0fGJ0hs6vkfeGw3FoncQ8P16EGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipA8gpFSIsC00f5aNPPM5nGLkXJUDJ6qhFeHeJg/WRdRo60q2dVYkrvA0TUPzzCR+0ddrejRlknNto7cb5VK4gNszIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDHpztZbu6QADS2w5dxoMQbNofh09uEpulRD/IjB1frgokLInW9QfVPwbvdUxJrs2kHWqn/V73Z9gsNzLgVz4epkA67nvk/oVKKFGUd4qGS4SF05/2oviF3dbuKcEKWd4i33nrUueuNcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipAmlkKLGQnKd3akDBsvd1SsvP0nQQCPHPwKdChMClTbZt0zk24zX9uwaRJ8Bx0pbmgrl0BD8K7KLdmPo9U2lfsfzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDNKHsG5P5hZOX7wiUxoMmelHHVlg9sksz+C0IjBj4i+fv/6qqlYrFJx07snEgSNcn9leOiXDBo0BkUuKbkczGVe3K3E75v3YRQWMqKIqFS/HAjn8lD+JvLMeGYFXHN6/HMHulxgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoICCpsBCBIYAipAeFjsFCb+dXJoStuJRs/baKtSHjNOecoLzJASXkQ3KNgH4tXBZHhQJFF61mqjSDboext/ItH2w6DL4EmIkItU4TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDFY4rJ1SPK419J55/xoME+ToMkmLXCVByylHIjDQxXv1oLE6JTuOv+SXfwbMB1uRFsfBr49I8ijaOA875ZdBBGQrAw06BmI9/BXehbgqFOvqIj6+P7/jPRheVYcPC2ANL4z1GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAMTWb/Ier1jqb50IZpPXchxgcAEyVbB1kjVHPZfaOUg3ABXtoUbeBQjnlW1kNhvVY5g+R4lcInfZBJ287VaiEbzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDFOvadOc8M0cG5+oSRoMDIN1S1NhD9jGdi+kIjBpZtVmwcX8bRUunwW7RSPcu6EyOdrG8fdySw8bDtxw6Ez0UelZtDxiVrWy4Ck/87oqHWCzZDVIuE4x5zbCbmLTwn67oJtD3BX0caJaKzMiGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev8BCpsBCBIYAipAHbjUo7UNerDRTDWtRVF61MtisWja1B9r7xf3CkE/OgWSyjeq/lV7SPa9lmn7/kWIqhGa3BfnBq+YR2fibdaflzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDLsNxAOtYNCa+CMjaRoM+WZQKs5BNXdxSas9IjCzJ6OwR1Z3QJC17bze5KoK7gdlZT/aLgAlHnUZsH3AmQgrZF7/X1de9399qFD2/hcqEUQ38hd/zKH+8fK4p9nD446JGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipA/2+BO3HzQCvb95ibfi1Eocftb/XKq4ivzhfrSkhlE+aIZQTBwnVWG3SYZM3tRjqBlGt1fGxhHgBJFysWC83yajIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDCPeOj1evmgeSIJm2RoMPDh0110KPCK3DPPwIjDSPl7gO7GNv4n9bYAz2lnIRBtfH4m2+2MVUGimXSy5sOWUHcgTLrnI38xQVihwh0YqFkhMBzUOI4/LB/A5TJvznbDTDjUnrVEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAEOxa5vegUwuVQbWQSXKfmk+ZNs8oAsdMRzykn0X/jcAUL6cgYgPzXff2CGfZMpw9reUFfe3f+QWntDpyJE7mQzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDMZQumg0TX8RQU1vtRoMiiAMcHtRHP7MmYetIjAdDt7RqssLf4GOW58f4sgkKLW7JxGKwTn4zH2EedHuurMODgh2mizv+ci1dxKkIioqFvMP8Eo4QrWE4h+kOcuit1DKRfZc9P8YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAPI/c/uPxBu84e6OOAY8pbX8Bfs2UJu1lkIjGxJsfIXTgzQPqfgs8gnz0wjr2jRy4RnPuvfhizt3a6j+VhZCWEjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDDta4J407yyJRhlYNRoMVLmPkVtgHnPPlN7hIjDSCPzxIIEIDEXyAR50YlEhwmZ378uYxX2cEmeF708G77btdMisezCnGnmv192oLF0qGAf2IxBpt6VxEzTwm/O3N/Tc0r/q1ehYnxgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAMW9Qsmzu0YfbgQUsSsbzU6pKQJBus5O+MNGAzbE1ka3k3ONf/eladJ4lQQ40Ip+myyHv7tm85qNDGtwxfyMfIzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDOx81bA9e1Yddixl+BoMGilK6cgRYfYYxMNvIjCBc0fqsjY8ab7OlIDKrDYzH6zwzP6ldIz5hGck3dkHcCLwYOSFvlMscqTHDEBh4KkqFo7lg4rQ5oN9MgM9wxSiiZq3+gcE5YAYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAR7SmBnKbKOhvlxZE04B3jgFnNAK3v6+pD2BNrHuMc8N8JevGgRdzO/XZNIeOW8GumJGmi6TpzC2mksX6s73PEzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDIzsvc2703TEPPGHKBoMq5QJFSf8zCmRv0DkIjDle+abx9ATmdNL8FOSE19gr3vnXBP6wbl8GgG13LdxQ+gbPHGQFu8STD1Ivt8ESBcqFnECnG2nQy++HnfJfkbU55QgmF62zWEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAk8AE96MC7PfTx9HkbnfZsvRurnBzKCqKvE/j48WVknzWxdfxxDd0FfOeVzVDaIlSlx56A4wr/RHqsY24c5OxNTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDEOUKoUXAKiVAWnKIhoMdm/6oRAyJ6lZAv75IjBSo4fZ2lQkd8vLbJtKFdUIdW3/6pK29eX2KHnPkOP0KEeVS2cEAR+0JhJfJ3bBXTQqGBVPY3jlD4EIT1Y2VNoPTcORcboKvB7TUBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpYCCpsBCBIYAipAl6XgeDtQriAPpaiY0pqp201okjdzaZI8vqYH7H867r3ljR4iMtNdvlZ1dCCNsPfp3+yMADek1h+qgHhIwUxIxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDJjJcTkEX4PNAcU8dhoM/kirYSv8MNZZ2ixuIjBPKc/3woFPPg2NtldxP+bKVUResGYCtAgz7VKxIb0BY/2N9S6t9Vj0JKN2fyMdy0sqKN1fpQNtRbnMgg9FAZhRp1vCXRMDK5yNHDaJSxSY58vbTyJAx8LjtYIYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EqACCpsBCBIYAipAjh4WBFC4lfeTl5qMiHH08rPp78PF1boHoFG9/NQAS6MD3nSr4pkqItTr0ocMICYnDYKLQ1+Ox2TeKpsTPTzESjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDK8fX8nmLyZ/+YhDUBoMlEKmZAPFIIEPg69HIjDznIJW7nyyOwwD+l3fo+hHp7r5gCTHKRNmO9j16/WW9dP1yHHCJzGcYzOnEPfMu2QqMuJrZjcTHdnilyI6+LEQAs71gqE9dY0JcWQ8IvYr6ChYM47n+wtmiDxw6g2fC1mtEXgUGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAbdwABpX179w3sKjkK4W+t9/49CtyxVG773BCKv6nYkD318vPPZwDRjGmefKzhdta5wSDAwpvkd0qEL25UF3mYTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDAe9Hb6bXEWa9TR4dRoMdxTTvg2GVuOrXB4PIjAxNYv9K+jPKaBRij2vvYmzZacwOB+NCvkv+bBbmOPsiZi+RDL7gIV+rtVN0QPf0iwqE4qC/FtR+N+jTA+gWaZSF2JdLAoYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAYazmhp0bYiEfc9T8s84ZASZCoKu6tS17iNfOOJRkZmuA4xXgMe+LubC22E/swnVDjY3K1zFt6EtgAVNDDaVbvTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDM4/0hw1mR5FK96icxoMzsq4klhLZ3PaA5HOIjBEj/NNdeDAA+cXhMkUP8xQivqhkFA1J4+pDB1ZXzgpEsu5tiJPdmIAWLQzeGgbQsAqE1dPrJFz6Rkkvs0uP4aeXFkPhZMYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo0CCpsBCBIYAipAnQF6SVsxYdToVfxgpH/pEKflbjxVfEIArP/KY0wDpyz6rMlS7mlkEH2Wj78Bc+FaJM/mB30WPuudlsLp5DaGXzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDJ2c2neZwmaa2wGlohoMzzpfMi8DAp4Q1ZY2IjAeYZtgGtP8HwRkUlJ6nzgIyH6WhcoRJBRMbjAJJC2XyiPH+1m59iB+O8bLHAeRwQgqH4Oj4aRSLAAiSMww601T9AIE9UJdwNOwWNNJ9DnsTVAYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAyFMSMAhIxZJ57AS9CL5OkYeRhylIG+J9quAITnkxeJikHZ3EjfH2jCU7v2UjvNPY67rdKU+Nu5Z7Mk343AmieDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDy7GuakzGdzvOiB+RoMhT+Ru7tzpYDSXDeAIjDEFeFejjNGflTEyCaWbouvxB8Y7F7C1naCkA88a8cbsMRbIeeRBMuv+9iU+/PfqZ8qHaRKGxZ9U3iebUI3oeQCLm5Srpm0wjxESczYs0U+GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EokCCpsBCBIYAipADMtpXryss+sQK87PXZj5KPuOV2NqSG07XxyJ03NJJGodbeqE6zW/LOsYx5SrqjY5vBu/pJpK1WHV4SQSo4HGWzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDrip1uVKEbOlRIcDxoMRSkbiypAMZUgieqLIjC0mFeVwe1+QebnAUrIxor+412177Z/TUKghDKRk/GiRSfCtq1CSb14d1Ia0XZTAGEqG9BKaEHV6wF1Y0U7dYHSX4Wi/I/zyfkredp24BgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAd0MMJUX2YzC56oRpLlPWXshMR5QjbVFc11KE+MN4oLC6WNz59YMKVc4XPx4eZmtWkXtUXSLSZ44cTKOKYMn22zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDCLna8f1BfXWEksG/BoM9bTNwp7uCwX0TzkqIjBIVRxwOPcU4sZjYZ7aoabzZd9MxEWrkD2jsyZJIa22fHLXAu4Clv+znZf7SBDSzhIqGaEts2oEG5dNIVbYKg+gCKaS4jiDiOfMjZ0YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAs0SMwOAB714pNDHrX2+2rcuwQsizflYee9lce736KAWlW5uK9MIIzXzP6JS1Q+33H35P057WqJJzpEFq+NFhCjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDE6AM7r8rjOlF7r63BoMgMHT3b/+Jo7cydkjIjDwvoRszc7vsAjqcGv5yBtummuicokhdPoVBivVYhBigyKfj07ZwxllghlKJvgUoH4qGh+QxtB/P5bKWq+onOS7uNm+hZ07Qyp5beCMGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpACCpsBCBIYAipAAybIq/ot6LVTRog2g+QnE937rF/LurrHDFKSjkFKrPg8bKX46apEylcD4BLPwi5n0y+n3hH8IUaMQTo52cDY6TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDGug1WXnbhPdJN8BtBoMB6PTAYmCWLyxMXleIjCWOdxK5lkjsZ/Rjn+1u7YO+N8oyaDldELzkrRtelqtfkqJOioWz9zY6+6q4GwfFS0qIiMts5xKOAzT382++TWGBq5eCKod8LXBEtvvJK9Ifev2EeUYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAfj+TTr+nywFzix1R8klQu2nVJ2hN6onDTR4iNA+Ze1Q5slNgr6ILLxvT01/brOIxOweY1M6vcPx8pQP7YGo1VTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDBejW87C2J7TUYa9TRoMtfPEWDRUg4WJcuxnIjAV1IU+SHTeoSo6SprWFaLZSfp4vRDXoKQMfrP9rFmIAOLUsuo42raZWEOHk5aY1IIqGkcmsTd6Gv4jw703Tu3XRO1OazKB9xvSX7R8GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipA6tBypaXIaynXyGrfPct6aER0Q9mY+BCMkCWRzWN2B+SIl4xnB/ntBtvgBQM97zM/tLRvfMbw3yI9T+1Tu8zA/DIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDGSfqgOZW2dzV/++yBoMbTFxjS/Dr55zduqoIjDQWG6OjFrn910rCVGafYyhshGPNSxDvP48d6WTcAuBQPk3LefoZhqrgVwXKi/4dI0qGYLP33rxKhm+b82tYCFpdjpx/7tvJpugZiYYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipA13w1fDjH1Dv9LwfHk6SLzmcbuEVUsJHx0x8jgIOWkyU4yKo+QwV43/oeQOILInKpV41UQ9jpe7MyQ09mTK5P2zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIbGNMAIawsh0Y680RoMXkCgoik0CbeduSvQIjBfBNVrylWp2VKeTuvJflytYSzfwoCZQG5mlvDA9kqaSuAj/EKlFFd6Nqeb5kkwDAcqGWVTJWI8GdXzkJN++8xPH7Hj9y60ASYOcBEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAxfDHDm99xOUUTCz7kKhBiWWU2DsjazDbMsgLcCVL3L8RjgmXAnJ7lhP2AOvI274VBmhYXSd5LPteuSbOQtLyYDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDELZfTNRhMOSw4U1nBoMateFB1XXFiZMcZMVIjD16URZUSGMLsKviK4fqNopTiDrpgw8mLd/JWr5vmlASIZaa2b2v3AnuWlTuKQsTXkqGpIdDyi+M563+JdZGljzp4aykIJMMFkXrn+EGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpgCCpsBCBIYAipAs8MmTpYfhkZIlLHxeroT0Yx2A+C87xr926+2vqU4/97c3s8OanxTIVtjce79PFhA93q4HzxfefKarulMV5xPSzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDN6ZX2opLeCW4G8bPBoM8EA6O1MLgrTyh5+ZIjAOro5BGTwCvBgh2dCWeIYuD+KknSxxsJZOJMRaGEKCPcdS+a4mQLIxLmkcKLo0yKAqKhS4JQy8WsurOG+Zvqo2SoUuauWtW/zSYfMVnwjXWkLZ6R4L4lydlLjXRRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAvNc5ByqMAQnjdFEVRqduYf2hWJG8sJqJUxRZuXBJCwqvKimWipnelbYHnhvRi8xXJJFGPVWXraLInaWhyjjSkjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDAhF/CZr85wN3oaRNRoMmHz5iwlku57Wmmo6IjAlb5YURU2nGRR3C4d2hEfZOEJ0bX14+Yzq9Nc7nBsFwqsFYjYKHrGB2jhHhZfxUqwqE1vJCSHnMjv3IaBv3FU0UJOGU4wYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAamn6uwnF3AofOR4C2nqFwebaTn1ZqgPNNCy/iZ+fwwaRgj1v/yyStBEWn5cuqBzNL0XdKOHuiIhXM7W+iGJ0IDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDNOiTXomC5eNOFP3nRoMYnYPhJuoHoFLgQfOIjCzORTjocfjJbQAIytsucUHes5VPrg1he/Pbcr/E6ApjnEbXsJYWHNgLo/Ow2aGA1EqHnz4wRz224CjTvsWhUK0WefpvxrMahiAAzvYUAHyqRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAP3Q4MwwmBULC2+NX//GMPwVU1XRdMCj9POs1rke65dKezZQ2x/SYMRCARlEvozibOSe/TXDsY1c37FrwK4axyTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDLiKxVNW12zurTv/DhoMn0GJrvrwNpgRjsqUIjDS2wVPrsiAXUNaoN3CgRSbl3HpNg73QsCzDPIh2c7kLRl24Eb46dh0bYHoq38gmakqFg5s1E+f7alt/nk38iYpyKWeYFw74LcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipA+pWsmB23Ygn95C3YZ3wpYzP++B/3ZGb1Jcy9iVEPVF8w78OZbDjW1SHke7hZ8hNWcMOBL3k7Tiiul6DgeONuJjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDMmC8RcQ2cw4dCdbtRoMLCw3FxcmFDP028qwIjDGgOyXwVBAXQeA14wqj8IPtf0WJAigyP1nm0GTPqf8pi5zHFHUlJll1L5UBeWPWKcqEwIXeZ0c48g68Eesmb1Ea03QAxcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAZD6v6pY0G7L6EVI9cpTWy4hk45bE+0dhyO/E96toyR8VPcb31iVkpn6wu0+cNz42GNY/rqTcFa1raOihjdAqozIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDQlnJOTYbGhXEes6hoMb34Zmn1nf0vUCsy8IjAhtz/mP3ls22LgTG7IMbEtBHUE6hbzNHt7EfCqZPlcwn94KPErGFQusgZUJhzgsC8qFwUbpqOPzmWFmP8iS+8tQCt1GTC13TPVGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAO+wcopvbST4hdYHNTLUe3Ne6j4ULyNhiEujVgbU3VGow9sQog2YbR7Xe55kr1IzW/ZB8+C2Jbnsn4JJt09AFUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIJ4LkptU6qe7wzHcBoMqoMoFsSFHC5kyR3rIjBu0AV2vFe+0uYkItXq4T2FoQc7TvI+TNGbtiVYCawN9soTdKQlpvsy24jX4fE+RSsqF8Y4hWGPn5g9n8UnlX7VMDu7wB+2uwFkGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAwEFVFZm7HpL+TpWM41PqHTGXoC4sZuV27Htim0FCMiUwmKj1mzu3C4u4XTlCLSSOIrT8JvaEYOMbviu4njTOsTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIWj3nf+ncTSaR+6lRoMp14BTCvSvMc66lK8IjBcFw8yCjRcIgRc7aXxyaoi3C9O8gWCZKF726yx2nLHG7/DCRWr9hPxoxrzFFe5KdsqGI+1+qOxwV+HOE2YQ9WRiUsBjIBMczZnoRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipArK6nOsbU8IeD73gxbIBulWx7hi/kafJsK9bMc9/TvbKUbpiJFg7D/Ghfy1dLLzF6H+Ue2zug2YgMHDQFiM4VWTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDF2sJhgsP0mIXoJgjxoMhCY2xlGj9jYDiC2TIjDJzRHOMDGVC4qskYXUE30GL4cgN75bZy9ROymNp/9UwmDG5xEezAqj99bCfKh3qnsqGiJXWS4MUaz3S9yQAUKA3PHkMQi1rcPWppSkGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAo48qayWaEP7qM9WUY+hgi6bcfuCnqiHJHXhkAkSbgFUwDRyxk4E5gbkYRQSHTq3fkUWvhumPBI3PyAFFLHSm7TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDHr0z5/OMp/Ondp3RhoMeemyrN8KnIp9kNT6IjBimUDF8lW+2vUeMkWQQNmkEvnu0B42U87ko2rYt7mgZGVPg92TEmRSbhH97KyFZVoqHtT5BT2pr6BInPE6LJUfBPBMWmG6Ss7xAC/Rg/pwTBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAKxAetSD/StiNNJzxUUPqhQ/LRHkSJY9U4WaZNlUFMfG6JUK7pjVci/6gC9LJtoyX4xp3b1Ve097wZo4ObwLBTjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDBzT9lRF3IICmMD4gxoMMdguwzHl3+SdSQaIIjCxFPMS2XdjqiAdxcMMsNkx4QwmjJUbTwn/Yd6WN9WSQGhlSit+odjtYrPJTu8FDkwqGb2IpAMOjRt0kra4OxnF8MZFrnu9eUAmnbQYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpACCpsBCBIYAipA8RimIbKIasYnzC78+37g4YATeh1RoJQr2kEhu6ihnTezd+HfrPFPvWQ4VL7sRfQZ5Bp/dyOFbbAZBM62W7FyhjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDD/YizmeYClYRSJSgxoMqoVUu9YsLGd0M+o3IjDOsNoRwvxQVIezYC6SC9E8HM9z6NBhUr8jy+3JupQ0vown4eHJGx5JhXVpqCT0VtsqItMXyxjczOY7i0LIopfx4rmZ1BRPWTLQ9NCIFt6QK6T1U4EYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev8BCpsBCBIYAipAwKFc/9Zza2sAiT2bAiJ+fWdtsSDYY9UlaEEQMe8sYWDjaYkdzQukF8t5pbpdblpQ9kzfoSCjaleZC1AFzLjJUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDLEZb/y19ZVfjmNxyRoMp/MbFXJQTSvGClCqIjA0DMUyx+cp0Zedip7amuLdUAKseVb9ZET7DxDQcbuIfT3rSNHOn4JKo40/rHCgIWAqEezFPZuiaiZOXdgcIhOl7ZIGGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EqECCpsBCBIYAipARIliKHCgtjb0SpTyGcz0H6ybwRJMN9s+euOufYMEUOCQve1PxBKX2rlLOcqxBBmcssnFLwgpA86+EHcvfIXnxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDOJEfz7QSCtEOGDSJxoM2BPS0m4kr4ZB5ALdIjBwvAy2czzlAQlR9azlSaz0Wm8CsJA5fZnsAWqJMc57yKao8QmdjceoqTtNz09t5t4qM1IxWilsI81izgWKY7xkr3MdJZuJO8lXafIwnQVlqoDvSWMNhOaphVixjHh/2/Xf/36cpRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAmCPWRY0mm5dnKVlx12+t9uUCkN5bvB4k/ifOZ0pfRuUcI0Flz+hKQh56+4mjZbPTdmQTCQxdVcxglIYzoOD/gzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDI3InwY2TAcKglE70BoM+XVkTTBW5Ounk9ulIjC+DH5CbGSN7FQD7oYRz8V2t1aGFunD7/yIT0uSAAj1LzJVN0RCzZf643U7NVetU2oqHqyc6SDMCjNdiuHuJ8jvhMC8f4b5NO6nOsaYogzUahgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAn7s+mVNqnRpHLftKQnW9gidxC0WGVF++/aRB9vCKlXNLwZXP9Hesf+usJ6SvMSCekVXM2P4mZ4eos4B2wBEQfjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDGBf9BjpWRfYFMfxwRoM/S5jKAvau+pxJ9JGIjAg4S0wkQb7W63O8SX9obiczULu5VRXKLt7xnn6LUtn7UZqYgd1ByU0YxdO2ZwuKWoqHeX4UYg0iYcRYMWY/3Lh4SsjY27AIla+GXDnq3F1GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipA0i1YJNucizKXdI6ebc1b8NrljjYfFOavWN1Y7J5LXM0JVmQTOD7EkAhwyH0aSOPI4j7MVspI3kqbM9RTbwGTpzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDNlCV6ShnkKWvoj1+xoMtVAD/7x2hAiw8elyIjBynJHduWSUM1bNHxOlwPLlwAQ0yYj65qWUg6gWJDQ8YooFA6uMZs2FRFnTd2mLqUwqFo3y3QFOpzZdDXVdAEvxBafxycYIAYwYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAMrYeyvwRqJV0Ahfu048xR7Cs6nCWHyPIjWmkOpzckdAcT4HOz412aTaSTnAg1ulHFa0n+/8NK1q11z0kn/8IiTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFOqxlHLYxa8q8kEJRoMJwfJxVyMOewZvFQ5IjDLv9THmsCcvq8cFXOe/nBAq9qsX049J0vU7BZRedTs7nveS2c/yltQ5c9aGsVJ8hMqGmAtDhYaILSC9tCS0WrtSqdEyH7T/2uu+xtEGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipARmr6kaMKVss88Njpzll8W17Yjdpc/E152E8bnrMwKMmBCS4ih+6GUSgb/jtjMWcQU5gsQDu+AyK9bKAApd9tdDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDKunst7lB1qvScFJSRoMEHpcOroPuPuk9/vYIjBumcehXsWqjjP+IBs01bhXXV0INl/ydkVkgMDzc1m/73dIlGOG+5YGJqJ9sR/cK9QqFThFA6ZJGz+J/Uxb+A/uv+FXH5zrhRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAVd6ol2scCsamnhl56hmhtJP7uvzMattb7ALi+CoLw0f46ZmSQ8IZ3GYSAln+Mc8+f+9hA5jp5pLfxM6w11f36TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFznAxrG9bDaa5sOZhoMGBkpZyESVNZMGqsLIjC+fdiOjZGFysmPV4DozFyRtH3eWV+oDndZg6xeBhfRfGMOyreItMr9d1ZpfIgArAQqGRhl/gDPkLrcC2i77hZkEjxXp6iQ5crwvdYYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAuD+llMbS3bPck8yyt526WFH89dOpPhR3pGf6Ld/Hi1pIBdcfPZXYImPamtKTOG06Zp9SFToHXM1h7TIbojH5szIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDOIUnwWGiQ3U8f2sTRoM13zRN+g1C4N6pjhPIjDZYaaJrsjl+we17VzI+5S3dwKj2V6FVQcHCTczKH6MbtGSacDpxOJ/ga6hgTtCsZoqHuBh75Aeymz8ylUETiIrSsPudtQjScLVhsUF5LoTFhgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAdmy7xXj+D3ctMZX3nkrsVA3wg5GbxuGCrCd64DfhGSkOd5QoURdw4byGjXIeGrjKlB16xe1+hLEKkLkWX3a34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDMhB71tqaNuBwixMxRoMTB7gZjpeFiMWOIyRIjBnej1GO9H74/Q98AjD/7h8sXlkeOrpcAVdunwjLzagkepeMu5LedAzxmRSxTAbackqF9b81e0DIMxRQCjcqXlNtD4eOcG/nu8OGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAkDoEOe9si+Sf0mdkfzyWZ7C3sYMhcyRWqbrf2jUsdtciOMupIsB/i6MbAzLx0iCrLPvf0k+rfKFt3Su90H1U1jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDPkNimZq3OIngZQb0hoMUrq/bCipz3lXDlaMIjA6fFBXisvN7G6feLMnbj+/mpGJML0F6o0Xq3985rdliu1jsxNFkGFUKo3wdxby0QQqHtjnWrs703g20AZLoVPghB92MLaFt5P70AGz1myq3BgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ep0CCpsBCBIYAipAsZJw/5llL7bWGZJv1jc/Oq8v20O/WZQzPNScVMx7bXDPUCX3pgttq9mi0QQbu5tuQZRwLes3vqUYMNGFSP3QmDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFYd1Zm2YawrmwZZvhoM9VQek7KV0GS845mqIjBXKkPh/XcX8LmVVdiXRQfUaW7ZITot4MGRNAnumJiym9jSW3yd3jwWonYagSuTQIYqL8eQYQGzGt1kvXbfzLBvtjZHLQE4/U4SJz7xV2KfGSbNcvvuVQOv3a570W5be8tzGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo4CCpsBCBIYAipAr+NGyvkThhIqzlMCi3L5CeBczCrIdg+GYm/uG7703B0jPYjUvgSJ48R6a/8+Xnteey1KJv3D7Q4PCXqLfrkVPTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDODsxYMih5eIDflEnRoM3qhwpbpMuF8GzCc4IjCCyg4kv41GmCvXL31+13SIcVsEAWMPrtnjIKlAu/V1zbKQOraKgpdXZ2tMXYtjEQsqIFL8zb64/T1JyWINVQqjZ/SQ7BXoB0YooLvF+ReHoqcjGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAPxDpYmN8so7suW5uk8OlVfEl/rKEPi6iQH1TVEkm8kgA14vLonUUrerf0RhfRnRF64Q3B+6CXhAyxblN/IgGyzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9+nv1QYSDFp4RG9H/awJ30ac7hoMXrtx2G0Mh44BqGNgIjCTQD1VYJHRujo0hn8JEqZd1yIBrwCzyqxrx1IU9TxZNbxdMPNhXMpwRUVI60ZwbW4qF9HEad9Qkx874EKcjEYC9o9qCt3NQc3AGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev4BCpsBCBIYAipAPxDpYmN8so7suW5uk8OlVfEl/rKEPi6iQH1TVEkm8kgA14vLonUUrerf0RhfRnRF64Q3B+6CXhAyxblN/IgGyzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9+nv1QYSDEMReeFUS+EiV28VPBoM/MqH72ajCGBco3/GIjBW54khMtp6F19y0JfeIOec2KwuZnqcpLlDPGji3t0rypMbd76b/ugg8BYVirUY12kqEMmN/XjbP1aaQCfGXOI6hc4YAQ==',
+                        provider_name='anthropic',
+                    ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=168,
-                    output_tokens=232,
+                    input_tokens=146,
+                    output_tokens=274,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 168,
-                        'output_tokens': 232,
+                        'input_tokens': 146,
+                        'output_tokens': 274,
+                        'thinking_tokens': 160,
                     },
-                    cost=Decimal('0.003984'),
+                    output_reasoning_tokens=160,
+                    cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
+                provider_response_id='msg_011CfY884N9wcySx9tLNbH2F',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3700,7 +4825,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3845,7 +4970,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     ),
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3901,7 +5026,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 37, 27, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fda6f11081a1b9fa80ae9122743506da9901a3d98ab7',
@@ -3931,7 +5056,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3992,7 +5117,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4448,7 +5573,7 @@ async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
     agent = Agent(m, model_settings={'thinking': False})
 
     result = await agent.run('What is 2+2?')
-    assert result.output == snapshot('2 + 2 = 4')
+    assert result.output == snapshot('2 + 2 = **4**')
     assert 'thinking' not in single_request_body(vcr)
 
 
@@ -5106,6 +6231,7 @@ def test_streaming_usage_thinking_tokens():
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -5246,14 +6372,17 @@ async def test_anthropic_model_empty_message_on_history(
     )
     assert request_capture.body()['system'] == snapshot([{'type': 'text', 'text': 'You are a helpful assistant.'}])
     assert result.output == snapshot("""\
-I can't physically give you a potato since I'm a digital assistant. However, I can:
+I'd be happy to help you get a potato! Here are a few ways I can assist:
 
-1. Help you find recipes that use potatoes
-2. Give you tips on how to select, store, or prepare potatoes
-3. Share information about different types of potatoes
-4. Suggest where you might buy potatoes locally
+1. **If you need to buy potatoes**: I can suggest where to find them (grocery stores, farmers markets, supermarkets like Walmart, Kroger, Safeway, etc.)
 
-What specific information about potatoes would be most helpful to you?\
+2. **If you need potato recipes**: I can share cooking ideas like baked potatoes, mashed potatoes, french fries, potato soup, etc.
+
+3. **If you need growing tips**: I can provide information on how to grow potatoes in your garden
+
+4. **If you need substitutes**: I can suggest alternatives if you're out of potatoes for a recipe
+
+What specifically would you like to know about potatoes?\
 """)
 
 
@@ -5288,7 +6417,7 @@ async def test_anthropic_web_search_tool(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5503,7 +6632,7 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5740,7 +6869,7 @@ async def test_anthropic_model_web_search_tool_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6617,7 +7746,7 @@ async def test_anthropic_web_fetch_tool(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6703,7 +7832,7 @@ Let me fetch the page first.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6777,7 +7906,7 @@ Let me fetch the page first.\
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6894,7 +8023,7 @@ async def test_anthropic_web_fetch_tool_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -7628,8 +8757,8 @@ async def test_anthropic_advisor_result_variants(
     calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
     returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert [c.tool_name for c in calls] == ['advisor']
-    # The advisor `server_tool_use` input is always empty, so `args` stays None.
-    assert calls[0].args is None
+    # The advisor `server_tool_use` input is always empty.
+    assert calls[0].args_as_dict() == {}
     assert [r.tool_name for r in returns] == ['advisor']
     assert returns[0].content == expected_content
 
@@ -7815,8 +8944,8 @@ async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_
     calls = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolCallPart))
     returns = list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolReturnPart))
     assert [c.tool_name for c in calls] == ['advisor']
-    # The advisor `server_tool_use` input is always empty, so `args` stays None.
-    assert calls[0].args is None
+    # The advisor `server_tool_use` input is always empty.
+    assert calls[0].args_as_dict() == {}
     assert [r.tool_name for r in returns] == ['advisor']
     content = returns[0].content
     assert isinstance(content, dict)
@@ -7832,7 +8961,7 @@ async def test_anthropic_advisor_tool(allow_model_requests: None, anthropic_api_
     # Advisor tokens bill at the advisor model's rates and are excluded from the request totals.
     assert result.usage.input_tokens == details['input_tokens']
     # Recorded top-level `output_tokens_details.thinking_tokens`, billed within `output_tokens`.
-    assert details['thinking_tokens'] == 28
+    assert details['thinking_tokens'] == 35
     assert details['thinking_tokens'] < details['output_tokens']
 
 
@@ -7862,6 +8991,9 @@ async def test_anthropic_advisor_tool_stream(
     assert agent_run.result is not None
     assert '4' in agent_run.result.output
     assert advisor_return_started
+    calls = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolCallPart))
+    # The advisor `server_tool_use` input is always empty.
+    assert [(c.tool_name, c.args_as_dict()) for c in calls] == [('advisor', {})]
     returns = list(iter_message_parts(agent_run.result.all_messages(), ModelResponse, NativeToolReturnPart))
     content = returns[0].content
     assert isinstance(content, dict)
@@ -7975,7 +9107,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8066,7 +9198,7 @@ The repo is organized as a monorepo with core packages like `pydantic-ai-slim` (
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8238,7 +9370,7 @@ async def test_anthropic_mcp_servers_stream(allow_model_requests: None, anthropi
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -8512,7 +9644,7 @@ async def test_anthropic_code_execution_tool(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How much is 3 * 12390?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -8521,13 +9653,14 @@ async def test_anthropic_code_execution_tool(
                 parts=[
                     ThinkingPart(
                         content='The user wants to calculate 3 * 12390.',
-                        signature='EuMBClsIDRgCKkCBepwkio14AThnNMEKAu3rSfMVfRaW6geACt55taz42duIJbFXxOJf0tI8EjTRA9RAKhwp+xXRURux2EQFBfXyMhFjbGF1ZGUtc29ubmV0LTQtNjgAEgzHGYHisxljYWpLnrgaDKZKZae+36/i1yGDySIw0y5IUqbGZAIbYwNMB08PQHqnGTATDg6fz5BZamuXOePOJjzuZAIgrLwihf5klQ2GKjY4OpKH9AeabXOH8IMNB0hXb2kKErLgHKRqM1XpUgcb1+CT+WQ44PaSGqORUYphCKXv3rL84J0YAQ==',
+                        signature='EpsCCpIBCBIYAipAgXqcJIqNeAE4ZzTBCgLt60nzFX0WluoHgAreebWs+NnbiCWxV8TiX9LSPBI00QPUQCocKfsV0VEbsdhEBQX18jIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBwc7v1QYSDJw8y+EPbdeyPIKBdhoM/oWgODyBbII/bD2kIjAP+kR4J6P/upMjwj/4Z88mHnoA4gAbBh2f/jQNu9LQh7SXJgUPJ09yGCdPvm7yFakqNsE0/S6xyplsLIL+kGYQE8kpLiOMv/mMxUcFBsqlN9EZrepldK8ZAcDoyhtpBpN1wI5wlXRCxRgB',
                         provider_name='anthropic',
                     ),
+                    TextPart(content='Sure! Let me calculate that for you.'),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((3 * 12390))'},
-                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
+                        args='{"command": "echo $((3 * 12390))"}',
+                        tool_call_id='srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -8540,30 +9673,32 @@ async def test_anthropic_code_execution_tool(
                             'stdout': '37170\n',
                             'type': 'bash_code_execution_result',
                         },
+                        tool_call_id='srvtoolu_01FBP24qnwQdUrAD7Zkmgo1z',
                         timestamp=IsDatetime(),
-                        tool_call_id='srvtoolu_01Y5A969cu9rsnDkHF6brfKF',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='The result of **3 × 12,390 = 37,170**.'),
+                    TextPart(content='**3 × 12,390 = 37,170**'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4692,
-                    output_tokens=106,
+                    input_tokens=4702,
+                    output_tokens=113,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 4692,
-                        'output_tokens': 106,
+                        'input_tokens': 4702,
+                        'output_tokens': 113,
+                        'thinking_tokens': 18,
                     },
-                    cost=Decimal('0.015666'),
+                    output_reasoning_tokens=18,
+                    cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRhtVsGiXZx1CgSETLH'},
-                provider_response_id='msg_01FzttSG1H2WSfUwv2J5qbMB',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01BhFKQcYGib9h2Rs3bfRcvH'},
+                provider_response_id='msg_011CfY3fcyW3mMptgWy58WsW',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -8580,7 +9715,7 @@ async def test_anthropic_code_execution_tool(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='Always use the code execution tool for math.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -8589,13 +9724,13 @@ async def test_anthropic_code_execution_tool(
                 parts=[
                     ThinkingPart(
                         content='The user wants to calculate 4 * 12390.',
-                        signature='EuMBClsIDRgCKkCL2iffHrB6tHBOjw6/tZsNE9mjnkPnnIfacGJ5k7bsyvJA+ns/Ip2UFePesjpTjejc4cuMUUyE5JubAP+vUYc4MhFjbGF1ZGUtc29ubmV0LTQtNjgAEgw1F/YrMZLYbqWCvIAaDLAuwVJtNlAhRAfAPyIwBNQfxK3FouQBAtlU2oGolIVbYhYiGvWjGrCqU/+HSoYBBUBx1nWMExSOyyUJnNy1KjYI1DEPApNrjV0XjCy3dGoIIeNeBL/viz2uAotZTe1qQaDwmo71S5jILbV1iLihcE1cL9LWFJMYAQ==',
+                        signature='EpsCCpIBCBIYAipAi9on3x6werRwTo8Ov7WbDRPZo55D55yH2nBieZO27MryQPp7PyKdlBXj3rI6U43o3OHLjFFMhOSbmwD/r1GHODIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBxs7v1QYSDL4z3NuojOG4GyTPXRoMgoyky9q0tPkhHz4FIjCATXMvTqiUTgqtn9NirccXHDg4NCc+hgOaqBWwoA8NMPVoynYEvFKj1XvTZm8P2HEqNsZkdoXZqYr84p4XZ+hsstv1Ad2dNqiCKxw4FmmTyfe+nH7wbPsrRicRswamC8Y+B6SmT5iyoRgB',
                         provider_name='anthropic',
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((4 * 12390))'},
-                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
+                        args='{"command": "echo $((4 * 12390))"}',
+                        tool_call_id='srvtoolu_0145eEZDa6jUXCMf2mXiWvrn',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -8608,12 +9743,12 @@ async def test_anthropic_code_execution_tool(
                             'stdout': '49560\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01VjgZr13GE2HYtGnPkHeuHh',
+                        tool_call_id='srvtoolu_0145eEZDa6jUXCMf2mXiWvrn',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
-                    TextPart(content='**4 × 12,390 = 49,560**'),
+                    TextPart(content='**4 * 12,390 = 49,560**'),
                 ],
                 usage=RequestUsage(
                     input_tokens=4690,
@@ -8623,15 +9758,17 @@ async def test_anthropic_code_execution_tool(
                         'cache_read_input_tokens': 0,
                         'input_tokens': 4690,
                         'output_tokens': 103,
+                        'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRiLGQoB5CoDJP5jaVY'},
-                provider_response_id='msg_01GpqA67eRBKk6HEb9w5Rs28',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01K2nhLiQ43xNyk73ijeEm7K'},
+                provider_response_id='msg_011CfY3g2LRZt5LqCR4pdTcV',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -8674,7 +9811,7 @@ async def test_anthropic_code_execution_tool_stream(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -9048,30 +10185,30 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
             None,
         )
     )
-    assert result.output == snapshot('Today is November 19, 2025.')
+    assert result.output == snapshot('Today is September 29, 2026.')
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Tomorrow is November 20, 2025.',
-                        id='msg_0dcd74f01910b54500691e5596124081a087e8fa7b2ca19d5a',
+                        content='Tomorrow will be September 30, 2026.',
+                        id='msg_0e0e591ccbb9a83b006abbed09350487d1a8216dcff0cebc51',
                         provider_name='openai',
                     )
                 ],
                 usage=RequestUsage(
                     input_tokens=329,
-                    output_tokens=12,
+                    output_tokens=13,
                     output_reasoning_tokens=0,
                     details={'reasoning_tokens': 0},
-                    cost=Decimal('0.000754'),
+                    cost=Decimal('0.000762'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
@@ -9079,10 +10216,10 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 11, 19, 23, 41, 8, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_0dcd74f01910b54500691e5594957481a0ac36dde76eca939f',
+                provider_response_id='resp_0e0e591ccbb9a83b006abbed08a2c087d181de454e7af3081e',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9100,7 +10237,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-3.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     model = anthropic_model('claude-sonnet-4-6', capture=True)
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
@@ -9108,17 +10245,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-            ],
+            [NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
     )
 
@@ -9129,17 +10256,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
     assert part_types_from_messages(result.all_messages()) == snapshot(
         [
             [UserPromptPart],
-            [
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-                NativeToolCallPart,
-                NativeToolReturnPart,
-                TextPart,
-            ],
+            [NativeToolCallPart, NativeToolReturnPart, TextPart],
             [UserPromptPart],
             [TextPart, NativeToolCallPart, NativeToolReturnPart, TextPart],
         ]
@@ -9217,31 +10334,31 @@ async def test_anthropic_tool_output(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa')
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_017UNCdavs1wnorx882Leniq')
                 ],
                 usage=RequestUsage(
-                    input_tokens=445,
+                    input_tokens=711,
                     output_tokens=23,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 445,
+                        'input_tokens': 711,
                         'output_tokens': 23,
                     },
-                    cost=Decimal('0.001680'),
+                    cost=Decimal('0.002478'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
+                provider_response_id='msg_011CfY3xfABGCBczzZYaZP54',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9251,11 +10368,11 @@ async def test_anthropic_tool_output(
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
+                        tool_call_id='toolu_017UNCdavs1wnorx882Leniq',
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -9263,27 +10380,27 @@ async def test_anthropic_tool_output(
                 parts=[
                     ToolCallPart(
                         tool_name='final_result',
-                        args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        args='{"city": "Mexico City", "country": "Mexico"}',
+                        tool_call_id='toolu_01XLX8Tn3mJAQWVLKZzdkJXr',
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=497,
+                    input_tokens=762,
                     output_tokens=56,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 497,
+                        'input_tokens': 762,
                         'output_tokens': 56,
                     },
-                    cost=Decimal('0.002331'),
+                    cost=Decimal('0.003126'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                provider_response_id='msg_011CfY3xjoVQd7HWbQKtKxgH',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9293,11 +10410,11 @@ async def test_anthropic_tool_output(
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
+                        tool_call_id='toolu_01XLX8Tn3mJAQWVLKZzdkJXr',
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -9324,7 +10441,11 @@ async def test_anthropic_text_output_function(
     )
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
     assert result.output == snapshot(
-        'BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS BOTH THE CAPITAL AND THE MOST POPULOUS CITY IN THE COUNTRY. WITH A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST CITIES IN THE WORLD.'
+        """\
+BASED ON THE TOOL RESULT, YOU'RE IN MEXICO. THE LARGEST CITY IN MEXICO IS **MEXICO CITY (CIUDAD DE MÉXICO)**, WHICH IS ALSO THE CAPITAL OF THE COUNTRY.
+
+MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST METROPOLITAN AREAS IN THE WORLD, WITH A METROPOLITAN POPULATION OF OVER 21 MILLION PEOPLE. THE CITY PROPER HAS A POPULATION OF APPROXIMATELY 9 MILLION PEOPLE. IT SERVES AS THE POLITICAL, ECONOMIC, AND CULTURAL CENTER OF MEXICO.\
+"""
     )
 
     assert result.all_messages() == snapshot(
@@ -9336,34 +10457,34 @@ async def test_anthropic_text_output_function(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="I'll help find the largest city in your country. Let me first check your country using the get_user_country tool."
+                        content="I'll help you find the largest city in your country. Let me first determine which country you're in."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK'),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=383,
-                    output_tokens=65,
+                    input_tokens=566,
+                    output_tokens=61,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 383,
-                        'output_tokens': 65,
+                        'input_tokens': 566,
+                        'output_tokens': 61,
                     },
-                    cost=Decimal('0.002124'),
+                    cost=Decimal('0.002613'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
+                provider_response_id='msg_011CfY3wx3ex3fuPktYXmnv8',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9373,37 +10494,41 @@ async def test_anthropic_text_output_function(
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
+                        tool_call_id='toolu_01A6nVcvkJZ34xjbVWD68U9W',
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is both the capital and the most populous city in the country. With a population of approximately 9.2 million people in the city proper and over 21 million people in its metropolitan area, Mexico City is not only the largest city in Mexico but also one of the largest cities in the world.'
+                        content="""\
+Based on the tool result, you're in Mexico. The largest city in Mexico is **Mexico City (Ciudad de México)**, which is also the capital of the country.
+
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people. It serves as the political, economic, and cultural center of Mexico.\
+"""
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=460,
-                    output_tokens=91,
+                    input_tokens=640,
+                    output_tokens=101,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 460,
-                        'output_tokens': 91,
+                        'input_tokens': 640,
+                        'output_tokens': 101,
                     },
-                    cost=Decimal('0.002745'),
+                    cost=Decimal('0.003435'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
+                provider_response_id='msg_011CfY3x4W79KgsD9VqZQY5W',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9457,31 +10582,34 @@ Don't include any text or Markdown fencing before or after.
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM')
+                    TextPart(
+                        content="I'll help you find the largest city in your country. Let me first determine which country you're in."
+                    ),
+                    ToolCallPart(tool_name='get_user_country', args='', tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=459,
-                    output_tokens=38,
+                    input_tokens=642,
+                    output_tokens=61,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 459,
-                        'output_tokens': 38,
+                        'input_tokens': 642,
+                        'output_tokens': 61,
                     },
-                    cost=Decimal('0.001947'),
+                    cost=Decimal('0.002841'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'tool_use'},
-                provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
+                provider_response_id='msg_011CfY3vdyS5QodUqcT3ogu4',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9491,33 +10619,46 @@ Don't include any text or Markdown fencing before or after.
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
+                        tool_call_id='toolu_01EFHXeuSi8dBkTkYCKLarCu',
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                parts=[
+                    TextPart(
+                        content="""\
+Based on the result, you're in Mexico. The largest city in Mexico is **Mexico City** (Ciudad de México), which is both the capital and the most populous city in the country, with a metropolitan area population of over 21 million people.
+
+```json
+{
+  "city": "Mexico City",
+  "country": "Mexico"
+}
+```\
+"""
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=510,
-                    output_tokens=17,
+                    input_tokens=716,
+                    output_tokens=81,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 510,
-                        'output_tokens': 17,
+                        'input_tokens': 716,
+                        'output_tokens': 81,
                     },
-                    cost=Decimal('0.001785'),
+                    cost=Decimal('0.003363'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
+                provider_response_id='msg_011CfY3vjSbpE3Fr3PSmTxXH',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9568,33 +10709,45 @@ Don't include any text or Markdown fencing before or after.
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
+                        content="""\
+```json
+{
+  "result": {
+    "kind": "CityLocation",
+    "data": {
+      "city": "Mexico City",
+      "country": "Mexico"
+    }
+  }
+}
+```\
+"""
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=265,
-                    output_tokens=31,
+                    input_tokens=248,
+                    output_tokens=56,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 265,
-                        'output_tokens': 31,
+                        'input_tokens': 248,
+                        'output_tokens': 56,
                     },
-                    cost=Decimal('0.001260'),
+                    cost=Decimal('0.001584'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
+                provider_response_id='msg_011CfY3vuCUuF3JVgYPaiAeH',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -9864,70 +11017,27 @@ async def test_anthropic_text_editor_code_execution_tool(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="Sure! I'll do both steps simultaneously -- creating the file and viewing it at the same time!"
+                        content="Sure! I'll do both steps simultaneously — creating the file and viewing it at the same time, then report back."
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        args='{"command": "create", "path": "/tmp/hello.txt", "file_text": "Hello, world!"}',
+                        tool_call_id='srvtoolu_01WFgbd6mVbXEn1svFKtFQCE',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'view', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
+                        args='{"command": "view", "path": "/tmp/hello.txt"}',
+                        tool_call_id='srvtoolu_015rV12wivwdNWXL4hMvXwSk',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
                     NativeToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'error_code': 'unavailable',
-                            'error_message': 'Tool response parsing error for create: Failed to parse tool response as JSON: Input is a zero-length, empty document: line 1 column 1 (char 0)',
-                            'type': 'text_editor_code_execution_tool_result_error',
-                        },
-                        tool_call_id='srvtoolu_016pLxxM63EiNXuNu4xif3v6',
+                        content={'is_file_update': False, 'type': 'text_editor_code_execution_create_result'},
+                        tool_call_id='srvtoolu_01WFgbd6mVbXEn1svFKtFQCE',
                         timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                    ),
-                    NativeToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'error_code': 'unavailable',
-                            'error_message': 'Tool response parsing error for view: Failed to parse tool response as JSON: unexpected character: line 1 column 1 (char 0)',
-                            'type': 'text_editor_code_execution_tool_result_error',
-                        },
-                        tool_call_id='srvtoolu_01PZq4iFAcL7tePiLnstxaXh',
-                        timestamp=IsDatetime(),
-                        provider_name='anthropic',
-                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                    ),
-                    TextPart(content='Let me try again, this time sequentially -- first creating, then viewing.'),
-                    NativeToolCallPart(
-                        tool_name='code_execution',
-                        args={'command': 'create', 'file_text': 'Hello, world!', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
-                        provider_name='anthropic',
-                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                    ),
-                    NativeToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'is_file_update': False,
-                            'type': 'text_editor_code_execution_create_result',
-                        },
-                        timestamp=IsDatetime(),
-                        tool_call_id='srvtoolu_01R4E6F3kJy4AHsq9D956u2Q',
-                        provider_name='anthropic',
-                        provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
-                    ),
-                    TextPart(content="File created! Now let's view it."),
-                    NativeToolCallPart(
-                        tool_name='code_execution',
-                        args={'command': 'view', 'path': '/tmp/hello.txt'},
-                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
                     ),
@@ -9941,7 +11051,7 @@ async def test_anthropic_text_editor_code_execution_tool(
                             'total_lines': 1,
                             'type': 'text_editor_code_execution_view_result',
                         },
-                        tool_call_id='srvtoolu_01NCMtdMpuTRPDtCeaPC1WWw',
+                        tool_call_id='srvtoolu_015rV12wivwdNWXL4hMvXwSk',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'text_editor_code_execution'},
@@ -9950,32 +11060,32 @@ async def test_anthropic_text_editor_code_execution_tool(
                         content="""\
 Here's a summary of what happened:
 
-1. **Created** `/tmp/hello.txt` with the text `Hello, world!` -- the tool confirmed the file was created successfully.
-2. **Viewed** `/tmp/hello.txt` -- the file contains exactly:
+1. **Created** `/tmp/hello.txt` — The file was created successfully with the specified content.
+2. **Viewed** `/tmp/hello.txt` — The file contains exactly:
 
-> `Hello, world!`
+   > `Hello, world!`
 
-Everything looks perfect! 🎉\
+Everything looks perfect! Both operations were run in parallel since creating and viewing are independent of each other in this case.\
 """
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=10490,
-                    output_tokens=469,
+                    input_tokens=4878,
+                    output_tokens=275,
                     details={
-                        'input_tokens': 10490,
-                        'output_tokens': 469,
+                        'input_tokens': 4878,
+                        'output_tokens': 275,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.038505'),
+                    cost=Decimal('0.018759'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011CaNRHVR8X8ny5XjueVygS'},
-                provider_response_id='msg_015ZT9schxByyYqpexx5ir4o',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_012BTgpuS8r9M6HkZbRkbHK9'},
+                provider_response_id='msg_011CfY3wQZKC36naa9enPGZs',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -11316,139 +12426,345 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
             None,
         )
     )
-    assert result.output == snapshot("""\
-Here's one significant historical event that occurred on September 17:
-
-In 1939, Finnish runner Taisto Mäki made history by becoming the first person to run 10,000 meters in less than 30 minutes, completing the distance in 29 minutes and 52 seconds.\
-""")
+    assert result.output == snapshot(
+        'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.'
+    )
 
     async with agent.run_stream('Briefly mention 1 event that happened tomorrow in history?') as result:
         chunks = [c async for c in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(
             [
-                'Let',
-                'Let me search for a significant',
-                'Let me search for a significant historical event that occurred on',
-                'Let me search for a significant historical event that occurred on September 18th.',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                'Here',
-                "Here's one notable historical event that occurred on September",
-                "Here's one notable historical event that occurred on September 18th: ",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marke",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
-                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
+                'I need',
+                'I need to clar',
+                'I need to clarify what',
+                "I need to clarify what you're asking.",
+                "I need to clarify what you're asking. Today",
+                "I need to clarify what you're asking. Today is September 29, 2026",
+                "I need to clarify what you're asking. Today is September 29, 2026, so",
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30,',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026,',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in',
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Su\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to app\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+""",
             ]
         )
 
     assert await result.get_output() == snapshot(
-        "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally."
+        """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+"""
     )
 
     async with agent.run_stream('Briefly mention 1 event that happened yesterday in history?') as result:
         chunks = [c async for c in result.stream_text(debounce_by=None)]
         assert chunks == snapshot(
             [
-                'Let',
-                'Let me search for a historical',
-                'Let me search for a historical event that occurred on September',
-                "Let me search for a historical event that occurred on September 16th (yesterday's date since",
-                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17,",
-                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025",
-                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Base\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), \
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, \
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, an\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristoc\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat\
-""",
-                """\
-Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
-
-Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat.\
-""",
+                'On',
+                'On September 28, 1928',
+                'On September 28, 1928, ',
+                'On September 28, 1928, Alexander Fleming discovered penic',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        "Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat."
+        'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.'
     )
 
     async with agent.run_stream(
@@ -11457,27 +12773,34 @@ Based on yesterday's date (September 16, 2025), Asian markets rose higher as Fed
         chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]  # pragma: lax no cover
         assert chunks == snapshot(
             [
-                'Let',
-                ' me search for historical',
+                'I',
+                ' need',
+                ' to search for historical',
                 ' events that occurred on',
-                ' September 19th.',
+                ' October',
+                ' 1st (',
+                'the day after tomorrow from',
+                ' today,',
+                ' September',
+                ' 29',
+                ',',
+                ' 2026',
+                ').',
                 """\
 
 
 """,
-                'Here',
-                "'s one significant historical event that occurred on September",
-                ' 19th: ',
-                'New Zealand made history by becoming the first self-governing nation to grant women the right',
-                ' to vote in national elections. It',
-                ' would take 27 more',
-                ' years before American women gained the',
-                ' same right.',
+                'On',
+                ' October 1, 1949',
+                ', the People',
+                "'s Republic of China was founded with",
+                ' Mao Zedong as Chairman',
+                '.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        "Here's one significant historical event that occurred on September 19th: New Zealand made history by becoming the first self-governing nation to grant women the right to vote in national elections. It would take 27 more years before American women gained the same right."
+        "On October 1, 1949, the People's Republic of China was founded with Mao Zedong as Chairman."
     )
 
 
@@ -11524,11 +12847,7 @@ async def test_anthropic_memory_tool(
 
     result = await agent.run('Where do I live?')
     assert content_blocks(request_capture.body(), 'tool_result') == snapshot([])
-    assert result.output == snapshot("""\
-
-
-According to my memory, you live in **Mexico City**.\
-""")
+    assert result.output == snapshot('According to my memory, you live in **Mexico City**.')
 
 
 def test_hidden_memory_function_tool_is_not_restored_as_native() -> None:
@@ -11572,13 +12891,23 @@ async def test_anthropic_model_usage_limit_not_exceeded(
     )
     assert result.output == snapshot(
         """\
-I noticed a small typo in that famous pangram! It should be:
+# Quick Brown Fox 🦊
 
-"The quick brown fox jumps over the **lazy dog**."
+You've shared the famous **pangram** (a sentence containing every letter of the alphabet)!
 
-(There should be a space between "lazy" and "dog")
+However, there's a small typo in your version. The traditional phrase is:
 
-This sentence is often used for testing typewriters, fonts, and keyboards because it contains every letter of the English alphabet at least once.\
+> "The quick brown fox jumps over the **lazy dog**."
+
+(Note: "lazy dog" should be two words)
+
+This sentence includes all 26 letters of the English alphabet and is commonly used for:
+- Testing fonts and typefaces
+- Keyboard testing
+- Display samples
+- Typography demonstrations
+
+Did you want to discuss something specific about this phrase, or were you testing something? 😊\
 """
     )
 
@@ -12465,8 +13794,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -12546,8 +13878,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -12620,17 +13955,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -12813,34 +14149,203 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     assert result1.usage == snapshot(
         RunUsage(
             input_tokens=1114,
-            cache_read_tokens=1111,
-            output_tokens=406,
+            output_tokens=408,
+            cache_write_tokens=1111,
             details={
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 1111,
+                'cache_creation_input_tokens': 1111,
+                'cache_read_input_tokens': 0,
                 'input_tokens': 3,
-                'output_tokens': 406,
+                'output_tokens': 408,
             },
             requests=1,
-            cost=Decimal('0.0064323'),
+            cost=Decimal('0.01029525'),
         )
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage == snapshot(
         RunUsage(
-            input_tokens=1532,
+            input_tokens=1534,
             cache_read_tokens=1111,
-            cache_write_tokens=418,
             output_tokens=33,
+            cache_write_tokens=420,
             details={
-                'cache_creation_input_tokens': 418,
+                'cache_creation_input_tokens': 420,
                 'cache_read_input_tokens': 1111,
                 'input_tokens': 3,
                 'output_tokens': 33,
             },
             requests=1,
-            cost=Decimal('0.0024048'),
+            cost=Decimal('0.0024123'),
+        )
+    )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'cache,expected_ttl,expected_usage',
+    [
+        pytest.param(
+            True,
+            '5m',
+            snapshot(
+                (
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 4,
+                            'cache_creation_input_tokens': 7836,
+                            'cache_read_input_tokens': 0,
+                        },
+                        output_tokens=4,
+                        cache_write_tokens=7836,
+                        input_tokens=7838,
+                        cost=Decimal('0.019634'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 4,
+                            'cache_creation_input_tokens': 0,
+                            'cache_read_input_tokens': 7836,
+                        },
+                        cache_read_tokens=7836,
+                        output_tokens=4,
+                        input_tokens=7838,
+                        cost=Decimal('0.0016112'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='default',
+        ),
+        pytest.param(
+            '1h',
+            '1h',
+            snapshot(
+                (
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 7839,
+                            'cache_read_input_tokens': 0,
+                            'ephemeral_1h_input_tokens': 7839,
+                        },
+                        cache_write_1h_tokens=7839,
+                        input_tokens=7841,
+                        output_tokens=5,
+                        cache_write_tokens=7839,
+                        cost=Decimal('0.031410'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        details={
+                            'input_tokens': 2,
+                            'output_tokens': 5,
+                            'cache_creation_input_tokens': 0,
+                            'cache_read_input_tokens': 7839,
+                        },
+                        cache_read_tokens=7839,
+                        output_tokens=5,
+                        input_tokens=7841,
+                        cost=Decimal('0.0016218'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
+async def test_unified_cache_writes_then_reads_real_api(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    cache: Literal[True, '1h'],
+    expected_ttl: str,
+    expected_usage: tuple[RunUsage, RunUsage],
+):
+    """The unified `cache` setting turns on Anthropic's automatic caching and breakpoints the instructions, with the
+    requested TTL.
+
+    The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
+    """
+    model = anthropic_model('claude-sonnet-5', capture=True)
+    agent = Agent(
+        model,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a concise Python assistant (cache setting: {cache!r}). '
+        + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=cache),
+    )
+    prompt = 'Name one Python web framework, in one word.'
+
+    first = await agent.run(prompt)
+    second = await agent.run(prompt)
+
+    # A top-level `cache_control`, with which the API breakpoints the conversation itself, plus one on the instructions.
+    assert [cache_breakpoints(body) for body in request_capture.bodies('/v1/messages')] == [
+        ({'type': 'ephemeral', 'ttl': expected_ttl}, ['system[0]'])
+    ] * 2
+    assert (first.usage, second.usage) == expected_usage
+
+
+@pytest.mark.vcr()
+async def test_unified_cache_shares_prefix_across_conversations_real_api(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory
+):
+    """With `cache=True`, a new conversation reads back the instructions and tool definitions an earlier one wrote.
+
+    Automatic caching alone only writes at the end of the conversation, and Anthropic only reads cache entries written
+    at a breakpoint, so the second conversation's first request could not reuse the shared prefix without the
+    instruction and tool definition breakpoints.
+    """
+    agent = Agent(
+        anthropic_model('claude-opus-5-5'),
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 650,
+        model_settings=ModelSettings(cache=True),
+    )
+
+    @agent.tool_plain
+    def get_python_version() -> str:  # pragma: no cover
+        """Get the latest stable Python version."""
+        return '3.14'
+
+    first = await agent.run('Name one Python web framework, in one word.')
+    second = await agent.run('Name one Python testing library, in one word.')
+
+    # One request per conversation, so each run's usage is its first request's.
+    assert (first.usage, second.usage) == snapshot(
+        (
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 4,
+                    'cache_creation_input_tokens': 8180,
+                    'cache_read_input_tokens': 0,
+                },
+                input_tokens=8184,
+                cache_write_tokens=8180,
+                output_tokens=4,
+                cost=Decimal('0.040996'),
+                requests=1,
+            ),
+            RunUsage(
+                details={
+                    'input_tokens': 4,
+                    'output_tokens': 5,
+                    'cache_creation_input_tokens': 85,
+                    'cache_read_input_tokens': 8095,
+                },
+                input_tokens=8184,
+                cache_write_tokens=85,
+                cache_read_tokens=8095,
+                output_tokens=5,
+                cost=Decimal('0.002160'),
+                requests=1,
+            ),
         )
     )
 
@@ -12855,7 +14360,7 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                 RequestUsage(
                     details={
                         'input_tokens': 3,
-                        'output_tokens': 210,
+                        'output_tokens': 196,
                         'cache_creation_input_tokens': 2966,
                         'cache_read_input_tokens': 0,
                         'ephemeral_1h_input_tokens': 2412,
@@ -12863,8 +14368,8 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
                     input_tokens=2969,
                     cache_write_tokens=2966,
                     cache_write_1h_tokens=2412,
-                    output_tokens=210,
-                    cost=Decimal('0.0197085'),
+                    output_tokens=196,
+                    cost=Decimal('0.0194985'),
                 )
             ),
             id='request',
@@ -12904,8 +14409,8 @@ async def test_anthropic_cache_write_ttl_pricing(
     the later `message_delta` usage.
 
     For the non-streamed case, the cost is 3 uncached input tokens at $3/MTok, 554 five-minute cache writes at
-    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 210 output tokens at $15/MTok. Pricing all 2966 writes at
-    the five-minute rate would report $0.0143 instead.
+    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 196 output tokens at $15/MTok. Pricing all 2966 writes at
+    the five-minute rate would report $0.0141 instead.
     """
     m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(
@@ -12925,6 +14430,54 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
+
+
+@pytest.mark.vcr()
+async def test_anthropic_cache_earlier_breakpoint_raised_to_later_longer_ttl(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A five-minute breakpoint before a one-hour one is raised to an hour, since Anthropic requires "Cache entries
+    with longer TTL must appear before shorter TTLs"
+    (https://platform.claude.com/docs/en/build-with-claude/prompt-caching) and rejects the request otherwise.
+    """
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
+    agent = Agent(
+        model,
+        instructions='You are a concise Python assistant. ' + 'Answer questions about Python concisely. ' * 300,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='5m'),
+    )
+
+    result = await agent.run(
+        ['Some context about Python. ' * 300, CachePoint(ttl='1h'), 'Name one Python web framework, in one word.']
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert cache_breakpoints(body) == snapshot((None, ['system[0]', 'messages[0].content[0]']))
+    (system_block,) = json_objects(body['system'])
+    cached_context = content_blocks(body, 'text')[0]
+    assert [system_block['cache_control'], cached_context['cache_control']] == snapshot(
+        [{'type': 'ephemeral', 'ttl': '1h'}, {'type': 'ephemeral', 'ttl': '1h'}]
+    )
+    assert result.usage == snapshot(
+        RunUsage(
+            details={
+                'input_tokens': 13,
+                'output_tokens': 4,
+                'cache_creation_input_tokens': 3913,
+                'cache_read_input_tokens': 0,
+                'ephemeral_1h_input_tokens': 3913,
+            },
+            cache_write_1h_tokens=3913,
+            cache_write_tokens=3913,
+            input_tokens=3926,
+            output_tokens=4,
+            cost=Decimal('0.023577'),
+            requests=1,
+        )
+    )
 
 
 @pytest.mark.vcr()
@@ -12950,16 +14503,16 @@ async def test_anthropic_cache_count_tokens(allow_model_requests: None, anthropi
     assert result.usage == snapshot(
         RunUsage(
             input_tokens=1114,
-            cache_read_tokens=1111,
-            output_tokens=414,
+            output_tokens=395,
+            cache_write_tokens=1111,
             details={
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 1111,
+                'cache_creation_input_tokens': 1111,
+                'cache_read_input_tokens': 0,
                 'input_tokens': 3,
-                'output_tokens': 414,
+                'output_tokens': 395,
             },
             requests=1,
-            cost=Decimal('0.0065523'),
+            cost=Decimal('0.01010025'),
         )
     )
 
@@ -12981,10 +14534,9 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
 
     from anthropic import AsyncAnthropicBedrock
 
+    # The SDK reads `AWS_BEARER_TOKEN_BEDROCK` into `api_key` and refuses it alongside SigV4 credentials.
     bedrock_client = AsyncAnthropicBedrock(
-        aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
-        aws_secret_key=os.environ.get('AWS_SECRET_ACCESS_KEY', 'test-secret-key'),
-        aws_session_token=os.environ.get('AWS_SESSION_TOKEN'),
+        api_key=os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token'),
         aws_region=os.environ.get('AWS_REGION', 'eu-central-1'),
     )
     m = AnthropicModel(
@@ -13007,34 +14559,34 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
     assert result1.usage == snapshot(
         RunUsage(
             input_tokens=9514,
-            cache_read_tokens=9511,
-            output_tokens=1944,
+            cache_write_tokens=9511,
+            output_tokens=2257,
             details={
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 9511,
+                'cache_creation_input_tokens': 9511,
+                'cache_read_input_tokens': 0,
                 'input_tokens': 3,
-                'output_tokens': 1944,
+                'output_tokens': 2257,
             },
             requests=1,
-            cost=Decimal('0.01174151'),
+            cost=Decimal('0.025494425'),
         )
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage == snapshot(
         RunUsage(
-            input_tokens=11470,
-            cache_write_tokens=1956,
-            cache_read_tokens=9511,
-            output_tokens=44,
+            input_tokens=11783,
+            cache_write_tokens=2269,
+            output_tokens=49,
             details={
-                'cache_creation_input_tokens': 1956,
+                'cache_creation_input_tokens': 2269,
                 'cache_read_input_tokens': 9511,
                 'input_tokens': 3,
-                'output_tokens': 44,
+                'output_tokens': 49,
             },
+            cache_read_tokens=9511,
             requests=1,
-            cost=Decimal('0.00398101'),
+            cost=Decimal('0.004438885'),
         )
     )
 
@@ -13241,8 +14793,8 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 parts=[
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((3 * 12390))'},
-                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
+                        args='{"command": "echo $((3 * 12390))"}',
+                        tool_call_id='srvtoolu_01F4x4GeMm6sCtxZgH4X7zgW',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -13255,7 +14807,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                             'stdout': '37170\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01HdeXFEfm2TUaENsFep6QUJ',
+                        tool_call_id='srvtoolu_01F4x4GeMm6sCtxZgH4X7zgW',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -13277,8 +14829,8 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
-                provider_response_id='msg_01LZfXQfnKjDzM8MfBWwnVqV',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01GP9761Kf5ewfT26pG9Aunt'},
+                provider_response_id='msg_011CfY3guUTe37w8j7394rk5',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -13294,8 +14846,8 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 parts=[
                     NativeToolCallPart(
                         tool_name='code_execution',
-                        args={'command': 'echo $((4 * 12390))'},
-                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
+                        args='{"command": "echo $((4 * 12390))"}',
+                        tool_call_id='srvtoolu_017vcQzhihPQeto4H19pZ5uW',
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
                     ),
@@ -13308,7 +14860,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                             'stdout': '49560\n',
                             'type': 'bash_code_execution_result',
                         },
-                        tool_call_id='srvtoolu_01XXQYLc95uCBCjeX52Pjopu',
+                        tool_call_id='srvtoolu_017vcQzhihPQeto4H19pZ5uW',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'anthropic_tool_name': 'bash_code_execution'},
@@ -13330,8 +14882,8 @@ async def test_anthropic_code_execution_tool_container_reuse(
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
-                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_011Caqgq9X3d68B2So2LZGmk'},
-                provider_response_id='msg_016CCM7vKzHb1YyMDsVofT35',
+                provider_details={'finish_reason': 'end_turn', 'container_id': 'container_01GP9761Kf5ewfT26pG9Aunt'},
+                provider_response_id='msg_011CfY3hECLM4hewT1txYQaG',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -13410,7 +14962,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     args=bad_args,
                 ),
             ],
-            timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         ),
         ModelRequest(
             parts=[
@@ -14091,22 +15643,22 @@ async def test_anthropic_compaction_end_to_end(
             '5m',
             snapshot(
                 RunUsage(
-                    input_tokens=55425,
-                    cache_write_tokens=55096,
-                    output_tokens=136,
+                    input_tokens=55403,
+                    cache_write_tokens=55100,
+                    output_tokens=112,
                     details={
-                        'input_tokens': 229,
-                        'output_tokens': 5,
+                        'input_tokens': 203,
+                        'output_tokens': 8,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'compaction_iterations': 1,
                         'message_iterations': 1,
+                        'compaction_iterations': 1,
                         'compaction_input_tokens': 100,
-                        'compaction_output_tokens': 131,
-                        'compaction_cache_creation_input_tokens': 55096,
+                        'compaction_output_tokens': 104,
+                        'compaction_cache_creation_input_tokens': 55100,
                     },
                     requests=1,
-                    cost=Decimal('0.209637'),
+                    cost=Decimal('0.209214'),
                 )
             ),
             id='5m',
@@ -14116,23 +15668,23 @@ async def test_anthropic_compaction_end_to_end(
             snapshot(
                 RunUsage(
                     details={
-                        'input_tokens': 205,
-                        'output_tokens': 15,
+                        'input_tokens': 187,
+                        'output_tokens': 8,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'message_iterations': 1,
                         'compaction_iterations': 1,
                         'compaction_input_tokens': 100,
-                        'compaction_output_tokens': 107,
-                        'compaction_cache_creation_input_tokens': 55096,
-                        'compaction_ephemeral_1h_input_tokens': 55096,
+                        'compaction_output_tokens': 85,
+                        'compaction_cache_creation_input_tokens': 55100,
+                        'compaction_ephemeral_1h_input_tokens': 55100,
                     },
                     requests=1,
-                    cache_write_tokens=55096,
-                    output_tokens=122,
-                    cache_write_1h_tokens=55096,
-                    input_tokens=55401,
-                    cost=Decimal('0.333321'),
+                    cache_write_tokens=55100,
+                    output_tokens=93,
+                    cache_write_1h_tokens=55100,
+                    input_tokens=55387,
+                    cost=Decimal('0.332856'),
                 )
             ),
             id='1h',
@@ -14162,7 +15714,8 @@ async def test_anthropic_compaction_usage_with_cache(
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~55k tokens
     agent = Agent(
         model=model,
-        instructions='You are a helpful assistant. Be very brief.',
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a helpful assistant ({ttl} cache). Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
         model_settings=AnthropicModelSettings(anthropic_cache=ttl),
     )
@@ -14170,6 +15723,53 @@ async def test_anthropic_compaction_usage_with_cache(
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
     assert cache_breakpoints(request_capture.body()) == ({'type': 'ephemeral', 'ttl': ttl}, [])
     assert result.usage == expected_usage
+
+
+def test_anthropic_compaction_1h_cache_write_survives_the_streamed_merge() -> None:
+    """Streamed usage for a 1h-TTL compaction request counts its one-hour cache write once.
+
+    The start event carries the compaction iteration's one-hour split, and the final event resets
+    `cache_creation_input_tokens` without resending it, so the stale split used to survive the merge alongside
+    `compaction_ephemeral_1h_input_tokens`: one-hour writes above the total. Folds the events recorded
+    by `test_anthropic_compaction_usage_with_cache[1h]`, which asserts the same values without streaming.
+    """
+    cassette = (
+        Path(__file__).parent / 'cassettes' / 'test_anthropic' / 'test_anthropic_compaction_usage_with_cache[1h].yaml'
+    )
+    content = yaml.safe_load(cassette.read_text())['interactions'][0]['response']['body']['content']
+    request_usage: RequestUsage | None = None
+    for line in content.splitlines():
+        if not line.startswith('data: '):
+            continue
+        event = json.loads(line.removeprefix('data: '))
+        if event['type'] == 'message_start':
+            parsed: BetaRawMessageStartEvent | BetaRawMessageDeltaEvent = BetaRawMessageStartEvent.model_validate(event)
+        elif event['type'] == 'message_delta':
+            parsed = BetaRawMessageDeltaEvent.model_validate(event)
+        else:
+            continue
+        request_usage = _map_usage(parsed, 'anthropic', 'https://api.anthropic.com', 'claude-sonnet-4-6', request_usage)
+
+    assert request_usage == snapshot(
+        RequestUsage(
+            details={
+                'input_tokens': 187,
+                'output_tokens': 8,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+                'message_iterations': 1,
+                'compaction_iterations': 1,
+                'compaction_input_tokens': 100,
+                'compaction_output_tokens': 85,
+                'compaction_cache_creation_input_tokens': 55100,
+                'compaction_ephemeral_1h_input_tokens': 55100,
+            },
+            input_tokens=55387,
+            cache_write_tokens=55100,
+            cache_write_1h_tokens=55100,
+            output_tokens=93,
+        )
+    )
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
@@ -14593,9 +16193,9 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
 
     result = await agent.run(message_history=message_history)
     assert result.output == snapshot("""\
-# Hi there! 👋
+# Hello! 👋
 
-How can I help you today?\
+I'm here to help! How can I assist you today?\
 """)
     assert result.new_messages() == snapshot(
         [
@@ -14615,29 +16215,29 @@ How can I help you today?\
                 parts=[
                     TextPart(
                         content="""\
-# Hi there! 👋
+# Hello! 👋
 
-How can I help you today?\
+I'm here to help! How can I assist you today?\
 """
                     )
                 ],
                 usage=RequestUsage(
                     input_tokens=26,
-                    output_tokens=18,
+                    output_tokens=23,
                     details={
                         'input_tokens': 26,
-                        'output_tokens': 18,
+                        'output_tokens': 23,
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                     },
-                    cost=Decimal('0.000116'),
+                    cost=Decimal('0.000141'),
                 ),
                 model_name='claude-haiku-4-5-20251001',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011Ccmc3JDrLNAjTnX1WNbcp',
+                provider_response_id='msg_011CfY3r8SaB2hLR3MSyYyGs',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -14648,7 +16248,7 @@ How can I help you today?\
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -14697,3 +16297,98 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+_ANTHROPIC_MESSAGE_START = (
+    'event: message_start\ndata: {"type": "message_start", "message": {"id": "msg_1", "type": "message", '
+    '"role": "assistant", "model": "claude-sonnet-4-5", "content": [], "stop_reason": null, "stop_sequence": null, '
+    '"usage": {"input_tokens": 1, "output_tokens": 1}}}\n\n'
+)
+
+
+@pytest.mark.parametrize(
+    ('call', 'content', 'content_type'),
+    [
+        pytest.param('request', b'   ', 'application/json', id='request'),
+        pytest.param(
+            'stream',
+            (
+                _ANTHROPIC_MESSAGE_START
+                + 'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, '
+                '"content_block": {"type": "text", "text": ""}}\n\n'
+                'event: content_block_delta\ndata: {"type": "content_block_delta", "index": 0, '
+                '"delta": {"type": "text_delta", "text": "Hello"}}\n\n'
+                'event: content_block_delta\ndata: {not json\n\n'
+            ).encode(),
+            'text/event-stream',
+            id='stream',
+        ),
+        pytest.param(
+            'stream',
+            b'event: content_block_start\ndata: {not json\n\n',
+            'text/event-stream',
+            id='stream-first-event',
+        ),
+        pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed event, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncAnthropic(
+        api_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            elif call == 'stream':
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
+                await Agent(model).run('Hello', model_settings={'max_tokens': 1024})
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.parametrize('call', ['request', 'count_tokens'])
+async def test_text_plain_response_body_raises_model_api_error(allow_model_requests: None, call: str) -> None:
+    """A 200 response with a `text/plain` body, which the SDK returns as a `str`, raises `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9579
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'upstream connect error', headers={'content-type': 'text/plain'})
+
+    async with AsyncAnthropic(
+        api_key='test',
+        base_url='http://localhost',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            else:
+                # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
+                await Agent(model).run('Hello', model_settings={'max_tokens': 1024})
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")

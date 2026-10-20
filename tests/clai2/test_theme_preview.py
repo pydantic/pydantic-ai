@@ -11,8 +11,9 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import PartStartEvent, TextPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
-from pydantic_clai2 import StreamRenderer, theme
-from pydantic_clai2.theme_picker import theme_preview
+from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.ui.menus.theme_picker import theme_preview
+from pydantic_clai2.ui.rendering import theme
 
 
 @pytest.mark.parametrize('name', theme.names())
@@ -73,7 +74,21 @@ def test_roles_support_raw_terminal_surfaces(name: str, truecolor: bool, monkeyp
             assert ('38;2;' in escape) == truecolor
 
 
-async def test_selected_theme_reaches_markdown_and_keeps_termflow_diff_defaults() -> None:
+@pytest.mark.parametrize(
+    ('name', 'addition', 'deletion', 'marker'),
+    [
+        ('default', '#225C2B', '#7A2936', '#66ff81'),
+        ('tokyo_night', '#3F4D39', '#583443', '#bde7ab'),
+        ('github_light', '#C3E6CB', '#F4C8CC', '#617365'),
+    ],
+)
+def test_diff_colours_follow_the_palette(name: str, addition: str, deletion: str, marker: str) -> None:
+    with theme.use(lambda: name):
+        colors = theme.diff_theme()
+    assert (colors.addition, colors.deletion, colors.addition_marker) == (addition, deletion, marker)
+
+
+async def test_selected_theme_reaches_markdown_and_diffs() -> None:
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor')
     with theme.use(lambda: 'github_light'):
@@ -93,5 +108,6 @@ async def test_selected_theme_reaches_markdown_and_keeps_termflow_diff_defaults(
     assert text.get_style_at_offset(console, text.plain.index('Heading')).color == Color.parse(
         PALETTES['github_light'].ansi[12]
     )
-    assert '\x1b[48;2;14;68;41m' in output.getvalue()
-    assert '\x1b[48;2;103;6;12m' in output.getvalue()
+    assert '\x1b[48;2;195;230;203m' in output.getvalue()
+    assert '\x1b[48;2;244;200;204m' in output.getvalue()
+    assert text.get_style_at_offset(console, text.plain.index('new')).color is None

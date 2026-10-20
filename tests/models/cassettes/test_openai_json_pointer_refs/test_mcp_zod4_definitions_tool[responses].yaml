@@ -1,0 +1,364 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "629"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        input:
+        - role: user
+          content: >-
+            Save a tree named root with one child named leaf that has no children, then say
+            done.
+        model: gpt-4.1-mini
+        stream: false
+        tool_choice: auto
+        tools:
+        - name: save_tree
+          parameters:
+            type: object
+            properties:
+              tree:
+                $ref: "#/definitions/__schema0"
+            required:
+            - tree
+            definitions:
+              __schema0:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  children:
+                    type: array
+                    items:
+                      $ref: "#/definitions/__schema0"
+                required:
+                - name
+                - children
+                additionalProperties: false
+            additionalProperties: false
+          type: function
+          description: Save a tree
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "698"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_064e70c01842664a006abfd315d56c87d2aa13ac62d43f78f0
+        object: response
+        created_at: 1790956309
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790956310
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-mini-2025-04-14
+        moderation: null
+        output:
+        - id: fc_064e70c01842664a006abfd3164d7087d2956f1186a1b8d370
+          type: function_call
+          status: completed
+          arguments: "{\"tree\":{\"name\":\"root\",\"children\":[{\"name\":\"leaf\",\"children\":[]} ]}}"
+          call_id: call_HxwdMLSrnXwICwBqraEFvTrO
+          name: save_tree
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Save a tree
+          name: save_tree
+          output_schema: null
+          parameters:
+            type: object
+            properties:
+              tree:
+                $ref: "#/definitions/__schema0"
+            required:
+            - tree
+            definitions:
+              __schema0:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  children:
+                    type: array
+                    items:
+                      $ref: "#/definitions/__schema0"
+                required:
+                - name
+                - children
+                additionalProperties: false
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 63
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 29
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 92
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-02T15:51:50.597124+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "924"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        input:
+        - role: user
+          content: >-
+            Save a tree named root with one child named leaf that has no children, then say
+            done.
+        - name: save_tree
+          arguments: "{\"tree\":{\"name\":\"root\",\"children\":[{\"name\":\"leaf\",\"children\":[]} ]}}"
+          call_id: call_HxwdMLSrnXwICwBqraEFvTrO
+          type: function_call
+        - type: function_call_output
+          call_id: call_HxwdMLSrnXwICwBqraEFvTrO
+          output: saved root with 1 children
+        model: gpt-4.1-mini
+        stream: false
+        tool_choice: auto
+        tools:
+        - name: save_tree
+          parameters:
+            type: object
+            properties:
+              tree:
+                $ref: "#/definitions/__schema0"
+            required:
+            - tree
+            definitions:
+              __schema0:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  children:
+                    type: array
+                    items:
+                      $ref: "#/definitions/__schema0"
+                required:
+                - name
+                - children
+                additionalProperties: false
+            additionalProperties: false
+          type: function
+          description: Save a tree
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1005"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d32fb3968aa6738006abfd31744f487d285a303bbd05a0272
+        object: response
+        created_at: 1790956311
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1790956311
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-mini-2025-04-14
+        moderation: null
+        output:
+        - id: msg_0d32fb3968aa6738006abfd317b8d887d293569ccf61639437
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Done.
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Save a tree
+          name: save_tree
+          output_schema: null
+          parameters:
+            type: object
+            properties:
+              tree:
+                $ref: "#/definitions/__schema0"
+            required:
+            - tree
+            definitions:
+              __schema0:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  children:
+                    type: array
+                    items:
+                      $ref: "#/definitions/__schema0"
+                required:
+                - name
+                - children
+                additionalProperties: false
+            additionalProperties: false
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 103
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 4
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 107
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-02T15:51:51.944841+00:00

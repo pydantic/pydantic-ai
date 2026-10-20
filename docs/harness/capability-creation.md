@@ -23,7 +23,7 @@ A coding agent often discovers, mid-task, that it wants a behavior its host does
 
 - `author_capability(name, code)` -- write `code` to `<directory>/<name>.py`, import it, and validate it. Validation requires exactly one `pydantic_ai.capabilities.AbstractCapability` subclass that constructs with no arguments; the side-effect-free static getters (`get_instructions`, `get_toolset`, `get_native_tools`, `get_model_settings`, `get_serialization_name`) are exercised. The async lifecycle hooks are not run -- they need a live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with their status and any validation error.
-- `disable_authored_capability(name)` -- stop a capability from being injected on the next run.
+- `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()` skips it.
 
 A "hook" is not a standalone object in pydantic-ai -- it is a method on a capability. So authoring a hook means authoring a capability that overrides one lifecycle method. A single overridden hook is a valid capability.
 
@@ -39,7 +39,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 ```
 
 The agent can now call `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`. `CapabilityCreation` also contributes static, cache-stable system-prompt guidance explaining these tools. Leave `guidance=None` for the default text, or pass your own string; set `guidance=''` to omit it entirely.
@@ -51,6 +51,8 @@ A capability **cannot** be added to a live, already-executing run. pydantic-ai r
 
 ### Integration contract
 
+The successful `author_capability` result tells the model the capability does not take effect in the current run. Writing and validating a capability does not schedule or inject it automatically.
+
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
 
 ```python
@@ -61,7 +63,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 
 history = None
 done = False
@@ -82,6 +84,17 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write never leaves a partial file that reads back as "no capabilities".
 
 Capability names must be lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name. A code that imports but fails validation is still written to disk (so it can be inspected) and recorded with its `last_error` set; `load_active()` skips it.
+
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
 
 ## Trust boundary
 

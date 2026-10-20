@@ -33,6 +33,9 @@ pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-eval
         (12.0, snapshot('12.0')),
         (2398723.123, snapshot('2,398,723.1')),
         (0.00000000000001, snapshot('0.0000000000000100')),
+        (float('inf'), snapshot('inf')),
+        (float('-inf'), snapshot('-inf')),
+        (float('nan'), snapshot('nan')),
     ],
 )
 def test_default_render_number(value: float | int, expected: str):
@@ -46,6 +49,10 @@ def test_default_render_number(value: float | int, expected: str):
         (127.3, 127.3, snapshot(None)),
         (3, 4, snapshot('+1')),
         (4, 3, snapshot('-1')),
+        (1.5, float('inf'), snapshot(None)),
+        (float('inf'), 1.5, snapshot(None)),
+        (1.5, float('nan'), snapshot(None)),
+        (float('nan'), float('nan'), snapshot(None)),
         (1.0, 1.7, snapshot('+0.7 / +70.0%')),
         (2.5, 1.0, snapshot('-1.5 / -60.0%')),
         (10.023, 10.024, snapshot('+0.001')),

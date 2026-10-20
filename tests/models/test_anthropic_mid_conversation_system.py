@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from cassetter import Cassette
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
+    from anthropic import DEFAULT_TIMEOUT, AsyncAnthropicBedrock, AsyncAnthropicFoundry
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
@@ -686,6 +686,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     # below is then the shared one from `Model.prepare_messages` that every model without support
     # gets — the adapter has no `<system>` rendering of its own.
     foundry_client = MagicMock(spec=AsyncAnthropicFoundry)
+    foundry_client.timeout = DEFAULT_TIMEOUT
     foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
     foundry_client.beta.messages.create = AsyncMock(return_value=completion)
 

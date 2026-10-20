@@ -5,12 +5,13 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from types import NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import SchemaValidator
-from typing_extensions import Self, TypedDict, TypeVar
+from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -136,7 +137,7 @@ async def run_output_validate_hooks(
     allow_partial: bool = False,
     wrap_validation_errors: bool = True,
 ) -> Any:
-    """Run the output validate hooks around `do_validate`.
+    """Run `wrap_output_validate` around the complete output-validation lifecycle.
 
     Validate hooks only fire for structured output that needs parsing.
 
@@ -144,33 +145,26 @@ async def run_output_validate_hooks(
     caught by the outer handler and converted to `ToolRetryError` when
     `wrap_validation_errors` is True. When False (streaming), errors propagate as-is.
     """
-    try:
+
+    async def lifecycle(output: RawOutput) -> Any:
         output = await capability.before_output_validate(run_context, output_context=output_context, output=output)
 
         try:
-            validated = await capability.wrap_output_validate(
-                run_context, output_context=output_context, output=output, handler=do_validate
-            )
+            validated = await do_validate(output)
         except (ValidationError, ModelRetry) as e:
             if allow_partial:
-                if wrap_validation_errors and isinstance(e, ValidationError):  # pragma: no cover
-                    raise _make_retry_prompt(e, run_context) from e
                 raise
-            try:
-                validated = await capability.on_output_validate_error(
-                    run_context, output_context=output_context, output=output, error=e
-                )
-            except (ValidationError, ModelRetry) as hook_error:
-                if wrap_validation_errors:
-                    raise _make_retry_prompt(hook_error, run_context) from hook_error
-                raise
+            validated = await capability.on_output_validate_error(
+                run_context, output_context=output_context, output=output, error=e
+            )
 
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
-    except ToolRetryError:
-        raise  # Already wrapped, propagate
+
+    try:
+        return await capability.wrap_output_validate(
+            run_context, output_context=output_context, output=output, handler=lifecycle
+        )
     except (ValidationError, ModelRetry) as e:
-        # ValidationError or ModelRetry from before_output_validate or after_output_validate
-        # (e.g. a user hook that does additional Pydantic validation on the validated output)
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise
@@ -185,7 +179,7 @@ async def run_output_process_hooks(
     do_process: Callable[[Any], Awaitable[Any]],
     wrap_validation_errors: bool = True,
 ) -> Any:
-    """Run the output process hooks around `do_process`.
+    """Run `wrap_output_process` around the complete output-processing lifecycle.
 
     Process hooks fire for all output types (text, structured, image) — in every mode,
     including tool output.
@@ -194,13 +188,12 @@ async def run_output_process_hooks(
     by the outer handler and converted to `ToolRetryError` when `wrap_validation_errors` is True.
     When False (streaming), errors propagate as-is.
     """
-    try:
+
+    async def lifecycle(output: Any) -> Any:
         output = await capability.before_output_process(run_context, output_context=output_context, output=output)
 
         try:
-            result = await capability.wrap_output_process(
-                run_context, output_context=output_context, output=output, handler=do_process
-            )
+            result = await do_process(output)
         except ToolRetryError:
             raise  # Control flow, not error
         except ModelRetry:
@@ -213,11 +206,14 @@ async def run_output_process_hooks(
             )
 
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
+
+    try:
+        return await capability.wrap_output_process(
+            run_context, output_context=output_context, output=output, handler=lifecycle
+        )
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
-        # ValidationError or ModelRetry from before_output_process, after_output_process, or
-        # on_output_process_error (e.g. a user hook doing additional Pydantic validation).
         if wrap_validation_errors:
             raise _make_retry_prompt(e, run_context) from e
         raise
@@ -1241,7 +1237,52 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         # `_union_processor` validates `kind` against the registered keys, so the lookup is safe.
         inner = self._processors[kind]
-        inner_validated = inner.validate(inner_data, allow_partial=allow_partial, validation_context=validation_context)
+        try:
+            inner_validated = inner.validate(
+                inner_data, allow_partial=allow_partial, validation_context=validation_context
+            )
+        except ValidationError as e:
+            # Re-root member errors under the envelope path so retry feedback matches what the
+            # model sent; shallow locs would have their input stripped when the retry prompt is rendered.
+            errors: list[InitErrorDetails] = []
+            for error in e.errors():
+                loc = ('result', 'data', *error['loc'])
+                error_context = error.get('ctx')
+                if 'url' in error:
+                    error_type: str | PydanticCustomError = error['type']
+                else:
+                    custom_error = PydanticCustomError(
+                        error['type'],  # pyright: ignore[reportArgumentType]
+                        error['msg'],  # pyright: ignore[reportArgumentType]
+                        error_context,
+                    )
+                    if custom_error.message() != error['msg']:
+                        # Keep the rendered message exact when it contains placeholders also present in its context.
+                        error_context = dict(error_context) if error_context is not None else {}
+                        message_key = '_pydantic_ai_message'
+                        while message_key in error_context:
+                            message_key += '_'
+                        error_context[message_key] = error['msg']
+                        custom_error = PydanticCustomError(
+                            error['type'],  # pyright: ignore[reportArgumentType]
+                            f'{{{message_key}}}',
+                            error_context,
+                        )
+                    error_type = custom_error
+
+                error_details: InitErrorDetails = {
+                    'type': error_type,
+                    'loc': loc,
+                    'input': error['input'],
+                }
+                if error_context is not None:
+                    error_details['ctx'] = error_context
+                errors.append(error_details)
+
+            raise ValidationError.from_exception_data(
+                e.title,
+                errors,
+            ) from e
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
         # expect — e.g. a `MyModel` instance or an `int`, not `{'response': 42}`.
         if (k := inner.hook_unwrap_key) is not None:
@@ -1620,6 +1661,16 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     return outputs_flat
 
 
+def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
+    """The output types described by `func`'s return annotation, or `str` when it has none."""
+    # A `partial`'s hints would resolve in the `functools` namespace, so read them off the wrapped function.
+    if isinstance(func, partial):
+        func = func.func
+    if return_annotation := get_function_type_hints(func).get('return', None):
+        return types_from_output_spec(return_annotation)
+    return [str]
+
+
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
@@ -1634,18 +1685,14 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif isinstance(output, PromptedOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, TextOutput):
-            outputs_flat.append(str)
+            outputs_flat.extend(_function_return_types(output.output_function))
         elif isinstance(output, ToolOutput):
             outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
         elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):
-            type_hints = get_function_type_hints(output)
-            if return_annotation := type_hints.get('return', None):
-                outputs_flat.extend(types_from_output_spec(return_annotation))
-            else:
-                outputs_flat.append(str)
+            outputs_flat.extend(_function_return_types(output))
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.
