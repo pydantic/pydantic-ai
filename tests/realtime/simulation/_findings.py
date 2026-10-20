@@ -330,6 +330,13 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
+def _failed_call_has_siblings(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A call that raised was made in the same response as another call."""
+    calls = sim.truth.tool_calls
+    failed = {calls[call_id].response for call_id, outcome in sim.tools.settled.items() if outcome == 'error'}
+    return any(sum(call.response == response for call in calls.values()) > 1 for response in failed)
+
+
 LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
     id='SIM-43',
     title=(
@@ -345,7 +352,7 @@ LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
-    matches=lambda sim, violation: 'error' in sim.tools.settled.values(),
+    matches=_failed_call_has_siblings,
 )
 
 
