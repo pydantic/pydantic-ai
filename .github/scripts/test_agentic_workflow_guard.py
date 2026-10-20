@@ -30,10 +30,12 @@ from agentic_workflow_guard import (
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
+    check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
     check_provider_health_identity,
     check_provider_health_monitor,
+    check_provider_health_recovery_wiring,
     check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
@@ -1099,6 +1101,49 @@ def test_main_exits_nonzero_and_prints_each_violation(
     assert '1 agentic-workflow policy violation(s).' in err
 
 
+def test_zai_workflow_requires_logfire_import(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-attention-triage.md',
+        '---\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
+    )
+    lock = _write(source.with_suffix('.lock.yml'), 'env: {}\n')
+
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-import',
+        'logfire-compiled',
+        'logfire-network',
+    }
+
+    _write(
+        source,
+        source.read_text(encoding='utf-8').replace(
+            '  - shared/engine-zai.md', '  - shared/engine-zai.md\n  - shared/otel-logfire.md'
+        ),
+    )
+    compiled_lock = """env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev
+  OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
+  GH_AW_OTLP_ENDPOINTS: '[{"url":"https://logfire-api.pydantic.dev"}]'
+jobs:
+  agent:
+    steps:
+      - env:
+          GH_AW_ALLOWED_DOMAINS: logfire-api.pydantic.dev,logfire-eu.pydantic.dev,logfire-us.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.info,logfire-us.pydantic.info
+"""
+    _write(lock, compiled_lock)
+    assert check_logfire_wiring(workflows) == []
+
+    _write(lock, compiled_lock.replace(',logfire-us.pydantic.info', ''))
+    assert [violation.check for violation in check_logfire_wiring(workflows)] == ['logfire-network']
+
+    _write(lock, 'env:\n  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev\n')
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-compiled',
+        'logfire-network',
+    }
+
+
 # --- the live repository ------------------------------------------------------
 
 
@@ -1314,6 +1359,95 @@ jobs:
     assert all(violation.path in (str(source), str(lock)) for violation in violations)
 
 
+def test_provider_health_recovery_wiring_requires_incident_bound_dispatch(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+---
+Prompt
+""",
+    )
+    health = _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace('required: false', 'required: true', 1), encoding='utf-8'
+    )
+    health.write_text('job: {}\n', encoding='utf-8')
+    assert {violation.path for violation in check_provider_health_recovery_wiring(workflows)} == {
+        str(source),
+        str(health),
+    }
+
+
+def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'pydantic-ai-ui-security-review.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    ordinary = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+    ordinary.write_text(
+        ordinary.read_text(encoding='utf-8').replace(
+            'workflow_dispatch: {}',
+            'workflow_dispatch:\n    inputs:\n      recovery_issue:\n        type: number\n        required: false',
+            1,
+        ),
+        encoding='utf-8',
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+
 def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
@@ -1493,7 +1627,9 @@ on:
     workflows: [Agent A, Agent B, Agent Provider Health]
     types: [completed]
   schedule: [{cron: '0 */6 * * *'}]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      recover_issue: {type: number, required: true}
 concurrency:
   group: provider-health
   cancel-in-progress: false
@@ -1522,6 +1658,7 @@ jobs:
         uses: actions/download-artifact@sha
         with:
           name: agent
+          run-id: ${{ github.event.workflow_run.id }}
       - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
         run: |
           mkdir -p agent
@@ -1532,17 +1669,26 @@ jobs:
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID"
           --run-attempt "$RUN_ATTEMPT"
-          --agent-artifact agent/agent-stdio.log
+          --conclusion "$CONCLUSION"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent
       - if: github.event_name == 'schedule'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
-""",
+          ISSUE_NUMBER: ${{ inputs.recover_issue }}
+        run: |
+          python3 .github/scripts/agent_provider_health.py monitor \
+            --repository "$GITHUB_REPOSITORY" \
+            --recover-issue "$ISSUE_NUMBER"
+  """,
     )
 
     violations = check_provider_health_monitor(workflows)
@@ -1591,10 +1737,15 @@ jobs:
     _write(
         monitor,
         trusted_config.replace(
-            'python3 .github/scripts/agent_provider_health.py monitor\n'
+            '        run: >-\n'
+            '          python3 .github/scripts/agent_provider_health.py monitor\n'
+            '          --repository "$GITHUB_REPOSITORY"\n'
+            '          --run-id "$RUN_ID"\n'
             '          --run-attempt "$RUN_ATTEMPT"\n'
-            '          --agent-artifact agent/agent-stdio.log',
-            'bash ./agent/payload',
+            '          --conclusion "$CONCLUSION"\n'
+            '          --health-artifact provider-health/provider-health.json\n'
+            '          --agent-artifact agent',
+            '        run: bash ./agent/payload',
             1,
         ),
     )

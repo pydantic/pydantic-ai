@@ -109,6 +109,9 @@ SESSION_CREATED_EVENT = 'session.created'
 SESSION_UPDATE_EVENT = 'session.update'
 SESSION_UPDATED_EVENT = 'session.updated'
 CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
+CONVERSATION_ITEM_DELETE_EVENT = 'conversation.item.delete'
+CONVERSATION_ITEM_ADDED_EVENTS = frozenset({'conversation.item.added', 'conversation.item.created'})
+"""The frames that say an item joined the conversation: GA's `.added`, and the beta protocol's `.created`."""
 INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
 INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
 INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
@@ -381,6 +384,8 @@ class ProtocolConversationItem(BaseModel):
     type: str
     role: str | None = None
     call_id: str | None = None
+    name: str | None = None
+    """The tool a function call item calls."""
     content: list[_ProtocolItemContent] | None = None
 
 
@@ -1018,6 +1023,16 @@ def client_item_id(input_index: int) -> str:
     around it (seeded history, a browser's items on a sideband).
     """
     return f'pydantic_ai_item_{input_index}'
+
+
+def tool_content_item_id(input_index: int) -> str:
+    """The id of the user message item carrying content a tool returned besides its output.
+
+    The connection chooses it so it can delete the item with the tool call (`openai_prune_tool_items`). It names no
+    input on purpose: under a `client_item_id`, `client_item_input` would take the item's joining the conversation for
+    input `input_index` being placed there, which the tool's output already reports.
+    """
+    return f'pydantic_ai_content_{input_index}'
 
 
 def client_item_input(item_id: str | None) -> int | None:

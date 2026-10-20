@@ -20,6 +20,7 @@ from ..settings import CacheRetention
 __all__ = (
     'BEDROCK_GEO_PREFIXES',
     'bedrock_claude_cache_retentions',
+    'bedrock_claude_supports_automatic_caching',
     'bedrock_lacks_claude_structured_output',
     'remove_bedrock_geo_prefix',
     'split_bedrock_model_id',
@@ -92,6 +93,32 @@ def bedrock_claude_cache_retentions(model_name: str) -> tuple[CacheRetention, ..
     """
     _, name = split_bedrock_model_id(model_name)
     return ('5m', '1h') if name.startswith(_ONE_HOUR_CACHE_CLAUDE_MODEL_PREFIXES) else ('5m',)
+
+
+# The Claude models that the legacy InvokeModel API (`AsyncAnthropicBedrock`) serves from the same infrastructure as
+# the Bedrock Messages API, which take Anthropic's top-level automatic caching parameter; the ARN-versioned models
+# reject it with a 400 (`cache_control: Extra inputs are not permitted`). Verified live on 2026-10-16 for every
+# prefix except `claude-fable-5`, which is documented in the same list. Bare names, as `split_bedrock_model_id`
+# returns them; a prefix also covers later point releases (`claude-opus-5-5`).
+# https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy#api-model-ids
+_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-haiku-5-5',
+    'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5',
+)
+
+
+def bedrock_claude_supports_automatic_caching(model_name: str) -> bool:
+    """Whether the legacy Bedrock InvokeModel API takes Anthropic's top-level automatic caching parameter for a model.
+
+    Accepts a full Bedrock model ID (e.g. `us.anthropic.claude-opus-4-8`) or a bare model name
+    (e.g. `claude-opus-4-8`).
+    """
+    _, name = split_bedrock_model_id(model_name)
+    return name.startswith(_AUTOMATIC_CACHING_CLAUDE_MODEL_PREFIXES)
 
 
 # The Claude models with structured output (JSON schema output and strict tool use) on the direct Anthropic

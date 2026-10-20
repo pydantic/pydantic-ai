@@ -15,6 +15,7 @@ from __future__ import annotations as _annotations
 
 from collections import deque
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from openai.types.realtime import (
@@ -44,6 +45,7 @@ from ._lifecycle import (
 )
 from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
+    CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
     client_item_input,
     is_user_message_item,
@@ -51,7 +53,6 @@ from ._openai_protocol import (
     response_metadata_answers,
 )
 
-_CONVERSATION_ITEM_ADDED_FRAMES = frozenset({'conversation.item.added', 'conversation.item.created'})
 _TRANSCRIPTION_SETTLED_FRAMES = frozenset(
     {'conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.failed'}
 )
@@ -86,11 +87,28 @@ def frame_response_id(event_type: str | None, data: dict[str, Any]) -> str | Non
     return response_id if isinstance(response_id, str) and response_id else None
 
 
+@dataclass(eq=False)
+class AudioCommit:
+    """An audio commit of ours the provider hasn't acknowledged yet (`input_audio_buffer.committed`)."""
+
+    sent_before: list[InputId]
+    """The inputs we sent ahead of it that weren't acknowledged either: the provider handles frames in order, so they
+    join the conversation before the turn the commit makes."""
+    has_audio: bool
+    """Whether audio went out since the buffer was last committed or cleared: a commit of nothing makes no turn."""
+    raced_vad: bool = False
+    """Whether server VAD reported a stop while it was waiting for its acknowledgement: VAD then committed the buffer
+    too, so which of the two committed the audio (and whether this one committed anything) is unknown."""
+
+
 class OpenAILifecycle:
     """Turns an OpenAI-protocol connection's frames and sends into lifecycle events."""
 
-    def __init__(self, *, transcribes: bool = True) -> None:
+    def __init__(self, *, transcribes: bool = True, commits_need_speech: bool = False) -> None:
         self._transcribes = transcribes
+        self._commits_need_speech = commits_need_speech
+        """Whether a commit makes a turn only of speech the provider heard start (xAI, which ignores a commit of
+        silence): one not acknowledged makes none then, unless a turn is under way."""
         self._leading: list[LifecycleEvent] = []
         """Events that precede the codec events of the frame being decoded: a response it starts."""
         self._pending: list[LifecycleEvent] = []
@@ -134,9 +152,12 @@ class OpenAILifecycle:
         """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one, or cleared."""
-        self._sent_before_commits: deque[list[InputId]] = deque()
-        """For each audio commit of ours not acknowledged yet, the inputs we sent ahead of it that weren't either:
-        the provider handles frames in order, so they join the conversation before the turn the commit makes."""
+        self._commits: deque[AudioCommit] = deque()
+        """Our audio commits not acknowledged yet, in the order they went out."""
+        self._audio_uncommitted = False
+        """Whether audio went out since the buffer was last committed or cleared."""
+        self._unacknowledged_turns = 0
+        """How many turns commits never acknowledged made, to name them: the provider named none."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
@@ -148,18 +169,50 @@ class OpenAILifecycle:
         """User message items that are no input of the session's (seeded or replayed history) are on their way."""
         self._messages.extend([None] * count)
 
-    def audio_commit_sent(self) -> list[InputId]:
+    def audio_appended(self) -> None:
+        """Input audio is going out, into the buffer the next commit commits."""
+        self._audio_uncommitted = True
+
+    def audio_clear_sent(self) -> None:
+        """A clear of the input audio buffer is going out: the next commit commits only audio sent after it."""
+        self._audio_uncommitted = False
+
+    def audio_commit_sent(self) -> AudioCommit:
         """An audio commit of ours is going out, after everything sent before it: what it notes, for `audio_commit_failed`."""
         sent_before = [*(input_id for input_id in self._messages if input_id is not None), *self._tool_outputs.values()]
-        self._sent_before_commits.append(sent_before)
-        return sent_before
+        commit = AudioCommit(sent_before=sent_before, has_audio=self._audio_uncommitted)
+        self._audio_uncommitted = False
+        self._commits.append(commit)
+        return commit
 
-    def audio_commit_failed(self, sent_before: list[InputId]) -> None:
+    def audio_commit_failed(self, commit: AudioCommit) -> None:
         """The audio commit `audio_commit_sent` noted never went out (unless a reconnect forgot it already)."""
-        for index, noted in enumerate(self._sent_before_commits):
-            if noted is sent_before:
-                del self._sent_before_commits[index]
-                return
+        if commit in self._commits:
+            self._commits.remove(commit)
+            self._audio_uncommitted = self._audio_uncommitted or commit.has_audio
+
+    def unacknowledged_commits(self) -> list[LifecycleEvent]:
+        """The connection reads nothing more from its socket: the commits it didn't acknowledge made turns all the same.
+
+        The provider had them, as it had the audio they commit, so each is recorded (with no transcript, which can
+        no longer come) where it joined the conversation: after what we sent ahead of it.
+        """
+        events: list[LifecycleEvent] = []
+        while self._commits:
+            commit = self._commits[0]
+            events += self._place_sent_before_commit()
+            if not commit.has_audio:
+                # A commit of nothing: the provider refuses it, so it makes no turn.
+                continue
+            if (speaking := next(reversed(self._speaking), None)) is not None:
+                # The turn under way (the provider heard it start) is the one the commit ends: it joins the
+                # conversation here, unless it already had (xAI adds it at speech start).
+                events += self._place(speaking)
+                self._speaking.pop(speaking)
+            elif not self._commits_need_speech and not commit.raced_vad:
+                self._unacknowledged_turns += 1
+                events += self._place(f'pydantic_ai_audio_commit_{self._unacknowledged_turns}')
+        return events
 
     def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
         self._tool_outputs[call_id] = input_id
@@ -288,7 +341,7 @@ class OpenAILifecycle:
         if event_type == 'input_audio_buffer.timeout_triggered':
             self._idle_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
             return []
-        if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
+        if event_type in CONVERSATION_ITEM_ADDED_EVENTS:
             return self.item_added(data)
         if event_type == 'response.output_item.added':
             return _output_item_details(data)
@@ -311,14 +364,23 @@ class OpenAILifecycle:
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
         item_id = InputAudioBufferCommittedEvent.model_validate(data).item_id
+        self._vad_committed()
         events = self._place_sent_before_commit()
         events += self._place(item_id)
         self._speaking.pop(item_id, None)
         return events
 
+    def _vad_committed(self) -> None:
+        """The provider committed the buffer: on its own, if no commit of ours is waiting for it, so it is empty now.
+
+        (As far as the client can tell: audio it sent while the provider committed may still be in it.)
+        """
+        if not self._commits:
+            self._audio_uncommitted = False
+
     def _place_sent_before_commit(self) -> list[LifecycleEvent]:
         """Place what we sent ahead of our commit and the provider hasn't acknowledged yet: it came first."""
-        sent = self._sent_before_commits.popleft() if self._sent_before_commits else []
+        sent = self._commits.popleft().sent_before if self._commits else []
         events: list[LifecycleEvent] = []
         for input_id in sent:
             if input_id in self._messages:
@@ -336,6 +398,9 @@ class OpenAILifecycle:
         item_id = InputAudioBufferSpeechStoppedEvent.model_validate(data).item_id
         if not item_id:
             return []
+        self._vad_committed()
+        for commit in self._commits:
+            commit.raced_vad = True
         events = self._place(item_id)
         self._speaking.pop(item_id, None)
         return events
@@ -401,6 +466,9 @@ class OpenAILifecycle:
     def error(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """An `error` frame: a refused request for a response settles every input it was made for."""
         error = RealtimeErrorEvent.model_validate(data).error
+        if error.code == 'input_audio_buffer_commit_empty' and self._commits:
+            # The provider refused our oldest commit it hadn't acknowledged (it handles frames in order): no turn.
+            self._commits.popleft()
         for rejected in rejected_inputs(error):
             if rejected.refused == 'content' and rejected.input_index in self._messages:
                 # Refused content never joins the conversation, so no `conversation.item.added` will place it.
@@ -426,14 +494,16 @@ class OpenAILifecycle:
 
         Those inputs are in the conversation all the same: the reconnect replays the history that holds them.
         """
+        # Ahead of them: what was sent before a commit joined the conversation before the commit's turn.
+        self._pending.extend(self.unacknowledged_commits())
+        # The new socket's buffer is empty.
+        self._audio_uncommitted = False
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
         # Placed once a reconnect succeeds, not before: a connection that never comes back placed nothing.
         self._carried_over.update(placed)
         self._messages.clear()
         self._tool_outputs.clear()
-        # A commit the old socket never acknowledged won't be on the new one.
-        self._sent_before_commits.clear()
 
     def reconnected(self, *, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]) -> None:
         """A reconnect succeeded: settle what it did not carry over, before it is reported.
@@ -457,6 +527,7 @@ class OpenAILifecycle:
 
     def closed(self, unanswered: Sequence[InputId]) -> None:
         """The connection is gone for good: nothing still open will ever end on its own, or be answered."""
+        self._pending.extend(self.unacknowledged_commits())
         self.requests_dropped(
             [*unanswered, *(input_id for answers, _ in self._requests.values() for input_id in answers)]
         )

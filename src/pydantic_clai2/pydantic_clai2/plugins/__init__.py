@@ -6,6 +6,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import islice
+from pathlib import Path
 from typing import ClassVar, Generic, Literal, Never, Protocol, Self, TypeVar, cast, get_args, get_origin
 from uuid import uuid4
 
@@ -18,7 +19,7 @@ from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.usage import RunUsage
@@ -83,8 +84,9 @@ class Conversation(Protocol):
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
-        directory or when persistence is not configured. A conversation still running in another
-        process is not taken over: a fork of it is resumed, and the notice says so.
+        directory, when persistence is not configured, or when another live session of this CLAI holds
+        it. A conversation still running in another process is not taken over: a fork of it is resumed,
+        and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
@@ -98,7 +100,7 @@ class SessionCatalog(Protocol):
 
     @property
     def follows_workspace(self) -> bool:
-        """Whether `/resume ID` moves CLAI into the directory a session was saved in, as under `clai2 --web`.
+        """Whether `/resume ID` moves the session into the directory it was saved in, as under `clai2 --web`.
 
         Otherwise it refuses a session saved in another directory than the one CLAI runs in.
         """
@@ -211,11 +213,12 @@ class PluginInfo:
 
 
 class PluginCatalog(Protocol):
-    """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `PluginLoader` is one.
+    """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `SessionPlugins` is one.
 
-    Each action applies at once and is saved, as the same `/plugins` action is; a running turn keeps
-    the plugins it started with. Adding and removing declarations goes through the prompt, with
-    `PluginHost.send_input`, as does a settings menu that is not declared (`/plugins configure NAME`).
+    Each action applies at once and is saved, as the same `/plugins` action is, in every live session
+    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations
+    goes through the prompt, with `PluginHost.send_input`, as does a settings menu that is not declared
+    (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
     own `on_session_start` or `on_session_end`, which a change runs.
     """
@@ -259,6 +262,144 @@ class PluginCatalog(Protocol):
         or reset through the menu's `source`, or one of its `actions` run with your own `Dialogs`.
         Raises `ValueError` when the plugin is not loaded, declares no menu, or its menu is already
         open, in the terminal or for another edit.
+        """
+        ...
+
+
+SendInput = Callable[[str, Sequence[BinaryContent]], None]
+"""How a host enters input at its session's prompt: the text, and the images attached to it."""
+
+
+PluginScope = Literal['session', 'process']
+"""How many instances of a plugin CLAI builds: one per live session, or one for the whole process."""
+
+
+class LiveSession(Protocol):
+    """One live session of this CLAI process, as a process-scoped plugin reaches it through `PluginHost.live`."""
+
+    @property
+    def id(self) -> str:
+        """Stable while the session is live; its conversation can change, as with `/new` or `/resume`."""
+        ...
+
+    @property
+    def session_id(self) -> str | None:
+        """The session's current saved conversation ID, as `PluginHost.session_id` reads it."""
+        ...
+
+    @property
+    def workspace(self) -> Path:
+        """The directory the session works in."""
+        ...
+
+    @property
+    def conversation(self) -> Conversation:
+        """The session's retained history."""
+        ...
+
+    @property
+    def status(self) -> Status:
+        """The session's status row."""
+        ...
+
+    @property
+    def sessions(self) -> SessionCatalog | None:
+        """The saved conversations, as the session's `/resume` lists them."""
+        ...
+
+    @property
+    def tasks(self) -> 'TaskCatalog | None':
+        """The session's delegated tasks, while a task owner runs them."""
+        ...
+
+    @property
+    def running(self) -> bool:
+        """Whether a turn runs in the session now."""
+        ...
+
+    def setting(self, key: str, /) -> JsonValue:
+        """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
+        ...
+
+    def command_menu(self, name: str, /) -> SettingsMenu | None:
+        """The menu bare `/NAME` opens in the session, built now, as `PluginHost.command_menu` builds it."""
+        ...
+
+    @property
+    def queued(self) -> int:
+        """How many inputs wait for the session's running turn or command to end."""
+        ...
+
+    @property
+    def watchers(self) -> int:
+        """How many `watch` calls have not stopped watching yet."""
+        ...
+
+    def watch(self) -> Callable[[], None]:
+        """Count a watcher, such as a browser showing the session, until the returned function is called.
+
+        A watched session is never closed for being idle. Calling the returned function again does nothing.
+        """
+        ...
+
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
+        """Enter `text` at the session's prompt, with `images` attached, as `PluginHost.send_input` does."""
+        ...
+
+    def interrupt(self) -> bool:
+        """Cancel the session's running turn or command; `False` when nothing was running."""
+        ...
+
+    async def complete(self, text: str, /) -> list[Completion]:
+        """What Tab offers at the session's prompt for `text`, as `PluginHost.complete` returns it."""
+        ...
+
+
+class LiveSessions(Protocol):
+    """The live sessions of this CLAI process, for a process-scoped plugin; see `PluginHost.live`."""
+
+    def listing(self) -> list[LiveSession]:
+        """Every live session, oldest first."""
+        ...
+
+    def get(self, live_id: str, /) -> LiveSession:
+        """The live session with this `LiveSession.id`; raises `LookupError` when none is live."""
+        ...
+
+    def current(self) -> LiveSession | None:
+        """The session whose moment, command, or run is being handled now; `None` outside one.
+
+        A task started while a session is handled, such as a server started from a command, inherits it.
+        """
+        ...
+
+    async def open(self, conversation_id: str, /) -> LiveSession:
+        """The live session holding a saved conversation, resuming it in a new one, in its own directory, if none does.
+
+        Concurrent calls for one conversation return the same session. Raises `LookupError` for an unknown
+        conversation, `ValueError` when its directory is gone, and `RuntimeError` where CLAI opens no sessions.
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
+        """
+        ...
+
+    async def new(self, *, workspace: Path | None = None) -> LiveSession:
+        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in.
+
+        Do not await it from `on_session_start`: the new session waits for the plugins still loading.
+        """
+        ...
+
+    async def close(self, live_id: str, /) -> None:
+        """Close a session CLAI opened with `open` or `new`, cancelling its turn; its plugins end with `'exit'`.
+
+        Raises `LookupError` when none is live and `ValueError` for one its own driver runs, such as the terminal's.
+        """
+        ...
+
+    def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call `listener` whenever a session opens or closes, or its running, queued, or watched state may change.
+
+        It is called synchronously, so it must be quick and not raise. The returned function unsubscribes.
         """
         ...
 
@@ -667,13 +808,17 @@ class PluginHost(Generic[DepsT]):
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
         submit_prompt: Callable[[str], None] | None = None,
-        send_input: Callable[[str], None] | None = None,
+        send_input: SendInput | None = None,
         interrupt: Callable[[], bool] = lambda: False,
         commands: Commands | None = None,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
         plugins: PluginCatalog | None = None,
         tasks: Callable[[], TaskCatalog | None] = lambda: None,
+        workspace: Callable[[], Path] = Path.cwd,
+        live: LiveSessions | None = None,
+        default_model: Callable[[], Awaitable[Model | str | None]] | None = None,
+        default_model_name: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -682,8 +827,10 @@ class PluginHost(Generic[DepsT]):
         `send_input` and `interrupt` drive the prompt as the keyboard does; see the methods of the
         same names. `commands` is the shell's registry, which `complete` reads; `sessions` its saved
         conversations; `setting` reads its settings, as the method of the same name does; `plugins`
-        is what `/plugins` manages; `tasks` returns what `/tasks` shows, read each time, as the property
-        of the same name is.
+        is what `/plugins` manages; `tasks` returns what `/tasks` shows, and `workspace` the session's
+        directory, each read each time, as the properties of the same names are. `live` is given to a
+        process-scoped plugin's host only. `default_model` resolves the model a new session starts with,
+        and `default_model_name` names it without building it.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -713,6 +860,28 @@ class PluginHost(Generic[DepsT]):
         self.plugins = plugins
         """The plugins `/plugins` manages; `None` on a host built outside the loader, such as in a test."""
         self._tasks = tasks
+        self._workspace = workspace
+        self._default_model = default_model
+        self._default_model_name = default_model_name
+        self.live = live
+        """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
+
+        Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
+        `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
+        session whose moment, command, or run is being handled, else the session that loaded it (once
+        that one has closed, the oldest live session). Its other attributes, such as `conversation` and
+        `status`, always name the session that loaded it.
+        """
+
+    @property
+    def workspace(self) -> Path:
+        """The directory this session works in: where its runs' tools work and its project files are read.
+
+        Use it instead of the process's working directory, which CLAI does not change after startup,
+        and pass it as `cwd=` to a subprocess. Under `clai2 --web` each session has its own. A host
+        built outside the shell, such as in a test, has the current directory.
+        """
+        return self._workspace()
 
     @property
     def tasks(self) -> TaskCatalog | None:
@@ -738,7 +907,7 @@ class PluginHost(Generic[DepsT]):
             raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
         self._submit_prompt(text)
 
-    def send_input(self, text: str, /) -> None:
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` at the prompt as Enter does, as if it was typed there, at any time from the shell's event loop.
 
         For a plugin that is another way to type, such as a remote UI. The text is trimmed, a bare
@@ -751,10 +920,32 @@ class PluginHost(Generic[DepsT]):
         one built without `send_input=`, or a CLAI whose output is not a terminal, which reads its
         prompts line by line. A bare command that opens a menu, such as `/model`, opens it in the
         terminal, where only the keyboard or `interrupt` closes it.
+
+        `images` go with the prompt, as images pasted at the prompt do: the model gets them after the
+        text, and the text may be blank. Raises `ValueError` when `text` is a `/command` or `!` line,
+        which take no images, or when the images would exceed the 32 MiB that may wait to be sent.
         """
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
-        self._send_input(text)
+        self._send_input(text, images)
+
+    async def default_model(self) -> Model | str | None:
+        """The model a new session starts with: the saved `model` setting, resolved as `/model NAME` does.
+
+        Without a saved one, the agent's own model, or `None` when it has none. For a plugin whose
+        own agent works for the whole process rather than one session, such as the web UI's
+        orchestrator. A host without CLAI's settings, such as in a test, returns `None` unless built
+        with `default_model=`.
+        """
+        return None if self._default_model is None else await self._default_model()
+
+    async def default_model_name(self) -> str | None:
+        """The name of the model `default_model` resolves, as `/model` shows it, such as `chain:NAME`.
+
+        Nothing is built, so it never needs a sign-in and never fails on a saved model that no longer
+        resolves; use it to show the model. `None` where `default_model` returns `None`.
+        """
+        return None if self._default_model_name is None else await self._default_model_name()
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.
@@ -906,6 +1097,13 @@ class Plugin(Generic[SettingsT, DepsT]):
 
     settings_type: ClassVar[type[BaseModel]] = NoSettings
     """The settings model, read from the class's `Plugin[...]` parameter; there is no need to set it."""
+    scope: ClassVar[PluginScope] = 'session'
+    """`'session'` builds the plugin once per live session; `'process'` once for the whole CLAI.
+
+    A process-scoped plugin gets `on_session_start` and `on_session_end` once, when it loads and unloads.
+    Its capabilities and commands join every live session, and each other moment reaches it once per
+    session, with `host.live.current()` naming that session.
+    """
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Record the settings model named in `Plugin[SettingsModel, ...]`."""

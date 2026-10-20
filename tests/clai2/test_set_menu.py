@@ -8,6 +8,7 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.plugins.menus import FieldRow
 from pydantic_clai2.ui.menus import field_menu
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE,
@@ -38,8 +39,10 @@ def test_rows_details_and_validation(tmp_path: Path) -> None:
     assert 'current  true (default)' in menu.details(items[2])
     assert 'choices' not in menu.details(items[1])
     assert menu.details(MenuItem('stray', value='nope')) == ''
+    assert menu.initial(model) == '', 'a value at its default opens empty'
     context.settings = context.settings.model_copy(update={'model': None})
     assert 'current  (not set)' in menu.details(items[0])
+    assert menu.initial(model) == '', 'a value that is not set opens empty'
     limit = menu.rows[1]
     source = SettingsSource(context)
     assert source.problem(limit, '50') is None
@@ -157,3 +160,34 @@ def test_project_overrides_are_marked_on_the_row(tmp_path: Path) -> None:
     assert 'origin   project' in menu.details(items['display.thinking'])
     assert 'origin' not in menu.details(items['model'])
     assert context.reset_setting('display.thinking').endswith('sets it again at next start.')
+
+
+class _Stored:
+    """A one-row source whose saved value the test sets."""
+
+    title = 'Stored'
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def rows(self) -> list[FieldRow]:
+        return [FieldRow(key='root', description='', default='')]
+
+    def current(self, row: FieldRow) -> str:
+        return self.value
+
+    def problem(self, row: FieldRow, text: str) -> str | None:
+        raise NotImplementedError
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        raise NotImplementedError
+
+    def reset(self, row: FieldRow) -> str:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(('value', 'initial'), [('src', 'src'), ('', ''), ('evil\x1b[2J', '')])
+def test_editor_opens_holding_a_printable_value(value: str, initial: str) -> None:
+    menu = FieldMenu(_Stored(value))
+    editor = menu.build_editor(menu.rows[0])
+    assert (editor.text, editor._placeholder) == (initial, 'empty resets to (empty)')  # pyright: ignore[reportPrivateUsage]

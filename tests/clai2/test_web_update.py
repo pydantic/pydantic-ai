@@ -13,8 +13,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import _app, chat
-from pydantic_clai2._app import create_shell
+from pydantic_clai2 import chat
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.protocol import DialogOpened, Notice, Snapshot, UpdateChanged, UpdateInfo
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
@@ -22,6 +21,8 @@ from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import session_runtime
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.update_menu import VERSION
 from tests.clai2.test_app_edges import inputs
 from tests.clai2.test_self_update import WEB_TOKEN, _updates  # pyright: ignore[reportPrivateUsage]
@@ -36,7 +37,7 @@ def _use(monkeypatch: pytest.MonkeyPatch, updates: Updates) -> None:
     def build(*, channel: object) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
 
 
 @pytest.mark.parametrize('code', [0, 1])
