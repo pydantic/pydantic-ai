@@ -319,7 +319,7 @@ print(
 
 _(This example is complete, it can be run "as is")_
 
-For text that changes during a run, such as state a tool updates, `get_instructions()` would return a callable, which can't opt in. Build the capability on [`Capability`][pydantic_ai.capabilities.Capability] instead, and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions], as in the [todo example](../agent.md#appending-instruction-changes).
+For text that changes during a run, such as state a tool updates, return a callable from `get_instructions()` that returns `InstructionPart(..., name=..., on_change='append')`, as in the [current page example](../agent.md#appending-instruction-changes), or build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions].
 
 ## Providing model settings
 

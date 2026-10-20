@@ -152,7 +152,7 @@ print(first_request.instructions)
 
 _(This example is complete, it can be run "as is")_
 
-You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
+You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context. Like [`@agent.instructions`][pydantic_ai.agent.Agent.instructions], it takes `name=` and [`on_change='append'`](agent.md#appending-instruction-changes), which keeps the cached prefix when the instructions change mid-conversation:
 
 ```python {title="toolset_instructions_decorator.py"}
 from pydantic_ai import Agent, FunctionToolset, ModelRequest, RunContext
@@ -260,13 +260,13 @@ _(This example is complete, it can be run "as is")_
 
 Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of the block's complete new text being added to the history for each change. Build them only from state you control: [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
 
-To opt in, give the toolset an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions]. The `@toolset.instructions` decorator doesn't take `on_change`, so override the method on a `FunctionToolset` subclass:
+To opt in, give the toolset an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and register the function with `@toolset.instructions(name=..., on_change='append')`. A [custom toolset](#building-a-custom-toolset) can instead return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions]:
 
 ```python {title="toolset_instruction_changes.py"}
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
-from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
 from pydantic_ai.models.test import TestModel
 
 
@@ -275,13 +275,12 @@ class Cart:
     items: list[str] = field(default_factory=list[str])
 
 
-class CartToolset(FunctionToolset[Cart]):
-    async def get_instructions(self, ctx: RunContext[Cart]) -> list[InstructionPart]:
-        count = len(ctx.deps.items)  # (1)!
-        return [InstructionPart(f'Items in the cart: {count}.', name='count', on_change='append')]
+cart_toolset = FunctionToolset[Cart](id='cart')
 
 
-cart_toolset = CartToolset(id='cart')
+@cart_toolset.instructions(name='count', on_change='append')
+def cart_count(ctx: RunContext[Cart]) -> str:
+    return f'Items in the cart: {len(ctx.deps.items)}.'  # (1)!
 
 
 @cart_toolset.tool
