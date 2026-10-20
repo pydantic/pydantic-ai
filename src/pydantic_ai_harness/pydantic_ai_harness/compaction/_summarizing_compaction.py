@@ -55,7 +55,12 @@ from pydantic_ai_harness.compaction._shared import (
     tool_return_text,
     validate_token_trigger,
 )
-from pydantic_ai_harness.compaction._summary import is_summary_part, without_summaries
+from pydantic_ai_harness.compaction._summary import (
+    is_summary_message,
+    summary_response,
+    summary_text,
+    without_summaries,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import AgentStreamEvent, ModelRequestPart, UserContent
@@ -230,11 +235,11 @@ def _format_messages(
                             'tool_return', tool_return_text(part), name=part.tool_name, max_chars=tool_return_max_chars
                         )
                     )
-        else:
+        elif not (skip_previous_summary and is_summary_message(msg)):
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     elements.append(_message_element('assistant', part.content))
-                elif is_summary_part(part) and part.content and not skip_previous_summary:
+                elif isinstance(part, CompactionPart) and part.provider_name is None and part.content:
                     elements.append(_message_element('summary', part.content))
                 elif isinstance(part, ToolCallPart):
                     elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
@@ -326,15 +331,14 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
-    A summary is a `CompactionPart` that no provider produced; the last one in the history is the
-    newest. Failing that, a history saved by an earlier release holds its summary as a
+    A summary is a response marked as this capability's own (see `summary_response`); the last one in
+    the history is the newest. A `CompactionPart` an application wrote itself is not one. Failing that, a history saved by an earlier release holds its summary as a
     `SystemPromptPart` opening with `_SUMMARY_PREFIX`, and each pass put its own ahead of the older
     ones, so there the first one is the newest.
     """
     for msg in reversed(messages):
-        for part in reversed(msg.parts):
-            if is_summary_part(part) and part.content:
-                return _without_bridge_prefix(part.content)
+        if is_summary_message(msg) and (text := summary_text(msg)):
+            return _without_bridge_prefix(text)
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
@@ -393,7 +397,7 @@ def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessag
     if any(message is retained for retained in kept):
         return True
     if isinstance(message, ModelResponse):
-        return all(is_summary_part(part) for part in message.parts)
+        return is_summary_message(message)
     return all(isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts)
 
 
@@ -665,7 +669,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
         # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
         # turns kept by `keep_user_messages` follow it, as they always did.
-        summary_message = ModelResponse(parts=[CompactionPart(content=summary)])
+        summary_message = summary_response(summary)
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
         if previous_summary is not None:

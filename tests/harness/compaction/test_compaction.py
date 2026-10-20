@@ -98,6 +98,7 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
     _format_messages,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai_harness.compaction._summary import summary_response
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from tests.conftest import try_import
 from tests.harness.conftest import agent_run_names
@@ -1186,10 +1187,14 @@ class TestFormatMessages:
         assert text == '<message role="user">\nhi\n</message>\n<message role="assistant">\nhello\n</message>'
 
     def test_previous_summary(self):
-        msgs: list[ModelMessage] = [ModelResponse(parts=[CompactionPart(content='earlier work')])]
+        msgs: list[ModelMessage] = [summary_response('earlier work')]
         assert _format_messages(msgs) == '<message role="summary">\nearlier work\n</message>'
         # Incremental mode passes the summary as the anchor instead.
         assert _format_messages(msgs, skip_previous_summary=True) == ''
+
+    def test_an_app_authored_compaction_part_is_summarized_like_any_content(self):
+        msgs: list[ModelMessage] = [ModelResponse(parts=[CompactionPart(content='app summary')])]
+        assert _format_messages(msgs, skip_previous_summary=True) == '<message role="summary">\napp summary\n</message>'
 
     def test_system_prompt(self):
         msgs: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='be helpful')])]
@@ -4858,12 +4863,22 @@ recent
 
     def test_the_newest_of_several_summaries_is_the_anchor(self):
         msgs: list[ModelMessage] = [
-            ModelResponse(parts=[CompactionPart(content='OLDER')]),
+            summary_response('OLDER'),
             _user('a'),
-            ModelResponse(parts=[CompactionPart(content='NEWER')]),
+            summary_response('NEWER'),
             _user('b'),
         ]
         assert _extract_previous_summary(msgs) == 'NEWER'
+
+    def test_an_app_authored_compaction_part_is_not_the_anchor(self):
+        msgs: list[ModelMessage] = [
+            summary_response('OURS'),
+            _user('a'),
+            ModelResponse(parts=[CompactionPart(content='APP')]),
+            _user('b'),
+        ]
+        assert _extract_previous_summary(msgs) == 'OURS'
+        assert _extract_previous_summary(msgs[2:]) is None
 
     async def test_an_earlier_summary_left_in_the_tail_is_superseded(self):
         """When the cutoff keeps an earlier summary, the new one anchors on it and replaces it."""
@@ -4873,7 +4888,7 @@ recent
         )
         messages: list[ModelMessage] = [
             ModelRequest(parts=[SystemPromptPart(content='Be terse.')]),
-            ModelResponse(parts=[CompactionPart(content='OLD')]),
+            summary_response('OLD'),
             _user('a'),
             _assistant('b'),
             _user('c'),
@@ -4890,6 +4905,21 @@ recent
         ]
         assert summaries == ['NEW']
 
+    async def test_an_app_authored_compaction_part_in_the_tail_is_kept(self):
+        """Only the summaries this capability wrote are superseded; an application's own stays."""
+        comp = SummarizingCompaction(model=_recording_summarizer([], output='NEW'), max_messages=3, keep_messages=4)
+        app_summary = ModelResponse(parts=[CompactionPart(content='APP')])
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart(content='Be terse.')]),
+            app_summary,
+            _user('a'),
+            _assistant('b'),
+            _user('c'),
+        ]
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        assert app_summary in result
+
     async def test_without_incremental_an_earlier_summary_in_the_tail_is_kept(self):
         """The new summary never saw the earlier one, so dropping it would lose the history it stands for."""
         comp = SummarizingCompaction(
@@ -4897,7 +4927,7 @@ recent
         )
         messages: list[ModelMessage] = [
             ModelRequest(parts=[SystemPromptPart(content='Be terse.')]),
-            ModelResponse(parts=[CompactionPart(content='OLD')]),
+            summary_response('OLD'),
             _user('a'),
             _assistant('b'),
             _user('c'),

@@ -479,7 +479,9 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
-                    pass
+                    # A summary no provider produced is sent as text; a provider's own is opaque state.
+                    if part.provider_name is None and part.content:
+                        response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)
                 else:

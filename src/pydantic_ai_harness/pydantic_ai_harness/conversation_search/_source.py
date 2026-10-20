@@ -139,8 +139,8 @@ def _overlap_length(history: list[str], snapshot: list[str]) -> int:
 def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
     """*messages* without compaction summary artifacts, which are never indexed.
 
-    A summary is a `CompactionPart` no provider produced: only that part is removed, so the rest of a
-    response holding one is still searched. In a history saved before `SummarizingCompaction` wrote
+    A summary is the response `SummarizingCompaction` marks as its own; a `CompactionPart` an
+    application wrote itself stays searchable. In a history saved before `SummarizingCompaction` wrote
     one, the summary is a request carrying its prefixed system prompt, which is removed whole.
     """
     return [
