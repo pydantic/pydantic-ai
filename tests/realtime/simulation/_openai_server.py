@@ -1,4 +1,4 @@
-"""A simulated OpenAI Realtime server (also serving the Azure OpenAI and xAI dialects of the protocol).
+"""A simulated OpenAI Realtime server (also serving the Azure OpenAI, xAI, and ElevenLabs dialects of the protocol).
 
 It is a small model of the provider's server, not a script: it keeps the conversation, at most one
 active response, the input audio buffer, and server-VAD state, and it reacts to client frames the way
@@ -6,7 +6,8 @@ the recorded cassettes and the live stress runs show the real API does. The beha
 the session, each observed live:
 
 - one response at a time: a `response.create` while one is active is refused with
-  `conversation_already_has_active_response`, echoing the frame's `event_id`;
+  `conversation_already_has_active_response`, echoing the frame's `event_id`, once the active one is done (xAI
+  cancels a response it started on its own for it instead);
 - function calls stream before the response's `response.done`, which carries the usage;
 - a response the client cancels can keep streaming (stragglers) until its cancelled `response.done`;
 - server VAD cancels the active response when the user starts speaking (`interrupt_response`), and
@@ -38,7 +39,10 @@ _BYTES_PER_MS = 48
 
 _EVENT_ID = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 
-Dialect = Literal['openai', 'azure', 'xai']
+Dialect = Literal['openai', 'azure', 'xai', 'elevenlabs']
+# `elevenlabs` serves what `openai` does, except for the divergences its recordings show, gated on
+# `self.dialect == 'elevenlabs'` as the xAI ones are: `conversation.created` after `session.created`, input
+# transcription that is always on, and no usage.
 
 _CONTENT_FRAME_PREFIXES = (
     'response.output_audio',
@@ -116,6 +120,10 @@ class ServerSession:
     pending_vad_responses: list[str] = field(default_factory=list[str])
     """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
     for a response at every turn's end; no recording shows what it does with several behind one reply)."""
+    refused_behind_active: list[tuple[dict[str, Any], list[str]]] = field(
+        default_factory=list[tuple[dict[str, Any], list[str]]]
+    )
+    """Refusals of a `response.create` that arrived while a response was active, sent once that one is done."""
     unanswered_tool_outputs: list[str] = field(default_factory=list[str])
     item_audio_ms: dict[str, int] = field(default_factory=dict[str, int])
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -204,7 +212,7 @@ class OpenAIServer:
             },
             immediately=True,
         )
-        if self.dialect == 'xai':
+        if self.dialect in ('xai', 'elevenlabs'):
             socket.emit(
                 {
                     'type': 'conversation.created',
@@ -334,7 +342,8 @@ class OpenAIServer:
         session.turn_detection = (
             config['turn_detection'] if 'turn_detection' in config else audio_input.get('turn_detection')
         )
-        session.transcription = audio_input.get('transcription') is not None
+        # ElevenLabs always transcribes: its `transcription` only sets the language.
+        session.transcription = self.dialect == 'elevenlabs' or audio_input.get('transcription') is not None
         session.socket.emit(
             {'type': 'session.updated', 'event_id': 'evt_updated', 'session': {**config, 'model': self.model}},
             immediately=True,
@@ -511,16 +520,26 @@ class OpenAIServer:
                 session, _error('server_refused', 'The server refused the response request.', event_id), requested
             )
             return
+        # A race, as below: the session defers requests it knows a response is under way for.
+        if (
+            session.active is not None
+            and self.dialect == 'xai'
+            and session.turn_detection is not None
+            and session.active.truth.trigger == 'vad'
+        ):  # pragma: lax no cover
+            # Seen live: xAI cancels a response server VAD started for ours.
+            self._finish_active(session, 'cancelled', reason='turn_detected')
         if session.active is not None:  # pragma: lax no cover (a race: the session defers requests it knows about)
-            self._refuse(
-                session,
-                _error(
-                    'conversation_already_has_active_response',
-                    f'Conversation already has an active response in progress: {session.active.truth.key}.',
-                    event_id,
-                ),
-                requested,
+            # Seen live: OpenAI refuses it, but only says so after the active response is done.
+            refusal = _error(
+                'conversation_already_has_active_response',
+                f'Conversation already has an active response in progress: {session.active.truth.key}.',
+                event_id,
             )
+            if self.dialect == 'xai':
+                self._refuse(session, refusal, requested)
+            else:
+                session.refused_behind_active.append((refusal, requested))
             return
         answers = requested
         session.unanswered_tool_outputs.clear()
@@ -700,8 +719,8 @@ class OpenAIServer:
                 'status_details': status_details,
                 'output': active.output,
                 'metadata': active.metadata,
-                # xAI reports the usage on the frame itself, and an empty `response.usage`.
-                'usage': {} if self.dialect == 'xai' else usage,
+                # xAI reports the usage on the frame itself, and an empty `response.usage`; ElevenLabs reports none.
+                'usage': {} if self.dialect == 'xai' else None if self.dialect == 'elevenlabs' else usage,
             },
         }
         if self.dialect == 'xai':
@@ -723,6 +742,9 @@ class OpenAIServer:
             session.late_done = done
         else:
             self._emit(session, done)
+        for refusal, refused in session.refused_behind_active:
+            self._refuse(session, refusal, refused)
+        session.refused_behind_active.clear()
         if session.pending_vad_responses:
             pending = session.pending_vad_responses.pop(0)
             self._start_response(session, trigger='vad', answers=[pending], user_turn=pending)
