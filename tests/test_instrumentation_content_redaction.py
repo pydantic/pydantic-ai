@@ -25,7 +25,16 @@ import pytest
 from opentelemetry.context import Context
 from pydantic import BaseModel, TypeAdapter
 
-from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     MessageJsonCache,
@@ -35,7 +44,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
@@ -259,6 +268,37 @@ def test_cached_message_name_projection_follows_current_mcp_url_ids() -> None:
     assert identity in str(first.attributes['gen_ai.input.messages'])
     assert identity not in str(second.attributes['gen_ai.input.messages'])
     assert not has_stale_message_json(settings, [history], cache)
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_url_derived_mcp_name_is_masked_if_run_fails_before_model_request(include_content: bool) -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
+    assert capability.id is not None
+    tool_name = f'mcp_server:{capability.id}'
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('previous'),
+        ModelResponse(parts=[NativeToolCallPart(tool_name=tool_name, tool_call_id='call-1')]),
+    ]
+
+    async def fail_before_run(_ctx: RunContext[None]) -> None:
+        raise RuntimeError('before model request')
+
+    settings, exporter = redacted_setup(include_content)
+    agent = Agent(
+        TestModel(), capabilities=[capability, Hooks(before_run=fail_before_run), Instrumentation(settings=settings)]
+    )
+    with pytest.raises(RuntimeError, match='before model request'):
+        await agent.run('go', message_history=history)
+
+    agent_span = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'invoke_agent'
+    )
+    assert agent_span.attributes is not None
+    assert 'SENTINEL-path' not in str(agent_span.attributes['pydantic_ai.all_messages'])
+    assert isinstance(history[1].parts[0], NativeToolCallPart)
+    assert history[1].parts[0].tool_name == tool_name
 
 
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')

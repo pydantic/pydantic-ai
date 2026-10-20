@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    mcp_telemetry_url_ids,
     model_response_span_capture,
     open_model_request_span,
     record_exception as _record_exception,
@@ -352,7 +353,11 @@ class Instrumentation(AbstractCapability[Any]):
         mcp_url_ids = (
             frozenset(self._last_model_request_parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
             if self._last_model_request_parameters is not None
-            else frozenset[str]()
+            else frozenset(
+                mcp_telemetry_url_ids(
+                    ctx.capabilities.values(), ctx.tool_manager.toolset if ctx.tool_manager is not None else None
+                )
+            )
         )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(

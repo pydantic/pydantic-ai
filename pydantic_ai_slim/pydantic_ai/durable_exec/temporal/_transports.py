@@ -7,6 +7,7 @@ from pydantic import ConfigDict, with_config
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._instrumentation import mcp_telemetry_url_ids
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
     CapabilityOperationParams,
@@ -27,6 +28,7 @@ from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallPara
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -274,6 +276,11 @@ def restore_telemetry_mcp_url_ids(
             url_ids.update(mcp_telemetry_url_ids([agent.root_capability]))
             for toolset in agent.toolsets:
                 url_ids.update(mcp_telemetry_url_ids([], toolset))
+        # Older payloads did not carry URL provenance. A dynamic capability is not present in
+        # the configured agent tree, but its resolved native tool is present in the request.
+        for tool in parameters.native_tools:
+            if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id:
+                url_ids.add(tool.id)
     parameters._telemetry_mcp_url_ids = url_ids  # pyright: ignore[reportPrivateUsage]
 
 

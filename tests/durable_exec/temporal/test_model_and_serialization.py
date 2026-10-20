@@ -47,6 +47,7 @@ from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
+    DynamicCapability,
     Instrumentation,
     NativeTool,
 )
@@ -78,7 +79,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -1986,6 +1987,36 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
 
     assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
     assert identity not in str(model_request_parameters_attributes(restored))
+
+
+@pytest.mark.parametrize('derived_id', [True, False])
+def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test-SENTINEL-path-token' if derived_id else 'chosen-id'
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: MCP(url, native=True, local=False), id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert parameters._telemetry_mcp_url_ids == ({identity} if derived_id else set())  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if derived_id else identity)
 
 
 async def test_temporal_activity_does_not_manage_registered_models() -> None:
