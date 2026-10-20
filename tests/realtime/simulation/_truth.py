@@ -164,6 +164,8 @@ class GroundTruth:
     """Those whose `input_audio_buffer.cleared` the client read."""
     speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
     """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    speech_reopened: set[str] = field(default_factory=set[str])
+    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
     transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each spoken user turn's completed transcript."""
     models_every_spoken_turn: bool = False
