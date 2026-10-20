@@ -70,7 +70,9 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
         # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
         self.id = self.id or _ID
         if self.client is not None and (self.auth or self.url != LOGFIRE_US_MCP_URL):
-            raise UserError('`client` owns the connection, so it cannot be combined with `auth` or `url`.')
+            raise UserError(
+                '`client` owns the connection, so it cannot be combined with `auth` or a `url` other than the default.'
+            )
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
