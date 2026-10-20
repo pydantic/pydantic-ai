@@ -121,6 +121,8 @@ class ServerSession:
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     ptt_speech: str | None = None
     """xAI push-to-talk: the user turn xAI reported speech for (`speech_started`) in the uncommitted buffer."""
+    items: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint of each item in the conversation, by item id (for `conversation.item.delete`)."""
     answered_everything: bool = False
     """xAI push-to-talk: a reply ended and nothing new arrived since, so xAI drops a `response.create`."""
     uncommitted_answers: list[str] = field(default_factory=list[str])
@@ -166,8 +168,6 @@ class OpenAIServer:
         self._refusals: dict[str, list[str]] = {}
         self._next_error = 1
         self._next_event = 1
-        self.late_terminals: set[str] = set()
-        """Responses whose (cancelled) `response.done` is, or was, held back past the start of the next response."""
         self.late_cancels = 0
         """How many `response.cancel`s arrived with no response left to cancel (it had already finished)."""
         # Client input index (from `event_id`) -> the input's ground-truth key. The connection numbers its
@@ -223,6 +223,7 @@ class OpenAIServer:
             'response.create': self._on_response_create,
             'response.cancel': self._on_response_cancel,
             'conversation.item.truncate': self._on_truncate,
+            'conversation.item.delete': self._on_item_delete,
         }[frame['type']]
         handler(session, frame)
 
@@ -554,16 +555,36 @@ class OpenAIServer:
 
     def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
         """Acknowledge an item joining the conversation, as the real API does for every item, whoever made it."""
+        item_id = item_id or self._new_item()
         if (fingerprint := conversation_fingerprint(item)) is not None:
             session.conversation.add(fingerprint)
+            session.items[item_id] = fingerprint
         self._emit(
             session,
             {
                 'type': 'conversation.item.added',
                 'previous_item_id': None,
-                'item': {**item, 'id': item_id or self._new_item(), 'object': 'realtime.item', 'status': 'completed'},
+                'item': {**item, 'id': item_id, 'object': 'realtime.item', 'status': 'completed'},
             },
         )
+
+    def _on_item_delete(self, session: ServerSession, frame: dict[str, Any]) -> None:
+        """Delete an item from the conversation, as the real API does (verified live), or refuse an unknown one."""
+        item_id = frame['item_id']
+        if (fingerprint := session.items.pop(item_id, None)) is None:  # pragma: lax no cover (only a stale id)
+            self._emit(
+                session, _error('invalid_value', f'Item with item_id not found: {item_id}', frame.get('event_id'))
+            )
+            return
+        session.conversation.discard(fingerprint)
+        self.truth.pruned.append(fingerprint)
+        kind, _, call_id = fingerprint.partition(':')
+        if (
+            kind in ('function_call', 'function_call_output') and call_id in session.unanswered_tool_outputs
+        ):  # pragma: lax no cover (only a premature deletion)
+            # The model hadn't answered the result yet: it would answer without it.
+            self.truth.pruned_unanswered.append(call_id)
+        self._emit(session, {'type': 'conversation.item.deleted', 'item_id': item_id})
 
     def _audio_item_added(self, session: ServerSession, item_id: str) -> None:
         self._item_added(
@@ -685,7 +706,6 @@ class OpenAIServer:
         if late:
             assert session.late_done is None, 'one late `response.done` at a time'
             session.late_done = done
-            self.late_terminals.add(truth.key)
         else:
             self._emit(session, done)
         if session.pending_vad_responses:
@@ -800,7 +820,8 @@ class OpenAIServer:
             'arguments': '{}',
         }
         active.output.append(item)
-        session.conversation.add(f'function_call:{call_id}')
+        # The real API adds each output item to the conversation as it starts.
+        self._item_added(session, item, item_id)
         self._emit(
             session,
             {
@@ -834,8 +855,6 @@ class OpenAIServer:
         session = self.session
         assert session is not None and session.late_done is not None
         done, session.late_done = session.late_done, None
-        if done['response']['id'] == self.truth.responses_by_number[self.truth.next_response_number - 1].key:
-            self.late_terminals.discard(done['response']['id'])  # No other response started meanwhile.
         self._emit(session, done)
 
     def repeat_done(self) -> None:
