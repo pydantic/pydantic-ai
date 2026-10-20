@@ -153,7 +153,10 @@ class TestLogfireMCP:
         Agent(TestModel(), deps_type=type(None), capabilities=[capability])
 
     def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
-        with pytest.raises(UserError, match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities"):
+        with pytest.raises(
+            UserError,
+            match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities that disagree on 'auth'",
+        ):
             Agent(TestModel(), capabilities=[LogfireMCP(id=None, auth='a'), LogfireMCP(id=None, auth='b')])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
