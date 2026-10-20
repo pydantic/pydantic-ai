@@ -18,7 +18,7 @@ from .._judge import (
     JudgeAnswer as _JudgeAnswer,
     SerializableToolSelector,
     claim_offset_limits,
-    claim_request,
+    claimed_request,
     reported_confidence,
     tool_call_prompt,
 )
@@ -122,7 +122,8 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     """Token budget for the conversation, when `include_conversation` is set.
 
     The rendered transcript is clamped to its most recent tokens (estimated at ~4 characters
-    per token), so the judge sees the latest turns and per-judgement cost stays bounded.
+    per token), so the judge sees the latest turns. The call's own arguments are always sent in
+    full.
     """
 
     on_uncertain: Literal['block', 'allow', 'ask'] = 'block'
@@ -269,11 +270,8 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         prompt = self._prompt(ctx, call, args)
         with ctx.tracer.start_as_current_span('judge tool call', attributes=attributes) as span:
             try:
-                claim_request(ctx)
-                try:
+                with claimed_request(ctx):
                     answer, confidence = await self._ask(ctx, prompt)
-                finally:
-                    ctx.usage.requests -= 1
             except Exception as error:
                 verdict = self._verdict(ctx, call, answer=None, confidence=None)
                 if span.is_recording():
