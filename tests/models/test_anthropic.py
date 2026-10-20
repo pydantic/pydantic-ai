@@ -13979,6 +13979,62 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 
 
 @pytest.mark.vcr()
+async def test_anthropic_load_capability_from_code_with_thinking(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """With thinking enabled, Anthropic accepts the assistant turn a load from code records, which has no thinking block.
+
+    The model then calls the tool the load revealed.
+    """
+    refunds = Capability[None](id='refunds', description='Refund tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def refund_status(order_id: str) -> str:
+        """Look up the refund status for an order."""
+        return f'Order {order_id}: refund issued on 2026-05-01.'
+
+    agent = Agent(
+        anthropic_model('claude-haiku-4-5', capture=True),
+        deps_type=type(None),
+        model_settings={'thinking': True},
+        capabilities=[refunds],
+        instructions=(
+            'First call open_ticket on its own. Once it returns, call refund_status for the order. '
+            'Never call load_capability.'
+        ),
+    )
+
+    @agent.tool
+    async def open_ticket(ctx: RunContext[None]) -> str:
+        """Open the customer's support ticket for order ABC-123."""
+        await ctx.load_capability('refunds')
+        return 'Ticket for order ABC-123 opened.'
+
+    result = await agent.run('Where is my refund for order ABC-123?')
+
+    # The load's `load_capability` turn has no thinking block; the last pair is the `search_tools`
+    # exchange this adapter renders to reveal `refund_status`.
+    assert message_shape(request_capture.body('/v1/messages', index=1)) == snapshot(
+        [
+            ('user', ['text']),
+            ('assistant', ['thinking', 'tool_use']),
+            ('user', ['tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+        ]
+    )
+    assert [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == snapshot(['open_ticket', 'load_capability', 'refund_status'])
+
+
+@pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_native_tools(allow_model_requests: None, anthropic_api_key: str):
     """`count_tokens` succeeds against the live API when a native/server tool is configured.
 
