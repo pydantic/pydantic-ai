@@ -159,31 +159,38 @@ _HAND_BUILT_TAG_ALLOWLIST = {
 }
 
 
+def _hand_built_framing_tags_in(relative: str, source: str) -> list[tuple[str, int, str]]:
+    tree = ast.parse(source)
+    # Docstrings and bare string statements document code; they never reach a model.
+    prose = {
+        id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    return [
+        (relative, node.lineno, node.value[:80])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in prose
+        and _HAND_BUILT_TAG.search(node.value)
+        and not any(relative == file and node.value.startswith(start) for file, start in _HAND_BUILT_TAG_ALLOWLIST)
+    ]
+
+
 def _hand_built_framing_tags() -> list[tuple[str, int, str]]:
-    found: list[tuple[str, int, str]] = []
-    for path in sorted(_SOURCE_ROOT.rglob('*.py')):
-        if path.name == '_framing.py':
-            continue
-        tree = ast.parse(path.read_text())
-        # Docstrings and bare string statements document code; they never reach a model.
-        prose = {
-            id(node.value)
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-        }
-        relative = path.relative_to(_SOURCE_ROOT).as_posix()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, str)
-                and id(node) not in prose
-                and _HAND_BUILT_TAG.search(node.value)
-                and not any(
-                    relative == file and node.value.startswith(start) for file, start in _HAND_BUILT_TAG_ALLOWLIST
-                )
-            ):
-                found.append((relative, node.lineno, node.value[:80]))
-    return found
+    return [
+        found
+        for path in sorted(_SOURCE_ROOT.rglob('*.py'))
+        if path.name != '_framing.py'
+        for found in _hand_built_framing_tags_in(path.relative_to(_SOURCE_ROOT).as_posix(), path.read_text())
+    ]
+
+
+def test_the_framing_tag_scan_finds_a_hand_built_tag() -> None:
+    source = 'def render(text):\n    """Wrap in `<system>`."""\n    return f\'<system>{text}</system>\'\n'
+    assert _hand_built_framing_tags_in('models/example.py', source) == [
+        ('models/example.py', 3, '<system>'),
+        ('models/example.py', 3, '</system>'),
+    ]
 
 
 def test_model_facing_code_builds_framing_tags_only_through_framing() -> None:
