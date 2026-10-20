@@ -2464,11 +2464,8 @@ def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.Mon
     finally:
         instrumentor.uninstrument()
     assert response.status_code == 200
-    assert [(span.attributes or {}).get('http.status_code') for span in exporter.get_finished_spans()] == [
-        429,
-        429,
-        200,
-    ]
+    span_statuses = [(span.attributes or {}).get('http.status_code') for span in exporter.get_finished_spans()]
+    assert span_statuses == [429, 429, 200]
 
 
 @pytest.fixture
