@@ -49,7 +49,7 @@ from dataclasses import replace
 from typing import Literal
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
+from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 from pydantic_ai_harness.guardrails._tool_return_text import detect_tool_return_content, is_text_tool_return
 
@@ -429,6 +429,7 @@ def for_tool_result_text(
                 )
             return verdict
         if is_text_tool_return(result):
+            # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
             assert isinstance(result.return_value, str)
             verdict = detector(result.return_value)
             if verdict.action not in ('allow', 'replace'):

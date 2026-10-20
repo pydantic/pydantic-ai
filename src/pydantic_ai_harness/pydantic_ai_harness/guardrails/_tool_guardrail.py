@@ -552,7 +552,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: object,
     ) -> GuardrailResult:
-        """Evaluate `result_guard` over what a tool returned or failed with, and act on the verdict.
+        """Evaluate `result_guard` over what a tool returned or failed with, reduced to what the model sees.
 
         Returns `allow`, or `replace` carrying what the model sees instead: the refusal message
         for `block`, the substituted value for `replace`. `retry` and `approve` raise. A failed
