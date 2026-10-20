@@ -18,14 +18,16 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Snapshot,
     TurnEnded,
     TurnStarted,
+    image_id,
 )
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.plugins.process_plugins import LiveRuntime
+from pydantic_clai2.runtime.image_codec import decode_images
 from pydantic_clai2.runtime.session_runtime import create_shell
 from tests.clai2.test_live_prompt import editor
-from tests.clai2.test_web import HEADER, TOKEN, WIRE, MakeWeb, make_web, receive_until
+from tests.clai2.test_web import HEADER, TOKEN, WIRE, MakeWeb, encoded, make_web, png, receive_until
 
 __all__ = ['make_web']
 
@@ -148,6 +150,34 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
             'hello'
         ]
         web_.portal.call(started.wait)
+        web_.post('/api/input', {'text': '/exit'})
+        assert running.result(timeout=10) == 'exit'
+
+
+def test_steering_a_queued_prompt_with_an_image_shows_it(make_web: MakeWeb) -> None:
+    """A prompt queued with an image steers with it, and the transcript shows its thumbnail once the model reads it."""
+    agent, started, release = waiting_agent()
+    web_ = make_web(agent)
+    [red] = decode_images([encoded(png('red'))])
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'go'})
+        web_.portal.call(started.wait)
+        web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
+        _, changed = receive_until(socket, QueueChanged)
+        while not changed.queue or changed.queue[0].text == 'go':
+            _, changed = receive_until(socket, QueueChanged)
+        [queued] = changed.queue
+        # Queued as the terminal's prompt holds it, its image by marker.
+        assert queued.text.startswith('look [image:')
+        assert web_.post(f'/api/queue/{queued.id}/steer').json() == {'steered': True}
+        web_.portal.call(release.set)
+        messages, _ = receive_until(socket, TurnEnded)
+        [steered] = [
+            message.item for message in messages if isinstance(message, ItemAdded) and message.item.kind == 'user'
+        ]
+        assert (steered.text, steered.images) == ('look', [image_id(red)])
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
 

@@ -699,7 +699,9 @@ class Session(Generic[DepsT, OutputT]):
         """Deliver input to the active run, or decline when no run is accepting input."""
         if not self._accepting_steering:
             return False
-        request = ModelRequest(parts=[UserPromptPart([text, *images] if images else text)], metadata={STEERING: True})
+        # A blank text beside images is left out: some providers reject an empty text block.
+        content: Sequence[UserContent] = [*([text] if text or not images else []), *images]
+        request = ModelRequest(parts=[UserPromptPart(content if images else text)], metadata={STEERING: True})
         if self._run_context is None:
             self._pending_steering.append(request)
         else:
@@ -754,9 +756,7 @@ class Session(Generic[DepsT, OutputT]):
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
-        content: str | Sequence[UserContent] | None = (
-            [*([text] if text is not None else []), *images] if images else text
-        )
+        content: str | Sequence[UserContent] | None = [*([text] if text else []), *images] if images else text
         if content is not None and (notes := self._take_monty_notes()):
             # Monty holds what the user's cells did; tell the model before this prompt.
             content = [*notes, *([content] if isinstance(content, str) else content)]

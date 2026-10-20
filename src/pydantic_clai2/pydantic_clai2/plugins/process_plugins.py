@@ -22,6 +22,7 @@ from pydantic import JsonValue
 from rich.console import Console
 from termflow.tui.completion import Completion
 
+from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
@@ -233,9 +234,9 @@ class LiveRuntime:
         """Tell the listeners of the process's live sessions that this one's state may have changed."""
         self._changed()
 
-    def send_input(self, text: str, /) -> None:
-        """Enter `text` at the session's prompt."""
-        self._host.send_input(text)
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
+        """Enter `text` at the session's prompt, with `images` attached."""
+        self._host.send_input(text, images=images)
 
     def interrupt(self) -> bool:
         """Cancel the session's running turn or command."""

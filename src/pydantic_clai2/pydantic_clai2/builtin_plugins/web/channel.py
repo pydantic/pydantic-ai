@@ -7,13 +7,13 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.messages import EnqueuedMessagesEvent, ModelMessage, UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, EnqueuedMessagesEvent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     EventTranslator,
-    Item,
+    ImageIds,
     ItemAdded,
     ItemLog,
     ItemMessage,
@@ -30,13 +30,15 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TitleChanged,
     TurnEnded,
     TurnStarted,
-    delivered_prompts,
+    delivered_steering,
     dump,
+    history_images,
     history_items,
     queued_item,
     usage_info,
     usage_report,
-    user_text,
+    user_images,
+    user_item,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
@@ -83,6 +85,9 @@ class SessionChannel:
         self._queue_sent: list[QueuedItem] = []
         """The queued input browsers were last sent, so only a change sends it again."""
         self._steered = 0
+        self._prompt_images: list[BinaryContent] = []
+        """The last prompt's images, which its run may not have added to the conversation yet."""
+        self._image_ids = ImageIds()
 
     @property
     def id(self) -> str:
@@ -100,7 +105,8 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages)
+        items = history_items(conversation.messages, image_ids=self._image_ids)
+        self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
         service = self.service
@@ -122,6 +128,10 @@ class SessionChannel:
             version=service.version,
             update=service.update,
         )
+
+    def image(self, image_id: str) -> BinaryContent | None:
+        """The image the transcript lists as `image_id`: the last prompt's, or one of the conversation's prompts."""
+        return self._image_ids.find(image_id)
 
     def status(self) -> StatusInfo:
         status = self.session.status
@@ -172,9 +182,11 @@ class SessionChannel:
             self._usage = usage
         if isinstance(event, EnqueuedMessagesEvent):
             # Steering, from here or the terminal, shows once the run's model receives it.
-            for text in delivered_prompts(event):
+            for part in delivered_steering(event):
                 self._steered += 1
-                self._show(ItemAdded(item=Item(id=f'steer{self._steered}', kind='user', text=text)))
+                # The run's history may not hold these images yet; a snapshot keeps them, as the prompt's.
+                self._prompt_images += user_images(part)
+                self._show(ItemAdded(item=user_item(part, id=f'steer{self._steered}', image_ids=self._image_ids)))
         for message in self._translator.translate(event):
             if by_user:
                 # Only the cell itself: the scripted model's closing text is not the user's.
@@ -197,7 +209,9 @@ class SessionChannel:
         self._turn.clear()
         item = None
         if prompt is not None:
-            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
+            part = UserPromptPart(prompt)
+            self._prompt_images = user_images(part)
+            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids)
         self.publish(TurnStarted(item=item))
         self.publish_status()
 
@@ -225,6 +239,7 @@ class SessionChannel:
         hub.rename(self.shown, self.id)
         self.shown = self.id
         self.workers.reset()
+        self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
         hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
         return True
@@ -239,16 +254,16 @@ class SessionChannel:
 
     # What the browser does.
 
-    def send(self, text: str) -> str | None:
+    def send(self, text: str, *, images: Sequence[BinaryContent] = ()) -> str | None:
         """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
 
         That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
+        nothing is entered. Otherwise the result is `None`. `images` go with a prompt, which may then be blank.
         """
-        text = _entered(text)
-        if (menu := self._menu(text)) is not None:
+        text = _entered(text, images=images)
+        if not images and (menu := self._menu(text)) is not None:
             return menu
-        self.session.send_input(text)
+        self.session.send_input(text, images=images)
         return None
 
     def _menu(self, text: str) -> str | None:
@@ -304,10 +319,13 @@ class SessionChannel:
         self.service.answerer.reply(request_id, answers, session=self.id)
 
 
-def _entered(text: str) -> str:
-    """`text` trimmed, as the prompt takes it; blank text and shell lines, which run only in the terminal, are refused."""
+def _entered(text: str, *, images: Sequence[BinaryContent] = ()) -> str:
+    """`text` trimmed, as the prompt takes it; shell lines, which run only in the terminal, are refused.
+
+    Blank text is refused too, unless `images` go with it.
+    """
     text = text.strip()
-    if not text:
+    if not text and not images:
         raise ValueError('Type a prompt or a /command.')
     if text.startswith('!'):
         raise ValueError('Shell lines (!) run only in the terminal.')

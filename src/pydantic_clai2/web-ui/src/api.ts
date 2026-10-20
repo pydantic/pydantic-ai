@@ -71,6 +71,34 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
 }
 
+// Fetched images as `data:` URLs, by ID. An ID is the digest of the bytes, so every session shares them.
+const images = new Map<string, Promise<string>>()
+
+/** An image of a prompt as a `data:` URL, which the page's policy allows where it allows no `blob:` one. */
+function image(base: string, id: string): Promise<string> {
+  let found = images.get(id)
+  if (!found) {
+    found = fetch(`${base}/images/${encodeURIComponent(id)}`, { headers: { 'x-clai-token': token } })
+      .then(async (response) => {
+        if (!response.ok) throw new ApiError(response.statusText, response.status)
+        const blob = await response.blob()
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = () => reject(reader.error ?? new Error('The image could not be read.'))
+          reader.readAsDataURL(blob)
+        })
+      })
+      // A failure is not kept, so another session, or a later try, can still find the image.
+      .catch((error: unknown) => {
+        images.delete(id)
+        throw error
+      })
+    images.set(id, found)
+  }
+  return found
+}
+
 /** A declared settings menu: a plugin's, or the one a command such as `/set` opens. */
 export interface MenuTarget {
   kind: 'plugins' | 'commands'
@@ -89,7 +117,9 @@ const menuQuery = (target: MenuTarget) =>
 export function sessionApi(id: string | null) {
   const base = id === null ? '/api' : `/api/sessions/${encodeURIComponent(id)}`
   return {
-    send: (text: string) => call<Entered>('POST', `${base}/input`, { text }),
+    /** Enter a prompt or `/command`; `images`, base64-encoded, go with a prompt. */
+    send: (text: string, images: readonly string[] = []) =>
+      call<Entered>('POST', `${base}/input`, images.length ? { text, images } : { text }),
     /** Send a prompt to the running turn now, as Alt+Enter at the prompt does; one that cannot steer is entered instead. */
     steer: (text: string) => call<Steering>('POST', `${base}/steer`, { text }),
     /** Rewrite a queued input in place; a 404 means it already ran or was removed. */
@@ -98,6 +128,8 @@ export function sessionApi(id: string | null) {
     /** Send a queued prompt to the running turn now; `steered: false` leaves it queued. */
     steerQueued: (id: string) => call<{ steered: boolean }>('POST', `${base}/queue/${encodeURIComponent(id)}/steer`),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
+    /** One of the images a prompt in this session's transcript lists, as a `data:` URL; fetched once per page. */
+    image: (id: string) => image(base, id),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),
     answer: (request: string, answers: AnswerBody[] | null) =>

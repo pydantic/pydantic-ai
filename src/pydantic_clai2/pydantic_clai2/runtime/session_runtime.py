@@ -61,6 +61,7 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
+from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -90,7 +91,7 @@ from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
-from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued
+from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
@@ -436,7 +437,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
-        send_input=lambda text: shell.send_input(text),
+        send_input=lambda text, images: shell.send_input(text, images=images),
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
@@ -880,16 +881,31 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'
 
-    def send_input(self, text: str) -> None:
+    def send_input(self, text: str, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
         editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
         used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+
+        `images` are attached as pasted ones are, by markers in the text that the turn resolves.
         """
         if self.prompt is not None and self.editor is None:
             raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
+        if images:
+            if input_kind(text) != 'prompt':
+                raise ValueError('Images go with a prompt, not with a /command or ! line.')
+            if sum(len(image.data) for image in images) > image_codec.MAX_PENDING_BYTES:
+                raise ValueError('These images exceed the 32 MiB limit; send fewer at a time.')
+            try:
+                markers = self.images.attach(images)
+            except ValueError as exc:
+                # The sender may not see the images waiting here, such as a terminal draft's.
+                raise ValueError(
+                    "Images waiting in this session's prompt leave no room for these (32 MiB limit)."
+                ) from exc
+            text = f'{text} {markers}'.strip()
         if not text or self.run_now(text):
             return
         if self.editor is not None:
@@ -967,12 +983,27 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         The terminal hands its console output over itself.
         """
         self.terminal = terminal
-        self.images = terminal.images if terminal is not None else ImageInput()
+        previous, self.images = self.images, terminal.images if terminal is not None else ImageInput()
+        # Queued prompts, and the one rejected for retry, keep their images as the terminal moves.
+        self.images.pending.update(previous.pending)
+        if previous.retry_text:
+            # The terminal's goes with the session leaving it, and the one shown brings its own.
+            self.images.retry_text, previous.retry_text = previous.retry_text, ''
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id
         self.bind(terminal.editor if terminal is not None else None)
+        # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
+        self._retain_images()
         self.live_session.changed()
+
+    def _retain_images(self) -> None:
+        """Let go of images that neither the draft nor a queued prompt of this session uses."""
+        self.images.retain(
+            [self.editor.buffer.text, *self.editor.queued_messages]
+            if self.editor is not None
+            else [entry.text for entry in self._inbox.entries]
+        )
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
@@ -1124,9 +1155,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
-            )
+            self._retain_images()
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace
@@ -1183,8 +1212,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
             return False
         try:
+            # Before waiting for the terminal: once the prompt left the queue, only this holds its images.
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return False
+        try:
             async with self.forks.busy():
-                return await self._turn(text)
+                return await self._turn(text, images)
         finally:
             if self.editor is not None:
                 await self.editor.output.drain()
@@ -1241,14 +1276,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
         return completed
 
-    async def _turn(self, text: str | None) -> bool:
+    async def _turn(self, text: str | None, images: Sequence[BinaryContent] = ()) -> bool:
+        """Run a turn on `text` and its resolved `images`, or an automated one, as a task's report, on `None`."""
         automated = text is None
-        try:
-            text, images = self.images.resolve(text) if text is not None else ('', [])
-        except ValueError as exc:
-            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-            return False
-        start = TurnStart(text=text)
+        start = TurnStart(text=text or '')
         ended: TurnEnd | None = None
 
         async def run_turn() -> None:

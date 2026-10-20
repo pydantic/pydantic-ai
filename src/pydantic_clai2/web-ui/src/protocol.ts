@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
+  images: string[]
 }
 
 export interface Option {
