@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 else:
     _UNSET = _Unset()
 
+
 _REMINDER_ORIGIN = 'pydantic-ai-harness.system_reminders.reminder.v1'
 """The `origin` in the `metadata` of the parts a `SystemReminders` firing enqueues.
 
@@ -593,7 +594,7 @@ def _quote(tag: str, body: str, **attrs: str) -> str:
     quoted text must not close either. Attribute values are HTML-escaped.
     """
     # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping.
-    closing = re.compile(rf'<(?=\s*/\s*(?:{re.escape(tag)}|system)(?=[\s/>]))', re.IGNORECASE)
+    closing = re.compile(rf'<(?=\s*/\s*(?:{re.escape(tag)}|system)(?=[\s/>]|$))', re.IGNORECASE)
     escaped = closing.sub('&lt;', body)
     attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
     return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'
