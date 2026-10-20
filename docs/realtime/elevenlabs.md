@@ -366,7 +366,7 @@ from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
 
 model = ElevenLabsRealtimeModel(
-    'eleven_realtime_v1_mini',
+    '{{ elevenlabs:realtime.name }}',
     provider=ElevenLabsProvider(base_url='https://api.eu.residency.elevenlabs.io'),
 )
 agent = Agent(instructions='You are a friendly voice assistant.')
@@ -374,7 +374,7 @@ agent = Agent(instructions='You are a friendly voice assistant.')
 
 ### Model names
 
-Use the `elevenlabs:` prefix with a model name, e.g. `agent.realtime('elevenlabs:eleven_realtime_v1_mini')`:
+Use the `elevenlabs:` prefix with a model name, e.g. `agent.realtime('{{ elevenlabs:realtime }}')`:
 
 | Model | Optimized for |
 | --- | --- |
@@ -400,7 +400,7 @@ settings = ElevenLabsRealtimeModelSettings(
     elevenlabs_max_duration_seconds=1800,
     turn_detection={'sensitivity': 'high'},
 )
-model = ElevenLabsRealtimeModel('eleven_realtime_v1_mini', settings=settings)
+model = ElevenLabsRealtimeModel('{{ elevenlabs:realtime.name }}', settings=settings)
 ```
 
 - `elevenlabs_voice` takes an ElevenLabs voice ID (e.g. `'JBFqnCBsd6RMkjVDRZzb'`) or a default voice's name;
@@ -471,13 +471,12 @@ Eleven Realtime is not currently available through the [Pydantic AI Gateway](../
 ElevenLabs closes a session once it reaches its maximum duration (600 seconds unless
 `elevenlabs_max_duration_seconds` says otherwise). With a [reconnect policy](lifecycle.md#reconnecting), the
 session reconnects, and the new session gets the [replayed local history](lifecycle.md#state-restoration), so the
-call carries on.
+call carries on. Without a reconnect policy, or once its reconnects are used up, the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] with ElevenLabs' close reason.
 
 ElevenLabs also closes a session that hasn't received anything from the client for 60 seconds, which happens
 whenever no microphone audio is streaming, as in a text-only or push-to-talk session. To keep such a session open,
-the connection sends an empty audio append (which adds no audio) after 45 seconds without sending anything. Without one, or once the
-policy's reconnects are used up, the session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] with
-ElevenLabs' close reason.
+the connection sends an empty audio append (which adds no audio) after 45 seconds without sending anything.
 
 ### Provider-specific quirks {#eleven-realtime-quirks}
 
