@@ -199,6 +199,8 @@ The bundled stores implement `SearchableMemoryStore`. For a custom store that im
 
 The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
 
+Scoring runs on the event loop and yields after each file, so a scan near the limits slows that search without stalling other runs in the process.
+
 Before backend dispatch, queries are limited to 1,000 characters and 32 unique whitespace-separated terms. Repeated case-insensitive terms are collapsed so they cannot inflate scoring or scan work.
 
 ## Configuration

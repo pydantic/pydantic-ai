@@ -14,6 +14,7 @@ from types import TracebackType
 from typing import Protocol
 
 import anyio
+import anyio.lowlevel
 import pytest
 
 from pydantic_ai.capabilities import LocalWorkspace
@@ -121,6 +122,51 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
         'acme/main/main/notes.md',
         'acme/main/notes.md',
     ]
+
+
+async def test_search_yields_to_the_event_loop_between_files() -> None:
+    store = InMemoryStore()
+    for index in range(20):
+        await store.write(f'main/topic-{index:02}.md', 'tea', expected_version=None)
+    ticks = 0
+    searched = anyio.Event()
+
+    async def tick() -> None:
+        nonlocal ticks
+        while not searched.is_set():
+            ticks += 1
+            await anyio.lowlevel.checkpoint()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(tick)
+        await anyio.lowlevel.checkpoint()
+        before = ticks
+        result = await store.search('main/', 'tea', limit=20, max_files=20, max_chars=1_000, max_file_chars=100)
+        during = ticks - before
+        searched.set()
+        assert len(result.matches) == 20
+        # Scoring yields once per file, so other tasks keep running during a long scan.
+        assert during >= 20
+
+
+async def test_sqlite_store_prefix_queries_seek_the_path_index(tmp_path: Path) -> None:
+    connection = sqlite3.connect(tmp_path / 'memory.sqlite3', check_same_thread=False)
+    try:
+        store = SqliteMemoryStore(connection=connection)
+        await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+        await store.list_paths('acme/main/', limit=10)
+        await store.search('acme/main/', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+        connection.set_trace_callback(None)
+
+        queries = [query for query in statements if query.startswith('SELECT') and 'FROM memory_files' in query]
+        assert len(queries) == 2
+        for query in queries:
+            plan = ' '.join(str(row[3]) for row in connection.execute(f'EXPLAIN QUERY PLAN {query}'))
+            assert plan.startswith('SEARCH memory_files USING'), plan
+    finally:
+        connection.close()
 
 
 async def test_in_memory_store_keeps_the_most_recent_receipts() -> None:

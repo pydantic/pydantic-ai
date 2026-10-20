@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol, TypeVar, runtime_checkable
 
 import anyio
+import anyio.lowlevel
 import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
@@ -166,7 +167,7 @@ def _snippet(content: str, query: str, max_chars: int) -> str:
     return snippet
 
 
-def lexical_search(
+async def lexical_search(
     files: Iterable[tuple[str, str]],
     query: str,
     *,
@@ -175,7 +176,11 @@ def lexical_search(
     max_chars: int,
     score_prefix: str = '',
 ) -> MemorySearchResult:
-    """Search a sorted file stream with deterministic scan and output bounds."""
+    """Search a sorted file stream with deterministic scan and output bounds.
+
+    Scoring one file at the default bounds takes milliseconds, and a search can score a thousand, so
+    it yields to the event loop after each file rather than holding it for the whole scan.
+    """
     terms = [term for term in query.lower().split() if term]
     if not terms or limit <= 0 or max_files <= 0 or max_chars <= 0:  # pragma: no cover - stores prevalidate
         return MemorySearchResult(matches=[], scanned=0, truncated=False)
@@ -192,6 +197,7 @@ def lexical_search(
         score = float(sum(lower_content.count(term) + 2 * lower_path.count(term) for term in terms))
         if score:
             scored.append((score, path, content))
+        await anyio.lowlevel.checkpoint()
     scored.sort(key=lambda item: (-item[0], item[1]))
     matches: list[MemorySearchMatch] = []
     remaining = max_chars
@@ -430,7 +436,7 @@ class InMemoryStore:
             scanned_paths = selected[:max_files]
             content_truncated = any(len(self._files[path]) > max_file_chars for path in scanned_paths)
             files = [(path, self._files[path][:max_file_chars]) for path in scanned_paths]
-        result = lexical_search(
+        result = await lexical_search(
             files, query, limit=limit, max_files=max_files, max_chars=max_chars, score_prefix=prefix
         )
         return MemorySearchResult(
@@ -821,7 +827,7 @@ class FileStore:
                 continue
             content_truncated = content_truncated or len(content) > max_file_chars
             files.append((path, content[:max_file_chars]))
-        result = lexical_search(
+        result = await lexical_search(
             files, query, limit=limit, max_files=max_files, max_chars=max_chars, score_prefix=prefix
         )
         return MemorySearchResult(
@@ -842,6 +848,15 @@ _SQLITE_OPERATIONS_SCHEMA = (
 _SQLITE_METADATA_SCHEMA = (
     'CREATE TABLE IF NOT EXISTS memory_metadata (id INTEGER PRIMARY KEY CHECK (id = 1), generation INTEGER NOT NULL)'
 )
+
+
+def _prefix_end(prefix: str) -> str:
+    """An upper bound for the paths starting with `prefix`, so SQLite can seek the path index for the range.
+
+    Paths are ASCII (`validate_store_path`), so every one starting with `prefix` sorts below `prefix` plus
+    the highest code point under SQLite's default binary collation.
+    """
+    return f'{prefix}\U0010ffff'
 
 
 class SqliteMemoryStore:
@@ -1071,8 +1086,8 @@ class SqliteMemoryStore:
 
         def op(connection: sqlite3.Connection) -> list[str]:
             rows = connection.execute(
-                'SELECT path FROM memory_files WHERE substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',
-                (prefix, prefix, limit),
+                'SELECT path FROM memory_files WHERE path >= ? AND path < ? ORDER BY path LIMIT ?',
+                (prefix, _prefix_end(prefix), limit),
             ).fetchall()
             return [str(row[0]) for row in rows]
 
@@ -1096,14 +1111,14 @@ class SqliteMemoryStore:
             # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
                 'SELECT path, substr(content, 1, ?), length(content) FROM memory_files '
-                'WHERE substr(path, 1, length(?)) = ? AND instr(substr(path, length(?) + 1), ?) = 0 '
+                'WHERE path >= ? AND path < ? AND instr(substr(path, length(?) + 1), ?) = 0 '
                 'ORDER BY path LIMIT ?',
-                (max_file_chars, prefix, prefix, prefix, '/', max_files + 1),
+                (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
             ).fetchall()
             return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
 
         rows = await anyio.to_thread.run_sync(self._run, op)
-        result = lexical_search(
+        result = await lexical_search(
             [(path, content) for path, content, _ in rows],
             query,
             limit=limit,

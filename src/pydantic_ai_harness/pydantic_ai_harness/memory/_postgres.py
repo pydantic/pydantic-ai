@@ -284,7 +284,7 @@ class PostgresMemoryStore:
                 max_file_chars,
                 max_files + 1,
             )
-        result = lexical_search(
+        result = await lexical_search(
             [(str(row[0]), str(row[1])) for row in rows],
             query,
             limit=limit,
