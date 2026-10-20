@@ -208,6 +208,7 @@ class StatusInfo:
     context_tokens: int | None = None
     context_window: int | None = None
     cost: str | None = None
+    cost_is_lower_bound: bool = False
     streamed_tokens: int = 0
     """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
     output_tokens: int | None = None
@@ -486,6 +487,7 @@ class UsageReport:
     total: TurnUsage
     unpriced: list[str]
     """The models without price data, whose responses no cost counts."""
+    unmeasured_requests: int = 0
 
 
 def turn_usage(usage: RunUsage) -> TurnUsage:
@@ -503,7 +505,10 @@ def turn_usage(usage: RunUsage) -> TurnUsage:
 def usage_report(usage: SessionUsage) -> UsageReport:
     """The browser's copy of what `/usage` prints."""
     return UsageReport(
-        turns=[turn_usage(turn) for turn in usage.turns], total=turn_usage(usage.total), unpriced=list(usage.unpriced)
+        turns=[turn_usage(turn) for turn in usage.turns],
+        total=turn_usage(usage.total),
+        unpriced=list(usage.unpriced),
+        unmeasured_requests=usage.total.unmeasured_requests,
     )
 
 

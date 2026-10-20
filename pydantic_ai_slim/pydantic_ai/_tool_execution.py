@@ -782,14 +782,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             elif isinstance(tool_call_result, exceptions.ModelRetry):
                 raise ToolRetryError(
                     _output.build_retried_tool_return(
-                        tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                        tool_call_result,
+                        tool_name=call.tool_name,
+                        tool_call_id=call.tool_call_id,
+                        tool_kind=call.tool_kind,
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`
             elif isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
                 raise ToolRetryError(
                     _output.retried_return_from_legacy(
-                        tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id
+                        tool_call_result,
+                        tool_name=call.tool_name,
+                        tool_call_id=call.tool_call_id,
+                        tool_kind=call.tool_kind,
                     )
                 )
             else:

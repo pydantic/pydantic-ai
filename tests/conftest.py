@@ -855,6 +855,12 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
+
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
 
@@ -903,8 +909,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 

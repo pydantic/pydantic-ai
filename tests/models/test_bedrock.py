@@ -6981,6 +6981,7 @@ async def test_bedrock_model_with_instructions_only(
 
     result = await agent.run()
     assert result.output
+    assert result.response.model_name == model_name
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -6992,7 +6993,7 @@ async def test_bedrock_model_with_instructions_only(
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
-                model_name=model_name,
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7029,6 +7030,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
     first_result = await agent.run()
     second_result = await agent.run('Now say goodbye.', message_history=first_result.all_messages())
     assert second_result.output
+    assert second_result.response.model_name == model_name
     assert second_result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -7040,7 +7042,7 @@ async def test_bedrock_model_instructions_only_then_message_history(
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
-                model_name=model_name,
+                model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',

@@ -127,6 +127,7 @@ def build_retried_tool_return(
     *,
     tool_name: str,
     tool_call_id: str | None = None,
+    tool_kind: _messages.ToolPartKind | None = None,
     cause: _messages.ToolRetryCause | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
@@ -141,7 +142,8 @@ def build_retried_tool_return(
 
     `cause` defaults to what the error says: `'validation_error'` for a `ValidationError`,
     `'model_retry'` for a `ModelRetry`. The tool manager passes its own for a call it rejects before
-    the tool runs.
+    the tool runs. `tool_kind` is the call's, so a retried return stays identifiable by kind the way a
+    failed or denied one does; a non-success return is never promoted to the kind's typed subclass.
     """
     content: list[dict[str, Any]] | str
     if isinstance(error, ValidationError):
@@ -153,7 +155,9 @@ def build_retried_tool_return(
     if cause is None:
         cause = 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
 
-    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried', cause=cause)
+    part = _messages.ToolReturnPart(
+        tool_name=tool_name, content=content, tool_kind=tool_kind, outcome='retried', cause=cause
+    )
     if tool_call_id:
         part.tool_call_id = tool_call_id
     return part
@@ -165,6 +169,7 @@ def retried_return_from_legacy(
     *,
     tool_name: str,
     tool_call_id: str,
+    tool_kind: _messages.ToolPartKind | None = None,
 ) -> _messages.ToolReturnPart:
     """The result a deferred call is answered with when its handler hands back the deprecated part.
 
@@ -177,6 +182,7 @@ def retried_return_from_legacy(
         tool_name=tool_name,
         content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
         tool_call_id=tool_call_id,
+        tool_kind=tool_kind,
         outcome='retried',
         cause='model_retry' if isinstance(content, str) else 'validation_error',
     )

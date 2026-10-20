@@ -434,7 +434,9 @@ class ToolManager(Generic[AgentDepsT]):
             else None
         )
         return ToolRetryError(
-            build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id, cause=cause)
+            build_retried_tool_return(
+                error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+            )
         )
 
     @staticmethod
@@ -1430,12 +1432,16 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                build_retried_tool_return(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                build_retried_tool_return(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
             )
         # TODO(v3): remove `RetryPromptPart`
         if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
             raise ToolRetryError(
-                retried_return_from_legacy(tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                retried_return_from_legacy(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
             )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the

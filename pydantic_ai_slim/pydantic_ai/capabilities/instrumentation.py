@@ -565,7 +565,9 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             if self.settings.include_content and span.is_recording():
-                retry = build_retried_tool_return(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                retry = build_retried_tool_return(
+                    error, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
                 span.set_attribute(names.tool_result_attr, retry.model_response_str(wrap_if_error=False))
             _record_exception(span, error, include_content=self.settings.include_content)
             span.set_status(StatusCode.ERROR)
