@@ -54,6 +54,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
+from tests.harness.conftest import IsStr
 
 from ...realtime_connections import InferredConnection
 
@@ -609,8 +610,7 @@ class TestBackgroundTools:
             for item in part.content
             if isinstance(item, TextContent)
         ]
-        assert len(follow_ups) == 1
-        assert re.fullmatch(r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result", follow_ups[0])
+        assert follow_ups == [IsStr(regex=r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result")]
 
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
