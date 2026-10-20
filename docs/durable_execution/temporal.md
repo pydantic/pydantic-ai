@@ -661,7 +661,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
     return {
         'args': [
-            'Continue the investigation.',
+            None,
             ModelMessagesTypeAdapter.dump_json(ctx.messages),
             ctx.usage,
             ctx.usage_limits,
@@ -683,7 +683,7 @@ class InvestigatorWorkflow(PydanticAIWorkflow):
     @workflow.run
     async def run(
         self,
-        prompt: str,
+        prompt: str | None,
         history: bytes | None = None,
         usage: RunUsage | None = None,
         usage_limits: UsageLimits | None = None,
@@ -708,6 +708,8 @@ async def main():
             task_queue='investigator',
         )
 ```
+
+The continuation passes `None` as the prompt: the carried-over history already ends with the request the model was about to receive (such as the latest tool results), so the new run sends it as is instead of adding a new user message.
 
 Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself. The callable and the `@workflow.run` signature that receives them are yours to shape.
 
