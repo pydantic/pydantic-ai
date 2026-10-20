@@ -1293,8 +1293,11 @@ class TestBackgroundTools:
         with pytest.raises(UserError, match='already has a'):
             await agent.run('go')
 
+    # The nested case is deep enough to raise `RecursionError` on 3.14+ too, where `json` limits depth by C stack size.
     @pytest.mark.parametrize(
-        'args', ['{', '[]', '{"run_in_background": "yes"}'], ids=['not-json', 'not-object', 'flag-not-boolean']
+        'args',
+        ['{', '[' * 100_000 + ']' * 100_000, '[]', '{"run_in_background": "yes"}'],
+        ids=['not-json', 'too-deeply-nested', 'not-object', 'flag-not-boolean'],
     )
     async def test_invalid_args_for_optional_tool_are_retried(self, args: str) -> None:
         retry_seen = False
