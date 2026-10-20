@@ -1732,18 +1732,22 @@ Parts need a unique [instruction identity](#instruction-parts). Use `name=` for 
 Instructions passed to a run method can append too, which suits per-request context an application passes to each run of a conversation, such as the page the user is on. Pass an `InstructionPart` with a `name`, keyed `'run:<name>'`; unnamed runtime instructions always rewrite:
 
 ```python {title="run_instruction_changes.py"}
+from typing import Literal
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
 from pydantic_ai.models.test import TestModel
 
+Page = Literal['home', 'settings', 'billing']  # (1)!
 
-def current_page(path: str) -> InstructionPart:
-    return InstructionPart(f'The user is on {path}.', name='page', on_change='append')
+
+def current_page(page: Page) -> InstructionPart:
+    return InstructionPart(f'The user is on the {page} page.', name='page', on_change='append')
 
 
 agent = Agent(TestModel(), instructions='Help the user navigate the app.')
-first = agent.run_sync('Hi!', instructions=current_page('/home'))
-second = agent.run_sync('What now?', instructions=current_page('/settings'), message_history=first.all_messages())
+first = agent.run_sync('Hi!', instructions=current_page('home'))
+second = agent.run_sync('What now?', instructions=current_page('settings'), message_history=first.all_messages())
 changes = [
     part.content
     for message in second.new_messages()
@@ -1752,8 +1756,10 @@ changes = [
     if isinstance(part, InstructionDeltaPart)
 ]
 print(changes)
-#> ['The user is on /settings.']
+#> ['The user is on the settings page.']
 ```
+
+1. The page comes from the application's own routing, as one of a fixed set of names, never the raw URL or anything else the user controls: instructions carry operator authority.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 
