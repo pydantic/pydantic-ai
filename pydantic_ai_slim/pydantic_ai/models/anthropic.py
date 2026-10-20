@@ -1976,13 +1976,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ]
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                if item.citations:
+                if citations := _map_citations(item.citations or [], item.text, fetched_pages):
                     items.append(
                         TextPart(
                             content=item.text,
                             provider_name=self.system,
-                            provider_details=_citations_provider_details(item.citations),
-                            citations=_map_citations(item.citations, item.text, fetched_pages),
+                            provider_details=_citations_provider_details(item.citations or []),
+                            citations=citations,
                         )
                     )
                 else:
@@ -3963,17 +3963,19 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if block_citations := pending_citations.pop(event.index, None):
-                        part = self._parts_manager.get_part_by_vendor_id(event.index)
-                        if isinstance(part, TextPart):  # pragma: no branch
-                            for event_ in self._parts_manager.handle_text_delta(
-                                vendor_part_id=event.index,
-                                content='',
-                                provider_name=self.provider_name,
-                                provider_details=_citations_provider_details(block_citations),
-                                citations=_map_citations(block_citations, part.content, fetched_pages),
-                            ):
-                                yield event_
+                    block_citations = pending_citations.pop(event.index, [])
+                    part = self._parts_manager.get_part_by_vendor_id(event.index)
+                    if isinstance(part, TextPart) and (
+                        citations := _map_citations(block_citations, part.content, fetched_pages)
+                    ):
+                        for event_ in self._parts_manager.handle_text_delta(
+                            vendor_part_id=event.index,
+                            content='',
+                            provider_name=self.provider_name,
+                            provider_details=_citations_provider_details(block_citations),
+                            citations=citations,
+                        ):
+                            yield event_
                     if event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
