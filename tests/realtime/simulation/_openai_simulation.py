@@ -127,9 +127,10 @@ class OpenAISimulation(Simulation):
         return OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='simulated'))
 
     def model_settings(self) -> RealtimeModelSettings:
+        transcription_model = 'auto' if self.openai.dialect == 'elevenlabs' else 'gpt-4o-mini-transcribe'
         settings: OpenAIRealtimeModelSettings = {
             'turn_detection': self.openai.turn_detection == 'server_vad',
-            'input_transcription_model': 'gpt-4o-mini-transcribe' if self.openai.transcription else None,
+            'input_transcription_model': transcription_model if self.openai.transcription else None,
         }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
         if self.openai.prune_tool_items:
@@ -142,11 +143,19 @@ class OpenAISimulation(Simulation):
             and vad.dialect != 'xai'
             and not (vad.vad_interrupts and vad.vad_responds)
         ):
-            settings['openai_turn_detection'] = {
-                'type': 'server_vad',
-                'interrupt_response': vad.vad_interrupts,
-                'create_response': vad.vad_responds,
-            }
+            if vad.dialect == 'elevenlabs':
+                # ElevenLabs only takes semantic VAD, with the same two flags.
+                settings['openai_turn_detection'] = {
+                    'type': 'semantic_vad',
+                    'interrupt_response': vad.vad_interrupts,
+                    'create_response': vad.vad_responds,
+                }
+            else:
+                settings['openai_turn_detection'] = {
+                    'type': 'server_vad',
+                    'interrupt_response': vad.vad_interrupts,
+                    'create_response': vad.vad_responds,
+                }
         return settings
 
     @contextmanager
@@ -263,12 +272,11 @@ class OpenAISimulation(Simulation):
         return True
 
 
-# TODO(elevenlabs-launch): the published ElevenLabs model id.
 _SERVED_MODELS: dict[Dialect, str] = {
     'openai': 'gpt-realtime',
     'azure': 'gpt-realtime',
     'xai': 'grok-voice-latest',
-    'elevenlabs': 'eleven-voice',
+    'elevenlabs': 'eleven_realtime_v1_mini',
 }
 """The model each dialect's server reports in `session.created`."""
 

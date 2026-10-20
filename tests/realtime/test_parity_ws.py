@@ -190,17 +190,16 @@ REALTIME_PARITY_CASES = [
         supports_native_tools=False,
         supports_text_output=False,  # Grok Voice always speaks
     ),
-    # TODO(elevenlabs-launch): the published model id, and each flag as verified live (they mirror the profile).
     RealtimeParityCase(
         id='elevenlabs-current',
         model_kind='elevenlabs',
-        model_name='eleven-voice',
+        model_name='eleven_realtime_v1_mini',
         route='elevenlabs',
-        supports_image_input=False,
+        supports_image_input=False,  # `input_image` parts are dropped from the item
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
-        supports_text_output=False,
+        supports_text_output=False,  # text output ignores audio input
     ),
     RealtimeParityCase(
         id='google-current',

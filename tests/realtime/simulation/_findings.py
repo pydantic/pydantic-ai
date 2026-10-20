@@ -626,8 +626,7 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.phantom_turn'}),
-    # TODO(elevenlabs-launch): drop `elevenlabs` if its server doesn't share the OpenAI behavior this needs.
-    providers=frozenset({'openai', 'azure', 'elevenlabs'}),
+    providers=frozenset({'openai', 'azure'}),
     # No more phantom turns than stops taken back: each of those makes at most one.
     matches=lambda sim, violation: violation.context.get('extra', 0) <= len(sim.truth.speech_stopped_uncommitted),
 )

@@ -1,0 +1,982 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      object: realtime.conversation
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000002
+- kind: message
+  direction: received
+  at: 1.141
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: Answer in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000003
+- kind: message
+  direction: sent
+  at: 1.142
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+- kind: message
+  direction: sent
+  at: 1.142
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 1.191
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000004
+- kind: message
+  direction: received
+  at: 1.191
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000005
+- kind: message
+  direction: received
+  at: 1.498
+  data:
+    type: response.created
+    response:
+      id: resp_1701m5czes45esjvqvgbw5q9b2kz
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_8301m5czeqmhezptvp81wzc0dsks
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000006
+- kind: message
+  direction: received
+  at: 1.498
+  data:
+    type: response.output_item.added
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    output_index: 0
+    item:
+      id: item_7201m5czes46evza5s0b26264ap9
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000007
+- kind: message
+  direction: received
+  at: 1.498
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_7201m5czes46evza5s0b26264ap9
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000008
+- kind: message
+  direction: received
+  at: 1.498
+  data:
+    type: response.content_part.added
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000009
+- kind: message
+  direction: received
+  at: 1.498
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: I acknowledge your code word is cobalt.
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000010
+- kind: message
+  direction: received
+  at: 1.591
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAEAAQABAAAAAAAAAAAAAAABAAAAAAAB
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000011
+- kind: message
+  direction: received
+  at: 1.602
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: JBQAEt0Qew5tCc8Esf+u+fz0s+6K6mHnU+fc6Afq7+sC
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000012
+- kind: message
+  direction: received
+  at: 1.611
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: sP0N/kr+rf4p/8L/HAB/AAkBhgEGAl4CnwKGAmMCdAKZ
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000013
+- kind: message
+  direction: received
+  at: 1.658
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: 5QA4AdYC7wT6CDYNnxFRFc0WiBYMFtUUJhQYFaQWwhl7
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000014
+- kind: message
+  direction: received
+  at: 1.765
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: JRPXDFIKJgfZDT8Q/Aa3BloKYQ7lDiUQNxGvELoS4RhJ
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000015
+- kind: message
+  direction: received
+  at: 1.884
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: xwOOAzgDBQPEAmMCCgKhAVkBEQHQAJcAVAAlAOD/oP9c
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000016
+- kind: message
+  direction: received
+  at: 1.977
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: wv+9/7T/qv+l/6f/qP+g/5r/mf+S/43/j/+P/4//iv+D
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000017
+- kind: message
+  direction: received
+  at: 1.977
+  data:
+    type: response.output_audio.delta
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAACAAEAAgABAAMAAgABAAIAAQAAAAEAAQAA
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000018
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: response.output_audio.done
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000019
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    transcript: I acknowledge your code word is cobalt.
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000020
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: response.content_part.done
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    item_id: item_7201m5czes46evza5s0b26264ap9
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: I acknowledge your code word is cobalt.
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000021
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_7201m5czes46evza5s0b26264ap9
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: I acknowledge your code word is cobalt.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000022
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: response.output_item.done
+    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    output_index: 0
+    item:
+      id: item_7201m5czes46evza5s0b26264ap9
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: I acknowledge your code word is cobalt.
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000023
+- kind: message
+  direction: received
+  at: 4.307
+  data:
+    type: response.done
+    response:
+      id: resp_1701m5czes45esjvqvgbw5q9b2kz
+      object: realtime.response
+      status: completed
+      conversation_id: conv_8301m5czeqmhezptvp81wzc0dsks
+      output:
+      - id: item_7201m5czes46evza5s0b26264ap9
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: I acknowledge your code word is cobalt.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000024
+- kind: message
+  direction: received
+  at: 4.308
+  data:
+    type: rate_limits.updated
+    rate_limits: []
+    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000025
+- kind: close
+  code: 1011
+  reason: test reconnect
+  ok: false
+  at: 4.357
+- kind: message
+  direction: received
+  at: 4.506
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000001
+- kind: message
+  direction: sent
+  at: 4.506
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Answer in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 4.506
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      object: realtime.conversation
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000002
+- kind: message
+  direction: received
+  at: 5.602
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: Answer in one short sentence.
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000003
+- kind: message
+  direction: sent
+  at: 5.602
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+- kind: message
+  direction: sent
+  at: 5.603
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: I acknowledge your code word is cobalt.
+- kind: message
+  direction: sent
+  at: 5.603
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.1
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What code word did I ask you to remember?
+- kind: message
+  direction: sent
+  at: 5.603
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.1
+    response:
+      metadata:
+        pydantic_ai_inputs: '1'
+- kind: message
+  direction: received
+  at: 5.651
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: msg_000001
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000004
+- kind: message
+  direction: received
+  at: 5.651
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: msg_000001
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000005
+- kind: message
+  direction: received
+  at: 5.651
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: I acknowledge your code word is cobalt.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000006
+- kind: message
+  direction: received
+  at: 5.651
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: I acknowledge your code word is cobalt.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000007
+- kind: message
+  direction: received
+  at: 5.763
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000002
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What code word did I ask you to remember?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000008
+- kind: message
+  direction: received
+  at: 5.763
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000002
+    item:
+      id: pydantic_ai_item_1
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What code word did I ask you to remember?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000009
+- kind: message
+  direction: received
+  at: 6.028
+  data:
+    type: response.created
+    response:
+      id: resp_6401m5czexhqf04vx4pv8fzqms01
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000010
+- kind: message
+  direction: received
+  at: 6.028
+  data:
+    type: response.output_item.added
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    output_index: 0
+    item:
+      id: item_6101m5czexhrfebrhem946e7wzjb
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000011
+- kind: message
+  direction: received
+  at: 6.028
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_6101m5czexhrfebrhem946e7wzjb
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000012
+- kind: message
+  direction: received
+  at: 6.028
+  data:
+    type: response.content_part.added
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000013
+- kind: message
+  direction: received
+  at: 6.028
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: The code word is cobalt.
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000014
+- kind: message
+  direction: received
+  at: 6.133
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAA
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000015
+- kind: message
+  direction: received
+  at: 6.161
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: Ofyl/FD7Nv3K/AX8sPxC/OP7Lf3c/JD7Cv2j/GX7zfzc
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000016
+- kind: message
+  direction: received
+  at: 6.169
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: GQKVCOYJ3Av0Dm8STA6MA3EHtQYpDKUAWQLo/9T3xvvd
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000017
+- kind: message
+  direction: received
+  at: 6.23
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: YBUuFSsVGRUmFkgScBH4ElQMywMF/072G+476yTelNYZ
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000018
+- kind: message
+  direction: received
+  at: 6.374
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: /OVu55boE+pN6z7tyfCp9Kf3Dvo1/S0A8gNUCB4L4wyD
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000019
+- kind: message
+  direction: received
+  at: 6.517
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    delta: CwRr/7oB9v3U/gj6RPdp90n1NPl9+dT4qvn7+tf9AgKU
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000020
+- kind: message
+  direction: received
+  at: 8.273
+  data:
+    type: response.output_audio.done
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000021
+- kind: message
+  direction: received
+  at: 8.274
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    transcript: The code word is cobalt.
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000022
+- kind: message
+  direction: received
+  at: 8.274
+  data:
+    type: response.content_part.done
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: The code word is cobalt.
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000023
+- kind: message
+  direction: received
+  at: 8.274
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_1
+    item:
+      id: item_6101m5czexhrfebrhem946e7wzjb
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: The code word is cobalt.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000024
+- kind: message
+  direction: received
+  at: 8.274
+  data:
+    type: response.output_item.done
+    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    output_index: 0
+    item:
+      id: item_6101m5czexhrfebrhem946e7wzjb
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: The code word is cobalt.
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000025
+- kind: message
+  direction: received
+  at: 8.274
+  data:
+    type: response.done
+    response:
+      id: resp_6401m5czexhqf04vx4pv8fzqms01
+      object: realtime.response
+      status: completed
+      conversation_id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      output:
+      - id: item_6101m5czexhrfebrhem946e7wzjb
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: The code word is cobalt.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000026

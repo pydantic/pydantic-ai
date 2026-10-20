@@ -1,10 +1,16 @@
 ---
-description: "Connect a Pydantic AI agent to a hosted ElevenLabs agent with ElevenLabsAgentsRealtimeModel: setup, agent ids, configuration overrides, tool sync and transcripts."
+description: "Connect a Pydantic AI agent to ElevenLabs: Eleven Realtime speech-to-speech models with ElevenLabsRealtimeModel, or a hosted ElevenLabs agent with ElevenLabsAgentsRealtimeModel."
 ---
 
 # ElevenLabs
 
-Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) through ElevenLabs Agents.
+Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) in two ways:
+
+- [ElevenLabs Agents](#elevenlabs-agents) runs the conversation on an agent hosted and configured on the
+  ElevenLabs platform (its voice, LLM, knowledge base, and tools), which Pydantic AI takes over per conversation.
+- [Eleven Realtime](#eleven-realtime) runs ElevenLabs' speech-to-speech models directly, with the instructions,
+  tools, and history coming from your Pydantic AI agent, as with every other
+  [realtime provider](overview.md#provider-support).
 
 ## ElevenLabs Agents
 
@@ -307,3 +313,153 @@ itself closes has none), and the live connection has it as
 - A conversation waiting in the workspace's concurrency queue hears ElevenLabs' hold audio, which
   isn't part of the conversation; one that times out there ends with a
   [`RealtimeError`][pydantic_ai.realtime.RealtimeError] saying so.
+
+## Eleven Realtime
+
+Use an `elevenlabs:<model>` model string, or
+[`ElevenLabsRealtimeModel`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel] for model-level
+configuration, to talk to ElevenLabs' [Eleven Realtime](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models)
+speech-to-speech models. Unlike [ElevenLabs Agents](#elevenlabs-agents), there is no hosted agent to configure:
+the session speaks [ElevenLabs' OpenAI Realtime-compatible API](https://elevenlabs.io/docs/eleven-agents/guides/openai-realtime-compatibility),
+and Pydantic AI configures it from your agent. Pick ElevenLabs Agents when the agent lives on the ElevenLabs
+platform, and Eleven Realtime when your Pydantic AI agent owns it. Start with the
+[realtime quickstart](overview.md#quickstart).
+
+### Setup
+
+To use Eleven Realtime, install `pydantic-ai-slim` with the `elevenlabs-realtime` optional group. It includes
+the `openai` package, because the API reuses the OpenAI Realtime protocol's event types:
+
+```bash
+pip/uv-add "pydantic-ai-slim[elevenlabs-realtime]"
+```
+
+Set `ELEVENLABS_API_KEY`, or pass an
+[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] with `api_key=`. The same key
+and provider serve [ElevenLabs Agents](#elevenlabs-agents). To keep the connection in a
+[data-residency region](https://elevenlabs.io/docs/overview/administration/data-residency), pass the region's
+host as `base_url=`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
+
+model = ElevenLabsRealtimeModel(
+    'eleven_realtime_v1_mini',
+    provider=ElevenLabsProvider(base_url='https://api.eu.residency.elevenlabs.io'),
+)
+agent = Agent(instructions='You are a friendly voice assistant.')
+```
+
+### Model names
+
+Use the `elevenlabs:` prefix with a model name, e.g. `agent.realtime('elevenlabs:eleven_realtime_v1_mini')`:
+
+| Model | Optimized for |
+| --- | --- |
+| `eleven_realtime_v1_mini` | Price and latency |
+| `eleven_realtime_v1_max` | Quality: it reasons before it responds, for complex instructions and multi-step tool use |
+
+`eleven_realtime_v1_max` needs a [`max_tokens`][pydantic_ai.realtime.RealtimeModelSettings.max_tokens] of at
+least 1024 (or none), isn't available in the India and Singapore data-residency regions, and costs more per
+token. See [ElevenLabs' model list](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models) for
+the details.
+
+### Settings
+
+[`ElevenLabsRealtimeModelSettings`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings]
+extends the [shared settings](overview.md#shared-settings):
+
+```python
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, ElevenLabsRealtimeModelSettings
+
+settings = ElevenLabsRealtimeModelSettings(
+    elevenlabs_voice='george',
+    elevenlabs_language='en',
+    elevenlabs_max_duration_seconds=1800,
+    turn_detection={'sensitivity': 'high'},
+)
+model = ElevenLabsRealtimeModel('eleven_realtime_v1_mini', settings=settings)
+```
+
+- `elevenlabs_voice` takes an ElevenLabs voice ID (e.g. `'JBFqnCBsd6RMkjVDRZzb'`) or a default voice's name;
+  the server's default is `'brian'`.
+- `elevenlabs_language` sets the conversation's language (e.g. `'es'` or `'pt-br'`), which ElevenLabs uses for
+  transcription, speech, and the model's replies. It defaults to English.
+- `elevenlabs_max_duration_seconds` caps the session's length, from 60 to 7,200 seconds; see
+  [Session length](#session-length).
+
+Turn detection is ElevenLabs' semantic VAD, which decides from what the user said, not only from silence,
+whether they're done. The shared [`turn_detection`](turns.md#automatic-turn-detection) setting maps onto it:
+`sensitivity` becomes its `eagerness` (`'low'`, `'medium'`, or `'high'`), and `prefix_padding_ms` and
+`silence_duration_ms` are passed through. `turn_detection=False` turns it off for
+[push-to-talk](turns.md#push-to-talk).
+
+The session is configured through the OpenAI Realtime protocol, so `ElevenLabsRealtimeModelSettings` also takes
+the [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] fields.
+`openai_turn_detection` takes a [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD], which sets
+`create_response` and `interrupt_response` too; a [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] raises
+a `UserError`, as ElevenLabs only supports semantic VAD. ElevenLabs accepts and then ignores the other
+OpenAI fields, so Pydantic AI doesn't send them: `openai_voice` (use `elevenlabs_voice`),
+`openai_input_noise_reduction`, `openai_output_speed`, `openai_truncation`, and `openai_prune_tool_items`.
+Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the same way.
+
+[Input transcription](audio.md#input-transcription) is always on: each spoken turn's transcript arrives whole
+once the turn is committed, usually after the reply has started. It takes no model, so
+`input_transcription_model` only accepts `'auto'` (the default); `None` still leaves transcripts on, and any
+other value raises a `UserError`.
+
+### Feature support and limitations
+
+| Feature | Support | Notes |
+| --- | --- | --- |
+| Audio format | Limited parameter support | Mono PCM16 at 24 kHz, input and output. The input rate is configurable (set `audio_input_sample_rate` through [`profile=`](overview.md#provider-support)); output is always 24 kHz. The API also offers G.711, which Pydantic AI does not expose |
+| Text output | Unsupported | ElevenLabs answers text input in text, but then ignores audio input altogether, so `output_modality='text'` raises a `UserError` |
+| Image input | Unsupported | ElevenLabs drops images from the conversation, so [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects them with a `UserError` before sending |
+| Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
+| Interruption | Full feature support | [`interrupt()`](turns.md#barge-in) cancels the response, and `played_ms` truncates what the model remembers saying to what the user heard |
+| Session seeding | Limited parameter support | User and assistant text only; seeded audio and images are unsupported |
+| Input transcription | Limited parameter support | Always on, with whole-turn transcripts; no transcription model to choose |
+| Native tools | Unsupported | ElevenLabs offers MCP tools, which Pydantic AI does not expose yet |
+| Async tool calls | Unsupported | The model answers the user while a [tool runs](tools.md#concurrent-tool-execution), but a result sent after such a reply never reaches it |
+| Usage | Unsupported | ElevenLabs reports no usage, so token counts are zero and `usage.cost` is `None` |
+| Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
+
+See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
+[Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
+
+### Browser connections
+
+ElevenLabs serves OpenAI's client-secret endpoint, but not its WebRTC one, so
+[browser WebRTC](deployment.md#browser-webrtc-server-sideband) isn't available.
+[`create_client_secret()`][pydantic_ai.realtime.openai.OpenAIRealtimeModel.create_client_secret] still mints the
+short-lived credential ElevenLabs' own browser guide uses: a browser running OpenAI's Realtime SDK passes it as
+the API key and opens a WebSocket to `wss://api.elevenlabs.io/v1/convai/realtime` itself. The secret is bound
+to the session your agent configures, but the conversation then runs in the browser, outside Pydantic AI.
+
+### Gateway
+
+Eleven Realtime is not currently available through the [Pydantic AI Gateway](../gateway.md). Connect with an
+`elevenlabs:<model>` model string, or with `provider='elevenlabs'` or an `ElevenLabsProvider`.
+
+### Session length
+
+ElevenLabs closes a session once it reaches its maximum duration (600 seconds unless
+`elevenlabs_max_duration_seconds` says otherwise), and one that hasn't received anything from the client for 60
+seconds, which happens when no microphone audio is streaming. With a
+[reconnect policy](lifecycle.md#reconnecting), the session reconnects, and the new session gets the
+[replayed local history](lifecycle.md#state-restoration), so the call carries on. Without one, or once the
+policy's reconnects are used up, the session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] with
+ElevenLabs' close reason.
+
+### Provider-specific quirks
+
+- ElevenLabs' semantic VAD can report that the user stopped speaking, then hear them carry on in the same turn,
+  so [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+  [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] can come more than once per
+  turn. The turn joins the history once ElevenLabs commits it.
+- A response's transcript can include expressive audio tags such as `[cheerful]`, which direct the delivery and
+  aren't spoken.
+- The protocol follows OpenAI Realtime, but feature support comes from the ElevenLabs model profile; avoid
+  assuming every OpenAI behavior is available.

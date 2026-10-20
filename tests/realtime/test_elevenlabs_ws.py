@@ -4,14 +4,10 @@ These complement the network-free `test_elevenlabs.py` unit tests: they replay r
 end-to-end through [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to prove the real protocol — the
 streamed part events, the tool round-trip, message-history seeding, and reconnect.
 
-Recording requires an `ELEVENLABS_API_KEY` with realtime access; when the cassette is missing offline the
-`elevenlabs_ws_cassette` fixture skips rather than errors.
-"""
+Recording requires an `ELEVENLABS_API_KEY`:
 
-# TODO(elevenlabs-launch): record every test here with
-#   uv run --env-file .env pytest tests/realtime/test_elevenlabs_ws.py --record-mode=rewrite --inline-snapshot=create
-# then replay without `--record-mode` and review each filled snapshot by hand: the empty `snapshot()`s are where
-# ElevenLabs' actual behavior gets pinned, and a surprise there is a quirk to handle in `realtime/elevenlabs.py`.
+    uv run --env-file .env pytest tests/realtime/test_elevenlabs_ws.py --record-mode=rewrite
+"""
 
 from __future__ import annotations as _annotations
 
@@ -22,7 +18,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunUsage
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -49,8 +45,7 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 
-# TODO(elevenlabs-launch): the published model id.
-MODEL = 'eleven-voice'
+MODEL = 'eleven_realtime_v1_mini'
 
 
 async def _until_turn_complete(session: Any, events: list[Any], *, timeout: float = 30) -> None:
@@ -73,30 +68,49 @@ async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsPr
         await _until_turn_complete(session, events)
 
     # The `session.update` the server accepted: the shape every `_session_config` TODO is checked against.
-    assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot()
-    assert collapse_event_types(events) == snapshot()
+    assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'type': 'realtime',
+                    'instructions': 'Answer in two or three words.',
+                    'output_modalities': ['audio'],
+                    'audio': {
+                        'input': {
+                            'format': {'type': 'audio/pcm', 'rate': 24000},
+                            'turn_detection': {'type': 'semantic_vad'},
+                        },
+                        'output': {'format': {'type': 'audio/pcm'}},
+                    },
+                    'model': 'eleven_realtime_v1_mini',
+                },
+            }
+        ]
+    )
+    assert collapse_event_types(events) == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
+    )
     messages = session.all_messages()
-    assert [type(m).__name__ for m in messages] == snapshot()
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     # The server-reported model, from `session.created`.
-    assert response.model_name == snapshot()
+    assert response.model_name == snapshot('eleven_realtime_v1_mini')
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
-    assert part.transcript == snapshot()
-    # TODO(elevenlabs-launch): usage is where xAI diverged most (running totals, audio seconds); check the
-    # buckets and the cost against ElevenLabs' pricing.
-    assert session.usage == snapshot()
+    assert part.transcript == snapshot('Hello there')
+    # `response.done` carries no usage.
+    assert session.usage == snapshot(RunUsage(requests=1))
 
 
-async def test_audio_in_server_vad_turn(
+async def test_audio_in_semantic_vad_turn(
     elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette], assets_path: Path
 ) -> None:
-    """A spoken user turn (audio in, server VAD) is transcribed into a user turn in history."""
+    """A spoken user turn (audio in, semantic VAD) is transcribed into a user turn in history."""
     provider, _ = elevenlabs_ws_cassette
     model = ElevenLabsRealtimeModel(MODEL, provider=provider)
     agent = Agent(instructions='Reply in a few words.')
-    # TODO(elevenlabs-launch): a 16 kHz clip if the profile's sample rate changes.
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
     events: list[Any] = []
@@ -108,14 +122,27 @@ async def test_audio_in_server_vad_turn(
 
     # Speech start -> stop -> user turn -> assistant reply; the user deltas show incremental vs cumulative
     # transcription (see `map_event`).
-    assert collapse_event_types(events) == snapshot()
+    assert collapse_event_types(events) == snapshot(
+        [
+            'RealtimeInputSpeechStartEvent',
+            'RealtimeInputSpeechEndEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartStartEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'RealtimeTurnCompleteEvent',
+        ]
+    )
     user_parts = [
         part for message in session.all_messages() if isinstance(message, ModelRequest) for part in message.parts
     ]
     assert len(user_parts) == 1
     user_part = user_parts[0]
     assert isinstance(user_part, SpeechPart) and user_part.speaker == 'user'
-    assert user_part.transcript == snapshot()
+    assert user_part.transcript == snapshot('Hello, my name is Marcelo.')
 
 
 @pytest.mark.realtime_ws_hold_open
@@ -156,7 +183,9 @@ async def test_push_to_talk_replies_only_when_asked(
     )
     created_types = [message.data['type'] for message in interactions[commit_at:] if message.direction == 'received']
     assert created_types.count('response.created') == 2
-    assert [type(message).__name__ for message in session.all_messages()] == snapshot()
+    assert [type(message).__name__ for message in session.all_messages()] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse', 'ModelResponse']
+    )
 
 
 async def test_tool_call_round(elevenlabs_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette]) -> None:
@@ -185,12 +214,46 @@ async def test_tool_call_round(elevenlabs_ws_cassette: tuple[ElevenLabsProvider,
                     break
 
     # The tool schema as sent: check ElevenLabs accepts the strict JSON schema the OpenAI codec produces.
-    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot()
+    assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
+        [
+            {
+                'type': 'session.update',
+                'session': {
+                    'type': 'realtime',
+                    'instructions': 'Use the get_weather tool for any weather question, then answer in one short sentence.',
+                    'output_modalities': ['audio'],
+                    'audio': {
+                        'input': {
+                            'format': {'type': 'audio/pcm', 'rate': 24000},
+                            'turn_detection': {'type': 'semantic_vad'},
+                        },
+                        'output': {'format': {'type': 'audio/pcm'}},
+                    },
+                    'tools': [
+                        {
+                            'type': 'function',
+                            'name': 'get_weather',
+                            'parameters': {
+                                'additionalProperties': False,
+                                'properties': {'city': {'type': 'string'}},
+                                'required': ['city'],
+                                'type': 'object',
+                            },
+                            'description': 'Look up the weather for a city.',
+                        }
+                    ],
+                    'model': 'eleven_realtime_v1_mini',
+                },
+            }
+        ]
+    )
     call_events = [e for e in events if isinstance(e, FunctionToolCallEvent)]
     assert [e.part.args_as_dict() for e in call_events] == [{'city': 'London'}]
     result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
     assert len(result_events) == 1 and isinstance(result_events[0].part, ToolReturnPart)
-    assert [type(m).__name__ for m in session.all_messages()] == snapshot()
+    assert [type(m).__name__ for m in session.all_messages()] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
     final = session.all_messages()[-1]
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
@@ -214,8 +277,30 @@ async def test_message_history_seeding(elevenlabs_ws_cassette: tuple[ElevenLabsP
 
     # A refused seed item (e.g. assistant `output_text`) surfaces as an error event: none may occur.
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
-    assert sent_frames_containing(cassette, 'My name is Alice') == snapshot()
-    assert sent_frames_containing(cassette, 'Nice to meet you') == snapshot()
+    assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': 'My name is Alice and my favorite color is teal.'}],
+                },
+            }
+        ]
+    )
+    assert sent_frames_containing(cassette, 'Nice to meet you') == snapshot(
+        [
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'output_text', 'text': 'Nice to meet you, Alice!'}],
+                },
+            }
+        ]
+    )
     reply = session.all_messages()[-1]
     assert isinstance(reply, ModelResponse)
     reply_part = reply.parts[0]
@@ -264,7 +349,7 @@ async def test_reconnect_replays_history_after_drop(
         and interaction.data.get('type') == 'conversation.item.create'
         and 'What code word' not in str(interaction.data)
     ]
-    assert replayed_roles == snapshot()
+    assert replayed_roles == snapshot(['user', 'assistant'])
     final = session.all_messages()[-1]
     assert isinstance(final, ModelResponse)
     final_part = final.parts[0]
@@ -297,7 +382,15 @@ async def test_handle_barge_in_over_live_speech(
                     if turns_complete == 2:
                         break
 
-    # TODO(elevenlabs-launch): with `supports_output_truncation=True`, a `conversation.item.truncate` is expected.
-    assert sent_frames_containing(cassette, 'conversation.item.truncate') == snapshot()
+    assert sent_frames_containing(cassette, 'conversation.item.truncate') == snapshot(
+        [
+            {
+                'type': 'conversation.item.truncate',
+                'item_id': 'item_2901m5czf1xxfjv91n21mdr7trmz',
+                'content_index': 0,
+                'audio_end_ms': 0,
+            }
+        ]
+    )
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot()
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])

@@ -38,8 +38,9 @@ _BYTES_PER_MS = 48
 _EVENT_ID = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 
 Dialect = Literal['openai', 'azure', 'xai', 'elevenlabs']
-# TODO(elevenlabs-launch): `elevenlabs` serves exactly what `openai` does until its divergences are known. Encode
-# each one the recordings show here, gated on `self.dialect == 'elevenlabs'`, as the xAI ones are.
+# `elevenlabs` serves what `openai` does, except for the divergences its recordings show, gated on
+# `self.dialect == 'elevenlabs'` as the xAI ones are: `conversation.created` after `session.created`, input
+# transcription that is always on, and no usage.
 
 _CONTENT_FRAME_PREFIXES = (
     'response.output_audio',
@@ -202,7 +203,7 @@ class OpenAIServer:
             },
             immediately=True,
         )
-        if self.dialect == 'xai':
+        if self.dialect in ('xai', 'elevenlabs'):
             socket.emit(
                 {
                     'type': 'conversation.created',
@@ -332,7 +333,8 @@ class OpenAIServer:
         session.turn_detection = (
             config['turn_detection'] if 'turn_detection' in config else audio_input.get('turn_detection')
         )
-        session.transcription = audio_input.get('transcription') is not None
+        # ElevenLabs always transcribes: its `transcription` only sets the language.
+        session.transcription = self.dialect == 'elevenlabs' or audio_input.get('transcription') is not None
         session.socket.emit(
             {'type': 'session.updated', 'event_id': 'evt_updated', 'session': {**config, 'model': self.model}},
             immediately=True,
@@ -687,8 +689,8 @@ class OpenAIServer:
                 'status_details': status_details,
                 'output': active.output,
                 'metadata': active.metadata,
-                # xAI reports the usage on the frame itself, and an empty `response.usage`.
-                'usage': {} if self.dialect == 'xai' else usage,
+                # xAI reports the usage on the frame itself, and an empty `response.usage`; ElevenLabs reports none.
+                'usage': {} if self.dialect == 'xai' else None if self.dialect == 'elevenlabs' else usage,
             },
         }
         if self.dialect == 'xai':

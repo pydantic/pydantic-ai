@@ -1,12 +1,36 @@
-"""ElevenLabs realtime API provider for speech-to-speech sessions.
+"""ElevenLabs realtime API provider for Eleven Realtime speech-to-speech sessions.
 
-ElevenLabs' speech-to-speech API speaks the OpenAI Realtime protocol and works with the OpenAI SDK, so
-[`ElevenLabsRealtimeModel`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel] is an
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] pointed at ElevenLabs: it reuses
-the OpenAI codec (event mapping, session seeding, tool conversion, server-VAD config, reconnect-by-replay,
-and the WebSocket connection itself), authenticated with the key and base URL of the shared
-[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider], and diverges only where
-ElevenLabs does.
+Connects to `wss://api.elevenlabs.io/v1/convai/realtime` over a WebSocket. Eleven Realtime speaks the OpenAI
+Realtime protocol, so [`ElevenLabsRealtimeModel`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModel] is an
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] pointed at ElevenLabs: it reuses the
+OpenAI codec (event mapping, session seeding, tool conversion, reconnect-by-replay, and the WebSocket connection
+itself), authenticated with the key and base URL of the shared
+[`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider], and diverges only where ElevenLabs
+does:
+
+- authentication uses the `xi-api-key` header, and the model is chosen with `session.model` in `session.update`
+  (the server ignores OpenAI's `?model=` query parameter);
+- turn detection is semantic VAD only: the server rejects `server_vad`, so the cross-provider
+  [`turn_detection`][pydantic_ai.realtime.RealtimeModelSettings.turn_detection] setting maps onto semantic VAD;
+- input transcription is always on, even with `input_transcription_model=None`, and takes no model, only a
+  language (see
+  [`elevenlabs_language`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_language]);
+- voices are ElevenLabs voices, set with
+  [`elevenlabs_voice`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_voice];
+- `response.done` carries no usage, so sessions report no token counts;
+- `conversation.item.delete` is not implemented, so `openai_prune_tool_items` is ignored;
+- images are dropped from user messages, and seeded history can only carry text;
+- text output (`output_modalities: ['text']`) ignores audio input altogether, so `output_modality='text'` is
+  unsupported;
+- the server ends a session after `max_duration_seconds` (600 by default; see
+  [`elevenlabs_max_duration_seconds`][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings.elevenlabs_max_duration_seconds])
+  or after 60 seconds without a client message. With a
+  [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, either close is re-dialed and the
+  local message history replayed into a new session.
+
+WebRTC is not supported, as ElevenLabs serves no `/realtime/calls` endpoint, but
+[`create_client_secret`][pydantic_ai.realtime.openai.OpenAIRealtimeModel.create_client_secret] mints the
+ephemeral credential a browser uses to open the WebSocket directly.
 
 For a hosted ElevenLabs agent, use
 [`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] instead.
@@ -17,18 +41,15 @@ SDK supplies the event types the shared OpenAI codec is built on):
     pip install "pydantic-ai-slim[elevenlabs-realtime]"
 """
 
-# TODO(elevenlabs-launch): list ElevenLabs' divergences in the docstring above, as `xai.py`'s
-# docstring lists xAI's (session shape, transcription, usage, reconnect, truncation, text output).
-
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence, Set as AbstractSet
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
 try:
     import websockets as websockets
-    from openai.types.realtime import RealtimeResponseUsage
+    from websockets.asyncio.client import ClientConnection
 
     from ..providers.openai import OpenAIProvider
 except ImportError as _import_error:  # pragma: no cover
@@ -46,101 +67,86 @@ from ..profiles.elevenlabs import elevenlabs_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
-from ..usage import RequestUsage
-from ._openai_protocol import map_event as _map_openai_event, with_realtime_query
-from .codec import RealtimeCodecEvent
-from .model import RealtimeClientSecret, RealtimeModel, WebRTCAnswer
+from ._lifecycle import LifecycleEvent
+from ._openai_lifecycle import OpenAILifecycle
+from ._openai_protocol import AUTO_TRANSCRIPTION_MODEL, turn_detection_config, with_realtime_query
+from .model import RealtimeModel, WebRTCAnswer
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
-from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec
-from .settings import RealtimeModelSettings
+from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile, RealtimeModelProfileSpec
+from .settings import RealtimeModelSettings, ReconnectPolicy
 
 if TYPE_CHECKING:
     from .model import RealtimeProviderSession
 
 __all__ = (
     'ElevenLabsRealtimeModel',
+    'ElevenLabsRealtimeModelName',
     'ElevenLabsRealtimeModelSettings',
     'ElevenLabsRealtimeConnection',
-    'map_event',
+    'LatestElevenLabsRealtimeModelNames',
 )
 
-# --- Constants to fill from the API reference ---------------------------------------------------------------
-# TODO(elevenlabs-launch): fill every constant in this block from ElevenLabs' API reference.
+_OPENAI_BASE_PATH = 'v1/convai'
+"""Path under `ElevenLabsProvider.base_url` that the OpenAI-protocol base URL points at.
 
-_OPENAI_BASE_PATH = 'v1'
-"""Path under `ElevenLabsProvider.base_url` that the OpenAI SDK's `base_url` points at.
+The realtime WebSocket is that URL plus `realtime`, with the HTTP scheme swapped for the WebSocket one, and the
+client-secret endpoint is that URL plus `realtime/client_secrets`, as on OpenAI:
+`https://api.elevenlabs.io` → `https://api.elevenlabs.io/v1/convai` → `wss://api.elevenlabs.io/v1/convai/realtime`.
+A data-residency `base_url` maps onto its own realtime host the same way."""
 
-The realtime WebSocket is that URL plus `realtime`, with the HTTP scheme swapped for the WebSocket one, as on
-OpenAI: `https://api.elevenlabs.io` → `https://api.elevenlabs.io/v1` → `wss://api.elevenlabs.io/v1/realtime`.
-TODO(elevenlabs-launch): the real path. If the realtime API lives on a different *host* than the REST API, derive
-the base URL from a host constant here instead of `ElevenLabsProvider.base_url`, and decide how data-residency
-`base_url`s map onto it."""
+LatestElevenLabsRealtimeModelNames = Literal['eleven_realtime_v1_mini', 'eleven_realtime_v1_max']
+"""The latest Eleven Realtime model names."""
 
-_AUTH_HEADER = 'Authorization'
-"""The handshake header carrying the API key.
+ElevenLabsRealtimeModelName = str | LatestElevenLabsRealtimeModelNames
+"""Possible Eleven Realtime model names.
 
-TODO(elevenlabs-launch): `Authorization: Bearer <key>` is what the OpenAI SDK sends; the rest of the ElevenLabs API
-uses `xi-api-key` (then `_AUTH_SCHEME = None`)."""
-
-_AUTH_SCHEME: str | None = 'Bearer'
-"""Prefix for the header value, e.g. `'Bearer'` for `Authorization: Bearer <key>`; `None` sends the bare key."""
-
-_MODEL_QUERY_PARAM = True
-"""Whether the model goes in the URL as `?model=`, as on OpenAI.
-
-TODO(elevenlabs-launch): or in `session.update`'s `session.model`, or not at all."""
-
-_AUTO_TRANSCRIPTION_MODEL = 'scribe_v2_realtime'
-"""What `input_transcription_model='auto'` resolves to (see `resolve_transcription_model`).
-
-TODO(elevenlabs-launch): the transcription model id the realtime API accepts, or whether transcription is always
-on and takes no model at all."""
-
-ElevenLabsRealtimeModelName = str
-"""Possible ElevenLabs realtime model names.
-
-TODO(elevenlabs-launch): `str | LatestElevenLabsRealtimeModelNames`, with a `Literal` of the published model ids, and
-add them to `KnownRealtimeModelName` in `realtime/model.py` (a sync test pins that list)."""
-
-# ------------------------------------------------------------------------------------------------------------
+`eleven_realtime_v1_mini` is optimized for price and speed; `eleven_realtime_v1_max` reasons before it responds,
+for complex instructions and multi-step tool use, and needs a `max_tokens` of at least 1024."""
 
 
 class ElevenLabsRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
-    """Settings specific to ElevenLabs realtime models.
+    """Settings specific to Eleven Realtime models.
 
     This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
-    field, since the session is configured with OpenAI's `session.update` shape. `openai_turn_detection`,
-    `openai_input_noise_reduction`, `openai_output_speed`, `openai_truncation`, `openai_prune_tool_items` and
-    `openai_keep_tool_items` are sent as on OpenAI. `openai_voice` is **ignored**: ElevenLabs voices are
-    ElevenLabs voice IDs, set with `elevenlabs_voice`.
-    """
+    field, since the session is configured with OpenAI's `session.update` shape. `openai_turn_detection` is sent
+    as on OpenAI, except that ElevenLabs only supports semantic VAD: a `ServerVAD` value raises a
+    [`UserError`][pydantic_ai.exceptions.UserError].
 
-    # TODO(elevenlabs-launch): for each inherited `openai_*` setting, confirm ElevenLabs honors it, and move any it
-    # rejects or ignores to the ignored list in the docstring above (and drop it in `_session_config`), as
-    # `AzureRealtimeModelSettings` does for Voice Live. In particular: semantic VAD in `openai_turn_detection`,
-    # `conversation.item.delete` for `openai_prune_tool_items`, and `truncation`.
-    # TODO(elevenlabs-launch): add only settings ElevenLabs documents, prefixed `elevenlabs_` (the Agents model uses
-    # `elevenlabs_agents_`). Candidates: output format, language, TTS knobs (stability, similarity, style).
+    The remaining inherited fields are **silently ignored**, because ElevenLabs accepts and then drops them:
+    `openai_voice` (ElevenLabs voices are set with `elevenlabs_voice`), `openai_input_noise_reduction`,
+    `openai_output_speed`, `openai_truncation`, and `openai_prune_tool_items` and `openai_keep_tool_items` (the
+    server doesn't implement `conversation.item.delete`). So are the shared `parallel_tool_calls` and `thinking`
+    settings. Input audio is always transcribed: `input_transcription_model` takes `'auto'` (the default) or
+    `None`, which still leaves transcripts on, and any other value raises a `UserError`.
+    """
 
     elevenlabs_voice: str
-    """Voice used for audio output: an ElevenLabs voice ID.
+    """Voice used for audio output: an ElevenLabs voice ID (e.g. `'JBFqnCBsd6RMkjVDRZzb'`) or the name of a
+    default voice. The server's default is `'brian'`."""
 
-    TODO(elevenlabs-launch): voice ID vs. name, the default voice, and where it goes in `session.update`."""
+    elevenlabs_language: str
+    """Language code of the conversation (e.g. `'en'`, `'es'`, `'pt-br'`), used for transcription, speech, and the
+    model's reply language. The server's default is English."""
+
+    elevenlabs_max_duration_seconds: int
+    """Maximum wall-clock duration of a session, in seconds, from 60 to 7200. The server's default is 600.
+
+    The server closes the WebSocket once it is exceeded. With a
+    [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, the session carries on over a new
+    connection, with the local message history replayed into it."""
 
 
-def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
-    """Map a raw ElevenLabs realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent].
+class _ElevenLabsLifecycle(OpenAILifecycle):
+    """The OpenAI lifecycle, except that a spoken turn joins the conversation when its audio is committed.
 
-    ElevenLabs speaks the OpenAI Realtime protocol, so events map via the OpenAI codec.
+    OpenAI's VAD commits a turn as soon as it reports `speech_stopped`. ElevenLabs' semantic VAD can instead hear
+    the user carry on after a pause, and report `speech_started` again for the same item, so a turn is only over
+    once `input_audio_buffer.committed` says so.
     """
-    # TODO(elevenlabs-launch): the hook for every event that diverges from OpenAI's, as `xai.map_event` does:
-    # - input transcription: incremental `.delta` (OpenAI) vs cumulative snapshots (xAI's `.updated`), and
-    #   whether `.completed` is a whole snapshot (then `replace(event, cumulative=True)`);
-    # - conversation lifecycle (`conversation.created`, `conversation.item.added`/`.created`), if it carries a
-    #   conversation id worth exposing;
-    # - error `type`s that end the session (xAI's `max_duration` → `recoverable=False`);
-    # - any ElevenLabs-only events: map them to codec events, or drop them by returning `None`.
-    return _map_openai_event(data)
+
+    def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        del data
+        return []
 
 
 class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
@@ -152,28 +158,46 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
 
     _provider_name = 'elevenlabs'
     _provider_label = 'ElevenLabs Realtime'
-    # TODO(elevenlabs-launch): whether a `function_call_output` can be followed by an image item.
+    # Images are dropped from conversation items, so there is nowhere for a tool result's images to go.
     _supports_tool_result_images = False
 
-    # TODO(elevenlabs-launch): reconnect. The inherited `_attempt_reconnect` re-dials and replays the local
-    # history into a fresh session, as on OpenAI and xAI. Override only if ElevenLabs resumes a conversation
-    # server-side, or if a session-length error should re-dial right away as xAI's `max_duration` does (see
-    # `XaiRealtimeConnection._decode_frame`).
+    def __init__(
+        self,
+        ws: ClientConnection,
+        *,
+        dial: Callable[[], Awaitable[ClientConnection]] | None = None,
+        reconnect: ReconnectPolicy | None = None,
+        input_transcription_enabled: bool = True,
+        interrupts_response_on_speech: bool = False,
+        model_name: str | None = None,
+        model_name_getter: Callable[[], str | None] | None = None,
+        observes_output_audio: bool = True,
+        audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
+        prune_tool_items: bool = False,
+        keep_tool_items: AbstractSet[str] = frozenset(),
+    ) -> None:
+        # ElevenLabs transcribes every spoken turn, so its transcripts arrive (and belong in history) even when
+        # `input_transcription_model=None` asked for none.
+        del input_transcription_enabled
+        super().__init__(
+            ws,
+            dial=dial,
+            reconnect=reconnect,
+            interrupts_response_on_speech=interrupts_response_on_speech,
+            model_name=model_name,
+            model_name_getter=model_name_getter,
+            observes_output_audio=observes_output_audio,
+            audio_output_sample_rate=audio_output_sample_rate,
+            prune_tool_items=prune_tool_items,
+            keep_tool_items=keep_tool_items,
+        )
+        self._lifecycle = _ElevenLabsLifecycle()
 
-    # TODO(elevenlabs-launch): push-to-talk. If, like xAI, a commit with `turn_detection: null` is answered
-    # without a `response.create`, or a `response.create` after committed audio is dropped, port xAI's
-    # `manual_turns` handling (`_send_event` / `_create_response` overrides) and add a simulator dialect rule.
-
-    def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
-        return map_event(data)
-
-    def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
-        # TODO(elevenlabs-launch): usage. Check `response.done`'s `usage` against OpenAI's shape: token buckets,
-        # any provider-only fields in `model_extra` (xAI adds a *running-total* `billable_audio_seconds`), and
-        # what genai-prices needs to price it (audio seconds? characters?). Put provider-only buckets in
-        # `details`, and set the unit pricing knows when billing isn't per token, so `cost_limit` doesn't price
-        # the session at a confident zero.
-        return super()._map_response_usage(usage)
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        # ElevenLabs answers `conversation.item.delete` with a `not_implemented` error: `openai_prune_tool_items`
+        # is one of the settings it ignores.
+        return False
 
 
 class _ElevenLabsOpenAIProvider(OpenAIProvider):
@@ -181,7 +205,7 @@ class _ElevenLabsOpenAIProvider(OpenAIProvider):
 
     Named `'elevenlabs'` and resolving ElevenLabs' realtime profile, so the behavior
     [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] derives from its provider
-    (`system`, `profile`, the WebSocket URL) reports ElevenLabs rather than OpenAI.
+    (`system`, `profile`, the WebSocket and client-secret URLs) reports ElevenLabs rather than OpenAI.
     """
 
     def __init__(self, elevenlabs_provider: ElevenLabsProvider) -> None:
@@ -201,17 +225,47 @@ class _ElevenLabsOpenAIProvider(OpenAIProvider):
         return elevenlabs_realtime_model_profile(model_name)
 
 
+def _turn_detection_config(settings: ElevenLabsRealtimeModelSettings) -> dict[str, Any] | None:
+    """The `turn_detection` payload: semantic VAD, the only kind ElevenLabs takes, or `None` for push-to-talk."""
+    if 'openai_turn_detection' in settings:
+        turn_detection = settings['openai_turn_detection']
+        if turn_detection['type'] == 'server_vad':
+            raise UserError(
+                'Eleven Realtime only supports semantic VAD: set `openai_turn_detection` to '
+                "`{'type': 'semantic_vad'}`, or use the cross-provider `turn_detection` setting."
+            )
+        config = turn_detection_config(turn_detection)
+        assert config is not None
+        if config.get('eagerness') == 'auto':
+            # ElevenLabs takes `low`, `medium` or `high`; leaving it out keeps the server default, `medium`.
+            del config['eagerness']
+        return config
+    base = settings.get('turn_detection', True)
+    if base is False:
+        return None
+    config = {'type': 'semantic_vad'}
+    if base is not True:
+        # Semantic VAD's `eagerness` takes the same values as the cross-provider `sensitivity`.
+        if (sensitivity := base.get('sensitivity')) is not None:
+            config['eagerness'] = sensitivity
+        for key in ('prefix_padding_ms', 'silence_duration_ms'):
+            if (value := base.get(key)) is not None:
+                config[key] = value
+    return config
+
+
 @dataclass(init=False)
 class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
-    """ElevenLabs realtime API model, for ElevenLabs' speech-to-speech models.
+    """ElevenLabs realtime API model, for the Eleven Realtime speech-to-speech models.
 
     Pass `provider='elevenlabs'` (the default, which reads `ELEVENLABS_API_KEY`) or an
     [`ElevenLabsProvider`][pydantic_ai.providers.elevenlabs.ElevenLabsProvider] constructed with `api_key=`
     or a data-residency `base_url=`. The session is configured and driven through the OpenAI Realtime
-    protocol; WebRTC is not supported.
+    protocol over a WebSocket; WebRTC is not supported.
 
     Args:
-        model: The model name.
+        model: The model name, `eleven_realtime_v1_mini` (optimized for price and speed) or
+            `eleven_realtime_v1_max` (reasons before it responds).
         provider: The provider to use for authentication and the base URL. Defaults to `'elevenlabs'`.
         settings: [Model settings][pydantic_ai.realtime.elevenlabs.ElevenLabsRealtimeModelSettings] used as
             defaults for realtime sessions. With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
@@ -221,18 +275,7 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
             returning the one to use.
     """
 
-    # TODO(elevenlabs-launch): the model-name example in `Args` (e.g. "The model name, e.g. `<id>`").
-    # TODO(elevenlabs-launch): WebRTC. If ElevenLabs serves OpenAI's `/realtime/calls`, `/realtime/client_secrets`
-    # and the `?call_id=` sideband, delete the WebRTC overrides at the bottom of this class to inherit OpenAI's,
-    # and set `supports_webrtc` in the profile.
-    # TODO(elevenlabs-launch): the handshake. The inherited `connect` waits for `session.created`, sends
-    # `session.update`, and waits for `session.updated`; frames in between fail the handshake. If a recording
-    # shows ElevenLabs sending one there (xAI's `conversation.created`), override `connect` as `XaiRealtimeModel`
-    # does to pass `on_unexpected_during_update`. Also check how a bad key or model name is refused (HTTP status
-    # on the upgrade vs. an `error` frame vs. a close code), so it surfaces as `ModelHTTPError`/`ModelAPIError`.
-
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = ElevenLabsRealtimeConnection
-    _auto_transcription_model: ClassVar[str] = _AUTO_TRANSCRIPTION_MODEL
 
     def __init__(
         self,
@@ -261,13 +304,20 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         return self._elevenlabs_provider.base_url
 
     def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
+        # The model is chosen by `session.model` in `session.update`: the server ignores a `?model=` query.
         del model_settings
-        return with_realtime_query(self._realtime_ws_base(), model=self.model if _MODEL_QUERY_PARAM else None)
+        return with_realtime_query(self._realtime_ws_base())
 
     async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
+        # The API key goes in `xi-api-key`; `Authorization: Bearer` only takes a client secret.
         del model_settings
-        api_key = self._elevenlabs_provider.api_key
-        return {_AUTH_HEADER: f'{_AUTH_SCHEME} {api_key}' if _AUTH_SCHEME else api_key}
+        return {'xi-api-key': self._elevenlabs_provider.api_key}
+
+    def _session_model_name(self, created: dict[str, Any], model_settings: OpenAIRealtimeModelSettings) -> str | None:
+        # `session.created` always reports the default model. The requested one is set by the `session.update`
+        # that follows, which the server rejects, failing the handshake, if it names an unknown model.
+        del created, model_settings
+        return self.model
 
     def _session_config(
         self,
@@ -276,23 +326,39 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         *,
         model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
-        # TODO(elevenlabs-launch): the `session.update` shape. This is OpenAI's GA shape (`type: 'realtime'`,
-        # `voice`/`turn_detection` nested under `audio`); xAI instead puts `voice`/`turn_detection` at the session
-        # top level and has no `type`/`output_modalities`. Check each field against their reference, including
-        # the audio format names (`audio/pcm` + `rate`, or ElevenLabs' `pcm_16000`), and drop any the server
-        # rejects or silently ignores (then document it in `ElevenLabsRealtimeModelSettings`).
         settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        transcription_model = settings.get('input_transcription_model', AUTO_TRANSCRIPTION_MODEL)
+        if transcription_model not in (AUTO_TRANSCRIPTION_MODEL, None):
+            raise UserError(
+                'Eleven Realtime always transcribes input audio and takes no transcription model: leave '
+                "`input_transcription_model` at `'auto'`, and set the language with `elevenlabs_language`; "
+                f'got {transcription_model!r}.'
+            )
         config = super()._session_config(instructions, tools, model_settings=settings)
+        config['model'] = self.model
+        audio_input: dict[str, Any] = config['audio']['input']
+        audio_input['turn_detection'] = _turn_detection_config(settings)
+        # Transcription takes no model, only the conversation's language, which also sets the reply language.
+        audio_input.pop('transcription', None)
+        audio_input.pop('noise_reduction', None)
+        if (language := settings.get('elevenlabs_language')) is not None:
+            audio_input['transcription'] = {'language': language}
         audio_output: dict[str, Any] = config['audio']['output']
+        # Output audio is always 24 kHz, and its `format` takes no `rate`.
+        audio_output['format'] = {'type': 'audio/pcm'}
         # `openai_voice` names an OpenAI voice, which ElevenLabs doesn't have; see `ElevenLabsRealtimeModelSettings`.
         audio_output.pop('voice', None)
+        audio_output.pop('speed', None)
         if voice := settings.get('elevenlabs_voice'):
             audio_output['voice'] = voice
-        # TODO(elevenlabs-launch): reasoning. If a model takes `reasoning.effort`, set `supports_thinking` in the
-        # profile; the inherited config then maps the unified `thinking` setting as OpenAI does.
+        for ignored in ('parallel_tool_calls', 'truncation'):
+            config.pop(ignored, None)
+        if (max_duration := settings.get('elevenlabs_max_duration_seconds')) is not None:
+            config['max_duration_seconds'] = max_duration
         return config
 
-    # WebRTC: the OpenAI signaling endpoints this class would inherit aren't known to exist on ElevenLabs.
+    # WebRTC: ElevenLabs serves OpenAI's client-secret endpoint, which `create_client_secret` inherits, but not
+    # `/realtime/calls`.
 
     def connect_webrtc(
         self,
@@ -303,16 +369,6 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> NoReturn:
         self._raise_unsupported_webrtc('connect_webrtc')
-
-    async def create_client_secret(
-        self,
-        *,
-        instructions: str | None = None,
-        tools: Sequence[ToolDefinition] | None = None,
-        model_settings: RealtimeModelSettings | None = None,
-        expires_after_seconds: int | None = None,
-    ) -> RealtimeClientSecret:
-        self._raise_unsupported_webrtc('create_client_secret')
 
     async def answer_webrtc_offer(
         self,

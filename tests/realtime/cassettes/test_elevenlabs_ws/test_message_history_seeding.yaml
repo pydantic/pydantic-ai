@@ -1,0 +1,572 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000001
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: semantic_vad
+        output:
+          format:
+            type: audio/pcm
+      model: eleven_realtime_v1_mini
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    conversation:
+      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      object: realtime.conversation
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000002
+- kind: message
+  direction: received
+  at: 0.048
+  data:
+    type: session.updated
+    session:
+      type: realtime
+      model: eleven_realtime_v1_mini
+      instructions: ''
+      output_modalities:
+      - audio
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          turn_detection:
+            type: semantic_vad
+            eagerness: medium
+            create_response: true
+            interrupt_response: true
+            threshold: null
+            prefix_padding_ms: null
+            silence_duration_ms: null
+            turn_timeout: -1.0
+          pacing: realtime
+        output:
+          format:
+            type: audio/pcm
+          voice: brian
+      tools: []
+      tool_choice: auto
+      temperature: 0.7
+      max_response_output_tokens: 4096
+      max_duration_seconds: 600
+      tracing: null
+      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      object: realtime.session
+      expires_at: null
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000003
+- kind: message
+  direction: sent
+  at: 0.048
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+- kind: message
+  direction: sent
+  at: 0.049
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: sent
+  at: 0.049
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+- kind: message
+  direction: sent
+  at: 0.049
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.095
+  data:
+    type: conversation.item.added
+    previous_item_id: null
+    item:
+      id: msg_000001
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000004
+- kind: message
+  direction: received
+  at: 0.095
+  data:
+    type: conversation.item.done
+    previous_item_id: null
+    item:
+      id: msg_000001
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000005
+- kind: message
+  direction: received
+  at: 0.095
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000006
+- kind: message
+  direction: received
+  at: 0.095
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000001
+    item:
+      id: msg_000002
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000007
+- kind: message
+  direction: received
+  at: 0.654
+  data:
+    type: conversation.item.added
+    previous_item_id: msg_000002
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000008
+- kind: message
+  direction: received
+  at: 0.654
+  data:
+    type: conversation.item.done
+    previous_item_id: msg_000002
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+        audio: null
+        transcript: null
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000009
+- kind: message
+  direction: received
+  at: 1.178
+  data:
+    type: response.created
+    response:
+      id: resp_6101m5czekqge6p8m22k47c19e6d
+      object: realtime.response
+      status: in_progress
+      conversation_id: conv_1201m5czejj2e85a5gyptbxbngjz
+      output: []
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000010
+- kind: message
+  direction: received
+  at: 1.178
+  data:
+    type: response.output_item.added
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    output_index: 0
+    item:
+      id: item_6001m5czekqhe73tsp9e8qczat2y
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000011
+- kind: message
+  direction: received
+  at: 1.178
+  data:
+    type: conversation.item.added
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_6001m5czekqhe73tsp9e8qczat2y
+      type: message
+      role: assistant
+      content: []
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: in_progress
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000012
+- kind: message
+  direction: received
+  at: 1.178
+  data:
+    type: response.content_part.added
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: null
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000013
+- kind: message
+  direction: received
+  at: 1.178
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: Your name is Alice and your favorite color is teal
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000014
+- kind: message
+  direction: received
+  at: 1.183
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: .
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000015
+- kind: message
+  direction: received
+  at: 1.276
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAA
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000016
+- kind: message
+  direction: received
+  at: 1.316
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: TP/h/v//JACn/R/9c/ta+lr8Xv61+yf7ev3+/dH7Z/j/
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000017
+- kind: message
+  direction: received
+  at: 1.33
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: yBgGHMAdwyLXJQknGCZ9IzMhViDiIJAgniKCJOkljiUC
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000018
+- kind: message
+  direction: received
+  at: 1.371
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: u+yk8Fvvkey455Hny+RL4ETef91w3xHp4/Ra9i76/uh0
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000019
+- kind: message
+  direction: received
+  at: 1.453
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: ofdB+DH4I/up+yz7Tfx0+x365Pdu+Nn45/hd+nb7B/3w
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000020
+- kind: message
+  direction: received
+  at: 1.617
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: D/5PAccBDQLY/ZX/TP9w/48CkgD//lT/n/4FAGMCpgG0
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000021
+- kind: message
+  direction: received
+  at: 1.645
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: 4/wj/TP9Lv0N/Qv98fwC/Tb9p/0u/rj+Mf+r/xEAUwBO
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000022
+- kind: message
+  direction: received
+  at: 1.757
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: vfgf+DP5Wvph+q/6G/2j/un+6v78/ygAUv+Z/in+Bf6x
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000023
+- kind: message
+  direction: received
+  at: 1.826
+  data:
+    type: response.output_audio.delta
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    delta: kv6Z/qb+sP65/sD+0f7K/tL+1v7W/tj+zP7P/rD+oP6C
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000024
+- kind: message
+  direction: received
+  at: 5.006
+  data:
+    type: response.output_audio.done
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000025
+- kind: message
+  direction: received
+  at: 5.006
+  data:
+    type: response.output_audio_transcript.done
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    transcript: Your name is Alice and your favorite color is teal.
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000026
+- kind: message
+  direction: received
+  at: 5.006
+  data:
+    type: response.content_part.done
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    output_index: 0
+    content_index: 0
+    part:
+      type: audio
+      audio: ''
+      transcript: Your name is Alice and your favorite color is teal.
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000027
+- kind: message
+  direction: received
+  at: 5.007
+  data:
+    type: conversation.item.done
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_6001m5czekqhe73tsp9e8qczat2y
+      type: message
+      role: assistant
+      content:
+      - type: output_audio
+        text: null
+        audio: ''
+        transcript: Your name is Alice and your favorite color is teal.
+      call_id: null
+      name: null
+      arguments: null
+      output: null
+      status: completed
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000028
+- kind: message
+  direction: received
+  at: 5.007
+  data:
+    type: response.output_item.done
+    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    output_index: 0
+    item:
+      id: item_6001m5czekqhe73tsp9e8qczat2y
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_audio
+        audio: ''
+        transcript: Your name is Alice and your favorite color is teal.
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000029
+- kind: message
+  direction: received
+  at: 5.007
+  data:
+    type: response.done
+    response:
+      id: resp_6101m5czekqge6p8m22k47c19e6d
+      object: realtime.response
+      status: completed
+      conversation_id: conv_1201m5czejj2e85a5gyptbxbngjz
+      output:
+      - id: item_6001m5czekqhe73tsp9e8qczat2y
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_audio
+          audio: ''
+          transcript: Your name is Alice and your favorite color is teal.
+      usage: null
+      output_modalities:
+      - audio
+      voice: brian
+      output_audio_format: audio/pcm
+      temperature: 0.7
+      max_output_tokens: 4096
+    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000030

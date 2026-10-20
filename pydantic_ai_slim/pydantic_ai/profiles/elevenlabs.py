@@ -69,41 +69,41 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
 
 
 def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-    """Get the realtime model profile for an ElevenLabs speech-to-speech model."""
-    # TODO(elevenlabs-launch): every value below is a placeholder until it is verified against the
-    # API reference and a live recording. Where unverified, the value claims *less* than OpenAI's profile, so
-    # an unsupported feature raises a `UserError` up front rather than silently misbehaving on the wire.
-    # Branch on `model_name` only once ElevenLabs ships more than one model with different capabilities.
+    """Get the realtime model profile for an Eleven Realtime speech-to-speech model.
+
+    Both models (`eleven_realtime_v1_mini` and `eleven_realtime_v1_max`) share the same API surface; Max reasons
+    before it responds, but exposes no reasoning setting.
+    """
     del model_name
     return {
-        # TODO(elevenlabs-launch): `input_audio_buffer.commit` + `response.create` with `turn_detection: null`.
+        # With `turn_detection: null`, a commit is answered only once `response.create` asks for it.
         'supports_manual_turn_control': True,
-        # TODO(elevenlabs-launch): `response.cancel`.
+        # `response.cancel` ends the active response with `status: 'cancelled'`.
         'supports_interruption': True,
-        # TODO(elevenlabs-launch): `conversation.item.truncate` (xAI documents it but it doesn't land at barge-in).
-        'supports_output_truncation': False,
-        # TODO(elevenlabs-launch): `output_modalities: ['text']`; xAI accepts it but always speaks.
+        # `conversation.item.truncate` is acknowledged with `conversation.item.truncated`.
+        'supports_output_truncation': True,
+        # `output_modalities: ['text']` answers text input with `response.output_text.*`, but then ignores audio input
+        # entirely: no speech events, no transcription, and a committed turn is never answered.
         'supports_text_output': False,
-        # TODO(elevenlabs-launch): `input_image` content parts.
+        # `input_image` content parts are accepted but silently dropped from the conversation item.
         'supports_image_input': False,
-        # TODO(elevenlabs-launch): `conversation.item.create` for history. Reconnect replays history through
-        # this same path, so with `False` a reconnect can't restore the conversation.
+        # User and assistant text items seed the conversation, which reconnect relies on too.
         'supports_session_seeding': True,
         'supports_seeding_images': False,
-        # TODO(elevenlabs-launch): assistant `output_audio` / user `input_audio` items in seeded history.
+        # Seeded user audio becomes an empty text part, and an assistant item needs a non-empty text part.
         'supports_seeding_audio': False,
-        # Not implemented by `ElevenLabsRealtimeModel`, whatever the API offers.
+        # Not implemented by `ElevenLabsRealtimeModel`: ElevenLabs serves no `/realtime/calls` endpoint.
         'supports_webrtc': False,
-        # TODO(elevenlabs-launch): a `reasoning` session field.
+        # There is no reasoning setting: `reasoning` is accepted but dropped.
         'supports_thinking': False,
-        # TODO(elevenlabs-launch): does the model keep talking (and answer the user) while a tool call is
-        # outstanding? Verify live with a slow tool, as for OpenAI and xAI (`'always'`).
-        'async_tool_call_mode': 'always',
-        # TODO(elevenlabs-launch): `input_audio_buffer.speech_started` / `.speech_stopped`.
+        # The model does answer the user while a tool call is outstanding, but a result sent after such a reply
+        # never reaches it, and the `response.create` that follows the result goes unanswered. So the result only
+        # arrives reliably when nothing else happens while the tool runs.
+        'async_tool_call_mode': 'never',
         'emits_input_speech_events': True,
-        # TODO(elevenlabs-launch): does a response's `usage.input_tokens` cover the whole conversation?
+        # `response.done` carries no `usage`.
         'response_usage_covers_context': False,
-        # TODO(elevenlabs-launch): PCM rates. ElevenLabs Agents default to 16 kHz; OpenAI Realtime is 24 kHz.
+        # The input rate is configurable, but output audio is always 24 kHz PCM.
         'audio_input_sample_rate': 24000,
         'audio_output_sample_rate': 24000,
     }

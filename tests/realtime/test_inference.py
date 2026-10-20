@@ -32,7 +32,7 @@ with try_import() as imports_successful:
         LatestAzureRealtimeModelNames,
         LatestAzureRealtimeTranscriptionModelNames,
     )
-    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
+    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, LatestElevenLabsRealtimeModelNames
     from pydantic_ai.realtime.google import LatestGoogleRealtimeModelNames
     from pydantic_ai.realtime.model import KnownRealtimeModelName
     from pydantic_ai.realtime.openai import (
@@ -58,6 +58,7 @@ def test_known_realtime_model_names() -> None:  # pragma: lax no cover
         + [f'openai:{name}' for name in get_model_names(LatestOpenAILiveModelNames)]
         + [f'azure:{name}' for name in get_model_names(LatestAzureRealtimeModelNames)]
         + [f'xai:{name}' for name in get_model_names(LatestXaiRealtimeModelNames)]
+        + [f'elevenlabs:{name}' for name in get_model_names(LatestElevenLabsRealtimeModelNames)]
         + [f'google:{name}' for name in get_model_names(LatestGoogleRealtimeModelNames)]
     )
     assert generated_names == sorted(get_args(KnownRealtimeModelName.__value__))
@@ -145,9 +146,9 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert azure_model.model_name == 'gpt-realtime'
 
     env.set('ELEVENLABS_API_KEY', 'test')
-    elevenlabs_model = infer_realtime_model('elevenlabs:eleven-voice')
+    elevenlabs_model = infer_realtime_model('elevenlabs:eleven_realtime_v1_mini')
     assert type(elevenlabs_model).__name__ == 'ElevenLabsRealtimeModel'
-    assert elevenlabs_model.model_name == 'eleven-voice'
+    assert elevenlabs_model.model_name == 'eleven_realtime_v1_mini'
 
 
 def test_infer_realtime_model_elevenlabs_agents(env: TestEnv) -> None:
@@ -247,7 +248,7 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
         ('openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('azure:gpt-realtime', 'AzureRealtimeModel'),
         ('xai:grok-voice-latest', 'XaiRealtimeModel'),
-        ('elevenlabs:eleven-voice', 'ElevenLabsRealtimeModel'),
+        ('elevenlabs:eleven_realtime_v1_mini', 'ElevenLabsRealtimeModel'),
         ('google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
         ('gateway/openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('gateway/google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),

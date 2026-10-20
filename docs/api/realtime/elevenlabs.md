@@ -1,6 +1,6 @@
 # `pydantic_ai.realtime.elevenlabs`
 
-The ElevenLabs realtime provider, for ElevenLabs' speech-to-speech models. Requires the `elevenlabs-realtime`
+The ElevenLabs realtime provider, for the Eleven Realtime speech-to-speech models. Requires the `elevenlabs-realtime`
 optional group (`pip install "pydantic-ai-slim[elevenlabs-realtime]"`), which includes `openai` because the
 model reuses the OpenAI Realtime codec, whose event types come from the OpenAI SDK.
 

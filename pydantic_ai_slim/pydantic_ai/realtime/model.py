@@ -510,6 +510,8 @@ KnownRealtimeModelName = TypeAliasType(
         'azure:gpt-realtime',
         'xai:grok-voice-latest',
         'xai:grok-voice-think-fast-2.0',
+        'elevenlabs:eleven_realtime_v1_max',
+        'elevenlabs:eleven_realtime_v1_mini',
         'google:gemini-2.5-flash-native-audio-latest',
         'google:gemini-3.1-flash-live-preview',
         'google:gemini-3.8-live',

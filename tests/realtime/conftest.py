@@ -355,14 +355,10 @@ def elevenlabs_agents_ws_cassette(
 def elevenlabs_ws_cassette(
     request: pytest.FixtureRequest, elevenlabs_api_key: str
 ) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
-    """An `ElevenLabsProvider` whose realtime WebSocket is backed by a cassette.
-
-    Skips (rather than errors) when the cassette is missing offline, so the cassette tests can land
-    before their recordings do.
-    """
+    """An `ElevenLabsProvider` whose realtime WebSocket is backed by a cassette."""
     if not elevenlabs_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
-    with _ws_cassette(request, 'elevenlabs', skip_if_missing=True) as cassette:
+    with _ws_cassette(request, 'elevenlabs') as cassette:
         yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
 
 
@@ -550,8 +546,7 @@ def parity_ws_cassette(
         provider = _gateway_realtime_provider('google', gateway_api_key)
         provider_name = 'gemini'
 
-    # TODO(elevenlabs-launch): drop `skip_if_missing` once the ElevenLabs parity rows are recorded.
-    with _ws_cassette(request, provider_name, skip_if_missing=route == 'elevenlabs', subdir=subdir) as cassette:
+    with _ws_cassette(request, provider_name, subdir=subdir) as cassette:
         yield case, provider, cassette
 
 
