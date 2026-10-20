@@ -2611,7 +2611,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                         elif response_part.content:  # pragma: no branch
                             thinking_text, carry_in_user_turn = render_replayed_thinking(
-                                response_part.content, self.profile, m
+                                response_part.content, self.profile
                             )
                             thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
                             if carry_in_user_turn:

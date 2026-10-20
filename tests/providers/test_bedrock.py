@@ -400,6 +400,19 @@ def test_remove_inference_geo_prefix(model_name: str, expected: str):
         ('eu.amazon.nova-micro-v1:0', ('amazon', 'nova-micro')),
         ('cohere.command-r-v1:0', ('cohere', 'command-r')),
         ('meta.llama3-8b-instruct-v14', ('meta', 'llama3-8b-instruct')),
+        # Inference profile and foundation model ARNs carry the model ID after the resource type.
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8',
+            ('anthropic', 'claude-opus-4-8'),
+        ),
+        (
+            'arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.anthropic.claude-opus-4-6-v1',
+            ('anthropic', 'claude-opus-4-6'),
+        ),
+        (
+            'arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0',
+            ('anthropic', 'claude-sonnet-4-5-20250929'),
+        ),
         # Not a `<provider>.<name>` shape — returned unchanged.
         ('claude-haiku-4-5', (None, 'claude-haiku-4-5')),
         ('claude-haiku-4-5@20251001', (None, 'claude-haiku-4-5@20251001')),
@@ -1078,3 +1091,16 @@ def test_strict_none_preserves_numeric_constraints():
             'required': ['score'],
         }
     )
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_bedrock_boolean_defs_preserved(definition: bool):
+    """Bedrock retains definitions, so boolean references need no inlining rewrite."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert BedrockJsonSchemaTransformer(schema).walk() == original
+    assert schema == original

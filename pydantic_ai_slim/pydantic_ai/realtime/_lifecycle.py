@@ -143,6 +143,25 @@ class OutputItemDetails(LifecycleEvent):
     provider_details: dict[str, Any]
 
 
+@dataclass(frozen=True, kw_only=True)
+class OutputItemCut(LifecycleEvent):
+    """The provider says the listener heard only part of one spoken output item, before or after its response ended.
+
+    Generation outruns playback, so the reply the user cuts off has usually ended already. Its message in history is
+    marked interrupted, and swapped for a copy in the same position, as one the session cuts off itself on a barge-in
+    is: a snapshot of history already handed out doesn't change. Like ElevenLabs' `agent_response_correction`.
+    """
+
+    item_id: str
+    """The output item, as the codec events streaming it named it (`OutputTranscript.item_id`)."""
+    heard_transcript: str | None = None
+    """What the listener heard of the item's transcript, which history then records instead, keeping the provider's
+    original in the part's `provider_details['original_transcript']`: `''` for an item they heard none of. `None`
+    leaves the transcript as it is."""
+    heard_ms: int | None = None
+    """How much of the item's audio the listener heard, in milliseconds, if known."""
+
+
 @dataclass(frozen=True)
 class StaleEvent:
     """A codec event about a response that has already ended: a repeated terminal, or content trailing it.

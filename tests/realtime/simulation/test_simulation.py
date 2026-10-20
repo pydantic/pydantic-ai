@@ -1149,10 +1149,12 @@ def test_started_reply_lost_to_a_drop_is_settled_openai() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('SIM-1')
-def test_known_server_vad_reply_lost_to_a_drop_holds_back_the_next() -> None:
-    """A server-VAD reply that called a tool is lost with the connection; the reply asked for after the reconnect
-    is never answered: the provider is still owed the lost call's output."""
+def test_server_vad_reply_whose_tool_result_was_lost_to_a_drop_does_not_hold_back_the_next() -> None:
+    """A server-VAD reply calls a tool whose result is lost with the connection; the reply asked for after the reconnect is answered.
+
+    The failed send is raised from `async for`, and the session goes on receiving over the re-dial (SIM-1 was a
+    simulator that stopped reading at the first error the iterator raised).
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
@@ -1162,23 +1164,43 @@ def test_known_server_vad_reply_lost_to_a_drop_holds_back_the_next() -> None:
         sim.call_tool(deliver=False)
         sim.settle()
         sim.create_response()
+        sim.wait_for_reply()
         sim.settle()
 
-    reproduce('SIM-1', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
-@known('SIM-15')
-def test_known_raising_tool_leaves_a_later_request_owed_xai() -> None:
-    """A tool raises; the request sent after that is held behind the calling response, which never ends."""
+def test_request_sent_after_a_tool_raised_is_answered_xai() -> None:
+    """A tool raises; a request sent after that is answered, and waited for, as usual.
+
+    The failure is raised from `async for`, and a consumer that keeps iterating keeps a working session (SIM-15 was
+    a simulator that stopped reading at the first error the iterator raised).
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.create_response()
         sim.call_tool()
         sim.finish_tool(outcome='error')
         sim.create_response()
+        sim.wait_for_reply()
         sim.settle()
 
-    reproduce('SIM-15', OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
+
+
+@known('SIM-43')
+def test_known_live_failed_call_leaves_its_round_owed() -> None:
+    """A delegated round of three calls, one of which raises: the other two results ask for a reply that never comes."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.backend_call()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+
+    reproduce('SIM-43', LiveSimulation(), scenario)
 
 
 @known('SIM-37')
@@ -1463,8 +1485,10 @@ def test_live_drop_raises_a_realtime_error() -> None:
 
     sim = LiveSimulation()
     run_clean(sim, scenario)
-    assert repr(sim.consumer_error) == snapshot(
-        "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+    assert [repr(error) for error in sim.consumer_errors] == snapshot(
+        [
+            "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+        ]
     )
 
 
@@ -2363,17 +2387,28 @@ def test_tool_result_awaiting_its_reply_when_barged_in_on_without_a_vad_reply() 
 
 
 def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
-    """G3b: the tool result the session sends hits the dropped socket, which ends the event stream over the re-dial."""
-    with GeminiSimulation(strict=False) as s:
-        s.send_text()
-        s.speak(deliver=False)
-        s.call_tools(deliver=False)
-        s.deliver()
-        s.drop()
-        s.settle()
-        s.send_text()
-        s.settle()
-        assert ('G3b', 'wait.hang') in s.checker.known_hits
+    """G3b: the tool result the session sends hits the dropped socket, and that failure is raised from `async for`.
+
+    The session goes on receiving over the re-dial, so a turn sent afterwards is answered.
+    """
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.call_tools(deliver=False)
+        sim.deliver()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.settle()
+
+    sim = GeminiSimulation()
+    run_clean(sim, scenario)
+    assert [repr(error) for error in sim.consumer_errors] == snapshot(
+        [
+            "RealtimeError('Realtime connection failed while sending: sent 1006 (abnormal closure [internal]) simulated drop; no close frame received')"
+        ]
+    )
 
 
 def test_scenario_live_delegation_ends_the_wait_on_a_tool_round() -> None:
@@ -2604,7 +2639,10 @@ def test_scenario_terminal_cut_off_by_hanging_up() -> None:
         sim.clear_audio()
         sim.create_response()
         sim.call_tool(deliver=False)
-        sim.settle()
+        sim.deliver()
+        # The tool's result would pass `request_limit`: the session raises that and goes on receiving.
+        sim.finish_tool()
+        sim.deliver()
         sim.clear_audio()
         sim.finish(ticks=0)
         sim.close()
