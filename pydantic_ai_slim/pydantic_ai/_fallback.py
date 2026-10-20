@@ -2,7 +2,7 @@
 
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] walks its chain inside a single model
 request, so it also works outside an agent (`direct.model_request`, a standalone `Model`); the
-[`Fallback`][pydantic_ai.capabilities.Fallback] capability walks it through the agent's own attempt
+[`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability walks it through the agent's own attempt
 loop, one [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] at a time. Everything they
 have in common lives here, so a fix lands once and the two can never disagree:
 
@@ -57,7 +57,7 @@ _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 FALLBACK_MODEL_PIN_KEY = 'fallback_model_id'
 """Where `FallbackModel` pins a suspended response to the inner model that started it."""
 FALLBACK_CAPABILITY_PIN_KEY = 'fallback_candidate'
-"""Where the `Fallback` capability pins a suspended response to the candidate that served it.
+"""Where the `ModelFallback` capability pins a suspended response to the candidate that served it.
 
 Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its own inner pin.
 """
@@ -98,7 +98,7 @@ FallbackOn = (
     | ResponseHandler
     | Sequence[type[Exception] | ExceptionHandler | ResponseHandler]
 )
-"""The type of the `fallback_on` parameter to [`Fallback`][pydantic_ai.capabilities.Fallback]
+"""The type of the `fallback_on` parameter to [`ModelFallback`][pydantic_ai.capabilities.ModelFallback]
 and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]."""
 
 
@@ -271,7 +271,7 @@ class AttemptLog:
 class FallbackChain:
     """One request's way down a fallback chain: what `fallback_on` moved on from, and the attempts that failed.
 
-    `FallbackModel` keeps one per request, and the `Fallback` capability one per request step. The capability
+    `FallbackModel` keeps one per request, and the `ModelFallback` capability one per request step. The capability
     leaves `log` to the agent's attempt loop, which records every attempt a hook moves on from.
     """
 
@@ -333,7 +333,7 @@ async def request_stream_until_first_event(
     is opened under the `request_timeout` `deadline`, if any, so waiting for the first event counts towards it
     like every event after it.
 
-    Shared by `FallbackModel` for each candidate and by the agent's primed stream, which the `Fallback`
+    Shared by `FallbackModel` for each candidate and by the agent's primed stream, which the `ModelFallback`
     capability relies on.
     """
     async with stream_under_deadline(

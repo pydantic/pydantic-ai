@@ -27,7 +27,7 @@ from pydantic_ai import (
     TextPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import AbstractCapability, Fallback
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai.messages import ModelRequest
@@ -631,11 +631,11 @@ async def test_request_timeout_covers_sdk_retries(
     assert attempts == 2
 
 
-# The `Fallback` capability gives each candidate a deadline of its own, as `FallbackModel` does: every attempt is a
+# The `ModelFallback` capability gives each candidate a deadline of its own, as `FallbackModel` does: every attempt is a
 # model request of its own.
 
 
-async def test_fallback_capability_gives_each_candidate_a_fresh_deadline():
+async def test_model_fallback_gives_each_candidate_a_fresh_deadline():
     timeout = 0.2
     time_left: list[float] = []
 
@@ -646,7 +646,7 @@ async def test_fallback_capability_gives_each_candidate_a_fresh_deadline():
     agent = Agent(
         FunctionModel(hang, model_name='primary'),
         model_settings={'request_timeout': timeout},
-        capabilities=[Fallback(FunctionModel(record_time_left, model_name='fallback'))],
+        capabilities=[ModelFallback(FunctionModel(record_time_left, model_name='fallback'))],
     )
 
     result = await agent.run('hello')
@@ -660,16 +660,16 @@ async def test_fallback_capability_gives_each_candidate_a_fresh_deadline():
     )
 
 
-async def test_fallback_capability_uses_each_candidates_own_request_timeout():
+async def test_model_fallback_uses_each_candidates_own_request_timeout():
     agent = Agent(
         FunctionModel(hang, model_name='primary', settings={'request_timeout': SHORT_TIMEOUT}),
-        capabilities=[Fallback(FunctionModel(answer, model_name='fallback'))],
+        capabilities=[ModelFallback(FunctionModel(answer, model_name='fallback'))],
     )
 
     assert (await agent.run('hello')).output == 'answer'
 
 
-async def test_fallback_capability_falls_back_when_a_stream_times_out_before_its_first_event():
+async def test_model_fallback_falls_back_when_a_stream_times_out_before_its_first_event():
     """The deadline covers opening a candidate's stream and waiting for its first event."""
 
     async def stalls_before_first_event(
@@ -682,7 +682,7 @@ async def test_fallback_capability_falls_back_when_a_stream_times_out_before_its
         FunctionModel(
             stream_function=stalls_before_first_event, model_name='primary', settings={'request_timeout': SHORT_TIMEOUT}
         ),
-        capabilities=[Fallback(FunctionModel(stream_function=stream_answer, model_name='fallback'))],
+        capabilities=[ModelFallback(FunctionModel(stream_function=stream_answer, model_name='fallback'))],
     )
 
     async with agent.run_stream('hello') as result:

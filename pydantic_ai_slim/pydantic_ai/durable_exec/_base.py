@@ -30,7 +30,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Fallback, Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -1877,9 +1877,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
-        # then run the final before-hook repair after every outer request rewrite. Inside `Fallback`,
-        # which is innermost too, so the per-attempt repair sees the model `Fallback` moved to.
-        return CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
+        # then run the final before-hook repair after every outer request rewrite. Inside `ModelFallback`,
+        # which is innermost too, so the per-attempt repair sees the model `ModelFallback` moved to.
+        return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

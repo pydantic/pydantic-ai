@@ -3339,7 +3339,7 @@ class ModelRequestAttempt:
     """An attempt at a model request that did not produce the response it is recorded on.
 
     A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
-    [`Fallback`][pydantic_ai.capabilities.Fallback] capability records one for each model it moved on
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records one for each model it moved on
     from, on the response of the model that answered
     ([`ModelResponse.failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]), or on the
     [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model failed.
@@ -3485,7 +3485,7 @@ class ModelResponse:
     """Earlier attempts at this request that failed before this response was produced, in order.
 
     A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
-    [`Fallback`][pydantic_ai.capabilities.Fallback] capability records the models it moved on from
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability records the models it moved on from
     here. Their usage is not included in `usage`, which is this response's own, but it does
     count towards the run's [`RunUsage`][pydantic_ai.usage.RunUsage] and
     [`UsageLimits`][pydantic_ai.usage.UsageLimits] token and cost limits. A rejected response's

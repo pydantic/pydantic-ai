@@ -388,7 +388,7 @@ class RunUsage(UsageBase):
     This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
     lower than the number of requests sent to the provider: attempts a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
-    [`Fallback`][pydantic_ai.capabilities.Fallback] capability moved on from, the continuation requests that
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability moved on from, the continuation requests that
     complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
     The tokens and cost of a rejected response, and of continuation requests, are still added to this usage.
     The attempts before a response are listed in its

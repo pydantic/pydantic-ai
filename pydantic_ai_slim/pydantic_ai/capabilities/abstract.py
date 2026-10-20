@@ -600,7 +600,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _model_is_default(self) -> bool:
         """Whether `get_model()` only offers a default, used when no other capability selects a model.
 
-        `Fallback` supplies the agent's model only when nothing else does: its first candidate is a
+        `ModelFallback` supplies the agent's model only when nothing else does: its first candidate is a
         stand-in for a missing agent model, not a selection that should outrank `SelectModel`.
         """
         return False

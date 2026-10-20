@@ -653,7 +653,7 @@ A request step can make more than one *attempt* at the model request. A hook ask
 - from `after_model_request`, to reject the response the attempt returned;
 - from `prepare_model_request`, to send the attempt to another model before anything is sent.
 
-Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which starts a new step with a retry prompt the model sees, another attempt stays within the step and the model sees nothing of the earlier one. [`ModelRequestContext.attempt`][pydantic_ai.models.ModelRequestContext.attempt] says which attempt is running, starting at `1`. The [`Fallback`](fallback.md) capability is built on this.
+Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which starts a new step with a retry prompt the model sees, another attempt stays within the step and the model sees nothing of the earlier one. [`ModelRequestContext.attempt`][pydantic_ai.models.ModelRequestContext.attempt] says which attempt is running, starting at `1`. The [`ModelFallback`](model-fallback.md) capability is built on this.
 
 ```text
 wrap_model_request(handler)              once per step

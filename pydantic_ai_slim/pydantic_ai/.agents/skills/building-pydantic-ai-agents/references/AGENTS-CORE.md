@@ -209,16 +209,16 @@ async def process(ctx: RunContext, count: int) -> str:
 
 ## Handle Provider Failures
 
-Use the `Fallback` capability when the user wants automatic provider or model failover. The chain is the model selected for the step (the agent's, `run(model=...)`'s, or `SelectModel`'s), then the capability's models.
+Use the `ModelFallback` capability when the user wants automatic provider or model failover. The chain is the model selected for the step (the agent's, `run(model=...)`'s, or `SelectModel`'s), then the capability's models.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Fallback
+from pydantic_ai.capabilities import ModelFallback
 
 agent = Agent(
     'openai:gpt-5.6-sol',
     name='fallback_agent',
-    capabilities=[Fallback('anthropic:claude-opus-5-5')],
+    capabilities=[ModelFallback('anthropic:claude-opus-5-5')],
 )
 ```
 

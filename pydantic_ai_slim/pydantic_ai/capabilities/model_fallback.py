@@ -26,11 +26,11 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import ModelRequestContext
 
-__all__ = ('Fallback',)
+__all__ = ('ModelFallback',)
 
 
 @dataclass(init=False)
-class Fallback(AbstractCapability[AgentDepsT]):
+class ModelFallback(AbstractCapability[AgentDepsT]):
     """Attempt other models when the one serving a request fails or returns a rejected response.
 
     The chain is the model selected for the step followed by this capability's models, so it
@@ -39,13 +39,13 @@ class Fallback(AbstractCapability[AgentDepsT]):
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import Fallback
+    from pydantic_ai.capabilities import ModelFallback
 
     # Try gpt-5.6-sol, then Fable.
-    agent = Agent('openai:gpt-5.6-sol', capabilities=[Fallback('anthropic:claude-fable-5')])
+    agent = Agent('openai:gpt-5.6-sol', capabilities=[ModelFallback('anthropic:claude-fable-5')])
 
     # No agent model: the first candidate is used for the first attempt.
-    agent = Agent(capabilities=[Fallback('openai:gpt-5.6-sol', 'anthropic:claude-fable-5')])
+    agent = Agent(capabilities=[ModelFallback('openai:gpt-5.6-sol', 'anthropic:claude-fable-5')])
     ```
 
     A model already attempted this step is skipped, so listing the agent's own model as the first
@@ -110,9 +110,9 @@ class Fallback(AbstractCapability[AgentDepsT]):
         """
         super().__init__()
         if not models:
-            raise UserError('`Fallback` requires at least one model to fall back to.')
+            raise UserError('`ModelFallback` requires at least one model to fall back to.')
         self.models = list(models)
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='Fallback')
+        self._predicates = FallbackPredicates.parse(fallback_on, owner='ModelFallback')
         self._supplies_model = False
         self._step = None
         self._cursor = 0
@@ -129,11 +129,11 @@ class Fallback(AbstractCapability[AgentDepsT]):
         # response that was finally accepted.
         return CapabilityOrdering(position='innermost')
 
-    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Fallback[AgentDepsT]:
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> ModelFallback[AgentDepsT]:
         """Decide whether this capability also has to supply the agent's model.
 
         A capability's model contribution outranks the agent's own default, so contributing
-        unconditionally would silently redirect `Agent(model, capabilities=[Fallback(...)])` to the
+        unconditionally would silently redirect `Agent(model, capabilities=[ModelFallback(...)])` to the
         first fallback candidate instead of falling back *to* it. Only step in when the agent has no
         model of its own — a run-level `model=` or `override(model=)` outranks a contribution
         anyway, so those keep working either way.
@@ -152,7 +152,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
         # `SelectModel`'s, outranks it rather than being overridden by it.
         return True
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Fallback[AgentDepsT]:
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelFallback[AgentDepsT]:
         """Return a fresh copy so each run tracks its own chain position."""
         return replace_no_init(
             self,
@@ -226,7 +226,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
         raise self._advance()
 
     def _new_chain(self) -> FallbackChain:
-        return FallbackChain(self._predicates, owner='Fallback')
+        return FallbackChain(self._predicates, owner='ModelFallback')
 
     def _reset_for_step(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reset the chain when a new request step begins.
@@ -255,7 +255,7 @@ class Fallback(AbstractCapability[AgentDepsT]):
         if candidate is None:
             raise UserError(
                 f'Cannot resume this suspended response: it was started by {pin!r}, which is neither the '
-                "model selected for this step nor one of `Fallback`'s models. Pass that model explicitly to "
+                "model selected for this step nor one of `ModelFallback`'s models. Pass that model explicitly to "
                 '`run(model=...)` when resuming.'
             )
         return candidate

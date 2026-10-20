@@ -710,7 +710,7 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 
     attempts: Sequence[ModelRequestAttempt] = ()
     """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
-    [`Fallback`][pydantic_ai.capabilities.Fallback] capability made, in order.
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability made, in order.
 
     Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
     `fallback_on` response handler, which the agent also adds to the run's

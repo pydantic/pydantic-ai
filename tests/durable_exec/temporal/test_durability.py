@@ -58,10 +58,10 @@ from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
-    Fallback,
     Hooks,
     ImageGeneration,
     Instrumentation,
+    ModelFallback,
     NativeTool,
     ProcessEventStream,
     ResolveModelId,
@@ -346,7 +346,7 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
         assert output == 'Echo: What is the capital of Mexico?'
 
 
-# --- Durability with the `Fallback` capability ---
+# --- Durability with the `ModelFallback` capability ---
 
 
 def _failing_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -362,7 +362,7 @@ fallback_durable_agent = Agent(
     name='durability_fallback_agent',
     capabilities=[
         # The default `fallback_on`: the model error reaches the workflow as itself, not as `ActivityError`.
-        Fallback('fallback_target'),
+        ModelFallback('fallback_target'),
         TemporalDurability(
             activity_config=BASE_ACTIVITY_CONFIG,
             models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
@@ -380,7 +380,7 @@ class FallbackDurableAgentWorkflow:
 
 
 async def test_durability_fallback_attempts_run_as_activities(client: Client):
-    """Each model `Fallback` moves to runs in its own activity, not inline in workflow code."""
+    """Each model `ModelFallback` moves to runs in its own activity, not inline in workflow code."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

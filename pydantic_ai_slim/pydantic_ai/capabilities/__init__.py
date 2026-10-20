@@ -41,13 +41,13 @@ from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
 from .deferred_tool_handler import HandleDeferredToolCalls
 from .durable_operation import durable_operation
-from .fallback import Fallback
 from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP
+from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -147,7 +147,7 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
-    'Fallback',
+    'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
     'Thinking',

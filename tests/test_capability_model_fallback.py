@@ -1,4 +1,4 @@
-"""The `Fallback` capability.
+"""The `ModelFallback` capability.
 
 The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tested in
 `test_model_request_attempts.py`.
@@ -27,8 +27,8 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
-    Fallback,
     Instrumentation,
+    ModelFallback,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
@@ -78,20 +78,20 @@ def reject_nope(response: ModelResponse) -> bool:
 
 
 async def test_agent_model_then_capability_model():
-    agent = Agent(FunctionModel(failure), capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(FunctionModel(failure), capabilities=[ModelFallback(FunctionModel(success))])
     result = await agent.run('x')
     assert result.output == 'hello'
     assert result.usage.requests == 1
 
 
 async def test_no_agent_model_uses_first_candidate():
-    agent = Agent(capabilities=[Fallback(FunctionModel(failure), FunctionModel(success))])
+    agent = Agent(capabilities=[ModelFallback(FunctionModel(failure), FunctionModel(success))])
     result = await agent.run('x')
     assert result.output == 'hello'
 
 
 async def test_chain_exhausted():
-    agent = Agent(FunctionModel(failure), capabilities=[Fallback(FunctionModel(failure))])
+    agent = Agent(FunctionModel(failure), capabilities=[ModelFallback(FunctionModel(failure))])
     with pytest.raises(FallbackExceptionGroup) as exc_info:
         await agent.run('x')
     assert len(exc_info.value.exceptions) == 2
@@ -100,7 +100,7 @@ async def test_chain_exhausted():
 async def test_response_rejection():
     agent = Agent(
         FunctionModel(rejected),
-        capabilities=[Fallback(FunctionModel(success), fallback_on=reject_nope)],
+        capabilities=[ModelFallback(FunctionModel(success), fallback_on=reject_nope)],
     )
     result = await agent.run('x')
     assert result.output == 'hello'
@@ -109,7 +109,7 @@ async def test_response_rejection():
 async def test_duplicate_model_skipped():
     m = FunctionModel(failure)
     ok = FunctionModel(success)
-    agent = Agent(m, capabilities=[Fallback(m, ok)])
+    agent = Agent(m, capabilities=[ModelFallback(m, ok)])
     result = await agent.run('x')
     assert result.output == 'hello'
 
@@ -126,7 +126,7 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
-        capabilities=[Fallback(FunctionModel(stream_function=success_stream))],
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'hello'
@@ -162,7 +162,7 @@ async def test_resumed_continuation_goes_to_the_pinned_model():
         return ModelResponse(parts=[TextPart('done')])
 
     pinned = FunctionModel(pinned_model, model_name='pinned')
-    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[Fallback(pinned)])
+    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(pinned)])
     result = await agent.run(message_history=_suspended_history(pinned.model_id))
     assert continued == [True]
     assert result.usage.requests == 1
@@ -177,7 +177,7 @@ async def test_failed_pinned_continuation_rewinds_to_the_step_model():
         return ModelResponse(parts=[TextPart('fresh')])
 
     pinned = FunctionModel(failure, model_name='pinned')
-    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[Fallback(pinned)])
+    agent = Agent(FunctionModel(step_model, model_name='step'), capabilities=[ModelFallback(pinned)])
     result = await agent.run(message_history=_suspended_history(pinned.model_id))
     assert result.output == 'fresh'
     assert step_saw == [False]
@@ -196,7 +196,7 @@ async def test_streamed_resumed_continuation_goes_to_the_pinned_model():
         yield 'done'
 
     pinned = FunctionModel(stream_function=pinned_stream, model_name='pinned')
-    agent = Agent(FunctionModel(stream_function=step_stream, model_name='step'), capabilities=[Fallback(pinned)])
+    agent = Agent(FunctionModel(stream_function=step_stream, model_name='step'), capabilities=[ModelFallback(pinned)])
     async with agent.run_stream(message_history=_suspended_history(pinned.model_id)) as stream:
         await stream.get_output()
     assert continued == [True]
@@ -210,7 +210,7 @@ async def test_streamed_failed_pinned_continuation_rewinds_to_the_step_model():
         yield 'fresh'
 
     pinned = FunctionModel(stream_function=failure_stream, model_name='pinned')
-    agent = Agent(FunctionModel(stream_function=step_stream, model_name='step'), capabilities=[Fallback(pinned)])
+    agent = Agent(FunctionModel(stream_function=step_stream, model_name='step'), capabilities=[ModelFallback(pinned)])
     async with agent.run_stream(message_history=_suspended_history(pinned.model_id)) as stream:
         assert await stream.get_output() == 'fresh'
     assert step_saw == [False]
@@ -225,7 +225,9 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
             )
         ]
     )
-    agent = Agent(FunctionModel(stream_function=failure_stream, model_name='step'), capabilities=[Fallback(served)])
+    agent = Agent(
+        FunctionModel(stream_function=failure_stream, model_name='step'), capabilities=[ModelFallback(served)]
+    )
     with capture_run_messages() as messages:
         async with agent.run_stream('x') as result:
             async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
@@ -237,7 +239,7 @@ async def test_suspended_response_is_pinned_to_the_model_that_served_it():
 
 
 async def test_complete_response_is_not_pinned():
-    agent = Agent(FunctionModel(failure, model_name='step'), capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(FunctionModel(failure, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
     result = await agent.run('x')
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -245,12 +247,12 @@ async def test_complete_response_is_not_pinned():
 
 
 async def test_select_model_outranks_the_fallback_default():
-    """With no agent model, `Fallback`'s first candidate only stands in when nothing else selects a model."""
+    """With no agent model, `ModelFallback`'s first candidate only stands in when nothing else selects a model."""
     selected = FunctionModel(success, model_name='selected')
     agent = Agent(
         capabilities=[
             SelectModel(lambda ctx: selected),
-            Fallback(FunctionModel(rejected, model_name='default')),
+            ModelFallback(FunctionModel(rejected, model_name='default')),
         ]
     )
     assert (await agent.run('x')).output == 'hello'
@@ -269,10 +271,10 @@ async def test_a_model_another_capability_retried_is_not_picked_again():
     retried = failing('retried')
 
     class RetryOnce(AbstractCapability[None]):
-        """Moves the first failed attempt to `retried`, then leaves errors to `Fallback`."""
+        """Moves the first failed attempt to `retried`, then leaves errors to `ModelFallback`."""
 
         def get_ordering(self) -> CapabilityOrdering:
-            return CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
+            return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
         async def on_model_request_error(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
@@ -284,7 +286,7 @@ async def test_a_model_another_capability_retried_is_not_picked_again():
     agent = Agent(
         failing('step'),
         deps_type=type(None),
-        capabilities=[Fallback(retried, FunctionModel(success)), RetryOnce()],
+        capabilities=[ModelFallback(retried, FunctionModel(success)), RetryOnce()],
     )
     assert (await agent.run('x')).output == 'hello'
     assert calls == ['step', 'retried']
@@ -294,7 +296,7 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
     """A candidate is entered when first attempted, once however many steps attempt it, and exited when the run ends."""
     events: list[str] = []
     candidate = LifecycleTrackingModel(events, include_exit_exception=False)
-    agent = Agent(FunctionModel(failure), capabilities=[Fallback(candidate)])
+    agent = Agent(FunctionModel(failure), capabilities=[ModelFallback(candidate)])
 
     @agent.tool_plain
     def noop() -> str:
@@ -308,14 +310,14 @@ async def test_fallback_candidates_are_entered_once_and_exited_with_the_run():
 
 
 async def test_a_pin_to_an_unknown_model_is_refused():
-    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[ModelFallback(FunctionModel(success))])
     with pytest.raises(UserError, match="started by 'function:gone'"):
         await agent.run(message_history=_suspended_history('function:gone'))
 
 
 async def test_a_fallback_model_candidate_keeps_its_own_pin():
-    """`Fallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
-    fallback = Fallback[None](TestModel())
+    """`ModelFallback`'s pin sits beside `FallbackModel`'s, so a `FallbackModel` candidate still resumes on its inner model."""
+    fallback = ModelFallback[None](TestModel())
     inner = FunctionModel(success, model_name='inner')
     ctx = RunContext[None](deps=None, model=inner, usage=RunUsage())
     request_context = ModelRequestContext(
@@ -332,11 +334,11 @@ async def test_a_fallback_model_candidate_keeps_its_own_pin():
 
 def test_fallback_requires_a_model():
     with pytest.raises(UserError, match='requires at least one model'):
-        Fallback()
+        ModelFallback()
 
 
 def test_fallback_is_not_spec_serializable():
-    assert Fallback.get_serialization_name() is None
+    assert ModelFallback.get_serialization_name() is None
 
 
 async def test_an_error_fallback_on_does_not_match_propagates():
@@ -349,7 +351,7 @@ async def test_an_error_fallback_on_does_not_match_propagates():
         later.append('called')  # pragma: no cover
         return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
 
-    agent = Agent(FunctionModel(potato), capabilities=[Fallback(FunctionModel(later_model))])
+    agent = Agent(FunctionModel(potato), capabilities=[ModelFallback(FunctionModel(later_model))])
     with pytest.raises(ValueError, match='not a model API error'):
         await agent.run('x')
     assert later == []
@@ -365,7 +367,7 @@ async def test_async_predicates():
     agent = Agent(
         FunctionModel(failure),
         capabilities=[
-            Fallback(FunctionModel(rejected), FunctionModel(success), fallback_on=[on_exception, on_response])
+            ModelFallback(FunctionModel(rejected), FunctionModel(success), fallback_on=[on_exception, on_response])
         ],
     )
     assert (await agent.run('x')).output == 'hello'
@@ -374,7 +376,7 @@ async def test_async_predicates():
 async def test_exhausted_chain_reports_every_failure_and_rejection():
     agent = Agent(
         FunctionModel(failure),
-        capabilities=[Fallback(FunctionModel(rejected), fallback_on=[ModelAPIError, reject_nope])],
+        capabilities=[ModelFallback(FunctionModel(rejected), fallback_on=[ModelAPIError, reject_nope])],
     )
     with pytest.raises(FallbackExceptionGroup) as exc_info:
         await agent.run('x')
@@ -390,7 +392,7 @@ async def test_a_wrapped_step_model_counts_as_attempted():
         raise ModelAPIError(model_name='inner', message='boom')
 
     inner = FunctionModel(inner_fn)
-    agent = Agent(WrapperModel(inner), capabilities=[Fallback(inner, FunctionModel(success))])
+    agent = Agent(WrapperModel(inner), capabilities=[ModelFallback(inner, FunctionModel(success))])
     assert (await agent.run('x')).output == 'hello'
     assert calls == ['inner']
 
@@ -406,7 +408,7 @@ async def test_an_unpinned_suspended_response_resumes_on_the_step_model():
         ModelRequest(parts=[UserPromptPart('x')]),
         ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='job-1'),
     ]
-    agent = Agent(FunctionModel(step_model), capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(FunctionModel(step_model), capabilities=[ModelFallback(FunctionModel(success))])
     await agent.run(message_history=history)
     assert continued == [True]
 
@@ -419,7 +421,7 @@ async def test_a_failed_pinned_continuation_cancels_its_job():
             cancelled.append(response.provider_response_id)
 
     pinned = CancellingModel(failure, model_name='pinned')
-    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[Fallback(pinned)])
+    agent = Agent(FunctionModel(success, model_name='step'), capabilities=[ModelFallback(pinned)])
     assert (await agent.run(message_history=_suspended_history(pinned.model_id))).output == 'hello'
     assert cancelled == ['job-1']
 
@@ -442,7 +444,7 @@ async def test_every_candidate_prepares_its_own_messages():
 
     agent = Agent(
         MarkingModel(failure, model_name='first'),
-        capabilities=[Fallback(MarkingModel(success, model_name='second'))],
+        capabilities=[ModelFallback(MarkingModel(success, model_name='second'))],
     )
     assert (await agent.run('x')).output == 'hello'
     assert prepared_by == [('first', 0), ('second', 0)]
@@ -466,7 +468,7 @@ async def test_outer_capabilities_only_see_the_accepted_response():
 
     class InsideFallback(AbstractCapability[None]):
         def get_ordering(self) -> CapabilityOrdering:
-            return CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
+            return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
         async def after_model_request(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
@@ -477,7 +479,7 @@ async def test_outer_capabilities_only_see_the_accepted_response():
     agent = Agent(
         FunctionModel(rejected),
         deps_type=type(None),
-        capabilities=[Outer(), Fallback(FunctionModel(success), fallback_on=reject_nope), InsideFallback()],
+        capabilities=[Outer(), ModelFallback(FunctionModel(success), fallback_on=reject_nope), InsideFallback()],
     )
     assert (await agent.run('x')).output == 'hello'
     assert inner_seen == ['nope', 'hello']
@@ -496,7 +498,9 @@ async def test_usage_counts_one_request_and_every_attempts_tokens():
     agent = Agent(
         FunctionModel(_rejected_with_usage),
         capabilities=[
-            Fallback(FunctionModel(_rejected_with_usage), FunctionModel(_success_with_usage), fallback_on=reject_nope)
+            ModelFallback(
+                FunctionModel(_rejected_with_usage), FunctionModel(_success_with_usage), fallback_on=reject_nope
+            )
         ],
     )
     result = await agent.run('x')
@@ -508,7 +512,9 @@ async def test_token_limits_apply_to_rejected_attempts():
     agent = Agent(
         FunctionModel(_rejected_with_usage),
         capabilities=[
-            Fallback(FunctionModel(_rejected_with_usage), FunctionModel(_success_with_usage), fallback_on=reject_nope)
+            ModelFallback(
+                FunctionModel(_rejected_with_usage), FunctionModel(_success_with_usage), fallback_on=reject_nope
+            )
         ],
     )
     with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 15'):
@@ -530,7 +536,7 @@ async def test_tokens_are_counted_for_each_candidate():
 
     agent = Agent(
         CountingModel(failure, model_name='first'),
-        capabilities=[Fallback(CountingModel(success, model_name='second'))],
+        capabilities=[ModelFallback(CountingModel(success, model_name='second'))],
     )
     result = await agent.run('x', usage_limits=UsageLimits(count_tokens_before_request=True))
     assert result.output == 'hello'
@@ -557,7 +563,7 @@ async def test_a_model_retry_after_a_rejected_attempt_keeps_only_the_retried_res
     agent = Agent(
         FunctionModel(rejected),
         deps_type=type(None),
-        capabilities=[RetryOnce(), Fallback(FunctionModel(second), fallback_on=reject_nope)],
+        capabilities=[RetryOnce(), ModelFallback(FunctionModel(second), fallback_on=reject_nope)],
     )
     result = await agent.run('x')
     assert result.output == 'hello'
@@ -582,14 +588,14 @@ async def test_a_run_model_is_attempted_before_the_chain():
 
         return FunctionModel(fn, model_name=name)
 
-    agent = Agent(capabilities=[Fallback(failing('first'), FunctionModel(success))])
+    agent = Agent(capabilities=[ModelFallback(failing('first'), FunctionModel(success))])
     assert (await agent.run('x', model=failing('explicit'))).output == 'hello'
     assert calls == ['explicit', 'first']
 
 
 async def test_a_run_level_model_selection_outranks_the_fallback_default():
     selected = FunctionModel(success, model_name='selected')
-    agent = Agent(capabilities=[Fallback(FunctionModel(rejected, model_name='default'))])
+    agent = Agent(capabilities=[ModelFallback(FunctionModel(rejected, model_name='default'))])
     result = await agent.run('x', capabilities=[SelectModel(lambda ctx: selected)])
     assert result.output == 'hello'
 
@@ -613,7 +619,7 @@ async def test_a_streamed_resume_waits_out_the_continuation_delay_before_opening
         ModelRequest(parts=[UserPromptPart('x')]),
         ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='job-1'),
     ]
-    agent = Agent(step, capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(step, capabilities=[ModelFallback(FunctionModel(success))])
     with Agent.using_sleep(record_sleep):
         async with agent.run_stream(message_history=history) as stream:
             await stream.get_output()
@@ -625,7 +631,7 @@ async def test_a_wrapped_fallback_default_is_still_outranked():
     agent = Agent(
         capabilities=[
             SelectModel(lambda ctx: selected),
-            WrapperCapability(wrapped=Fallback(FunctionModel(rejected, model_name='default'))),
+            WrapperCapability(wrapped=ModelFallback(FunctionModel(rejected, model_name='default'))),
         ]
     )
     assert (await agent.run('x')).output == 'hello'
@@ -637,9 +643,11 @@ async def test_response_handlers_are_not_consulted_for_a_streamed_response():
 
     agent = Agent(
         FunctionModel(stream_function=nope_stream),
-        capabilities=[Fallback(FunctionModel(stream_function=success_stream), fallback_on=reject_nope)],
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream), fallback_on=reject_nope)],
     )
-    with pytest.warns(UserWarning, match='`Fallback` response handlers in `fallback_on` are not applied to streamed'):
+    with pytest.warns(
+        UserWarning, match='`ModelFallback` response handlers in `fallback_on` are not applied to streamed'
+    ):
         async with agent.run_stream('x') as stream:
             assert await stream.get_output() == 'nope'
 
@@ -656,7 +664,7 @@ async def failure_before_first_event_stream(
 async def test_stream_error_before_first_event_falls_back():
     """An error a stream raises before its first event falls back, as one while opening it does."""
     first = FunctionModel(stream_function=failure_before_first_event_stream, model_name='failure')
-    agent = Agent(first, capabilities=[Fallback(FunctionModel(stream_function=success_stream))])
+    agent = Agent(first, capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))])
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'hello'
     response = stream.all_messages()[-1]
@@ -681,7 +689,7 @@ async def test_stream_error_after_first_event_propagates():
 
     agent = Agent(
         FunctionModel(stream_function=fails_after_first_event),
-        capabilities=[Fallback(FunctionModel(stream_function=fallback_stream))],
+        capabilities=[ModelFallback(FunctionModel(stream_function=fallback_stream))],
     )
     with pytest.raises(ModelAPIError, match='lost'):
         async with agent.run_stream('x') as stream:
@@ -713,7 +721,7 @@ def _chain(*functions: Any) -> list[Model]:
 
 def _capability_agent(*functions: Any, instrument: bool = False) -> Agent[Any, str]:
     first, *rest = _chain(*functions)
-    capabilities: list[AbstractCapability[Any]] = [Fallback(*rest, fallback_on=_FALLBACK_ON)]
+    capabilities: list[AbstractCapability[Any]] = [ModelFallback(*rest, fallback_on=_FALLBACK_ON)]
     if instrument:
         capabilities.append(Instrumentation(settings=InstrumentationSettings()))
     return Agent(first, capabilities=capabilities)
@@ -817,7 +825,7 @@ async def test_exhausted_chain_raises_the_limit_its_attempts_exceeded():
 async def test_a_fallback_model_candidates_own_group_keeps_its_attempts():
     """A `FallbackModel` candidate's group the capability doesn't fall back on lists only the attempts it made."""
     inner = FallbackModel(*_chain(failure, failure))
-    agent = Agent(inner, capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(inner, capabilities=[ModelFallback(FunctionModel(success))])
     with pytest.raises(FallbackExceptionGroup) as exc_info:
         await agent.run('x')
     assert _described(exc_info.value.attempts) == snapshot(
@@ -839,7 +847,7 @@ async def test_a_rejected_recovery_is_recorded_as_the_error_it_recovered():
             return ModelResponse(parts=[TextPart('nope')], usage=RequestUsage(input_tokens=1000))
 
     first, answer = _chain(failure, _billed_answer)
-    agent = Agent(first, capabilities=[RecoverWithNope(), Fallback(answer, fallback_on=reject_nope)])
+    agent = Agent(first, capabilities=[RecoverWithNope(), ModelFallback(answer, fallback_on=reject_nope)])
     result = await agent.run('x')
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
@@ -851,7 +859,7 @@ async def test_a_rejected_recovery_is_recorded_as_the_error_it_recovered():
 
 async def test_a_stream_records_the_attempts_that_failed_to_open():
     first = FunctionModel(stream_function=failure_stream, model_name='failure')
-    agent = Agent(first, capabilities=[Fallback(FunctionModel(stream_function=success_stream))])
+    agent = Agent(first, capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))])
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'hello'
     response = stream.all_messages()[-1]
@@ -1027,7 +1035,7 @@ async def test_stream_spans_match_fallback_model(capfire: CaptureLogfire):
     instrumentation = Instrumentation(settings=InstrumentationSettings())
     trees: list[list[dict[str, Any]]] = []
     for agent in (
-        Agent(first, capabilities=[Fallback(answer), instrumentation]),
+        Agent(first, capabilities=[ModelFallback(answer), instrumentation]),
         Agent(FallbackModel(first, answer), capabilities=[instrumentation]),
     ):
         async with agent.run_stream('x') as stream:
@@ -1091,7 +1099,7 @@ async def test_the_step_model_another_capability_already_retried_is_not_attempte
                 raise RetryModelRequest(step)
             return request_context
 
-    agent = Agent(step, capabilities=[RedirectPinnedOnce(), Fallback(pinned)])
+    agent = Agent(step, capabilities=[RedirectPinnedOnce(), ModelFallback(pinned)])
     result = await agent.run(message_history=_suspended_history(pinned.model_id))
     assert result.output == 'hello'
     assert step_calls == 1
@@ -1109,7 +1117,7 @@ async def test_a_run_timeout_is_not_fallen_back_from():
         fallback_calls.append(True)  # pragma: no cover
         return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
 
-    agent = Agent(FunctionModel(hangs), capabilities=[Fallback(FunctionModel(fallback), fallback_on=(Exception,))])
+    agent = Agent(FunctionModel(hangs), capabilities=[ModelFallback(FunctionModel(fallback), fallback_on=(Exception,))])
     with pytest.raises(RunTimedOut):
         await agent.run('x', timeout=0.05)
     assert fallback_calls == []
@@ -1128,7 +1136,7 @@ async def test_each_candidate_gets_its_own_max_retries():
 
         return FunctionModel(fn, model_name=name, settings={'max_retries': 0} if fail else None)
 
-    agent = Agent(respond('first', fail=True), capabilities=[Fallback(respond('last', fail=False))])
+    agent = Agent(respond('first', fail=True), capabilities=[ModelFallback(respond('last', fail=False))])
     assert (await agent.run('x')).output == 'hello'
     assert seen == [('first', 0), ('last', None)]
 
@@ -1179,7 +1187,7 @@ async def test_settings_a_hook_sets_reach_every_candidate():
             model_settings={'temperature': 0.1},
             capabilities=[
                 SetRetriesAndDropTemperature(in_place),
-                Fallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
+                ModelFallback(respond('last', False, {'max_retries': 5, 'temperature': 0.9})),
             ],
         )
         assert (await agent.run('x')).output == 'hello'
@@ -1206,7 +1214,7 @@ async def test_callable_model_settings_resolve_once_per_step():
 
         return FunctionModel(fn)
 
-    agent = Agent(respond(True), model_settings=settings, capabilities=[Fallback(respond(False))])
+    agent = Agent(respond(True), model_settings=settings, capabilities=[ModelFallback(respond(False))])
     assert (await agent.run('x')).output == 'hello'
     assert calls == [1]
     assert temperatures == [0.2, 0.2]
@@ -1224,14 +1232,14 @@ async def test_a_streamed_request_a_wrapper_answers_without_calling_the_model():
 
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
-        capabilities=[AnswerFromCache(), Fallback(FunctionModel(stream_function=success_stream))],
+        capabilities=[AnswerFromCache(), ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'cached'
 
 
 async def test_cancelling_a_primed_stream_before_iterating_cancels_its_job():
-    """A stream `Fallback` primed is in flight, so cancelling it before iteration starts cancels its server-side job."""
+    """A stream `ModelFallback` primed is in flight, so cancelling it before iteration starts cancels its server-side job."""
     served = ScriptedContinuationModel(
         segments=[
             StreamSegment(
@@ -1239,7 +1247,7 @@ async def test_cancelling_a_primed_stream_before_iterating_cancels_its_job():
             )
         ]
     )
-    agent = Agent(served, capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(served, capabilities=[ModelFallback(FunctionModel(success))])
     async with agent.iter('x') as run:
         async for node in run:  # pragma: no branch
             if Agent.is_model_request_node(node):
@@ -1264,7 +1272,7 @@ async def test_a_failed_continuation_delay_before_priming_cancels_the_resumed_jo
         ModelRequest(parts=[UserPromptPart('x')]),
         ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='job-1'),
     ]
-    agent = Agent(served, capabilities=[Fallback(FunctionModel(success))])
+    agent = Agent(served, capabilities=[ModelFallback(FunctionModel(success))])
     with Agent.using_sleep(failing_sleep), pytest.raises(RuntimeError, match='sleep failed'):
         async with agent.run_stream(message_history=history) as stream:
             await stream.get_output()  # pragma: no cover

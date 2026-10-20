@@ -775,7 +775,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             return ModelResponse(
                 parts=[], model_name=self.model_name, state=state, failed_attempts=self.failed_attempts
             )
-        # Attempts that failed before this stream was opened, such as models a `Fallback` capability moved on from.
+        # Attempts that failed before this stream was opened, such as models a `ModelFallback` capability moved on from.
         if self.failed_attempts:
             snapshot = replace(snapshot, failed_attempts=[*self.failed_attempts, *(snapshot.failed_attempts or [])])
         return replace(snapshot, state=state)

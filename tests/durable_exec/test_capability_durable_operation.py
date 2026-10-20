@@ -18,8 +18,8 @@ from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     AbstractCapability,
-    Fallback,
     Instrumentation,
+    ModelFallback,
     ProcessEventStream,
     ResolveModelId,
     WrapperCapability,
@@ -425,7 +425,7 @@ async def test_capability_operation_registered_model_id_swap_does_not_manage_mod
 
 
 async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
-    """Each attempt `Fallback` moves to runs as a durable model operation, never inline in workflow code."""
+    """Each attempt `ModelFallback` moves to runs as a durable model operation, never inline in workflow code."""
 
     def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelAPIError(model_name='failing', message='boom')
@@ -434,7 +434,7 @@ async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
     agent = Agent(
         FunctionModel(failing),
         name='fallback_durable',
-        capabilities=[Fallback('registered'), durability],
+        capabilities=[ModelFallback('registered'), durability],
     )
 
     assert (await agent.run('test')).output == 'from-fallback'

@@ -311,7 +311,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         rejected, are accrued too: from `ModelResponse.failed_attempts` ahead of the response that
         carries them, and from the attempts core records on the request context when every model
         failed, whether or not a hook then recovered from the error. A response a hook rejected to
-        make another attempt, as the `Fallback` capability does, is accrued as a failed attempt too.
+        make another attempt, as the `ModelFallback` capability does, is accrued as a failed attempt too.
 
         The segments of a continuation chain are observed too, so the merged response they
         produce can be accrued boundary by boundary: see `_accrue_response`.
@@ -327,7 +327,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             usage_responses = request_context._usage_responses[usage_response_offset:]  # pyright: ignore[reportPrivateUsage]
             # Segments are attributed only to a lifecycle's single committed response, which core merged them into.
             boundaries = _continuation_boundaries(request_context, segments) if len(usage_responses) == 1 else []
-            # A response a hook rejected to make another attempt, such as one the `Fallback` capability rejected,
+            # A response a hook rejected to make another attempt, such as one the `ModelFallback` capability rejected,
             # is a failed attempt like one a `FallbackModel` rejected, though core lists it as a billed response.
             rejected = request_context._rejected_usage_responses  # pyright: ignore[reportPrivateUsage]
             errors: list[Exception | None] = []

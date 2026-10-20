@@ -1,6 +1,6 @@
 """The per-attempt model request loop: `prepare_model_request`, `RetryModelRequest` and `ModelRequestContext.attempt`.
 
-The `Fallback` capability built on these is tested in `test_capability_fallback.py`.
+The `ModelFallback` capability built on these is tested in `test_capability_model_fallback.py`.
 """
 
 from __future__ import annotations

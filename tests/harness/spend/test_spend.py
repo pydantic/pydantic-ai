@@ -22,7 +22,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
-    Fallback,
+    ModelFallback,
     WrapModelRequestHandler,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -2190,8 +2190,8 @@ class TestFallbackAttempts:
         assert (await guard.status())[0].spent == Spent(usd=Decimal('120'), tokens=132, requests=2)
 
     @pytest.mark.parametrize('reject_all', [False, True])
-    async def test_the_fallback_capability_is_charged_like_fallback_model(self, reject_all: bool):
-        """The `Fallback` capability bills the same chain to the same budget as `FallbackModel` does."""
+    async def test_model_fallback_is_charged_like_fallback_model(self, reject_all: bool):
+        """The `ModelFallback` capability bills the same chain to the same budget as `FallbackModel` does."""
 
         def reject(response: ModelResponse) -> bool:
             return reject_all or response.model_name == 'gpt-4o-mini'
@@ -2214,7 +2214,9 @@ class TestFallbackAttempts:
             )
             first, second = chain()
             if use_capability:
-                agent = Agent(first, deps_type=type(None), capabilities=[guard, Fallback(second, fallback_on=reject)])
+                agent = Agent(
+                    first, deps_type=type(None), capabilities=[guard, ModelFallback(second, fallback_on=reject)]
+                )
             else:
                 agent = Agent(
                     FallbackModel(first, second, fallback_on=reject), deps_type=type(None), capabilities=[guard]

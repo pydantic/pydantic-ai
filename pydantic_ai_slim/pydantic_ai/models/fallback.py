@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from ..settings import ModelSettings
 
 # Re-exported: these were public from this module before the fallback machinery was shared with the
-# `Fallback` capability, and `from pydantic_ai.models.fallback import ...` must keep working.
+# `ModelFallback` capability, and `from pydantic_ai.models.fallback import ...` must keep working.
 __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 'ResponseRejected'
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
