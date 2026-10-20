@@ -442,14 +442,15 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
 
         A caller that asks core for raw errors, as `CodeMode` does for the calls its sandbox
         makes, gets the tool's `ModelRetry` or `ToolFailed` unwrapped, and its message reaches
-        the model the same way, so those are screened too, but only while the tool runs: from
-        this guardrail's argument hook, which runs after every other capability's, to its result
-        or error hook, which runs before every other capability's. A raw retry from outside that
-        window is another capability's instruction, not tool output, and passes through. So does
-        a `retry` verdict from any `ToolGuardrail`. A capability ordered inside this one (another
-        `position='innermost'` capability) runs within the window, so a retry from its argument
-        or result hook is screened. One from its error hook is not: that hook hands its retry to
-        this guardrail's error hook, which ends the window.
+        the model the same way, so those are screened too, but only while the tool runs. The
+        window opens at this guardrail's argument hook, which runs after every other
+        capability's, and closes at its result or error hook, which run before every other
+        capability's, or when the call returns here. A raw retry from outside that window is
+        another capability's instruction, not tool output, and passes through. So does a `retry`
+        verdict from any `ToolGuardrail`. Hooks of a capability ordered inside this one (another
+        `position='innermost'` capability) run within the window, so their retries are
+        screened, except one from an error hook: that hook hands its retry to this guardrail's
+        error hook, which closes the window.
         """
         if self.result_guard is None or not self._guards(call.tool_name):
             return await handler(args)

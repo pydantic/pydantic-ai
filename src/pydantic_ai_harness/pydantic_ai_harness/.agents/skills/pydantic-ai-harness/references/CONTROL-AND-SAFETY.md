@@ -113,8 +113,8 @@ print(agent.run_sync('Which key do I use?').output)
 `ToolGuardrail(guard=...)` receives a `ToolCallInfo(name, args, tool_call_id)`; `result_guard`
 receives a `ToolResultInfo` (the same fields plus `result`), not the raw result, so wrap a text
 detector with `for_tool_result_text`. `result_guard` also screens a `ModelRetry`/`ToolFailed`
-raised while the tool runs (the tool's own, including inside `CodeMode`); other retries, including
-`ToolGuardrail` verdicts, pass unscreened. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
+raised while the tool runs (including inside `CodeMode`); `ToolGuardrail` `retry` verdicts are
+never screened. `args` is a read-only `mappingproxy` copy: `json.dumps` rejects
 it, so serialize or build a `replace` mapping from `dict(call.args)`.
 
 ```python
