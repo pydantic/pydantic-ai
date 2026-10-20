@@ -1496,8 +1496,8 @@ async def test_bedrock_include_citations_ignores_unsupported_document_format(
     }
 
 
-async def test_bedrock_tool_return_documents_disable_citations(bedrock_provider: BedrockProvider) -> None:
-    """Tool-return documents stay ordinary tool output even when citations are globally enabled."""
+async def test_bedrock_tool_return_documents_without_citation_support(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents stay ordinary tool output on models that don't support citations."""
     model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
@@ -1558,6 +1558,67 @@ async def test_bedrock_tool_return_documents_disable_citations(bedrock_provider:
             ],
         },
     ]
+
+
+async def test_bedrock_tool_return_document_citations_request(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents get citations like user-prompt documents on models that support them."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_reports', args={}, tool_call_id='tool-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_reports',
+                    tool_call_id='tool-1',
+                    content=[
+                        BinaryContent(data=b'inline report', media_type='text/plain', identifier='inline-report'),
+                        UploadedFile(
+                            file_id='s3://bucket/uploaded.txt',
+                            provider_name='bedrock',
+                            identifier='uploaded-report',
+                        ),
+                    ],
+                )
+            ]
+        ),
+    ]
+
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(include_citations=True)
+    )
+
+    assert bedrock_messages[2] == snapshot(
+        {
+            'role': 'user',
+            'content': [
+                {
+                    'toolResult': {
+                        'toolUseId': 'tool-1',
+                        'content': [
+                            {
+                                'document': {
+                                    'name': 'Document 1',
+                                    'format': 'txt',
+                                    'source': {'text': 'inline report'},
+                                    'citations': {'enabled': True},
+                                }
+                            },
+                            {
+                                'document': {
+                                    'name': 'Document 2',
+                                    'format': 'txt',
+                                    'source': {'s3Location': {'uri': 's3://bucket/uploaded.txt'}},
+                                    'citations': {'enabled': True},
+                                }
+                            },
+                        ],
+                        'status': 'success',
+                    }
+                }
+            ],
+        }
+    )
 
 
 async def test_bedrock_usage_with_cached_tokens(
