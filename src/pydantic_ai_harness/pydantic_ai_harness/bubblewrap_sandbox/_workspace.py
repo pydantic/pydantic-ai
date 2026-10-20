@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import posixpath
 from collections.abc import Mapping, Sequence
+from functools import cached_property
+
+import anyio
 
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -251,7 +254,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         return [
             'bwrap',
             '--die-with-parent',
-            '--new-session',
+            # Keep the backend's process group so its timeout/cancellation kills descendants too.
+            # Detached Shell jobs start their own session. The backend supplies no controlling terminal.
             # `--unshare-all` without its PID namespace: `bwrap` ends that namespace, killing every
             # process in it, when the command exits, so detached commands (the harness `Shell`'s jobs)
             # would die with the call that started them, and a later call could not see or signal them.
@@ -321,7 +325,19 @@ class BubblewrapWorkspace(WrapperWorkspace):
         filter_arg = '' if self._network else NETWORK_FILTER_BASE64
         return ['/bin/sh', '-c', _TRUSTED_LAUNCH, 'sh', working_dir, filter_arg, *bwrap]
 
+    @cached_property
+    def _login_guard_lock(self) -> anyio.Lock:
+        return anyio.Lock()
+
     async def _login_path_mounts(self, working_dir: str) -> tuple[str, ...]:
+        if self._login_guard is not None:
+            return self._login_guard
+        async with self._login_guard_lock:
+            if self._login_guard is None:
+                self._login_guard = await self._compute_login_path_mounts(working_dir)
+            return self._login_guard
+
+    async def _compute_login_path_mounts(self, working_dir: str) -> tuple[str, ...]:
         """Bind the `_LOGIN_PATHS` that the writable directory contains read-only.
 
         The next workspace call opens a new connection, so a command that can write one of them runs on the
@@ -329,8 +345,6 @@ class BubblewrapWorkspace(WrapperWorkspace):
         onto itself, so it is a mount point that a command cannot rename to swap in its own copy.
         `bwrap_args` come after this and can override it.
         """
-        if self._login_guard is not None:
-            return self._login_guard
         # `cd -P` and `pwd -P` are builtins. `Workspace.realpath` over SSH runs `readlink`, `wc` and
         # `base64` from `PATH`, which a writable directory on that `PATH` could supply.
         reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_HOME], timeout=_PROBE_TIMEOUT)
@@ -378,10 +392,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
                     f'bubblewrap could not make the login files in {home} read-only inside the sandbox: '
                     f'{created.stderr.strip()}'
                 )
-        self._login_guard = tuple(
-            arg for path in paths for arg in ('--bind' if kinds[path] == 'p' else '--ro-bind', path, path)
-        )
-        return self._login_guard
+        return tuple(arg for path in paths for arg in ('--bind' if kinds[path] == 'p' else '--ro-bind', path, path))
 
     async def read_bytes(self, path: str) -> bytes:
         return await self._files.read_bytes(path)

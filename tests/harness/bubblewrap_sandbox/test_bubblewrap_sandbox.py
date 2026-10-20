@@ -9,6 +9,7 @@ import base64
 import contextlib
 import os
 import shutil
+import signal
 import socket
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -29,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
@@ -52,7 +54,7 @@ def tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
 def _sandbox_args(working_dir: str, *, network: bool = False) -> str:
     return ' '.join(
         [
-            '--die-with-parent --new-session --unshare-user --unshare-ipc --unshare-uts --unshare-cgroup-try',
+            '--die-with-parent --unshare-user --unshare-ipc --unshare-uts --unshare-cgroup-try',
             *([] if network else ['--unshare-net --seccomp 3']),
             '--cap-drop ALL',
             '--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run',
@@ -645,6 +647,75 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
 
         assert (await workspace.run(['sh', '-c', 'ls -A /run'])).stdout == ''
 
+    @pytest.mark.parametrize('stop', ['timeout', 'cancel'])
+    async def test_stopping_a_command_kills_its_descendants(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stop: str
+    ) -> None:
+        """A foreground grandchild must stay in the backend's process group, unlike detached Shell jobs."""
+        backend = LocalWorkspaceBackend(tmp_path)
+        workspace = BubblewrapWorkspace(Workspace(backend))
+        await workspace.run(['true'])
+        ready = anyio.Event()
+        finished = anyio.Event()
+        scope = anyio.CancelScope()
+        pid_file = tmp_path / 'child-pid'
+        command = 'sleep 3600 & echo $! > child-pid.tmp; mv child-pid.tmp child-pid; wait'
+
+        # Inject expiry after the grandchild is ready, rather than waiting out a timer or racing startup.
+        async def expired(
+            process: anyio.abc.Process,
+            stdout: bytearray,
+            stderr: bytearray,
+            deadline: float | None,
+        ) -> int:
+            await ready.wait()
+            raise TimeoutError
+
+        if stop == 'timeout':
+            monkeypatch.setattr(backend, '_wait_and_collect_output', expired)
+
+        async def run() -> None:
+            try:
+                with scope:
+                    if stop == 'timeout':
+                        with pytest.raises(WorkspaceTimeoutError):
+                            await workspace.run(command, shell=True, timeout=30)
+                    else:
+                        await workspace.run(command, shell=True)
+            finally:
+                finished.set()
+
+        child_pid: int | None = None
+        try:
+            async with anyio.create_task_group() as group:
+                group.start_soon(run)
+                try:
+                    with anyio.fail_after(10):
+                        while not pid_file.exists():
+                            await anyio.sleep(0.01)
+                        child_pid = int(pid_file.read_text())
+                    ready.set()
+                    if stop == 'cancel':
+                        scope.cancel()
+                    with anyio.fail_after(10):
+                        await finished.wait()
+                        # A killed orphan may remain a zombie until the host's init reaps it.
+                        status = Path(f'/proc/{child_pid}/stat')
+                        while True:
+                            try:
+                                state = status.read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
+                            except FileNotFoundError:
+                                break
+                            if state == 'Z':
+                                break
+                            await anyio.sleep(0.01)
+                finally:
+                    group.cancel_scope.cancel()
+        finally:
+            if child_pid is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(child_pid, signal.SIGKILL)
+
     async def test_a_detached_command_outlives_the_call(self, tmp_path: Path) -> None:
         """The harness `Shell` detaches its jobs and checks on them in later calls."""
         workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
@@ -653,3 +724,59 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
         await anyio.sleep(3)
 
         assert await workspace.read_text('out') == 'alive\n'
+
+
+async def test_concurrent_first_calls_initialize_login_paths_once(
+    tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent first commands must not race to create the same missing login files."""
+    home = str(tools.home.resolve())
+    backend = LocalWorkspaceBackend(tools.home)
+    original_run = backend.run
+    setup_started = anyio.Event()
+    release_setup = anyio.Event()
+    setup_calls = 0
+    results: list[CommandResult] = []
+
+    async def working_dir() -> str:
+        return home
+
+    async def run(
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        nonlocal setup_calls
+        if not isinstance(command, str) and command[:2] == ['/bin/sh', '-c']:
+            # Keep the probes in-process so both callers deterministically reach setup or its lock.
+            if len(command) == 3:
+                return CommandResult(exit_code=0, stdout=home + '\n' if '$HOME' in command[2] else '', stderr='')
+            if 'set -C' in command[2]:
+                setup_calls += 1
+                setup_started.set()
+                await release_setup.wait()
+        return await original_run(command, shell=shell, env=env, timeout=timeout)
+
+    monkeypatch.setattr(backend, 'working_dir', working_dir)
+    monkeypatch.setattr(backend, 'run', run)
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    async def call() -> None:
+        results.append(await workspace.run(['true']))
+
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(call)
+            group.start_soon(call)
+            await setup_started.wait()
+            await anyio.wait_all_tasks_blocked()
+            assert setup_calls == 1
+            release_setup.set()
+
+    assert [result.exit_code for result in results] == [0, 0]
+    assert len(tools.bwrap_calls) == 2
+    assert (tools.home / '.bashrc').is_file()
+    assert (await workspace.run(['true'])).exit_code == 0
+    assert setup_calls == 1
