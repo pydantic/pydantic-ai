@@ -104,14 +104,16 @@ export function QueuePanel({ queue, running, onError }: Props) {
               {item.text.split(/\s+/).join(' ')}
             </span>
             <span className="queued-actions">
-              <button
-                className="icon-button"
-                title="Edit"
-                aria-label="Edit queued message"
-                onClick={() => setEditing({ id: item.id, text: item.text })}
-              >
-                <PencilIcon size={13} />
-              </button>
+              {item.kind !== 'shell' && (
+                <button
+                  className="icon-button"
+                  title="Edit"
+                  aria-label="Edit queued message"
+                  onClick={() => setEditing({ id: item.id, text: item.text })}
+                >
+                  <PencilIcon size={13} />
+                </button>
+              )}
               {running && item.kind === 'prompt' && (
                 <button
                   className="icon-button"

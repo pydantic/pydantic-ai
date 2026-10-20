@@ -7,7 +7,7 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web.protocol import (
@@ -32,14 +32,21 @@ __all__ = ['make_web']
 ORIGIN = {'origin': 'http://testserver'}
 
 
+NOTE = 'A context file the agent found.'
+
+
 def waiting_agent() -> tuple[Agent[None, str], anyio.Event, anyio.Event]:
-    """An agent whose first request calls `wait`, which holds the turn until released, then answers."""
+    """An agent whose first request calls `wait`, which holds the turn until released, then answers.
+
+    `wait` enqueues `NOTE` for the model, as a capability such as `RepoContext` does, which is not the user's steering.
+    """
     started, release = anyio.Event(), anyio.Event()
     tools = Capability[None]()
 
-    @tools.tool_plain
-    async def wait() -> str:
+    @tools.tool
+    async def wait(ctx: RunContext[None]) -> str:
         """Wait to be released."""
+        ctx.enqueue(NOTE)
         started.set()
         await release.wait()
         return 'released'
@@ -100,6 +107,13 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
         # Alt+Enter: the running turn takes a prompt now; a command never steers, and is entered as Enter would.
         assert web_.post('/api/steer', {'text': ' focus on tests '}).json() == {'steered': True, 'menu': None}
         assert web_.post('/api/steer', {'text': '/set'}).json() == {'steered': False, 'menu': 'set'}
+        # Bare `clear` is `/clear`, as at the terminal's prompt, so it queues instead of steering.
+        assert web_.post('/api/steer', {'text': 'clear'}).json() == {'steered': False, 'menu': None}
+        _, changed = receive_until(socket, QueueChanged)
+        cleared = changed.queue[-1]
+        assert (cleared.text, cleared.kind) == ('/clear', 'command')
+        assert web_.client.delete(f'/api/queue/{cleared.id}', headers={HEADER: TOKEN}).status_code == 204
+        receive_until(socket, QueueChanged)
         assert web_.post(f'/api/queue/{command.id}/steer').json() == {'steered': False}
         assert web_.post(f'/api/queue/{first.id}/steer').json() == {'steered': True}
         _, changed = receive_until(socket, QueueChanged)
@@ -112,14 +126,17 @@ def test_steer_queue_edit_and_remove_during_a_turn(make_web: MakeWeb) -> None:
         steered = [
             message.item for message in messages if isinstance(message, ItemAdded) and message.item.kind == 'user'
         ]
+        # Only the user's steering shows as theirs, not the note the tool enqueued.
         assert [(item.id, item.text) for item in steered] == [('steer1', 'focus on tests'), ('steer2', 'first, edited')]
         # The queued command runs once the turn ends, leaving the queue empty.
         messages, notice = receive_until(socket, Notice)
         assert notice.command == '/cost'
         assert [message.queue for message in messages if isinstance(message, QueueChanged)][-1] == []
         state = web_.get('/api/state').json()
+        # The saved history lists every prompt the model read, the note included, as it did before.
         assert [item['text'] for item in state['items'] if item['kind'] == 'user'] == [
             'go',
+            NOTE,
             'focus on tests',
             'first, edited',
         ]

@@ -41,6 +41,7 @@ from pydantic_ai_harness.subagents import DelegationOutcome
 from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
+from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
@@ -298,11 +299,14 @@ class QueueChanged:
 
 
 def delivered_prompts(event: EnqueuedMessagesEvent) -> list[str]:
-    """The prompts an enqueue delivered into the run, such as a steering message, as the transcript shows them."""
+    """The user's steering an enqueue delivered into the run, as the transcript shows it.
+
+    Input a capability enqueues, such as a context file it found, is the model's to read, not the user's to see.
+    """
     return [
         user_text(part)
         for message in event.messages
-        if isinstance(message, ModelRequest)
+        if isinstance(message, ModelRequest) and message.metadata and message.metadata.get(STEERING)
         for part in message.parts
         if isinstance(part, UserPromptPart)
     ]

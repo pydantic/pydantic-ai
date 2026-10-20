@@ -673,10 +673,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError('Type a prompt or a /command.')
         entry = find_queued(self._queued_prompts(), input_id)
         if self.editor is not None:
-            self.editor.rewrite(entry, text)
+            self.editor.rewrite(entry, text)  # which tells `host.live` through its `queue_changed`
         else:
             entry.text = text
-        self.live_session.changed()
+            self.live_session.changed()
 
     def remove_queued(self, input_id: str) -> None:
         """Drop a waiting input, as clearing a recalled queued prompt before Enter does."""
@@ -685,7 +685,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.editor.discard(entry)
         else:
             self._inbox.remove(entry)
-        self.live_session.changed()
+            self.live_session.changed()
 
     @property
     def idle(self) -> bool:
@@ -1026,9 +1026,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def steer(self, text: str) -> bool:
         """Enqueue steering in core and hand transcript feedback to the active turn.
 
-        `False` when no run takes it, and for a `/command` or `!` shell line, which never steer.
+        `False` when no run takes it, and for a `/command` (bare `clear` included) or `!` shell line, which never steer.
         """
-        if not can_steer(text):
+        if not can_steer(expand_bare_command(text)):
             return False
         try:
             resolved, images = self.images.resolve(text)
