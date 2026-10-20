@@ -144,8 +144,7 @@ spoken turn starts, joins the conversation, and gets the last of its audio and t
 ([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
 [`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]), and which tool calls' results
 it won't answer either ([`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]). The session
-builds history, usage,
-and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
+builds history, usage, and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
 
 **Implementing a connection** — subclass [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
 and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
