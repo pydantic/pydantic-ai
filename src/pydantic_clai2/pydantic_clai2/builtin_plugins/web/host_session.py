@@ -1,11 +1,12 @@
 """The plugin's own host as the one live session, for a `web` plugin built outside CLAI's loader, such as in a test."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import JsonValue
 from termflow.tui.completion import Completion
 
+from pydantic_ai.messages import BinaryContent
 from pydantic_clai2.plugins import Conversation, LiveSession, PluginHost, SessionCatalog, TaskCatalog
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.rendering.status import Status
@@ -68,8 +69,8 @@ class HostSession:
     def command_menu(self, name: str, /) -> SettingsMenu | None:
         return self._host.command_menu(name)
 
-    def send_input(self, text: str, /) -> None:
-        self._host.send_input(text)
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
+        self._host.send_input(text, images=images)
 
     def interrupt(self) -> bool:
         return self._host.interrupt()
