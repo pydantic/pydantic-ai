@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, overload
+from typing import Any, ClassVar, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
@@ -86,6 +86,8 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     `description` so the model still has the hint.
     """
 
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE
+
     def walk(self) -> JsonSchema:
         schema = super().walk()
 
@@ -110,7 +112,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
-            for key in _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE.get(schema_type, ()):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
                 if key in schema:
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
@@ -126,6 +128,15 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
+
+
+class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):
+    # Claude, GLM, Qwen and Gemma reject `contains`; Ministral accepts it. Keep the fallback model-specific.
+    # Verified on Bedrock us-east-1; see https://github.com/pydantic/pydantic-ai/issues/10713.
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = {
+        **_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE,
+        'array': (*_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE['array'], 'contains'),
+    }
 
 
 class BedrockModelProfile(ModelProfile, total=False):
@@ -303,7 +314,11 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         profile,
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
         ),
@@ -402,7 +417,11 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_thinking_variant='qwen',
             supports_thinking=supports_reasoning,
             thinking_always_enabled=supports_reasoning,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -422,7 +441,11 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     return merge_profile(
         _strip_builtin_tools(google_model_profile(model_name)),
         BedrockModelProfile(
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
             # Bedrock Converse API doesn't support JSON object mode
@@ -440,7 +463,7 @@ def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
-            json_schema_transformer=BedrockJsonSchemaTransformer,
+            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
         ),
