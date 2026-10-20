@@ -221,3 +221,15 @@ def test_a_cancellation_revises_only_the_response_whose_calls_it_names() -> None
     assert revisions(tracker.frame_for([ToolCallCancelled(['b'])])) == [
         AnswersRevised(response_id='pydantic_ai_response_2', released=(2,))
     ]
+
+
+def test_audio_that_never_went_out_is_no_sign_the_user_spoke() -> None:
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    tracker.input_failed(tracker.input_sent(BinaryAudio(data=b'\x00\x01', media_type='audio/pcm')))
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(1,))
+    ]

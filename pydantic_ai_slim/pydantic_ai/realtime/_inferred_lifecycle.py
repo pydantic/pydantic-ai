@@ -183,6 +183,8 @@ class InferredLifecycle:
         """The last audio input sent: the user may have spoken over a reply with it. Only an input sent after it can
         have cut the reply off (see `inputs_cut_off_replies`). (The provider's transcripts of the user's speech can
         come long after it, so they don't say when the user spoke.)"""
+        self._spoken_before = -1
+        """What `_spoken_since` was before the latest audio input, should that never go out."""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
         self._cut_off = False
@@ -234,7 +236,7 @@ class InferredLifecycle:
         self._inputs += 1
         if isinstance(content, BinaryContent) and content.is_audio:
             self._audio_since_reply = True
-            self._spoken_since = input_id
+            self._spoken_before, self._spoken_since = self._spoken_since, input_id
             return input_id
         if isinstance(content, CommitAudio):
             # The audio sent since the last turn is one now: it joins the conversation as the commit arrives. (Undone
@@ -295,6 +297,8 @@ class InferredLifecycle:
 
     def input_failed(self, input_id: InputId) -> None:
         """The input never went out (its send raised): forget it."""
+        if self._spoken_since == input_id:
+            self._spoken_since = self._spoken_before
         if (uncommit := self._uncommit) is not None and uncommit.input_id == input_id:
             # A commit that never went out committed nothing.
             self._uncommit = None
