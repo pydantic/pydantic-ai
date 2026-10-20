@@ -1201,13 +1201,13 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'content': [],
                     'tool_calls': [
                         {
-                            'function': {'name': 'get_photo', 'arguments': {}},
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
                             'id': 'photo1',
                             'type': 'function',
                             'index': 0,
                         },
                         {
-                            'function': {'name': 'get_photo', 'arguments': {}},
+                            'function': {'name': 'get_photo', 'arguments': '{}'},
                             'id': 'photo2',
                             'type': 'function',
                             'index': 0,

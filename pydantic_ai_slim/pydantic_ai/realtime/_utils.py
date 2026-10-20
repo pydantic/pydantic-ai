@@ -6,6 +6,7 @@ import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
+from dataclasses import replace
 from typing import Literal, assert_never, overload
 
 import anyio
@@ -21,6 +22,7 @@ from ..messages import (
     SpeechPart,
     SpeechPartDelta,
     TextContent,
+    TextPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -237,6 +239,26 @@ def accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     if stripped and (stripped_text := text.strip()).startswith(stripped):
         return text, stripped_text[len(stripped) :]
     return accumulated + text, text
+
+
+@overload
+def fold_part_transcript(part: TextPart, text: str) -> tuple[TextPart, str]: ...
+
+
+@overload
+def fold_part_transcript(part: SpeechPart, text: str) -> tuple[SpeechPart, str]: ...
+
+
+def fold_part_transcript(part: SpeechPart | TextPart, text: str) -> tuple[SpeechPart | TextPart, str]:
+    """Fold a transcript event's `text` into a model part's text by the rule of `accumulate_transcript`.
+
+    Returns the updated part and the newly appended text.
+    """
+    if isinstance(part, TextPart):
+        content, appended = accumulate_transcript(part.content, text)
+        return replace(part, content=content), appended
+    transcript, appended = accumulate_transcript(part.transcript or '', text)
+    return replace(part, transcript=transcript or None), appended
 
 
 def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:

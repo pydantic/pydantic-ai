@@ -29,7 +29,7 @@ from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     tools=[duckduckgo_search_tool()],
     instructions='Search DuckDuckGo for the given query and return the results.',
 )
@@ -108,7 +108,7 @@ from pydantic_ai import Agent
 from pydantic_ai.common_tools.web_fetch import web_fetch_tool
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     tools=[web_fetch_tool()],
     instructions='Fetch web pages and summarize their content.',
 )
@@ -167,7 +167,7 @@ api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     tools=[tavily_search_tool(api_key)],
     instructions='Search Tavily for the given query and return the results.',
 )
@@ -209,7 +209,7 @@ api_key = os.getenv('TAVILY_API_KEY')
 assert api_key is not None
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     tools=[tavily_search_tool(api_key, max_results=5, include_domains=['arxiv.org'])],
     instructions='Search for information and return the results.',
 )
@@ -242,7 +242,7 @@ Here are some recent papers about transformer architectures from arxiv.org:
 
     from pydantic_ai import Agent
 
-    agent = Agent('openai:gpt-5.2', capabilities=[ExaSearch()])
+    agent = Agent('{{ openai:medium }}', capabilities=[ExaSearch()])
 
     result = agent.run_sync('What are the latest developments in quantum computing?')
     print(result.output)

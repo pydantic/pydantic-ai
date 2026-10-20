@@ -54,6 +54,8 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+Thinking is model parity, not a per-model feature: a `ThinkingPart` from message history is sent back to whatever model you switch to. It rides the provider's own reasoning channel where the part is still usable there — it has to carry the credential that channel checks (a signature, a reasoning-item id) and have come from that same provider — and goes as text where it isn't: in the model's thinking tags for most models, and for the Anthropic family in a `user` message ahead of the assistant turn, wrapped in `<assistant_thinking>`, because Claude copies formatting it finds in assistant turns into the answers your users read. You do not have to strip thinking from history before switching models; the one profile that can turn the send-back off is `openai_chat_send_back_thinking_parts=False`, which no shipped model sets.
+
 ## Configure Prompt Caching Across Providers
 
 Add `Caching()` to every agent you build unless its requests are one-offs that are never repeated. Some models cache nothing unless the request asks them to: Anthropic (incl. Bedrock, Vertex and Foundry clients), Bedrock Claude and Nova, and OpenRouter's Anthropic routes. Without it, those agents pay full price for their instructions, tools and conversation on every request. OpenAI GPT-5.6+ and OpenRouter's Gemini 2.5+ routes cache implicitly and take explicit breakpoints (and on GPT-5.6, cache options) on top. Caching isn't on by default only because it changes cost. Use the `Caching` capability (or the unified `cache` model setting) rather than provider-specific settings like `anthropic_cache` or `bedrock_cache_*`.
@@ -134,6 +136,17 @@ Important hook families:
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
+
+Changing what the model sees from `before_model_request`:
+
+- Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
+- State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
+- Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
+- Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
+- `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+
+A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 

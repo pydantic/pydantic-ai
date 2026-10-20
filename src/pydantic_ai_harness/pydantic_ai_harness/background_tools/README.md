@@ -61,9 +61,9 @@ BackgroundTools(tools=lambda ctx, td: td.name.startswith('research_'))
 Use `metadata={'background': 'optional'}` to let the model decide for each call. The model sees a
 `run_in_background` argument, but your function does not receive it.
 
-A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools and
-realtime sessions run normally. Do not use `run_in_background` as one of your function's own
-parameters.
+A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
+realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
+with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
@@ -103,7 +103,14 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata.
+
+Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
 other tool exception ends the run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`

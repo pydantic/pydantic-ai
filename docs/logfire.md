@@ -4,6 +4,8 @@ description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any 
 
 # Pydantic Logfire Debugging and Monitoring
 
+Once an agent is in production, its traces are how you find out why a run gave a wrong answer, took too long or cost too much. Pydantic AI emits OpenTelemetry traces of every run, model request and tool call; this page sets up [Pydantic Logfire](#pydantic-logfire) to view them, and covers [any other OpenTelemetry backend](#otel-without-logfire) too.
+
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
 
 These applications also have some challenges that most developers have encountered much less often: LLMs are **fickle** and **non-deterministic**. Subtle changes in a prompt can completely change a model's performance, and there's no `EXPLAIN` query you can run to understand why.
@@ -73,7 +75,7 @@ from pydantic_ai import Agent
 logfire.configure()  # (1)!
 logfire.instrument_pydantic_ai()  # (2)!
 
-agent = Agent('openai:gpt-5.2', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
+agent = Agent('{{ openai:medium }}', name='hello_world_agent', instructions='Be concise, reply with one sentence.')  # (4)!
 result = agent.run_sync('Where does "hello world" come from?')  # (3)!
 print(result.output)
 """
@@ -130,7 +132,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)  # (1)!
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -176,7 +178,7 @@ logfire.configure(send_to_logfire=False)  # (2)!
 logfire.instrument_pydantic_ai()
 logfire.instrument_httpx(capture_all=True)
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -229,7 +231,7 @@ tracer_provider.add_span_processor(span_processor)
 set_tracer_provider(tracer_provider)
 
 Agent.instrument_all()
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> Paris
@@ -398,7 +400,7 @@ instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
 )
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -415,7 +417,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -424,7 +426,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -433,7 +435,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -451,7 +453,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_model_request_parameters=False)
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation(settings=instrumentation_settings)])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation(settings=instrumentation_settings)])
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```

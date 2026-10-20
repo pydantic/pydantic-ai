@@ -1,14 +1,15 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write a current title and body, label it, review every push
-  subject to the mechanical-refresh exception, watch CI, and triage every comment. Use whenever you
-  open a PR or push a commit to one.
+description: Open and advance a PR — write current metadata, watch CI, and triage comments.
+  Review pushes except prose-only documentation and mechanical text/data refreshes.
+  Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
 
 Pushing starts a loop; it does not end the task. **Work stops only when CI is green AND no comment
-is left unresolved.**
+is left unresolved.** For prose-only documentation, follow the handoff exception below; hosted
+review completion is not a gate.
 
 ## When you open the PR
 
@@ -44,9 +45,10 @@ Use one fenced `diff` tree from the public entry point to the changed observable
 
 ### Keep labels current with the title and body
 
-Assign title, body, and label updates to the same subagent. Reconcile labels whenever the title or body changes.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+Reconcile labels whenever the title or body changes.
 
-Run `.agents/skills/pushing-commits-to-the-repo/label-catalog` and give the subagent the printed file path.
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
 The checked-in catalog supplies clones and worktrees without label-read requests.
 Run the helper with `--refresh` after creating, renaming, or updating repository labels.
 Commit refreshed catalog changes.
@@ -68,6 +70,21 @@ Labelling needs triage permission on the repo (Pydantic team members and their a
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
 
+## Prose-only documentation
+
+Prose-only documentation changes only natural-language text, including policy wording, docstring prose, and instruction wording.
+Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
+
+Skip `pre-push-review`, all local reviewers, extra hosted-review dispatches, the second-opinion choice, and the final metadata-subagent review.
+Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
+Do not wait or poll for automatic hosted review completion or require its verdict.
+A skipped automatic review does not block handoff.
+
+Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
+Do not edit workflows or triggers to implement this exception.
+Once CI is green and posted comments are triaged, hand David the PR diff to inspect and merge.
+Never merge the PR yourself.
+
 ## Mechanical text/data refreshes
 
 A small mechanical text/data refresh changes no code, runtime behavior, CI logic, or substantive
@@ -79,7 +96,7 @@ ask for a second-opinion choice. Automatic configured CI and hosted reviews stil
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless
   the user's instructions override this.
-- For all other diffs, run `pre-push-review` before each push. Address every finding, commit the
+- Except for prose-only documentation and mechanical text/data refreshes, run `pre-push-review` before each push. Address every finding, commit the
   fixes, and repeat the review until it returns no findings. This applies before the first PR push
   and between every later PR iteration.
 - A `pre-push-review` verdict belongs to the diff it read. Any later commit voids it — re-run against
@@ -91,6 +108,9 @@ ask for a second-opinion choice. Automatic configured CI and hosted reviews stil
   permission from a flag or setting.
 
 ## After you push — the loop
+For prose-only documentation, wait for CI checks, excluding hosted review completion.
+Triage comments already posted before handoff; do not wait for future hosted review comments or verdicts.
+
 1. **Watch CI to a terminal state.** Don't idle. If it fails, diagnose: fix if the failure is
    yours; if it's a known flake or pre-existing on main, say so with evidence.
 2. **Triage every comment** (bots and humans alike). For each one:
@@ -116,6 +136,7 @@ The repo has two standards reviewers, and they are independent:
 
 Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
 
+- Skip this entire section for prose-only documentation; do not dispatch reviews or ask for a second-opinion choice.
 - Skip additional-review selection for a mechanical text/data refresh defined above.
 
 Once the loop above has terminated — CI green, every comment triaged — decide whether to apply it
@@ -126,7 +147,7 @@ before handing the PR back or requesting merge:
 - **Use judgment on whether it's warranted.** Skip it when you're highly confident there's nothing
   left to catch (typo fixes, dependency bumps, mechanical chores). Apply it for substantive
   changes: new features, behavior changes, public API surface, non-trivial bug fixes — and
-  user-facing docs, where it catches things like examples using outdated models. In between, weigh
+  docs containing code examples, where it catches things like examples using outdated models. In between, weigh
   cost against risk; smaller PRs are cheaper to review, so lean toward applying when unsure.
 - **How:** `gh pr edit <number> --add-label douwebot`. This requires triage permission on the repo
   (Pydantic team members and their agents). If it fails, quote the actual error — don't skip it
@@ -136,17 +157,40 @@ before handing the PR back or requesting merge:
   `agent_docs/` — a security guard against a PR editing the reviewer's own instructions. The guard
   is skipped for an author with write or admin access on the repo. Don't apply the label to a PR the
   guard covers; the red check is the guard working.
+- When a maintainer explicitly requests review of those protected paths, apply
+  `douwebot:review-agent-config`. It authorizes one review only when its first `labeled` event came
+  from a `User` with current write or admin permission and the PR still has the event head. Do not
+  treat label presence as approval for an ordinary `douwebot` trigger or a later head. If the run
+  fails or is canceled, remove and reapply the label; rerunning the old event is denied.
 - **Afterwards, re-enter the loop.** The review posts inline comments and a formal verdict that
   need the same triage as any other review.
 
 ## Before handing the PR back
 
-Run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
+For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
+Correct metadata directly, then hand David the PR diff after CI is green and posted comments are triaged.
+Skip the subagent steps below; automatic hosted review completion remains exempt.
 
-1. Dispatch a fresh subagent that has not worked on the PR.
+For other diffs, run this final metadata check after CI, comments, and any selected `douwebot` review have settled:
+
+1. Dispatch a fresh subagent that has not worked on the PR. Run the subagent on the latest light model your harness
+   supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
+   against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, title, body, labels, and complete catalog.
-3. Ask it to check only the title, body, and labels against this skill and the root `AGENTS.md`.
-4. Require either `current` or exact corrections: replacement title/body and label additions/removals.
-5. Apply every correction. Committed changes restart the post-push loop; GitHub metadata-only changes do not.
-6. After a replacement, repeat the check with another fresh subagent.
-7. Hand the PR back only after the check reports `current`.
+3. Ask it to check only the title, body, and labels against this skill, the root `AGENTS.md`, and the PR template.
+4. Require either `current` or exact corrections: title or body text changes and label additions/removals.
+   - Require each correction to cite the rule it enforces.
+   - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
+     missing element, require the correction to name that element instead.
+5. Verify each correction. Keep a correction only when a rule in this skill, the root `AGENTS.md`, or the PR template
+   says what the correction claims and the current title, body, or labels break that rule. When that rule is not the
+   one the correction cites, cite it on the kept correction. When you find a violation that no correction names,
+   verify it the same way and add it as a kept correction.
+6. Edit the title, body, and labels once. Use the kept corrections, and write your own changes where they fall short.
+   The edit is done when all three hold:
+   - The edited title, body, and labels follow every rule a kept correction cites.
+   - The edited title, body, and labels break no rule that the current ones follow.
+   - The edit applies no subagent text that no kept correction covers.
+
+   Committed changes restart the post-push loop; GitHub metadata-only changes do not.
+7. Hand the PR back after the edit.

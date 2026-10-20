@@ -91,4 +91,4 @@ def slash_search(
     The footer starts with `/ search`, followed by `footer`.
     """
     search = _SlashSearch(key_source=key_source, hotkeys=dict(hotkeys or {}))
-    return search.build(builder.footer_hint(f'/ search · {footer}'))
+    return search.build(builder.footer_hint(f'/ search - {footer}'))

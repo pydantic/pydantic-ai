@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 import hashlib
+import html
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai.workspaces import Workspace
 
+# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (https://github.com/pydantic/pydantic-ai/pull/10547),
+# adding `context-file` to its tags. Until then this matches its semantics: only the `<` of a closing tag is escaped,
+# in any case, with whitespace around the `/`, or carrying attributes; a longer tag name is left alone.
+_CONTEXT_FILE_CLOSING_TAG_OPENER = re.compile(r'<(?=\s*/\s*context-file(?=[\s/>]))', re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class ContextFile:
-    """A single instruction file discovered during walk-up."""
+    """A single instruction file discovered during walk-up or nested traversal."""
 
     directory: Path
     """The directory the file was found in."""
 
     path: Path
-    """The file's path."""
+    """The file's path, named after its target when it is a symlink to a file in the same directory."""
 
     content: str
     """The file's text content."""
@@ -44,18 +51,25 @@ def _walk_dirs(workspace_dir: Path, home_dir: Path | None) -> list[Path]:
     return list(reversed(chain))
 
 
-async def _is_file(workspace: Workspace, path: Path) -> bool:
-    """True when `path` exists and is a regular file inside `workspace`."""
+async def _real_file(workspace: Workspace, path: Path) -> Path | None:
+    """The file `path` names, after symlinks, when it is a regular file in `path`'s own directory, else `None`.
+
+    A link such as `CLAUDE.md -> AGENTS.md` returns `AGENTS.md` in the same directory, so the file is
+    labeled and deduplicated by the name it is kept under.
+    """
     text = str(path)
     try:
         entry = await workspace.stat(text)
     except (FileNotFoundError, NotADirectoryError):
-        return False
+        return None
     if entry.is_dir:
-        return False
+        return None
+    real = Path(await workspace.realpath(text))
     # Autoloaded instructions belong to the directory being scanned, not a
     # symlink target in another directory (even another ancestor in the walk).
-    return Path(await workspace.realpath(text)).parent == Path(await workspace.realpath(str(path.parent)))
+    if real.parent != Path(await workspace.realpath(str(path.parent))):
+        return None
+    return path.parent / real.name
 
 
 async def discover_instruction_files(
@@ -70,18 +84,17 @@ async def discover_instruction_files(
     first and the most specific (closest to the model's recency window) comes
     last. Within a directory, `filenames` are tried in order.
 
-    Files are deduped by the path the walker visits and by content hash, so
-    two names for the same content within one directory load once.
+    Files are deduped by the path a symlink resolves to and by content hash, so
+    two names for the same content within one directory load once, under the
+    name of the file a symlink points to.
     """
     seen_paths: set[Path] = set()
     seen_hashes: set[str] = set()
     found: list[ContextFile] = []
     for directory in _walk_dirs(workspace_dir, home_dir):
         for filename in filenames:
-            candidate = directory / filename
-            if not await _is_file(workspace, candidate):
-                continue
-            if candidate in seen_paths:
+            candidate = await _real_file(workspace, directory / filename)
+            if candidate is None or candidate in seen_paths:
                 continue
             content = (await workspace.read_bytes(str(candidate))).decode('utf-8', errors='replace')
             digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
@@ -96,8 +109,8 @@ async def discover_instruction_files(
 async def find_dir_context_file(workspace: Workspace, directory: Path, filenames: Sequence[str]) -> ContextFile | None:
     """Return the first existing instruction file in `directory`, or `None`."""
     for filename in filenames:
-        candidate = directory / filename
-        if await _is_file(workspace, candidate):
+        candidate = await _real_file(workspace, directory / filename)
+        if candidate is not None:
             return ContextFile(
                 directory=directory,
                 path=candidate,
@@ -109,12 +122,21 @@ async def find_dir_context_file(workspace: Workspace, directory: Path, filenames
 def render_context_file(file: ContextFile, *, label: str) -> str:
     """Render one file as a labeled block.
 
+    The file and its path come from the repository, so neither can end the block: a closing
+    `</context-file>` in the content is escaped as `&lt;/context-file>`, and the label is
+    attribute-escaped. Everything else goes in as written.
+
     The closing tag sits on its own line, so the content's trailing line terminators go: keeping them
     would put a blank line before the tag for every file that ends the way a text file should. Only the
     terminators -- trailing spaces and tabs stay, being a hard line break in Markdown.
     """
-    content = file.content.rstrip('\r\n')
-    return f'<context-file path="{label}">\n{content}\n</context-file>'
+    content = _CONTEXT_FILE_CLOSING_TAG_OPENER.sub('&lt;', file.content.rstrip('\r\n'))
+    return f'<context-file path="{html.escape(label)}">\n{content}\n</context-file>'
+
+
+def render_context_file_path(label: str) -> str:
+    """Name a file without its contents, as an empty `<context-file>` tag with the label attribute-escaped."""
+    return f'<context-file path="{html.escape(label)}" />'
 
 
 def render_context_files(files: Sequence[ContextFile], *, relative_to: Path) -> str:

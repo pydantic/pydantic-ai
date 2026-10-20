@@ -10,8 +10,9 @@ contracts not exposed there:
   operations. Covered by `test_protocol.py` and `test_transports.py`.
 * `_workspace`: the core workspace call schema, rather than a copied schema.
   Covered by `test_workspaces.py`.
-* `_run_context` and `_toolset`: availability evidence, enqueue rejection, tool
-  outcomes and validation-context reconstruction. Covered by `test_transports.py`,
+* `_run_context` and `_toolset`: availability evidence, dispatch snapshot
+  fields, enqueue rejection, tool outcomes and validation-context
+  reconstruction. Covered by `test_transports.py`,
   `test_effects_contracts.py` and `test_workspaces.py`.
 
 Private context attributes and the effective tracer lookup also remain here.
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
 
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -33,7 +35,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar as TypeVarExtensions
 
 from pydantic_ai import Agent
-from pydantic_ai._run_context import AnchoredEvidence
+from pydantic_ai._run_context import AnchoredEvidence, ToolNamePath
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec import JSON_CODEC
@@ -57,6 +59,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
+    DispatchSnapshots,
     DynamicToolsResult,
     EnqueueGuard,
     enqueue_not_supported_message,
@@ -395,12 +398,14 @@ _STR_SET_ADAPTER: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),
     ('usage_limits', dict, TypeAdapter(UsageLimits)),
+    ('deadline', str, TypeAdapter(datetime)),
     ('loaded_capability_ids', list, _STR_SET_ADAPTER),
     ('discovered_tool_names', list, _STR_SET_ADAPTER),
     ('available_tool_names', list, _STR_SET_ADAPTER),
     ('active_capability_ids', list, _STR_SET_ADAPTER),
     ('_deferred_capability_ids', list, _STR_SET_ADAPTER),
     ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
+    ('_tool_name_path', list, TypeAdapter(ToolNamePath)),
     ('workspace_ref', dict, TypeAdapter(WorkspaceRef)),
 )
 
@@ -415,7 +420,12 @@ _NONE_UNLESS_ATTACHED = (
     '_run_capabilities_by_id',
     '_run_held_toolsets',
 )
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+# `deadline` is defaulted so a payload from a workflow that predates it reads as a run without one.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    ('deadline', None),
+    ('_tool_name_path', ()),
+)
 _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_UNLESS_ATTACHED}
 
 
@@ -441,29 +451,17 @@ class RenderRunContext(RunContext[AgentDepsT]):
         setattr(
             self,
             '__dataclass_fields__',
-            {name: field for name, field in RunContext.__dataclass_fields__.items() if name in self.__dict__},
+            {
+                name: field
+                for name, field in (RunContext.__dataclass_fields__ | DispatchSnapshots.__dataclass_fields__).items()
+                if name in self.__dict__
+            },
         )
 
     def __getattribute__(self, name: str) -> Any:
         if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
             raise UserError(f'{name!r} is not available on {self.__class__.__name__!r} inside a Render child task.')
         return super().__getattribute__(name)
-
-    def restore_snapshots(self, source: RenderRunContext[AgentDepsT]) -> None:
-        """Preserve worker-only state after core guards copy the dataclass fields.
-
-        These snapshots are properties or wire metadata, so `dataclasses.replace`
-        omits them. Do not copy dataclass fields: core has just guarded those.
-        """
-        for name in (
-            'available_tool_names',
-            'active_capability_ids',
-            '_deferred_capability_ids',
-            'workspace_ref',
-            '_model_id',
-        ):
-            if name in source.__dict__:
-                self.__dict__[name] = source.__dict__[name]
 
     @property
     def available_tool_names(self) -> set[str]:
@@ -521,7 +519,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Project the serializable context state needed by child operations."""
-        return {
+        serialized: dict[str, Any] = {
             'run_id': ctx.run_id,
             'conversation_id': ctx.conversation_id,
             # Models contain provider clients and cannot be serialized. Their
@@ -542,6 +540,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'instrumentation_version': ctx.instrumentation_version,
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
+            'deadline': ctx.deadline,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
             '_anchored_evidence': ctx._anchored_evidence,
@@ -551,6 +550,11 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'capability_active': ctx.capability_active,
             'workspace_ref': ctx.workspace.ref,
         }
+        # Set while a toolset under a name-changing wrapper is listed, so a `prepare` that runs in
+        # the child reads its tool's own retry count.
+        if tool_name_path := ctx._tool_name_path:
+            serialized['_tool_name_path'] = tool_name_path
+        return serialized
 
     @classmethod
     def deserialize_run_context(

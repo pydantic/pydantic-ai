@@ -15,11 +15,23 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
-from pydantic_ai.messages import CapabilityInstructionSource, InstructionId
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionChangePolicy,
+    InstructionId,
+    ToolKind,
+    ToolKindLike,
+    ToolPartKind,
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
     SystemPromptFunc,
     Tool,
     ToolFuncContext,
@@ -182,6 +194,29 @@ class Capability(AbstractCapability[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -190,6 +225,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -212,6 +248,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -234,6 +271,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -252,6 +290,29 @@ class Capability(AbstractCapability[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
@@ -260,6 +321,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -282,6 +344,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -304,6 +367,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=_tool_kind_id(tool_kind),
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -328,7 +392,7 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -337,6 +401,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         /,
         *,
         name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
@@ -366,6 +431,9 @@ class Capability(AbstractCapability[AgentDepsT]):
                 [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
                 key to qualify the name against, so the part stays unaddressable. See
                 [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
         """
         if name is not None:
             validate_instruction_name(name)
@@ -380,6 +448,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                     name=name,
                     id=InstructionId(source, name=name) if source is not None else None,
                     dynamic=True,
+                    on_change=on_change,
                 )
             )
             return func_

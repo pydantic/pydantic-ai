@@ -26,7 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Coder, SSHWorkspace
 
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SSHWorkspace('dev@build-box', working_dir='/srv/app', env={'UV_OFFLINE': '1'}), Coder()],
 )
 result = agent.run_sync('Run the test suite and fix the first failure.')

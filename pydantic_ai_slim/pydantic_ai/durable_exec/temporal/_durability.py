@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
@@ -12,6 +12,7 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -399,7 +400,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
         # Temporal applies its durable-operation guards while deserializing the run context;
         # wrapping it again would replace activity-specific compatibility state.
-        yield ctx
+        if ctx.deadline is None:
+            yield ctx
+            return
+        # An activity doesn't share the workflow's context, so an agent a tool runs here inherits the
+        # run's deadline from the serialized context instead.
+        with provide_run_deadline(ctx.deadline):
+            yield ctx
 
     def _resolve_temporal_tool_config(
         self, operation_id: DurableOperationId, tool: object | None, name: str
@@ -513,6 +520,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
+        return workflow.now if self.in_durable_context else None
 
     async def wrap_run(
         self,

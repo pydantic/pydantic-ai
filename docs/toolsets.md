@@ -542,7 +542,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
 mcp = MCPToolset('http://localhost:8000/mcp')
-agent = Agent('openai:gpt-5.2', toolsets=[mcp.defer_loading()])
+agent = Agent('{{ openai:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
 ### Including Return Schemas
@@ -697,7 +697,7 @@ class PersonalizedGreeting(BaseModel):
     language_code: str
 
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset], output_type=PersonalizedGreeting)
+agent = Agent('{{ openai:medium }}', toolsets=[toolset], output_type=PersonalizedGreeting)
 
 result = agent.run_sync('Greet the user in a personalized way')
 print(repr(result.output))
@@ -945,7 +945,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 # ...
 ```
 
@@ -961,7 +961,7 @@ from pydantic_ai_ejentum import EjentumToolset
 
 toolset = EjentumToolset()
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
 The toolset emits Pydantic AI `instructions` that nudge the agent to call the matching `harness_*` tool before generating. Pass `add_instructions=False` to suppress and supply routing guidance from your own system prompt.

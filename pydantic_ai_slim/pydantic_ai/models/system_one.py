@@ -84,6 +84,9 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     # The API's schema requires `instructions` on every question, even one whose options say what it asks.
     requires_instructions: ClassVar[bool] = True
 
+    # The API takes a `temperature`, but no retry count: the provider's client makes a single attempt.
+    unsupported_settings = DecisionModel.unsupported_settings - {'temperature'} | {'max_retries'}
+
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
     _api_key: str | None = field(repr=False)

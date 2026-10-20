@@ -1,0 +1,844 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1041"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the weather in Paris? Find a tool for it.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "741"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08892b547f2b9bf2006acfe32dff8487d295ea2be92ed64260
+        object: response
+        created_at: 1792009006
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792009006
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: fc_08892b547f2b9bf2006acfe32e631887d296a352f92e2165d9
+          type: function_call
+          status: completed
+          arguments: "{\"queries\":[\"weather Paris\",\"current weather\",\"geolocation weather\",\"forecast API\",\"temperature in Paris\"]}"
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          name: search_tools
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 153
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 34
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 187
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:16:46.818202+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1746"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the weather in Paris? Find a tool for it.
+        - name: search_tools
+          arguments: "{\"queries\":[\"weather Paris\",\"current weather\",\"geolocation weather\",\"forecast API\",\"temperature in Paris\"]}"
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe32e631887d296a352f92e2165d9
+        - type: function_call_output
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          output: "{\"discovered_tools\":[{\"name\":\"get_weather\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            type: function
+            description: Get the current weather for a city.
+            strict: true
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "815"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08892b547f2b9bf2006acfe32eff1887d29c88c44069971422
+        object: response
+        created_at: 1792009007
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792009007
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: fc_08892b547f2b9bf2006acfe32f525887d2805b51506ceb8721
+          type: function_call
+          status: completed
+          arguments: "{\"queries\":[\"Paris weather get_weather\"]}"
+          call_id: call_GQyMM0GBIcH4zlvz1EWqo0y8
+          name: search_tools
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Get the current weather for a city.
+          name: get_weather
+          tools:
+          - type: function
+            description: Get the current weather for a city.
+            name: get_weather
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 331
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 22
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 353
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:16:47.875374+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2093"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the weather in Paris? Find a tool for it.
+        - name: search_tools
+          arguments: "{\"queries\":[\"weather Paris\",\"current weather\",\"geolocation weather\",\"forecast API\",\"temperature in Paris\"]}"
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe32e631887d296a352f92e2165d9
+        - type: function_call_output
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          output: "{\"discovered_tools\":[{\"name\":\"get_weather\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            type: function
+            description: Get the current weather for a city.
+            strict: true
+        - name: search_tools
+          arguments: "{\"queries\":[\"Paris weather get_weather\"]}"
+          call_id: call_GQyMM0GBIcH4zlvz1EWqo0y8
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe32f525887d2805b51506ceb8721
+        - type: function_call_output
+          call_id: call_GQyMM0GBIcH4zlvz1EWqo0y8
+          output: "{\"discovered_tools\":[{\"name\":\"get_weather\"}]}"
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "602"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08892b547f2b9bf2006acfe32ffc9087d29989d66bdc25649d
+        object: response
+        created_at: 1792009008
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792009008
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: fc_08892b547f2b9bf2006acfe33054f887d2bec6d3c957b125a8
+          type: function_call
+          status: completed
+          arguments: "{\"city\":\"Paris\"}"
+          call_id: call_lvT8GnEWdLBDOK58pnVX5CsK
+          name: get_weather
+          namespace: get_weather
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Get the current weather for a city.
+          name: get_weather
+          tools:
+          - type: function
+            description: Get the current weather for a city.
+            name: get_weather
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 376
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 394
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:16:48.668483+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2403"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-nano
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the weather in Paris? Find a tool for it.
+        - name: search_tools
+          arguments: "{\"queries\":[\"weather Paris\",\"current weather\",\"geolocation weather\",\"forecast API\",\"temperature in Paris\"]}"
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe32e631887d296a352f92e2165d9
+        - type: function_call_output
+          call_id: call_0vOm0pTJdbml26l24WxL6bOI
+          output: "{\"discovered_tools\":[{\"name\":\"get_weather\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            type: function
+            description: Get the current weather for a city.
+            strict: true
+        - name: search_tools
+          arguments: "{\"queries\":[\"Paris weather get_weather\"]}"
+          call_id: call_GQyMM0GBIcH4zlvz1EWqo0y8
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe32f525887d2805b51506ceb8721
+        - type: function_call_output
+          call_id: call_GQyMM0GBIcH4zlvz1EWqo0y8
+          output: "{\"discovered_tools\":[{\"name\":\"get_weather\"}]}"
+        - name: get_weather
+          arguments: "{\"city\":\"Paris\"}"
+          call_id: call_lvT8GnEWdLBDOK58pnVX5CsK
+          type: function_call
+          id: fc_08892b547f2b9bf2006acfe33054f887d2bec6d3c957b125a8
+          namespace: get_weather
+        - type: function_call_output
+          call_id: call_lvT8GnEWdLBDOK58pnVX5CsK
+          output: Sunny in Paris
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "561"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_08892b547f2b9bf2006acfe330c8ec87d28df3cdccb09618fb
+        object: response
+        created_at: 1792009008
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792009009
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-nano-2026-03-17
+        moderation: null
+        output:
+        - id: msg_08892b547f2b9bf2006acfe33110e887d2a82058b9bea551e0
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: The current weather in **Paris** is **sunny**.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Get the current weather for a city.
+          name: get_weather
+          tools:
+          - type: function
+            description: Get the current weather for a city.
+            name: get_weather
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 409
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 17
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 426
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-14T20:16:49.422670+00:00

@@ -111,7 +111,7 @@ class RenderBoundOperation(
     @property
     def operation(
         self,
-    ) -> DurableOperation[ParamsT, WireT, ResultT]:  # pragma: no cover - backend protocol introspection
+    ) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:

@@ -10,6 +10,8 @@ from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallSettledEvent,
     SpeculativeCodeUpdateEvent,
 )
+from pydantic_ai_harness.code_mode._parts import RunCodeArgs, RunCodeCallPart
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import SpeculationStats
 from pydantic_ai_harness.code_mode._toolset import (
     CodeModeMount,
@@ -26,9 +28,12 @@ __all__ = [
     'CodeModeMount',
     'CodeModeOS',
     'CodeModeOSCallback',
+    'CodeModeReplStore',
     'CodeModeResourceLimits',
     'CodeModeReturnSchemaWarning',
     'CodeModeToolset',
+    'RunCodeArgs',
+    'RunCodeCallPart',
     'SpeculationStats',
     'SpeculativeCallClaimedEvent',
     'SpeculativeCallEvictedEvent',

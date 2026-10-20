@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, timedelta
@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
-from dirty_equals import IsJson
+from dirty_equals import IsJson, IsOneOf
 from pydantic import BaseModel
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -19,6 +19,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     Agent,
     FallbackExceptionGroup,
+    FinalResultEvent,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
@@ -41,12 +42,18 @@ from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    AgentStreamEvent,
     FinishReason,
     InstructionId,
     InstructionPart,
     ModelResponseState,
+    ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPartDelta,
     ToolAvailabilityDeltaPart,
 )
 from pydantic_ai.models import (
@@ -57,7 +64,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -388,7 +395,11 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:failure_response:,function:success_response:',
+                        'chat function:success_response:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:success_response:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
@@ -617,7 +628,11 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function::failure_response_stream,function::success_response_stream',
+                        'chat function::success_response_stream',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::success_response_stream',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'input'}]}],
@@ -1085,6 +1100,123 @@ async def test_all_failed_streaming() -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
+
+
+async def failure_before_first_event_stream(
+    _model_messages: list[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    # A chunk that produces no event, like a provider's `response.created`, so the stream opens fine.
+    yield {}
+    raise ModelHTTPError(status_code=503, model_name='test-function-model', body={'error': 'overloaded'})
+
+
+async def _stream_events(
+    model: Model, messages: list[ModelMessage]
+) -> tuple[list[ModelResponseStreamEvent], ModelResponse]:
+    async with model.request_stream(messages, None, ModelRequestParameters()) as streamed_response:
+        events = [event async for event in streamed_response]
+    return events, streamed_response.get()
+
+
+async def test_streaming_error_before_first_event_falls_back() -> None:
+    """A stream that opens but fails before its first event falls back, and the next stream's events are replayed intact."""
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('input')]
+    direct_events, _ = await _stream_events(success_model_stream, messages)
+
+    failing_model = FunctionModel(stream_function=failure_before_first_event_stream)
+    events, response = await _stream_events(FallbackModel(failing_model, success_model_stream), messages)
+
+    assert events == direct_events
+    assert events == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='hello ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='world')),
+            PartEndEvent(index=0, part=TextPart(content='hello world')),
+        ]
+    )
+    assert response.model_name == 'function::success_response_stream'
+    assert response.state == 'complete'
+    assert response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='function::failure_before_first_event_stream',
+                provider_name='function',
+                outcome='error',
+                error="ModelHTTPError: status_code: 503, model_name: test-function-model, body: {'error': 'overloaded'}",
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            )
+        ]
+    )
+
+
+async def test_streaming_all_failed_before_first_event() -> None:
+    failing_model = FunctionModel(stream_function=failure_before_first_event_stream)
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await _stream_events(FallbackModel(failing_model, failing_model), [ModelRequest.user_text_prompt('input')])
+    assert [type(exc) for exc in exc_info.value.exceptions] == [ModelHTTPError, ModelHTTPError]
+
+
+async def test_streaming_error_after_first_event_propagates() -> None:
+    """Once a stream has produced its first event it has been handed over, so a later error isn't a fallback."""
+
+    async def failure_after_first_event_stream(
+        _model_messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[str]:
+        yield 'hello '
+        raise ModelHTTPError(status_code=503, model_name='test-function-model', body={'error': 'overloaded'})
+
+    fallback_model = FallbackModel(
+        FunctionModel(stream_function=failure_after_first_event_stream), success_model_stream
+    )
+    events: list[ModelResponseStreamEvent] = []
+    with pytest.raises(ModelHTTPError, match='overloaded'):
+        async with fallback_model.request_stream(
+            [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+        ) as streamed_response:
+            async for event in streamed_response:
+                events.append(event)
+    assert events == snapshot(
+        [PartStartEvent(index=0, part=TextPart(content='hello ')), FinalResultEvent(tool_name=None, tool_call_id=None)]
+    )
+
+
+async def test_streaming_stopped_early_closes_the_model_stream() -> None:
+    """A consumer that stops iterating a handed-over stream early still gets the model's stream closed."""
+    closed = False
+
+    async def tracked_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal closed
+        try:
+            yield 'hello '
+        finally:
+            closed = True
+
+    async with FallbackModel(FunctionModel(stream_function=tracked_stream)).request_stream(
+        [ModelRequest.user_text_prompt('input')], None, ModelRequestParameters()
+    ) as streamed_response:
+        assert await anext(aiter(streamed_response)) == PartStartEvent(index=0, part=TextPart(content='hello '))
+        assert not closed
+
+    assert closed
+
+
+async def test_streaming_without_events_is_handed_over() -> None:
+    """A stream that ends without producing any event is accepted, not treated as a failure."""
+
+    async def empty_stream(
+        _model_messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
+        yield {}
+
+    empty_model = FunctionModel(stream_function=empty_stream)
+    events, response = await _stream_events(
+        FallbackModel(empty_model, success_model_stream), [ModelRequest.user_text_prompt('input')]
+    )
+    assert events == []
+    assert response.model_name == 'function::empty_stream'
+    assert response.failed_attempts is None
 
 
 async def test_fallback_condition_override() -> None:
@@ -1624,6 +1756,7 @@ Don't include any text or Markdown fencing before or after.
                             {
                                 'content': 'Be kind',
                                 'dynamic': False,
+                                'on_change': 'rewrite',
                                 'name': None,
                                 'id': 'agent',
                                 'part_kind': 'instruction',
@@ -1638,6 +1771,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                                 'dynamic': False,
+                                'on_change': 'rewrite',
                                 'name': None,
                                 'id': None,
                                 'part_kind': 'instruction',
@@ -1651,7 +1785,11 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.provider.name': 'function',
-                    'logfire.msg': 'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                    # logfire>=5.2.0 keeps `logfire.msg` in sync with the renamed span; older versions keep the original name.
+                    'logfire.msg': IsOneOf(
+                        'chat fallback:function:tool_output_func:,function:prompted_output_func:',
+                        'chat function:prompted_output_func:',
+                    ),
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:prompted_output_func:',
                     'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'hello'}]}],
@@ -2181,6 +2319,49 @@ async def test_response_handler_not_triggered() -> None:
 
     result = await agent.run('hello')
     assert result.output == snapshot('primary response')
+
+
+async def test_response_handler_not_applied_to_streamed_requests_warns() -> None:
+    """Response handlers can't judge a streamed response, so each way of streaming warns and accepts it."""
+
+    async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'primary response'
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return any(isinstance(part, TextPart) and 'primary' in part.content for part in response.parts)
+
+    fallback = FallbackModel(
+        FunctionModel(primary_response, stream_function=primary_stream),
+        FunctionModel(fallback_response),
+        fallback_on=reject_primary,
+    )
+    agent = Agent(model=fallback)
+    warning = '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests'
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback response')
+
+    async def event_stream_handler(_ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await agent.run('hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('primary response')
+
+    listening_agent = Agent(model=fallback)
+
+    @listening_agent.on_event
+    async def _(_ctx: RunContext[Any], _event: AgentStreamEvent) -> None:
+        pass
+
+    with pytest.warns(UserWarning, match=warning):
+        result = await listening_agent.run('hello')
+    assert result.output == snapshot('primary response')
+
+    with pytest.warns(UserWarning, match=warning):
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == snapshot('primary response')
 
 
 async def test_response_handler_all_fail() -> None:
@@ -3575,19 +3756,21 @@ async def test_fallback_graph_streaming_continuation_keeps_pin() -> None:
     assert fallback_calls == 3
 
 
-async def test_fallback_streaming_pinned_continuation_fails_falls_back() -> None:
-    """Streaming: pinned model fails to open stream → messages are rewound,
+@pytest.mark.parametrize('opens_before_failing', [False, True])
+async def test_fallback_streaming_pinned_continuation_fails_falls_back(opens_before_failing: bool) -> None:
+    """Streaming: pinned model fails to open stream, or fails before its first event → messages are rewound,
     fallback chain is tried, and the fallback model succeeds."""
     primary_call_count = 0
 
-    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    async def primary_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         nonlocal primary_call_count
         primary_call_count += 1
         if primary_call_count == 1:
             yield 'partial'
         else:
+            if opens_before_failing:
+                yield {}
             raise ModelHTTPError(status_code=500, model_name='primary', body='continuation error')
-            yield ''  # pragma: no cover
 
     fallback_calls = 0
 

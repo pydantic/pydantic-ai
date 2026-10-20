@@ -149,14 +149,14 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # pyright: ignore[reportAttributeAccessIssue]
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.0000')))
+    assert result.usage == snapshot(RunUsage(unmeasured_requests=1, requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -167,7 +167,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -185,7 +185,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -358,7 +358,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -518,7 +518,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=RequestUsage(cost=Decimal('0.0000')),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=UTC),
                 provider_name='cohere',
@@ -538,6 +538,7 @@ async def test_request_tool_call(allow_model_requests: None):
             details={'input_tokens': 4, 'output_tokens': 2},
             tool_calls=1,
             cost=Decimal('6.375E-7'),
+            unmeasured_requests=1,
         )
     )
 

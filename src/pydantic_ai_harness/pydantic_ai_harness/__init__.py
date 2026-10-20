@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     )
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
+    from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -77,6 +79,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
@@ -90,6 +93,8 @@ __all__ = [
     'ConversationSearch',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
     'DayAI',
+    'DaytonaSandbox',
+    'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DynamicWorkflow',
     'E2BSandbox',
@@ -158,6 +163,7 @@ __all__ = [
 _CAPABILITY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
@@ -169,6 +175,7 @@ _CAPABILITY_EXPORTS = {
     'Coder': 'coder',
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
+    'DaytonaSandbox': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
@@ -218,6 +225,7 @@ _CAPABILITY_EXPORTS = {
 
 _CONSTANT_EXPORTS = {
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
+    'DaytonaSandboxBackend': 'daytona_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',

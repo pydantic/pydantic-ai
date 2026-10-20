@@ -852,6 +852,12 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
+
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
 
@@ -900,8 +906,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 
@@ -1217,6 +1223,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def elevenlabs_api_key() -> str:
+    return os.getenv('ELEVENLABS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
@@ -1229,6 +1240,11 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def meta_api_key() -> str:
+    return os.getenv('META_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1290,6 +1306,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
 def bedrock_provider():
     try:
         import boto3
+        from botocore.config import Config
 
         from pydantic_ai.providers.bedrock import BedrockProvider
 
@@ -1302,10 +1319,14 @@ def bedrock_provider():
             yield provider
             provider.client.close()
         else:  # pragma: lax no cover
+            # `BedrockProvider`'s default read timeout; botocore's 60s cuts off a Nova code-interpreter
+            # sandbox timeout, which takes longer to come back.
+            config = Config(read_timeout=300)
             if os.getenv('AWS_PROFILE'):
                 bedrock_client = boto3.client(
                     'bedrock-runtime',
                     region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                    config=config,
                 )
             else:
                 bedrock_client = boto3.client(
@@ -1316,6 +1337,7 @@ def bedrock_provider():
                         'AWS_SECRET_ACCESS_KEY', '6666666666666666666666666666666666666666'
                     ),
                     aws_session_token=os.getenv('AWS_SESSION_TOKEN', None),
+                    config=config,
                 )
             yield BedrockProvider(bedrock_client=bedrock_client)
             bedrock_client.close()

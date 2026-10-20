@@ -55,7 +55,10 @@ The retained tail is measured per message with `estimate_message_tokens`, so `ke
 tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
-exactly what the provider counted for them. Before the first such response, after the last, and
+exactly what the provider counted for them. A response a provider continued across several requests
+([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
+enters that difference with its first request's input tokens, since its billed `input_tokens`
+re-count the earlier requests' output. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
@@ -168,7 +171,10 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, everything the provider billed for the anchored request counts -- including
-tool definitions and `FilePart` payloads, which no character estimate can see. For the messages
+tool definitions and `FilePart` payloads, which no character estimate can see. A response a provider
+continued across several requests ([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
+anchors on its first request's input tokens plus its output, since its billed input re-counts the
+earlier requests' output. For the messages
 after the anchor (and for whole histories with no reported usage), the estimator counts every part
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
@@ -360,8 +366,8 @@ TieredCompaction(
 
 ## `SlidingWindowCompaction` and `ClearToolResults` options
 
-`SlidingWindowCompaction` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead for a token
-budget rather than a message count. By default `preserve_first_user_message=True` keeps the first user
+`SlidingWindowCompaction` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead to retain
+a minimum amount of original message text rather than a message count. By default `preserve_first_user_message=True` keeps the first user
 turn even when it falls outside the window, so the agent does not lose the original task.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. Set `clear_tool_inputs=True` to also blank the
@@ -369,6 +375,14 @@ arguments of the cleared calls, and `exclude_tools` to a set of tool names whose
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
+
+With `max_messages`, the count starts after the last cleared result, because clearing blanks content
+but removes no messages. Clearing then happens in batches: after a clear, the next one waits until
+more than `max_messages` messages follow the last cleared result, so the requests in between extend
+the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear,
+about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So
+each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and
+at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
 
 ## `WarnNearLimits` thresholds
 
@@ -458,19 +472,42 @@ and never sees the summary token deltas.
 By default `incremental=True` updates the newest existing summary from a prior compaction as an
 anchor rather than regenerating it from scratch. This changes the summary-call prompt from earlier
 releases; set `incremental=False` to retain the prior regeneration behavior. `preserve_first_user_message=True` keeps the original task turn even
-when it falls outside the window. Pass `keep_tokens` to trim the retained tail to a token budget instead
-of `keep_messages`.
+when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
+instead of using `keep_messages`.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
-The messages served into that template are rendered to text, and each tool return is capped per return at
-`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
-turns. Raise it, or set it to `None` to render each return whole, when the summarizer's context window is
-large enough to absorb the payloads. `max_tokens` and `keep_tokens` control when compaction runs and which
-history messages are retained; they do not cap the summary-request payload.
+The messages served into that template are rendered as a transcript with one `<message>` element per part
+(each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
+for a tool call or return, its tool name. Content that looks like the transcript's own tags, in any case
+or spacing, is escaped, so a tool return can't close its message and forge another, or end the transcript
+early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
+characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
+render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+`max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
+do not cap the summary-request payload.
+
+### Token retention after automatic compaction
+
+For both strategies, `max_tokens` is the trigger and positive `keep_tokens` is the minimum unchanged
+recent suffix. Retention includes the boundary message and required tool dependencies, including named
+retries. Counts follow [What counts toward `keep_tokens`](#what-counts-toward-keep_tokens), excluding
+attached `ModelRequest.instructions`. Histories below the target stay unchanged. Summaries, receipts, pins, and older user copies do not replace the protected tail.
+
+Allow headroom for whole-message/tool-dependency overshoot and added context; `keep_tokens` is not a
+request-size limit. A value of `0` sets a zero-token target rather than a minimum-retention floor;
+`None` selects message-count retention with `keep_messages`.
+
+When everything before the suffix is already accounted for (an earlier summary, receipts, pins, and
+messages kept verbatim anyway, such as the preserved first user turn), `SummarizingCompaction` has
+nothing new to summarize and leaves the history unchanged without a summary call, even if it is
+still above the trigger.
+
+See the [token-retention guide](https://pydantic.dev/docs/ai/harness/compaction/#token-retention-after-automatic-compaction)
+for the automatic-compaction example, tokenizer accounting, and fallback/budget guidance.
 
 ## Usage accounting
 
@@ -598,14 +635,14 @@ task state and scratchpads that live *in* the history.
 
 User turns are the highest signal-per-token content in a conversation, and losing them is the
 main driver of resumption drift. `SummarizingCompaction(keep_user_messages=True)` preserves
-the newest user turns from the summarized prefix alongside the summary. They consume the
+the newest user turns from the summarized prefix alongside the summary. In message-count mode, they consume the
 existing `keep_messages` tail budget, so at most that many retained user messages and tail
 messages survive together, except that one tail slot is reserved for the request being
 answered when retained user turns would otherwise consume it; compaction therefore does not
-grow retained copies on each cycle. When `keep_tokens` is set, those same retained user
-messages and tail messages also share its token budget; a user turn that does not fit is
-summarized instead, and the newest tail message survives even when retained user turns
-exhaust that budget too.
+grow retained copies on each cycle. With a positive `keep_tokens`, the original suffix takes
+precedence: `keep_messages` caps only the additional older user turns, which do not reduce the
+retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token budget, and the
+newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched. This

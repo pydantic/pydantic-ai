@@ -2517,8 +2517,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
+        '<context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.'
+        '- refunds: Refund policy tools.\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -3680,6 +3682,21 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     # Inside a run, the alias resolves through the hook as usual.
     result = await agent.run('hi')
     assert result.output == 'ok'
+
+
+def test_resolve_model_id_string_override_sets_mcp_sampling_model() -> None:
+    """MCP sampling setup accepts a string model override with a resolver capability installed.
+
+    Sync because `set_mcp_sampling_model()` imports the MCP module on first use.
+    """
+    pytest.importorskip('fastmcp')
+
+    def resolver(ctx: ModelResolutionContext[object], model_id: str) -> FunctionModel | None:
+        return None  # pragma: no cover
+
+    agent = Agent('test', capabilities=[ResolveModelId(resolver)])
+    with agent.override(model='test'):
+        agent.set_mcp_sampling_model()
 
 
 # --- ResolveModelId capability tests ---

@@ -6,13 +6,15 @@ the recorded cassettes and the live stress runs show the real API does. The beha
 the session, each observed live:
 
 - one response at a time: a `response.create` while one is active is refused with
-  `conversation_already_has_active_response`, echoing the frame's `event_id`;
+  `conversation_already_has_active_response`, echoing the frame's `event_id`, once the active one is done (xAI
+  cancels a response it started on its own for it instead);
 - function calls stream before the response's `response.done`, which carries the usage;
 - a response the client cancels can keep streaming (stragglers) until its cancelled `response.done`;
 - server VAD cancels the active response when the user starts speaking (`interrupt_response`), and
   commits the user's audio item, and asks for a response on its own (`create_response`), when they stop;
 - the input transcript arrives on its own schedule, often after the response it prompted;
-- an empty `input_audio_buffer.commit` is refused;
+- an empty `input_audio_buffer.commit` is refused, echoing its `event_id`, and so is one under server VAD with no
+  speech heard (xAI ignores a commit under server VAD altogether);
 - a dropped connection loses whatever was in flight; a re-dial starts a fresh server session, with an
   empty conversation (a tool output for a call it never made is refused) that the client replays history into.
 
@@ -108,10 +110,17 @@ class ServerSession:
     """Input audio buffered since the last commit or clear."""
     speaking: str | None = None
     """The user turn server VAD currently hears, if any."""
+    stopped_uncommitted: str | None = None
+    """xAI: the user turn its VAD heard stop and hasn't committed yet. Speech heard before it does re-opens that
+    same turn (recorded in a live xAI probe, October 2026: SIM-41)."""
     pending_transcripts: list[str] = field(default_factory=list[str])
     pending_vad_responses: list[str] = field(default_factory=list[str])
     """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
     for a response at every turn's end; no recording shows what it does with several behind one reply)."""
+    refused_behind_active: list[tuple[dict[str, Any], list[str]]] = field(
+        default_factory=list[tuple[dict[str, Any], list[str]]]
+    )
+    """Refusals of a `response.create` that arrived while a response was active, sent once that one is done."""
     unanswered_tool_outputs: list[str] = field(default_factory=list[str])
     item_audio_ms: dict[str, int] = field(default_factory=dict[str, int])
     ended_responses: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -121,12 +130,18 @@ class ServerSession:
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     ptt_speech: str | None = None
     """xAI push-to-talk: the user turn xAI reported speech for (`speech_started`) in the uncommitted buffer."""
+    items: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint of each item in the conversation, by item id (for `conversation.item.delete`)."""
     answered_everything: bool = False
     """xAI push-to-talk: a reply ended and nothing new arrived since, so xAI drops a `response.create`."""
     uncommitted_answers: list[str] = field(default_factory=list[str])
     """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
     conversation: set[str] = field(default_factory=set[str])
     """What this session's conversation holds, as `conversation_fingerprint`s: a re-dial starts empty."""
+    truncated_items: set[str] = field(default_factory=set[str])
+    """Assistant items a truncation cut: the server deletes their transcript, keeping only the audio heard."""
+    item_fingerprints: dict[str, str] = field(default_factory=dict[str, str])
+    """The fingerprint each finished assistant item added to `conversation`."""
     restoration_checked: bool = False
 
     @property
@@ -162,8 +177,6 @@ class OpenAIServer:
         self._refusals: dict[str, list[str]] = {}
         self._next_error = 1
         self._next_event = 1
-        self.late_terminals: set[str] = set()
-        """Responses whose (cancelled) `response.done` is, or was, held back past the start of the next response."""
         self.late_cancels = 0
         """How many `response.cancel`s arrived with no response left to cancel (it had already finished)."""
         # Client input index (from `event_id`) -> the input's ground-truth key. The connection numbers its
@@ -219,6 +232,7 @@ class OpenAIServer:
             'response.create': self._on_response_create,
             'response.cancel': self._on_response_cancel,
             'conversation.item.truncate': self._on_truncate,
+            'conversation.item.delete': self._on_item_delete,
         }[frame['type']]
         handler(session, frame)
 
@@ -361,10 +375,21 @@ class OpenAIServer:
         if self._xai_ptt(session):
             self._xai_ptt_commit(session, frame.get('event_id'), answer=True)
             return
-        if session.audio_ms <= 0:
+        if self.dialect == 'xai' and session.server_vad:
+            # Checked live: under server VAD, xAI ignores a commit altogether (no acknowledgement, no error) and
+            # commits only what its VAD hears.
+            return
+        if session.audio_ms <= 0 or (session.server_vad and session.speaking is None):
+            # Checked live: under server VAD, OpenAI and Azure commit only speech their VAD heard start, and refuse
+            # a commit of anything else as empty (after VAD committed the turn, or of the silence after it). The
+            # error echoes the commit's `event_id`.
             self._emit(
                 session,
-                _error('input_audio_buffer_commit_empty', 'Error committing input audio buffer: buffer too small.'),
+                _error(
+                    'input_audio_buffer_commit_empty',
+                    'Error committing input audio buffer: buffer too small.',
+                    frame.get('event_id'),
+                ),
             )
             return
         self._commit_user_turn(session)
@@ -491,16 +516,26 @@ class OpenAIServer:
                 session, _error('server_refused', 'The server refused the response request.', event_id), requested
             )
             return
+        # A race, as below: the session defers requests it knows a response is under way for.
+        if (
+            session.active is not None
+            and self.dialect == 'xai'
+            and session.turn_detection is not None
+            and session.active.truth.trigger == 'vad'
+        ):  # pragma: lax no cover
+            # Seen live: xAI cancels a response server VAD started for ours.
+            self._finish_active(session, 'cancelled', reason='turn_detected')
         if session.active is not None:  # pragma: lax no cover (a race: the session defers requests it knows about)
-            self._refuse(
-                session,
-                _error(
-                    'conversation_already_has_active_response',
-                    f'Conversation already has an active response in progress: {session.active.truth.key}.',
-                    event_id,
-                ),
-                requested,
+            # Seen live: OpenAI refuses it, but only says so after the active response is done.
+            refusal = _error(
+                'conversation_already_has_active_response',
+                f'Conversation already has an active response in progress: {session.active.truth.key}.',
+                event_id,
             )
+            if self.dialect == 'xai':
+                self._refuse(session, refusal, requested)
+            else:
+                session.refused_behind_active.append((refusal, requested))
             return
         answers = requested
         session.unanswered_tool_outputs.clear()
@@ -541,20 +576,45 @@ class OpenAIServer:
             )
             return
         self.truth.truncations.append((item_id, audio_end_ms))
+        # "Truncating audio will delete the server-side text transcript to ensure there is not text in the
+        # context that hasn't been heard by the user" (the API reference).
+        session.truncated_items.add(item_id)
+        if (fingerprint := session.item_fingerprints.pop(item_id, None)) is not None:
+            session.conversation.discard(fingerprint)
         self._emit(session, {'type': 'conversation.item.truncated', 'item_id': item_id, 'audio_end_ms': audio_end_ms})
 
     def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
         """Acknowledge an item joining the conversation, as the real API does for every item, whoever made it."""
+        item_id = item_id or self._new_item()
         if (fingerprint := conversation_fingerprint(item)) is not None:
             session.conversation.add(fingerprint)
+            session.items[item_id] = fingerprint
         self._emit(
             session,
             {
                 'type': 'conversation.item.added',
                 'previous_item_id': None,
-                'item': {**item, 'id': item_id or self._new_item(), 'object': 'realtime.item', 'status': 'completed'},
+                'item': {**item, 'id': item_id, 'object': 'realtime.item', 'status': 'completed'},
             },
         )
+
+    def _on_item_delete(self, session: ServerSession, frame: dict[str, Any]) -> None:
+        """Delete an item from the conversation, as the real API does (verified live), or refuse an unknown one."""
+        item_id = frame['item_id']
+        if (fingerprint := session.items.pop(item_id, None)) is None:  # pragma: lax no cover (only a stale id)
+            self._emit(
+                session, _error('invalid_value', f'Item with item_id not found: {item_id}', frame.get('event_id'))
+            )
+            return
+        session.conversation.discard(fingerprint)
+        self.truth.pruned.append(fingerprint)
+        kind, _, call_id = fingerprint.partition(':')
+        if (
+            kind in ('function_call', 'function_call_output') and call_id in session.unanswered_tool_outputs
+        ):  # pragma: lax no cover (only a premature deletion)
+            # The model hadn't answered the result yet: it would answer without it.
+            self.truth.pruned_unanswered.append(call_id)
+        self._emit(session, {'type': 'conversation.item.deleted', 'item_id': item_id})
 
     def _audio_item_added(self, session: ServerSession, item_id: str) -> None:
         self._item_added(
@@ -676,9 +736,11 @@ class OpenAIServer:
         if late:
             assert session.late_done is None, 'one late `response.done` at a time'
             session.late_done = done
-            self.late_terminals.add(truth.key)
         else:
             self._emit(session, done)
+        for refusal, refused in session.refused_behind_active:
+            self._refuse(session, refusal, refused)
+        session.refused_behind_active.clear()
         if session.pending_vad_responses:
             pending = session.pending_vad_responses.pop(0)
             self._start_response(session, trigger='vad', answers=[pending], user_turn=pending)
@@ -689,7 +751,9 @@ class OpenAIServer:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
         transcript = item['content'][0]['transcript']
-        session.conversation.add(f'assistant:{transcript}')
+        if active.message_item not in session.truncated_items:
+            session.conversation.add(fingerprint := f'assistant:{transcript}')
+            session.item_fingerprints[active.message_item] = fingerprint
         self._emit(
             session,
             {
@@ -739,6 +803,8 @@ class OpenAIServer:
             )
             session.item_audio_ms[active.message_item] = 0
             active.audio_ms = 0
+            truth.items[active.message_item] = []
+            self.truth.item_responses[active.message_item] = truth
         item = active.output[-1]
         common = {
             'response_id': truth.key,
@@ -755,6 +821,7 @@ class OpenAIServer:
         truth.words.append(word)
         self.truth.word_seq[word] = self.truth.tick()
         active.message_words.append(word)
+        truth.items[active.message_item].append(word)
         item['content'][0]['transcript'] = ' '.join(active.message_words)
         self._emit(
             session,
@@ -786,7 +853,8 @@ class OpenAIServer:
             'arguments': '{}',
         }
         active.output.append(item)
-        session.conversation.add(f'function_call:{call_id}')
+        # The real API adds each output item to the conversation as it starts.
+        self._item_added(session, item, item_id)
         self._emit(
             session,
             {
@@ -820,8 +888,6 @@ class OpenAIServer:
         session = self.session
         assert session is not None and session.late_done is not None
         done, session.late_done = session.late_done, None
-        if done['response']['id'] == self.truth.responses_by_number[self.truth.next_response_number - 1].key:
-            self.late_terminals.discard(done['response']['id'])  # No other response started meanwhile.
         self._emit(session, done)
 
     def repeat_done(self) -> None:
@@ -841,6 +907,15 @@ class OpenAIServer:
         """
         session = self.session
         assert session is not None and session.server_vad and session.speaking is None
+        if (key := session.stopped_uncommitted) is not None:
+            # xAI takes back its own stop: the user goes on in the same turn, under the same item (SIM-41).
+            session.stopped_uncommitted = None
+            session.speaking = key
+            self.truth.speech_reopened.add(key)
+            self._emit(
+                session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
+            )
+            return key
         key = self.truth.new_user_turn()
         session.speaking = key
         self.truth.speech_started[key] = self.truth.tick()
@@ -860,7 +935,9 @@ class OpenAIServer:
         """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to.
 
         `commit=False` is a stop server VAD takes back: the user goes on, and the next start opens the turn
-        the audio is committed as (a guess at semantic VAD's pauses; no recording has one).
+        the audio is committed as (a guess at semantic VAD's pauses; no recording has one). On xAI, which commits a
+        turn a few hundred milliseconds after its stop, the next start re-opens the same turn instead (recorded in
+        a live xAI probe, October 2026: SIM-41), and `commit_stopped()` commits it if nobody speaks.
         """
         session = self.session
         assert session is not None and session.speaking is not None
@@ -868,8 +945,25 @@ class OpenAIServer:
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
         if not commit:
-            self.truth.speech_stopped_uncommitted.add(key)
+            if self.dialect == 'xai':
+                session.stopped_uncommitted = key
+            else:
+                self.truth.speech_stopped_uncommitted.add(key)
             return key
+        self._vad_commit(session, key)
+        return key
+
+    def commit_stopped(self) -> str:
+        """xAI commits the turn its VAD heard stop, nobody having spoken again since."""
+        session = self.session
+        assert session is not None
+        key, session.stopped_uncommitted = session.stopped_uncommitted, None
+        assert key is not None
+        self._vad_commit(session, key)
+        return key
+
+    def _vad_commit(self, session: ServerSession, key: str) -> None:
+        item_id = f'item_{key}'
         session.audio_ms = 0
         self.truth.speech_committed.add(key)
         if self.dialect != 'xai':
@@ -886,7 +980,6 @@ class OpenAIServer:
             self._start_response(session, trigger='vad', answers=[key], user_turn=key)
         else:
             session.pending_vad_responses.append(key)
-        return key
 
     def transcribe(self, *, fail: bool = False) -> str:
         """Deliver the oldest pending input transcript (or its transcription failure)."""

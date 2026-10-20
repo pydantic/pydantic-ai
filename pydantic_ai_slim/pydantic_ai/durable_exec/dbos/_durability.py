@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
+from pydantic_ai._utils import now_utc
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapRunHandler
@@ -24,7 +26,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
-from ._utils import StepConfig, guard_enqueue_in_workflow
+from ._utils import StepConfig, guard_enqueue_in_workflow, using_durable_sleep
 
 if TYPE_CHECKING:
     from dbos._context import DBOSContext
@@ -238,6 +240,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
+    async def _run_start_time(self, run_id: str) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+
+        # Recorded as a step, so a recovered workflow counts the run's `timeout=` from when it first started.
+        # A coroutine function, so DBOS records the step without blocking the event loop.
+        async def run_start_time() -> datetime:
+            return now_utc()
+
+        return await DBOS.run_step_async({'name': f'{self.name}.run_start_time'}, run_start_time)
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.
@@ -287,7 +300,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode for every entry point."""
+        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
@@ -296,5 +309,5 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached:
             mode = 'sequential'
-        with agent.parallel_tool_call_execution_mode(mode):
+        with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
             return await handler()

@@ -41,6 +41,7 @@ from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersis
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
+    GitCheckout,
     SqliteConversationStore,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
@@ -48,6 +49,7 @@ from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sessions import PersistencePlugin
+from tests.clai2.test_session_browser import repository
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -399,6 +401,35 @@ async def test_resume_from_another_directory_runs_in_this_session_directory(tmp_
     await second.prompt('second')
     await second.prompt('third')
     assert working_dirs == [str(original.resolve()), str(elsewhere.resolve()), str(elsewhere.resolve())]
+
+
+async def test_a_session_saved_in_a_git_checkout_records_it(tmp_path: Path) -> None:
+    """The checkout is saved with the session, so the browsers still place it once its worktree is removed."""
+    repo, linked, plain = tmp_path / 'repo', tmp_path / 'linked', tmp_path / 'plain'
+    repository(repo, linked=linked, branch='feature')
+    (linked / 'src').mkdir()
+    plain.mkdir()
+    agent = Agent(TestModel(custom_output_text='answer'))
+    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    session = Session(agent, deps=None, conversations=conversations, workspace=linked / 'src')
+    await session.prompt('first')
+    checkout = GitCheckout(
+        repository=str((repo / '.git').resolve()), name='repo', root=str(linked.resolve()), branch='feature'
+    )
+    assert session.summary.checkout == checkout
+    await session.commit_messages([])
+    assert (await conversations.get(conversation_id=session.conversation_id)).summary.checkout == checkout
+    await session._fork()  # pyright: ignore[reportPrivateUsage]
+    assert session.summary.checkout == checkout
+
+    # Elsewhere it keeps the checkout it saved; outside Git, a session records none.
+    elsewhere = Session(agent, deps=None, conversations=conversations, workspace=plain)
+    await elsewhere.resume(session.conversation_id, allow_other_workspace=True)
+    await elsewhere.prompt('second')
+    assert elsewhere.summary.checkout == checkout
+    await elsewhere.clear()
+    await elsewhere.prompt('third')
+    assert elsewhere.summary.checkout is None
 
 
 @pytest.mark.parametrize(

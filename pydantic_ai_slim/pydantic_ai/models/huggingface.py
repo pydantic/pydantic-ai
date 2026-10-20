@@ -19,6 +19,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -49,6 +51,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -157,6 +160,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset(
+        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+    )
 
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
@@ -505,6 +512,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -562,6 +571,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
@@ -571,7 +581,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                self._usage += _map_usage(chunk)
+                self._add_usage(_map_usage(chunk), reported=chunk.usage is not None)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -631,7 +641,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     return usage.RequestUsage(
         input_tokens=response_usage.prompt_tokens,
