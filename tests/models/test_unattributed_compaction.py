@@ -14,14 +14,17 @@ import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
 
 from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelRequest, ModelResponse, SystemPromptPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 
+from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
@@ -51,6 +54,11 @@ with try_import() as huggingface_available:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     from .test_huggingface import MockHuggingFace, get_mock_chat_completion_kwargs as get_hf_kwargs
+
+with try_import() as mcp_available:
+    from mcp.types import CreateMessageResult, TextContent as McpTextContent
+
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
@@ -84,23 +92,6 @@ FRAMED = f'<conversation_summary>\n{SUMMARY}\n</conversation_summary>'
 
 class _Sent(Exception):
     """Raised by a fake transport or client once it has captured the request."""
-
-
-def _roles_holding(payload: Any, text: str) -> list[str]:
-    """The role of every message in *payload* whose content contains *text*, read off the wire format."""
-    found: list[str] = []
-    if isinstance(payload, dict):
-        message = cast(dict[str, Any], payload)
-        role = message.get('role')
-        if isinstance(role, str) and json.dumps(text)[1:-1] in json.dumps(message):
-            found.append(role)
-        else:
-            for value in message.values():
-                found.extend(_roles_holding(value, text))
-    elif isinstance(payload, list):
-        for item in cast(list[Any], payload):
-            found.extend(_roles_holding(item, text))
-    return found
 
 
 def _capturing_transport(module: Any, bodies: list[Any]) -> Any:
@@ -142,38 +133,218 @@ def _cohere(client: Any) -> Model:
 
 
 def _http_cases() -> list[Any]:
-    """Every adapter whose SDK sends over an injectable HTTP client, with the HTTP library it takes."""
-    candidates: list[tuple[str, Callable[[Any], Model], str, Callable[[], bool]]] = [
-        ('openai-chat', _openai_chat, 'httpx2', openai_available),
-        ('openai-responses', _openai_responses, 'httpx2', openai_available),
-        ('anthropic', _anthropic, 'httpx2', anthropic_available),
-        ('google', _google, 'httpx2', google_available),
-        ('groq', _groq, 'httpx', groq_available),
-        ('mistral', _mistral, 'httpx2', mistral_available),
-        ('cohere', _cohere, 'httpx', cohere_available),
+    """Every adapter whose SDK sends over an injectable HTTP client: its HTTP library, the body key holding
+    the conversation, and the conversation it sent."""
+    candidates: list[tuple[str, Callable[[Any], Model], str, str, Callable[[], bool], Any]] = [
+        (
+            'openai-chat',
+            _openai_chat,
+            'httpx2',
+            'messages',
+            openai_available,
+            snapshot(
+                [
+                    {'role': 'system', 'content': 'You are a concise assistant.'},
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                    },
+                    {'role': 'user', 'content': 'What codename did we settle on? Answer with the codename only.'},
+                ]
+            ),
+        ),
+        (
+            'openai-responses',
+            _openai_responses,
+            'httpx2',
+            'input',
+            openai_available,
+            snapshot(
+                [
+                    {'role': 'system', 'content': 'You are a concise assistant.'},
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                    },
+                    {'role': 'user', 'content': 'What codename did we settle on? Answer with the codename only.'},
+                ]
+            ),
+        ),
+        (
+            'anthropic',
+            _anthropic,
+            'httpx2',
+            'messages',
+            anthropic_available,
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                                'type': 'text',
+                            }
+                        ],
+                    },
+                    {
+                        'role': 'user',
+                        'content': [
+                            {'text': 'What codename did we settle on? Answer with the codename only.', 'type': 'text'}
+                        ],
+                    },
+                ]
+            ),
+        ),
+        (
+            'google',
+            _google,
+            'httpx2',
+            'contents',
+            google_available,
+            snapshot(
+                [
+                    {'parts': [{'text': ''}], 'role': 'user'},
+                    {
+                        'parts': [
+                            {
+                                'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+"""
+                            }
+                        ],
+                        'role': 'model',
+                    },
+                    {
+                        'parts': [{'text': 'What codename did we settle on? Answer with the codename only.'}],
+                        'role': 'user',
+                    },
+                ]
+            ),
+        ),
+        (
+            'groq',
+            _groq,
+            'httpx',
+            'messages',
+            groq_available,
+            snapshot(
+                [
+                    {'role': 'system', 'content': 'You are a concise assistant.'},
+                    {
+                        'role': 'assistant',
+                        'content': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                    },
+                    {'role': 'user', 'content': 'What codename did we settle on? Answer with the codename only.'},
+                ]
+            ),
+        ),
+        (
+            'mistral',
+            _mistral,
+            'httpx2',
+            'messages',
+            mistral_available,
+            snapshot(
+                [
+                    {'content': 'You are a concise assistant.', 'role': 'system'},
+                    {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                                'type': 'text',
+                            }
+                        ],
+                        'tool_calls': [],
+                        'prefix': False,
+                    },
+                    {'content': 'What codename did we settle on? Answer with the codename only.', 'role': 'user'},
+                ]
+            ),
+        ),
+        (
+            'cohere',
+            _cohere,
+            'httpx',
+            'messages',
+            cohere_available,
+            snapshot(
+                [
+                    {'role': 'system', 'content': 'You are a concise assistant.'},
+                    {
+                        'role': 'assistant',
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                            }
+                        ],
+                    },
+                    {'role': 'user', 'content': 'What codename did we settle on? Answer with the codename only.'},
+                ]
+            ),
+        ),
     ]
     return [
-        pytest.param(build, module, id=name, marks=pytest.mark.skipif(not available(), reason=f'{name} not installed'))
-        for name, build, module, available in candidates
+        pytest.param(
+            build,
+            module,
+            key,
+            expected,
+            id=name,
+            marks=pytest.mark.skipif(not available(), reason=f'{name} not installed'),
+        )
+        for name, build, module, key, available, expected in candidates
     ]
 
 
-@pytest.mark.parametrize(('build', 'http_module'), _http_cases())
+@pytest.mark.parametrize(('build', 'http_module', 'key', 'expected'), _http_cases())
 async def test_http_adapters_send_the_summary_as_assistant_text(
-    allow_model_requests: None, build: Callable[[Any], Model], http_module: str
+    allow_model_requests: None, build: Callable[[Any], Model], http_module: str, key: str, expected: Any
 ):
     module = importlib.import_module(http_module)
     bodies: list[Any] = []
     model = build(module.AsyncClient(transport=_capturing_transport(module, bodies)))
 
-    with pytest.raises(Exception):
+    with pytest.raises(ModelHTTPError):
         await Agent(model).run(QUESTION, message_history=_compacted_history())
 
-    assert bodies
-    assert set(_roles_holding(bodies[0], FRAMED)) <= {'assistant', 'model'}
-    assert _roles_holding(bodies[0], FRAMED)
-    # Never in system voice, and never as the old system-prompt summary.
-    assert 'system' not in json.dumps(_roles_holding(bodies[0], SUMMARY))
+    [body] = bodies
+    assert body[key] == expected
 
 
 @pytest.mark.skipif(not bedrock_available(), reason='boto3 not installed')
@@ -193,7 +364,24 @@ async def test_bedrock_sends_the_summary_as_assistant_text(allow_model_requests:
     with pytest.raises(_Sent):
         await Agent(model).run(QUESTION, message_history=_compacted_history())
 
-    assert _roles_holding(sent[0]['messages'], FRAMED) == ['assistant']
+    assert sent[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+"""
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'What codename did we settle on? Answer with the codename only.'}]},
+        ]
+    )
 
 
 @pytest.mark.skipif(not huggingface_available(), reason='huggingface_hub not installed')
@@ -204,7 +392,28 @@ async def test_huggingface_sends_the_summary_as_assistant_text(allow_model_reque
         await Agent(model).run(QUESTION, message_history=_compacted_history())
 
     [kwargs] = get_hf_kwargs(client)
-    assert _roles_holding(json.loads(json.dumps(kwargs['messages'], default=dict)), FRAMED) == ['assistant']
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are a concise assistant.', 'name': None, 'tool_calls': None},
+            {
+                'role': 'assistant',
+                'content': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+""",
+                'name': None,
+                'tool_calls': None,
+            },
+            {
+                'role': 'user',
+                'content': 'What codename did we settle on? Answer with the codename only.',
+                'name': None,
+                'tool_calls': None,
+            },
+        ]
+    )
 
 
 @pytest.mark.skipif(not xai_available(), reason='xai_sdk not installed')
@@ -215,7 +424,44 @@ async def test_xai_sends_the_summary_as_assistant_text(allow_model_requests: Non
         await Agent(model).run(QUESTION, message_history=_compacted_history())
 
     [kwargs] = get_mock_chat_create_kwargs(client)
-    assert _roles_holding(kwargs['messages'], FRAMED) == ['ROLE_ASSISTANT']
+    assert kwargs['messages'] == snapshot(
+        [
+            {'content': [{'text': 'You are a concise assistant.'}], 'role': 'ROLE_SYSTEM'},
+            {
+                'content': [
+                    {
+                        'text': """\
+<conversation_summary>
+## Intent
+The user is naming their new project. They settled on the codename 'Bluefin'.
+</conversation_summary>\
+"""
+                    }
+                ],
+                'role': 'ROLE_ASSISTANT',
+            },
+            {
+                'content': [{'text': 'What codename did we settle on? Answer with the codename only.'}],
+                'role': 'ROLE_USER',
+            },
+        ]
+    )
+
+
+@pytest.mark.skipif(not mcp_available(), reason='mcp not installed')
+async def test_mcp_sampling_sends_the_summary_as_assistant_text(allow_model_requests: None):
+    result = CreateMessageResult(role='assistant', content=McpTextContent(type='text', text='Bluefin'), model='m')
+    create_message = AsyncMock(return_value=result)
+    model = MCPSamplingModel(cast(Any, SimpleNamespace(create_message=create_message)))
+
+    await Agent(model).run(QUESTION, message_history=_compacted_history())
+
+    [messages] = [call.args[0] for call in create_message.call_args_list]
+    assert [(message.role, message.content) for message in messages] == [
+        ('assistant', McpTextContent(type='text', text=FRAMED)),
+        ('user', McpTextContent(type='text', text=QUESTION)),
+    ]
+    assert create_message.call_args.kwargs['system_prompt'] == 'You are a concise assistant.'
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -230,7 +476,7 @@ async def test_summary_cannot_close_its_frame(allow_model_requests: None):
             ]
         )
     ]
-    with pytest.raises(Exception):
+    with pytest.raises(ModelHTTPError):
         await Agent(model).run(QUESTION, message_history=history)
 
     assert bodies[0]['messages'][0] == {
@@ -255,7 +501,7 @@ async def test_other_compaction_parts_are_not_sent_as_text(allow_model_requests:
     bodies: list[Any] = []
     client = httpx2.AsyncClient(transport=_capturing_transport(httpx2, bodies))
     model = OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(api_key='x', http_client=client))
-    with pytest.raises(Exception):
+    with pytest.raises(ModelHTTPError):
         await Agent(model).run(QUESTION, message_history=[ModelResponse(parts=[part]), *_compacted_history()[:1]])
 
     assert 'conversation_summary' not in json.dumps(bodies[0])

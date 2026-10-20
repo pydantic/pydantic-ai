@@ -36,7 +36,9 @@ To compact on any model, edit the message history yourself with a [history proce
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.
 
-To store a summary you wrote, put it in a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with only `content` set, in a `ModelResponse` that takes the place of the messages it summarizes. A compaction part without a `provider_name` was not produced by any provider's compaction API, so each provider model sends it as assistant text inside `<conversation_summary>` (with that tag escaped in the summary itself; a [`FunctionModel`][pydantic_ai.models.function.FunctionModel] receives the part itself, and realtime sessions don't send it), and, like any compaction part, it is a [visibility boundary](#provider-native-compaction) for tool discoveries and on-demand capability loads. That keeps a model-written summary out of the system prompt. [Pydantic AI Harness](#pydantic-ai-harness)'s `SummarizingCompaction` stores its summaries this way.
+To store a summary you wrote, put it in a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with only `content` set, in a `ModelResponse` that takes the place of the messages it summarizes. That keeps a model-written summary out of the system prompt.
+
+A compaction part without a `provider_name` wasn't produced by any provider's compaction API, so every provider model sends it as assistant text inside `<conversation_summary>`, with that tag escaped in the summary itself. A [`FunctionModel`][pydantic_ai.models.function.FunctionModel] receives the part itself, and realtime sessions don't send it. Like any compaction part, it's also a [visibility boundary](#provider-native-compaction) for tool discoveries and on-demand capability loads. [Pydantic AI Harness](#pydantic-ai-harness)'s `SummarizingCompaction` stores its summaries this way.
 
 ## Pydantic AI Harness
 

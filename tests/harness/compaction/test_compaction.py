@@ -4904,6 +4904,29 @@ recent
         ]
         assert summaries == ['NEW']
 
+    async def test_without_incremental_an_earlier_summary_in_the_tail_is_kept(self):
+        """The new summary never saw the earlier one, so dropping it would lose the history it stands for."""
+        comp = SummarizingCompaction(
+            model=_recording_summarizer([], output='NEW'), max_messages=3, keep_messages=4, incremental=False
+        )
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart(content='Be terse.')]),
+            ModelResponse(parts=[CompactionPart(content='OLD')]),
+            _user('a'),
+            _assistant('b'),
+            _user('c'),
+        ]
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        summaries = [
+            part.content
+            for message in result
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, CompactionPart)
+        ]
+        assert summaries == ['NEW', 'OLD']
+
     async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
         """A history with the old system-prompt summary keeps loading, and its summary is replaced."""
         prompts: list[str] = []

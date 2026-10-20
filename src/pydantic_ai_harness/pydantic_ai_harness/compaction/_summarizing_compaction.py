@@ -642,8 +642,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary_message = ModelResponse(parts=[CompactionPart(content=summary)])
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
-        # The new summary supersedes any earlier one the cutoff kept: it was the anchor for this one.
-        preserved = without_summaries(preserved)
+        if previous_summary is not None:
+            # The new summary was written as an update of the newest earlier one, so it supersedes any
+            # the cutoff kept. Without an anchor the new summary never saw them, so they stay.
+            preserved = without_summaries(preserved)
         result: list[ModelMessage] = [*standing, summary_message, *extra, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
         if self.receipts:

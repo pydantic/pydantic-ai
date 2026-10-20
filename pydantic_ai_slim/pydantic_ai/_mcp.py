@@ -6,6 +6,7 @@ from typing import Literal, assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
+from .models import _render_unattributed_compaction_parts  # pyright: ignore[reportPrivateUsage]
 
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
@@ -116,7 +117,7 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         sampling_msgs.append(mcp_types.SamplingMessage(role=role, content=content))
 
     system_prompt: list[str] = []
-    for pai_message in pai_messages:
+    for pai_message in _render_unattributed_compaction_parts(pai_messages):
         if isinstance(pai_message, messages.ModelRequest):
             request_start = len(sampling_msgs)
             tool_results: list[mcp_types.SamplingMessageContentBlock] = []
