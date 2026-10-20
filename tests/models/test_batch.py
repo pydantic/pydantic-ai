@@ -9,6 +9,7 @@ orderings a recording can't produce on demand.
 from __future__ import annotations
 
 import asyncio
+import gc
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -1061,3 +1062,51 @@ async def test_batch_waits_dont_count_as_generation_continuations(batched: bool)
     result = await Agent(FunctionModel(respond), capabilities=capabilities).run('Hello')
 
     assert result.output == '1 2 3 4 5 done'
+
+
+async def test_shared_failures_with_nobody_waiting_are_retrieved() -> None:
+    """A check that fails after every request waiting on it was cancelled doesn't log an unretrieved error."""
+    unretrieved: list[str] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _, context: unretrieved.append(context['message']))
+    checking = asyncio.Event()
+    submitting = asyncio.Event()
+    fail = asyncio.Event()
+
+    class FailingModel(SlowBatchTestModel):
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            if self.created:
+                submitting.set()
+                await fail.wait()
+                raise ModelHTTPError(status_code=500, model_name='test', body='submission failed')
+            return await super().batch_create(requests)
+
+        async def batch_status(self, batch: Batch) -> Batch:
+            checking.set()
+            await fail.wait()
+            raise ModelHTTPError(status_code=500, model_name='test', body='check failed')
+
+    try:
+        wrapped = FailingModel(pending_checks=1)
+        model = _batched(wrapped, **FAST_POLLING, max_requests=1, max_wait=None)
+        pending = await _pending_response(model)
+        prompt = ModelRequest(parts=[UserPromptPart('Hello')])
+        check = asyncio.create_task(model.request([prompt, pending], None, ModelRequestParameters()))
+        submission = asyncio.create_task(_pending_response(model))
+        await checking.wait()
+        await submitting.wait()
+        for task in (check, submission):
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        fail.set()
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # Their tracebacks would keep the failed futures alive past the collection.
+        del check, submission
+        gc.collect()
+        for _ in range(10):
+            await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    assert unretrieved == []

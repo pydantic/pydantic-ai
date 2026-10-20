@@ -381,12 +381,23 @@ class BatchPool:
             poll = self._polls[key] = loop.create_task(
                 self._fetch(model, batch, ticket.get('trace_context'), requester)
             )
-            poll.add_done_callback(lambda _: self._polls.pop(key, None))
+            poll.add_done_callback(lambda done: self._poll_done(key, done))
         # Waits without cancelling the shared poll when this request is cancelled.
         await asyncio.wait((poll,))
         if poll.cancelled():
             raise UserError(_EXITED_MESSAGE)
         return poll.result()
+
+    def _poll_done(
+        self,
+        key: tuple[asyncio.AbstractEventLoop, _BatchKey],
+        poll: asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]],
+    ) -> None:
+        self._polls.pop(key, None)
+        # Marks a failure retrieved even when every request waiting on the check was cancelled; the others still
+        # raise it from the task's result.
+        if not poll.cancelled():
+            poll.exception()
 
     async def _fetch(
         self, model: Model, batch: Batch, trace_context: dict[str, str] | None, requester: _Requester | None
