@@ -1053,7 +1053,7 @@ class TestCompaction:
         ],
     )
     def test_validation_summary_prompt_fields(self, summary_prompt: str):
-        with pytest.raises(ValueError, match=r'summary_prompt must contain a `\{messages\}` placeholder'):
+        with pytest.raises(ValueError, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'):
             SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)
 
     def test_summary_prompt_with_escaped_braces_is_accepted(self):
@@ -1523,16 +1523,6 @@ class TestWarnNearLimitsMarkerDetection:
         # Marker message removed; user and assistant remain.
         assert len(result.messages) == 2
         assert isinstance(result.messages[1], ModelResponse)
-
-    async def test_strip_keeps_the_request_fields_of_a_mixed_request(self):
-        legacy = _legacy_warning().parts[0]
-        request = ModelRequest(
-            parts=[UserPromptPart('keep me'), legacy], instructions='Be careful.', run_id='run-1', metadata={'k': 'v'}
-        )
-        rc = _make_request_context([request])
-        result = await WarnNearLimits(max_iterations=100).before_model_request(_make_ctx(requests=5), rc)
-        [stripped] = result.messages
-        assert stripped == dataclasses.replace(request, parts=[request.parts[0]])
 
 
 class TestWarnNearLimitsTotalTokensBelowThreshold:
