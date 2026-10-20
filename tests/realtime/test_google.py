@@ -4700,42 +4700,28 @@ def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: boo
 
 
 @pytest.mark.parametrize(
-    ('activity', 'released'),
+    ('start', 'offset', 'released'),
     [
         # The user started speaking before the second text went out: that text cut the reply off.
-        (
-            genai_types.VoiceActivity(
-                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='0.5s'
-            ),
-            True,
-        ),
-        (
-            genai_types.VoiceActivity(
-                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='0s'
-            ),
-            True,
-        ),
+        (True, '0.5s', True),
+        (True, '0s', True),
         # ...or after both went out, over the reply: the speech did.
-        (
-            genai_types.VoiceActivity(
-                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='2.5s'
-            ),
-            False,
-        ),
+        (True, '2.5s', False),
         # With no offset to place it, the speech may have come after them.
-        (genai_types.VoiceActivity(voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START), False),
-        (
-            genai_types.VoiceActivity(
-                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_END, audio_offset='2.5s'
-            ),
-            True,
-        ),
+        (True, None, False),
+        (False, '2.5s', True),
     ],
 )
 async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
-    activity: genai_types.VoiceActivity, released: bool
+    start: bool, offset: str | None, released: bool
 ) -> None:
     """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off."""
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START
+        if start
+        else genai_types.VoiceActivityType.ACTIVITY_END,
+        audio_offset=offset,
+    )
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
     )
