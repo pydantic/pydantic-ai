@@ -15,7 +15,7 @@ from pydantic_ai_harness.dynamic_workflow._toolset import (
     WorkflowAgent,
     WorkflowResourceLimits,
     index_workflow_agents,
-    validate_workflow_agent,
+    validate_workflow_settings,
 )
 
 
@@ -114,17 +114,10 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return None
 
     def __post_init__(self) -> None:
-        catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
+        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
+        catalog = [_normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)
         self._catalog = catalog
-
-    def _normalize_workflow_agent(
-        self, entry: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT]
-    ) -> WorkflowAgent[AgentDepsT]:
-        """Normalize a public catalog entry to the internal wrapper form."""
-        if isinstance(entry, WorkflowAgent):
-            return entry
-        return WorkflowAgent(agent=entry)
 
     def reveal(self, agent: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT]) -> None:
         """Reveal a sub-agent on the next model step (the supported runtime API for doing so).
@@ -136,11 +129,8 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         site. If one `DynamicWorkflow` instance is shared across concurrent runs, `reveal()` reaches
         all in-flight runs and joins the baseline catalog for runs that start afterwards.
         """
-        entry = self._normalize_workflow_agent(agent)
-        existing_names: set[str] = set()
-        for catalog_entry in self._catalog:
-            existing_names.add(validate_workflow_agent(catalog_entry, existing_names))
-        validate_workflow_agent(entry, existing_names)
+        entry = _normalize_workflow_agent(agent)
+        index_workflow_agents([*self._catalog, entry])
         self._catalog.append(entry)
 
     def get_toolset(self) -> DynamicWorkflowToolset[AgentDepsT]:
@@ -159,3 +149,12 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
             toolset_id=self.id,
             owning_capability=self,
         )
+
+
+def _normalize_workflow_agent(
+    entry: AbstractAgent[AgentDepsT, object] | WorkflowAgent[AgentDepsT],
+) -> WorkflowAgent[AgentDepsT]:
+    """Normalize a public catalog entry to the internal wrapper form."""
+    if isinstance(entry, WorkflowAgent):
+        return entry
+    return WorkflowAgent(agent=entry)
