@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    mcp_telemetry_history_ids,
     mcp_telemetry_url_ids,
     model_request_telemetry_url_ids,
     model_response_span_capture,
@@ -362,7 +363,9 @@ class Instrumentation(AbstractCapability[Any]):
         )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(list(message_history), mcp_url_ids=mcp_url_ids)
+                settings.messages_to_otel_messages(
+                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
+                )
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }

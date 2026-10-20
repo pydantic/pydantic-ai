@@ -218,7 +218,7 @@ class CachedMessageJson:
     fragment: bytes
     """The serialized fragment (see `message_json_fragment`)."""
     mcp_url_ids: frozenset[str] = frozenset()
-    """URL-derived MCP ids used to project native tool names in this fragment."""
+    """MCP names withheld from the serialized historical message fragment."""
 
 
 MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
@@ -549,6 +549,23 @@ def model_request_telemetry_url_ids(
         for tool in parameters.native_tools
         if isinstance(tool, MCPServerTool) and tool._telemetry_url_derived_id == tool.id  # pyright: ignore[reportPrivateUsage]
     }
+
+
+def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: frozenset[str]) -> frozenset[str]:
+    """Withhold MCP names in trace history when their original ID provenance is unavailable."""
+    from pydantic_ai.messages import ModelResponse, NativeToolCallPart, NativeToolReturnPart
+
+    ids = set(known_ids)
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name.startswith(
+                    'mcp_server:'
+                ):
+                    # A resumed response carries the name but not the request that classified its ID.
+                    # Trace-only masking is conservative; provider history is left intact.
+                    ids.add(part.tool_name.removeprefix('mcp_server:'))
+    return frozenset(ids)
 
 
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:

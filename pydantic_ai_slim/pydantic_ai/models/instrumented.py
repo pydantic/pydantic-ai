@@ -22,6 +22,7 @@ from pydantic_ai._instrumentation import (
     CachedMessageJson,
     MessageJsonCache,
     get_instructions,
+    mcp_telemetry_history_ids,
     message_json_fragment,
     model_request_telemetry_url_ids,
     open_model_request_span,
@@ -242,7 +243,6 @@ class InstrumentationSettings:
         self,
         input_messages: list[ModelMessage],
         message_json_cache: MessageJsonCache | None,
-        mcp_url_ids: frozenset[str] = frozenset(),
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -252,17 +252,21 @@ class InstrumentationSettings:
         in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
         bounded by the current history even when a history processor prunes or rebuilds messages.
         Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
         """
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=mcp_url_ids))
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts or entry.mcp_url_ids != mcp_url_ids:
+            if entry is None or entry.parts is not message.parts:
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
                 entry = CachedMessageJson(
-                    message, message.parts, message_json_fragment(self, message, mcp_url_ids), mcp_url_ids
+                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
                 )
             fresh_entries[id(message)] = entry
             if entry.fragment:
@@ -291,9 +295,7 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': self._input_messages_json(
-                input_messages, message_json_cache, mcp_url_ids
-            ).decode(),
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(

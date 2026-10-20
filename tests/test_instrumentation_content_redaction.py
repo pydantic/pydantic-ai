@@ -303,7 +303,7 @@ def test_url_derived_mcp_tool_call_name_is_masked_in_request_span() -> None:
     assert response.parts[0].tool_name == tool_name
 
 
-def test_cached_message_name_projection_follows_current_mcp_url_ids() -> None:
+def test_cached_history_name_projection_is_conservative_across_requests() -> None:
     identity = 'mcp.example.test-SENTINEL-path'
     history = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{identity}', tool_call_id='call-1')])
     settings, exporter = redacted_setup(True)
@@ -317,7 +317,7 @@ def test_cached_message_name_projection_follows_current_mcp_url_ids() -> None:
 
     first, second = exporter.get_finished_spans()
     assert first.attributes is not None and second.attributes is not None
-    assert identity in str(first.attributes['gen_ai.input.messages'])
+    assert identity not in str(first.attributes['gen_ai.input.messages'])
     assert identity not in str(second.attributes['gen_ai.input.messages'])
     assert not has_stale_message_json(settings, [history], cache)
 
@@ -410,6 +410,48 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
     else:
         assert json.loads(serialized)['function_tools'][0]['toolset_id'] == '[REDACTED]'
         assert any(tool.toolset_id == capability.id for tool in observed_parameters[0].function_tools)
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('current_mcp', [True, False])
+async def test_resumed_mcp_history_from_another_server_is_masked(include_content: bool, current_mcp: bool) -> None:
+    class SupportsMCP(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
+            return frozenset({MCPServerTool})
+
+    old_name = 'mcp_server:old.example-OLD-token'
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('previous'),
+        ModelResponse(parts=[NativeToolCallPart(tool_name=old_name, tool_call_id='call-1')]),
+    ]
+    current = MCP('https://new.example/current', native=True, local=False)
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup(include_content)
+    capabilities = (
+        [current, Instrumentation(settings=settings)] if current_mcp else [Instrumentation(settings=settings)]
+    )
+    await Agent(SupportsMCP(respond), capabilities=capabilities).run('go', message_history=history)
+    agent_span = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'invoke_agent'
+    )
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert agent_span.attributes is not None and chat.attributes is not None
+    assert 'OLD-token' not in str(agent_span.attributes['pydantic_ai.all_messages'])
+    assert 'OLD-token' not in str(chat.attributes['gen_ai.input.messages'])
+    assert isinstance(history[1], ModelResponse)
+    original_part = history[1].parts[0]
+    assert isinstance(original_part, NativeToolCallPart)
+    assert original_part.tool_name == old_name
 
 
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')

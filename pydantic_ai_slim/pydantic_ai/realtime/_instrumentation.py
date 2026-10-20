@@ -22,6 +22,7 @@ from .._instrumentation import (
     InstrumentationNames,
     annotate_tool_call_otel_metadata,
     build_tool_definitions,
+    mcp_telemetry_history_ids,
     model_metric_attributes,
     model_request_parameters_attributes,
     model_request_telemetry_url_ids,
@@ -215,7 +216,9 @@ class SessionInstrumentation:
                 else frozenset[str]()
             )
             attributes['pydantic_ai.all_messages'] = safe_to_json(
-                settings.messages_to_otel_messages(messages, mcp_url_ids=mcp_url_ids)
+                settings.messages_to_otel_messages(
+                    messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
+                )
             ).decode()
             if new_message_index is not None:
                 attributes['pydantic_ai.new_message_index'] = new_message_index
