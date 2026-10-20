@@ -243,13 +243,16 @@ Gotchas:
   `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.
-- Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected); prefer
-  the domain-scoped form `{'https://site': {'key': 'value'}}`.
+- Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
+  substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
+  Secret values are replaced with their placeholder in the `browse_web` result. Screenshots are not
+  redacted.
 - `session_scope='agent'` reuses one browser across calls (serialized); close with `aclose()` or
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
-- `file://`, `read_file`, and `upload_file` are disabled by the default factory.
+- `file://`, `read_file`, and `upload_file` are disabled by the default factory, and `evaluate` too
+  when `sensitive_data` is set.
 - browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's
   agents; `browser_use_telemetry=True` sends it. Set `ANONYMIZED_TELEMETRY=false` to also stop
   browser-use's process-wide PostHog client (which captures uncaught exceptions).
