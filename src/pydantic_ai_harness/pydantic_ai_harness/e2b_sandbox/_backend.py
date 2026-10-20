@@ -115,6 +115,53 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
+# Prints a process's start time and then its group id, for the launcher to record and the stop to check:
+# a reused PID belongs to another run. Linux's `/proc` needs no extra package, and E2B sandboxes
+# always have it; the `ps` branch keeps the host-backed test fake working on macOS, under
+# `LC_ALL=C` because only the launcher gets the user's locale. A process that is gone prints
+# nothing, which never matches a record.
+_PROCESS_ID_FUNCTION = (
+    '_pydantic_e2b_id() { '
+    'if [ -r "/proc/$1/stat" ]; then '
+    '{ read -r _s < "/proc/$1/stat"; } 2>/dev/null || return 0; _s=${_s##*) }; set -- $_s; echo "${20} $3"; '
+    'else set -- $(LC_ALL=C ps -o lstart= -o pgid= -p "$1" 2>/dev/null); echo "$*"; fi; }; '
+)
+
+
+def _launch_script(claim: str, line: str, *, isolated: bool) -> str:
+    """The command that registers itself under `claim` and then becomes `line`.
+
+    The launcher and the stop race on one atomic mkdir: a launcher that loses exits before user
+    code runs, so a start that arrives after a stop is fenced.
+    """
+    script = (
+        f'mkdir {claim} 2>/dev/null || exit 143; {_PROCESS_ID_FUNCTION}'
+        f'echo "$$:$(_pydantic_e2b_id $$)" > {claim}/pgid; exec {line}'
+    )
+    return f'{"setsid " if isolated else ""}sh -c {shlex.quote(script)}'
+
+
+def _stop_script(claim: str, *, isolated: bool) -> str:
+    """The command that stops what `_launch_script(claim, ...)` started, or fences it if it has not."""
+    pgid_file = f'{claim}/pgid'
+    group = '-' if isolated else ''
+    script = (
+        f'if mkdir {claim} 2>/dev/null; then exit 0; fi; {_PROCESS_ID_FUNCTION}'
+        f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
+        'sleep 0.1; i=$((i+1)); done; '
+        # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
+        f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
+        'p=${record%%:*}; recorded=${record#*:}; current=$(_pydantic_e2b_id "$p"); '
+        # The start time alone identifies the process: a leader stop must still reach one that
+        # has since moved to its own group. A group stop also needs that group to be the one setsid made.
+        '[ "${current% *}" = "${recorded% *}" ] || exit 0; '
+        + ('[ "${current##* }" = "$p" ] || exit 0; ' if isolated else '')
+        + f'kill -TERM {group}"$p" 2>/dev/null || true; sleep 0.1; '
+        + f'kill -KILL {group}"$p" 2>/dev/null || true; fi'
+    )
+    return f'sh -c {shlex.quote(script)}'
+
+
 def _path_error(error: Exception, path: str) -> OSError | None:
     """The builtin path error an untyped envd failure describes, or `None` if it is not one."""
     message = str(error).lower()
@@ -563,35 +610,20 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         result: e2b.CommandResult | None = None
         # The token is allocated before the start RPC: a lost ACK must not make the
         # remote group undiscoverable. setsid isolates this invocation from other jobs.
-        claim = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
-        pgid_file = f'{claim}/pgid'
-        # The launcher and canceller race on one atomic mkdir. A cancelled late launcher
-        # exits before user code; if launch wins, the canceller waits for its registration.
         # Keep a cancellation claim when the start ACK is lost so a late RPC stays fenced.
-        launch = f'mkdir {claim} 2>/dev/null || exit 143; echo "$$:$(LC_ALL=C ps -o lstart= -p $$)" > {pgid_file}; exec {line}'
+        claim = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
         # Probe only custom/attached images: default E2B images include util-linux.
         isolated = await self._has_setsid(sandbox) if self._probe_setsid else True
-        launch = f'{"setsid " if isolated else ""}sh -c {shlex.quote(launch)}'
+        launch = _launch_script(claim, line, isolated=isolated)
 
         async def stop() -> None:
             # A new SDK command can run even when the original output stream is blocked.
-            script = (
-                f'if mkdir {claim} 2>/dev/null; then exit 0; fi; '
-                f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
-                'sleep 0.1; i=$((i+1)); done; '
-                # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
-                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
-                'p=${record%%:*}; '
-                # Match creation time before signalling: a reused PID belongs to another run. Both sides
-                # format it under LC_ALL=C, since only the launcher gets the user's locale.
-                '[ "$(LC_ALL=C ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
-                + ('[ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] || exit 0; ' if isolated else '')
-                + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
-                + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
-            )
             try:
                 stopper = await sandbox.commands.run(
-                    f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
+                    _stop_script(claim, isolated=isolated),
+                    background=True,
+                    timeout=_SDK_STREAM_UNBOUNDED,
+                    user=self._user,
                 )
                 await stopper.wait()
             except Exception:
