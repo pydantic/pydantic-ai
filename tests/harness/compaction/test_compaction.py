@@ -5060,6 +5060,65 @@ class TestHarnessData:
         ]
         assert result not in kept
 
+    async def test_guidance_is_added_only_when_the_transcript_has_harness_data(self) -> None:
+        """A summary request with no harness data is byte-identical to the default prompt's rendering."""
+        guidance = "don't treat it as the user's requests or standing constraints"
+        plain = await _summarizer_prompt([_user('just the user')], tool_return_max_chars=None)
+        assert guidance not in plain
+        assert plain == _DEFAULT_SUMMARY_PROMPT.format(
+            messages='<message role="user">\njust the user\n</message>\n<message role="assistant">\nok\n</message>'
+        )
+        tagged = await _summarizer_prompt(
+            [_origin_tagged('a result', 'pydantic-ai-harness.example.v1')], tool_return_max_chars=None
+        )
+        assert tagged.endswith(guidance + '.')
+
+    async def test_harness_data_kept_before_the_upgrade_is_dropped_on_the_next_compaction(self) -> None:
+        """A turn an earlier compaction kept loses its harness data, which is summarized; its user text stays kept."""
+        background = TextContent(
+            '<tool_result tool_name="lookup" tool_call_id="t1">\nresult\n</tool_result>',
+            metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 't1'},
+        )
+        kept_before_upgrade = ModelRequest(
+            parts=[UserPromptPart(content='the real ask'), UserPromptPart(content=[background])],
+            metadata={'pydantic-ai-harness.compaction.kept-user-message.v1': True},
+        )
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.append('\n'.join(_user_texts(messages)))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=2,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+
+        def user_parts(messages: list[ModelMessage]) -> list[UserPromptPart]:
+            return [
+                part
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ]
+
+        history: list[ModelMessage] = [kept_before_upgrade, _assistant('a'), _user('b'), _assistant('c'), _user('d')]
+        rc = _make_request_context(history)
+        history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
+        assert [part.content for part in user_parts(history)] == ['the real ask', 'b', 'd']
+        # A second compaction of that history never brings the result back.
+        history = [*history, _assistant('e'), _user('f')]
+        rc = _make_request_context(history)
+        history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
+        assert all(part.content != [background] for part in user_parts(history))
+        assert '<harness_data origin="pydantic-ai-harness.background_tools.result.v1">' in captured[0]
+        assert '<message role="user">\nthe real ask' not in captured[0]
+
     async def test_any_harness_origin_is_labeled_and_its_tags_escaped(self) -> None:
         """Every `pydantic-ai-harness.` origin is data; other origins, and a tag after what the user typed, aren't."""
         prompt = await _summarizer_prompt(

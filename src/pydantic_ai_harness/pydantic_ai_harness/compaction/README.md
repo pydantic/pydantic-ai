@@ -490,8 +490,8 @@ render each return whole, when the summarizer's context window is large enough t
 Content a harness capability added on the user channel, such as a `BackgroundTools` result, is not a user
 message. It carries an `origin` in its `TextContent.metadata` starting with `pydantic-ai-harness.`, and it is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
-`role="user"`. The default prompt tells the summarizer not to treat such content as the user's requests or
-standing constraints.
+`role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
+treat it as the user's requests or standing constraints; other summary requests are unchanged.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
@@ -652,7 +652,7 @@ Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) wi
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched.
 Harness-added content on the user channel, such as a background tool's result, isn't a user turn and is
-never retained. This supersedes `preserve_first_user_message` (which keeps only the first).
+never retained, including in a turn an earlier compaction kept. This supersedes `preserve_first_user_message` (which keeps only the first).
 
 ```python
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
