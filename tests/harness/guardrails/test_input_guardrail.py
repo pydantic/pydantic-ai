@@ -1253,6 +1253,19 @@ class TestFindPromptPart:
         run_ctx, _ = _build_ctx_and_req(messages=history)
         assert _find_prompt_part(run_ctx, request) is prompt
 
+    def test_a_copied_prompt_is_not_mistaken_for_an_earlier_turn(self):
+        earlier = UserPromptPart(content='earlier turn')
+        prompt = UserPromptPart(content='current turn')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[earlier]),
+            ModelResponse(parts=[TextPart(content='assistant')]),
+            ModelRequest(parts=[prompt]),
+        ]
+        copied = dataclasses.replace(prompt)
+        request: list[ModelMessage] = [*history[:2], ModelRequest(parts=[copied])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is copied
+
     def test_falls_back_to_the_latest_part_when_none_is_in_the_history(self):
         request: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='copied prompt'), UserPromptPart(content='latest')])
@@ -1281,6 +1294,9 @@ class TestAnnotatedAsRunContext:
             (RunContext[object], True),
             ('RunContext', True),
             ('RunContext[MyDeps]', True),
+            ('pydantic_ai.RunContext[MyDeps]', True),
+            ("'RunContext[MyDeps]'", True),
+            ('NotRunContext', False),
             ('str', False),
             (str, False),
             (inspect.Parameter.empty, False),
@@ -1364,10 +1380,11 @@ class _AppendSecretToPrompt(AbstractCapability[Any]):
     async def wrap_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
     ) -> ModelResponse:
-        for message in request_context.messages:
-            for part in message.parts:
-                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                    part.content = f'{part.content}\ncontext: {_SECRET}'
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        prompt = next(part for part in last.parts if isinstance(part, UserPromptPart))
+        assert isinstance(prompt.content, str)
+        prompt.content = f'{prompt.content}\ncontext: {_SECRET}'
         return await handler(request_context)
 
 

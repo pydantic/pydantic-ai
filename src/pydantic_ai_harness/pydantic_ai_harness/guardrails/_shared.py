@@ -181,7 +181,9 @@ def _annotated_as_run_context(parameter: inspect.Parameter) -> bool:
     """
     annotation = parameter.annotation
     if isinstance(annotation, str):
-        return annotation == 'RunContext' or annotation.startswith('RunContext[')
+        # Also `'pydantic_ai.RunContext[Deps]'`, and a quoted annotation under postponed evaluation.
+        name = annotation.strip().strip('\'"').split('[', 1)[0].strip()
+        return name.rsplit('.', 1)[-1] == 'RunContext'
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 

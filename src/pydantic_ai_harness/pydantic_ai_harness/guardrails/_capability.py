@@ -95,25 +95,34 @@ def _require_prompt_text(replacement: object, position: int) -> None:
 
 
 def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> UserPromptPart | None:
-    """The most recent user prompt in the run's history, as it appears in this request.
+    """The user's prompt for this run, as it appears in this request.
 
-    `messages` is this request's copy of the history. An outer capability can add a
-    `UserPromptPart` to it for this request only (`SystemReminders`, `Planning` and `Memory`
-    append one to the last request), and that part is not the user's prompt. It is not in
-    `ctx.messages`, so matching on identity skips it: the guard neither screens nor overwrites it.
-    A part an outer capability rewrote in place is still the same object, so the guard reads the
-    rewritten text.
+    That is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages` is
+    this request's copy of the history, where an outer capability can add a `UserPromptPart` for
+    this request only (`SystemReminders`, `Planning` and `Memory` append one to the last request).
+    That part is not the user's prompt, so the prompt is found by identity: the guard neither
+    screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
+    the same object, so the guard reads the rewritten text.
 
-    When no part in `messages` is also in `ctx.messages`, because a capability rebuilt the request
-    from copies, the most recent part in `messages` is used.
+    When the prompt is not in `messages` by identity, because a capability replaced it with a copy,
+    the most recent part in `messages` is used, so an earlier turn's prompt still shared with the
+    history is not matched in place of the copy.
     """
-    history_parts = {id(part) for message in ctx.messages for part in message.parts}
+    prompt = next(
+        (
+            part
+            for message in reversed(ctx.messages)
+            for part in reversed(message.parts)
+            if isinstance(part, UserPromptPart)
+        ),
+        None,
+    )
     latest: UserPromptPart | None = None
     for message in reversed(messages):
         for part in reversed(message.parts):
             if not isinstance(part, UserPromptPart):
                 continue
-            if id(part) in history_parts:
+            if part is prompt:
                 return part
             if latest is None:
                 latest = part
