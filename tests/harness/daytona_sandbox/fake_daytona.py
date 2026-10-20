@@ -21,12 +21,11 @@ import shlex
 import shutil
 import signal
 import subprocess
-import tempfile
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import IO, Protocol
+from typing import Protocol
 
 import anyio
 import anyio.lowlevel
@@ -44,8 +43,6 @@ class CreateParams(Protocol):
     name: str | None
     snapshot: str | None
     auto_stop_interval: int | None
-    auto_archive_interval: int | None
-    auto_delete_interval: int | None
     env_vars: dict[str, str] | None
     network_block_all: bool | None
     labels: dict[str, str] | None
@@ -250,14 +247,14 @@ def _host_errors(path: str, operation: str) -> Generator[None]:
 class _HostProcess(FakeProcess):
     """Mirrors `sandbox.process` by running commands on the host under `host_root`.
 
-    Session commands write to anonymous temporary files that the log stream tails, so output
-    printed before a deadline kill is delivered, and deleting the session kills the process group.
+    Each session command is a host process in its own process group; deleting the session kills
+    the group, as Daytona kills a deleted session's command.
     """
 
     def __init__(self, owner: FakeSandbox, host_root: Path) -> None:
         super().__init__(owner)
         self.host_root = host_root
-        self.commands: dict[str, tuple[subprocess.Popen[bytes], IO[bytes], IO[bytes]]] = {}
+        self.commands: dict[str, subprocess.Popen[bytes]] = {}
 
     async def exec(
         self,
@@ -285,16 +282,16 @@ class _HostProcess(FakeProcess):
         timeout: int | None = None,
     ) -> SimpleNamespace:
         self.owner.check_alive()
-        out, err = tempfile.TemporaryFile(), tempfile.TemporaryFile()
+        # The command line sends its output to files itself.
         process = subprocess.Popen(
             ['sh', '-c', getattr(request, 'command')],
             cwd=self.host_root,
-            stdout=out,
-            stderr=err,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
         command_id = f'{session_id}-cmd'
-        self.commands[command_id] = (process, out, err)
+        self.commands[command_id] = process
         return SimpleNamespace(cmd_id=command_id)
 
     async def get_session_command(
@@ -304,15 +301,13 @@ class _HostProcess(FakeProcess):
         request_timeout: float | None = None,
     ) -> SimpleNamespace:
         self.owner.check_alive()
-        return SimpleNamespace(exit_code=self.commands[command_id][0].poll())
+        return SimpleNamespace(exit_code=self.commands[command_id].poll())
 
     async def delete_session(self, session_id: str, request_timeout: float | None = None) -> None:
-        process, out, err = self.commands.pop(f'{session_id}-cmd')
+        process = self.commands.pop(f'{session_id}-cmd')
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-        out.close()
-        err.close()
 
 
 def _loops(path: Path) -> bool:
@@ -407,7 +402,7 @@ class FakeSandbox:
         self.responder: Callable[[str, int | None], tuple[str, int]] = lambda command, timeout: ('', 0)
         self.process_sessions: set[str] = set()
         self.process_command = ''
-        # Each session command's line, by command ID, for its stored logs.
+        # What the next session command writes to its stdout and stderr files.
         self.process_stdout: list[str] = []
         self.process_stderr: list[str] = []
         self.process_reply: list[str] | None = None
@@ -450,15 +445,12 @@ class FakeSandbox:
         if isinstance(self.process, _HostProcess):
             # The real control plane stops command sessions when their sandbox is deleted;
             # merely changing the fake state leaves the host subprocess running.
-            for process, _, _ in self.process.commands.values():
+            for process in self.process.commands.values():
                 if process.poll() is None:  # pragma: no branch - a finished command's session is deleted before this
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
 
     def check_alive(self) -> None:
-        # A sandbox handle shares its `AsyncDaytona`'s HTTP session, so it stops working with it.
-        if self.client is not None and self.client.closed:
-            raise DaytonaError('Daytona client is closed')  # pragma: no cover - only a stale handle gets here
         if self.state in (SandboxState.DESTROYING, SandboxState.DESTROYED):
             raise self.gone_error or DaytonaNotFoundError(
                 f'Sandbox with ID or name {self.id} not found', status_code=404

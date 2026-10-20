@@ -151,10 +151,6 @@ class TestConformance:
         assert await backend.get_sandbox() is sandbox
         assert fake_daytona.sandboxes == [sandbox]
 
-    async def test_realpath_normalizes_a_path(self, fake_daytona: FakeDaytona) -> None:
-        backend = DaytonaSandboxBackend()
-        assert await backend.realpath('/tmp/../tmp/file') == '/tmp/file'
-
     async def test_run_and_filesystem_protocols(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         assert isinstance(backend, WorkspaceBackend)
@@ -216,9 +212,6 @@ class TestCommands:
         with anyio.fail_after(5):
             result = await backend.run(['sh', '-c', 'if read line; then echo unexpected; else echo eof; fi'])
         assert result.stdout == 'eof\n'
-        fake_daytona.host_root = None
-        await DaytonaSandboxBackend().run(['true'])
-        assert '"$@" </dev/null' in fake_daytona.sandboxes[-1].process_command
 
     async def test_large_output_is_exact_and_a_timeout_keeps_a_bounded_tail(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -469,53 +462,19 @@ class TestCommands:
             await backend.run(['true'])
         assert sandbox.start_calls == []
 
-    @pytest.mark.parametrize(
-        ('start_error', 'expected'),
-        [
-            (DaytonaConnectionError('control plane down'), DaytonaConnectionError),
-            (DaytonaBadRequestError('sandbox is in an error state', status_code=400), WorkspaceUnavailableError),
-            (DaytonaAuthenticationError('bad key', status_code=401), WorkspaceUnavailableError),
-        ],
-    )
-    async def test_a_failed_restart_keeps_transient_errors(
-        self, fake_daytona: FakeDaytona, start_error: Exception, expected: type[Exception]
-    ) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.state = daytona.SandboxState.STOPPED
-        sandbox.start_error = start_error
-        with pytest.raises(expected) as exc_info:
-            await backend.run(['true'])
-        assert start_error in (exc_info.value, exc_info.value.__cause__)
-
     @pytest.mark.parametrize('state', [daytona.SandboxState.STOPPED, daytona.SandboxState.PAUSED])
-    async def test_stopped_sandbox_restarts_for_held_backend(
+    async def test_a_sandbox_stopped_under_a_held_backend_is_unavailable(
         self, fake_daytona: FakeDaytona, state: daytona.SandboxState
     ) -> None:
-        # Daytona stops an idle container and pauses an idle VM; a start request resumes either.
+        # Daytona stops an idle container and pauses an idle VM; attaching again starts either.
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.state = state
-        result = await backend.run(['true'])
-        assert result.exit_code == 0
+        with pytest.raises(WorkspaceUnavailableError, match='was stopped while idle'):
+            await backend.run(['true'])
+        assert sandbox.start_calls == []
+        assert (await DaytonaSandboxBackend(ref=backend.ref).run(['true'])).exit_code == 0
         assert sandbox.start_calls
-
-    async def test_restart_is_not_counted_against_the_command_timeout(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.state = daytona.SandboxState.STOPPED
-        start = sandbox.start
-
-        async def slow_start(timeout: float | None = 60) -> None:
-            # Restarting outlasts the timeout; the command itself fits in it comfortably.
-            await anyio.sleep(1.1)
-            await start(timeout)
-
-        monkeypatch.setattr(sandbox, 'start', slow_start)
-        result = await backend.run(['true'], timeout=1)
-        assert result.exit_code == 0
 
     async def test_session_setup_timeout_is_transient(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -1042,7 +1001,6 @@ class TestDeletedSandbox:
         with pytest.raises(WorkspaceUnavailableError):
             await backend.working_dir()
         assert sandbox.start_calls == []
-        assert fake_daytona.closed_clients == 1
 
     async def test_a_missing_path_on_a_live_sandbox_is_file_not_found(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -1076,27 +1034,16 @@ class TestDeletedSandbox:
 
 
 class TestLazyOperations:
-    async def test_default_cwd_is_applied_to_commands(self, fake_daytona: FakeDaytona) -> None:
-        backend = DaytonaSandboxBackend(working_dir='/work dir')
-        await backend.run(['true'])
-        command = _unmarked(fake_daytona.sandboxes[0].process_command)
-        assert command.startswith("sh -c 'cd -- ")
-        assert 'work dir' in command
-        assert command.endswith('sh true')
-
-    async def test_working_dir_initializes_identity(self, fake_daytona: FakeDaytona) -> None:
-        backend = DaytonaSandboxBackend(working_dir='/workspace')
-        assert await backend.working_dir() == '/workspace'
-        assert backend.ref is not None
-
-    @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
+    @pytest.mark.parametrize('operation', ['run', 'write_bytes', 'working_dir'])
     async def test_ref_is_recorded_by_the_first_operation(self, fake_daytona: FakeDaytona, operation: str) -> None:
         backend = DaytonaSandboxBackend()
         assert backend.ref is None
         if operation == 'run':
             await backend.run(['true'])
-        else:
+        elif operation == 'write_bytes':
             await backend.write_bytes('/note', b'data')
+        else:
+            await backend.working_dir()
         assert backend.ref == WorkspaceRef(provider='daytona', id=fake_daytona.sandboxes[0].id)
 
     @pytest.mark.parametrize('operation', ['run', 'read_bytes', 'exists', 'working_dir'])
@@ -1270,7 +1217,7 @@ async def test_aclose_waits_for_an_in_flight_file_operation(
     with anyio.fail_after(5):
         await entered.wait()
         close = asyncio.create_task(backend.aclose())
-        await asyncio.sleep(0.01)
+        await anyio.wait_all_tasks_blocked()
         assert fake_daytona.closed_clients == 0
         release.set()
         assert await read == b'kept'
@@ -1290,25 +1237,23 @@ async def test_working_dir_is_reverified_after_aclose(fake_daytona: FakeDaytona)
 
 
 @pytest.mark.parametrize('failure', ['error', 'hang'])
-async def test_failed_close_keeps_the_client_for_a_retry(
+async def test_failed_close_is_logged(
     fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: str
 ) -> None:
     monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._TEARDOWN_TIMEOUT', 0.05)
     backend = DaytonaSandboxBackend()
     await backend.get_sandbox()
-    client = fake_daytona.sandboxes[0].client
-    assert client is not None
     if failure == 'error':
         fake_daytona.close_errors = iter([DaytonaConnectionError('offline')])
     else:
         fake_daytona.close_gate = asyncio.Event()
-    with anyio.fail_after(1):
+    with anyio.fail_after(5):
         await backend.aclose()
-    assert not client.closed
     assert 'Daytona API client' in caplog.text
     fake_daytona.close_gate = None
-    await backend.aclose()
-    assert client.closed
+    # The next operation opens a client of its own and attaches by `ref`.
+    await backend.working_dir()
+    assert fake_daytona.opened_clients == 2
 
 
 async def test_supplied_client_survives_acquisition_failure(fake_daytona: FakeDaytona) -> None:

@@ -58,12 +58,6 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
     ) == ('python', 0, {'A': 'b'}, True)
 
 
-async def test_lifetimes_default_to_daytonas_own(fake_daytona: FakeDaytona) -> None:
-    await DaytonaSandboxBackend().get_sandbox()
-    params = fake_daytona.create_params[0]
-    assert (params.auto_stop_interval, params.auto_archive_interval, params.auto_delete_interval) == (None, None, None)
-
-
 @pytest.mark.parametrize(
     ('settings', 'message'),
     [
