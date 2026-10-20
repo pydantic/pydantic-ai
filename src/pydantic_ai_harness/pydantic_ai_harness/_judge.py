@@ -46,7 +46,7 @@ _CHARS_PER_TOKEN = 4
 # TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
 # (https://github.com/pydantic/pydantic-ai/pull/10547), adding `tool_call` and `conversation` to its tags.
 # Until then this matches its semantics: only the `<` of a closing tag is escaped.
-_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*/\s*(?:tool_call|conversation)(?=[\s/>]))', re.IGNORECASE)
+_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*/\s*(?:tool_call|conversation)(?=[\s/>]|$))', re.IGNORECASE)
 
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
 

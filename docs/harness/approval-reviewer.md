@@ -211,7 +211,7 @@ reviewer = ApprovalReviewer(
 )
 ```
 
-`unsure` is checked against each model's response. A language model reports no `confidence`, so its answer is final. Tune the `0.8` bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Arguments can be written to steer Jev's answer ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)), so keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
+The `unsure` function runs on each model's response in the chain. A language model reports no `confidence`, so its answer is final. Tune the `0.8` bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Arguments can be written to steer Jev's answer ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)), so keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
 
 ## Composition
 
