@@ -1,8 +1,8 @@
 """A SQLite FTS5 index of the search corpus, kept in the database a `SqliteStepStore` writes.
 
 The index stores what the scan path derives on every search: each run's durable record,
-one row per message, rendered to the text the search ranks plus the keys the inherited-history
-dedup compares. A search refreshes a run's rows when the run's `complete` snapshots changed
+one row per message, rendered to the text the search shows, the words the search ranks, and
+the keys the inherited-history dedup compares. A search refreshes a run's rows when the run's `complete` snapshots changed
 since they were indexed, so the write path needs no hook, and a database written before the
 index existed is indexed by its first search.
 
@@ -36,31 +36,32 @@ _TABLES = (
     'format_version INTEGER NOT NULL) WITHOUT ROWID',
     'CREATE TABLE IF NOT EXISTS conversation_search_messages ('
     'id INTEGER PRIMARY KEY, run_id TEXT NOT NULL, position INTEGER NOT NULL, hash TEXT NOT NULL, '
-    'deltas TEXT NOT NULL, length INTEGER NOT NULL, text TEXT NOT NULL, layout TEXT NOT NULL, '
+    'deltas TEXT NOT NULL, length INTEGER NOT NULL, words TEXT NOT NULL, text TEXT NOT NULL, '
+    'layout TEXT NOT NULL, '
     'UNIQUE (run_id, position))',
 )
 
 _CREATE_FTS_TABLE = (
-    'CREATE VIRTUAL TABLE IF NOT EXISTS conversation_search_fts USING fts5(text, '
-    "content='conversation_search_messages', content_rowid='id', tokenize='unicode61 remove_diacritics 2')"
+    'CREATE VIRTUAL TABLE IF NOT EXISTS conversation_search_fts USING fts5(words, '
+    "content='conversation_search_messages', content_rowid='id', "
+    'tokenize="unicode61 remove_diacritics 0 tokenchars \'_\'")'
 )
-"""The external-content FTS5 table over `conversation_search_messages.text`.
+"""The external-content FTS5 table over `conversation_search_messages.words`.
 
-`MATCH` must find every message the toolset's word tokens score. Each query term is matched as an
-FTS5 string, which FTS5 tokenizes like the text, so a word `unicode61` splits differently
-(`snake_case`) still matches as a phrase. `remove_diacritics 2` folds an accent written as a
-separate combining mark into its letter, so the token stays `cafe` as the toolset reads it; it also
-lets `cafe` match a precomposed `é`, a candidate the scoring then drops.
+`MATCH` must find exactly the messages holding a word the toolset scores, so the table indexes the
+toolset's own words, space separated, instead of the text: FTS5's tokenizer draws other word
+boundaries (combining marks and private-use characters stay inside its tokens). Each query word is
+an FTS5 string that FTS5 tokenizes as it tokenized the same word in a message, so the two match.
 """
 
 _TRIGGERS = (
     'CREATE TRIGGER IF NOT EXISTS conversation_search_messages_insert '
     'AFTER INSERT ON conversation_search_messages BEGIN '
-    'INSERT INTO conversation_search_fts (rowid, text) VALUES (NEW.id, NEW.text); END',
+    'INSERT INTO conversation_search_fts (rowid, words) VALUES (NEW.id, NEW.words); END',
     'CREATE TRIGGER IF NOT EXISTS conversation_search_messages_delete '
     'AFTER DELETE ON conversation_search_messages BEGIN '
-    "INSERT INTO conversation_search_fts (conversation_search_fts, rowid, text) VALUES ('delete', OLD.id, OLD.text); "
-    'END',
+    'INSERT INTO conversation_search_fts (conversation_search_fts, rowid, words) '
+    "VALUES ('delete', OLD.id, OLD.words); END",
     # Deleting a run (as deleting a saved conversation does) removes its text from the index too.
     'CREATE TRIGGER IF NOT EXISTS conversation_search_runs_delete AFTER DELETE ON runs BEGIN '
     'DELETE FROM conversation_search_messages WHERE run_id = OLD.run_id; '
@@ -89,10 +90,12 @@ class IndexedMessage:
     """`message_hash` of the message, for the inherited-history dedup."""
     deltas: str
     """Keys of the instruction changes the message carries, space separated."""
+    words: str
+    """The words of `text` the search ranks, space separated."""
     length: int
-    """Token count of `text`, for BM25 length normalization."""
+    """How many `words` there are, for BM25 length normalization."""
     text: str
-    """The full rendering the search ranks."""
+    """The full rendering the search shows."""
     layout: str
     """JSON `[prefix length, body length, display limit]` per line of `text`, to clip it for display."""
 
@@ -159,12 +162,12 @@ class IndexReader:
         return total
 
     def candidates(self, terms: Sequence[str], spans: Mapping[str, int]) -> list[tuple[str, int, str]]:
-        """`(run_id, position, text)` of each message in `spans` that FTS5 finds holding one of `terms`.
+        """`(run_id, position, words)` of each message in `spans` holding one of `terms`.
 
         The scope join runs inside the query, so a message outside `spans` never leaves SQLite.
         """
         return self._conn.execute(
-            'SELECT m.run_id, m.position, m.text FROM conversation_search_fts f '
+            'SELECT m.run_id, m.position, m.words FROM conversation_search_fts f '
             'JOIN conversation_search_messages m ON m.id = f.rowid '
             'JOIN json_each(?) s ON s.key = m.run_id '
             'WHERE conversation_search_fts MATCH ? AND m.position >= s.value',
@@ -189,11 +192,16 @@ class SqliteSearchIndex:
 
     @staticmethod
     def for_source(source: HistorySource) -> SqliteSearchIndex | None:
-        """The index for a `SnapshotHistorySource` over a `SqliteStepStore`, else `None`."""
-        if not isinstance(source, SnapshotHistorySource):
+        """The index for a `SnapshotHistorySource` over a `SqliteStepStore`, else `None`.
+
+        Exact types only: the index is shared by every search of the database, so a subclass
+        that changes what `run_history` returns (to redact it, say) must not read, or fill,
+        rows that another source rendered.
+        """
+        if type(source) is not SnapshotHistorySource:
             return None
         store = source._store  # pyright: ignore[reportPrivateUsage]
-        return SqliteSearchIndex(store) if isinstance(store, SqliteStepStore) else None
+        return SqliteSearchIndex(store) if type(store) is SqliteStepStore else None
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection]:
@@ -217,7 +225,8 @@ class SqliteSearchIndex:
             with _transaction(conn, 'BEGIN IMMEDIATE'):
                 for statement in (*_TABLES, _CREATE_FTS_TABLE, *_TRIGGERS):
                     conn.execute(statement)
-        self._ready = True
+        # Inside a transaction the caller holds open, the schema exists only if they commit it.
+        self._ready = not conn.in_transaction
 
     async def refresh(self, run_ids: Sequence[str], load: Callable[[str], Awaitable[list[IndexedMessage]]]) -> None:
         """Re-index each of `run_ids` whose `complete` snapshots changed since it was indexed.
@@ -267,9 +276,9 @@ class SqliteSearchIndex:
             conn.execute('DELETE FROM conversation_search_messages WHERE run_id = ?', (run_id,))
             conn.executemany(
                 'INSERT INTO conversation_search_messages '
-                '(run_id, position, hash, deltas, length, text, layout) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                '(run_id, position, hash, deltas, words, length, text, layout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 [
-                    (run_id, position, m.hash, m.deltas, m.length, m.text, m.layout)
+                    (run_id, position, m.hash, m.deltas, m.words, m.length, m.text, m.layout)
                     for position, m in enumerate(messages)
                 ],
             )

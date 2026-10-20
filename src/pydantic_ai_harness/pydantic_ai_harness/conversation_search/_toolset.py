@@ -446,7 +446,7 @@ class _IndexCorpus(_Corpus):
         )
         n = sum(section.length for section in self.sections)
         avgdl = self._reader.total_length(spans) / n
-        term_counts = [Counter(_tokenize(text)) for _, _, text in candidates]
+        term_counts = [Counter(words.split(' ')) for _, _, words in candidates]
         return [
             (candidates[idx][0], candidates[idx][1], score)
             for idx, score in _bm25_scores(terms, term_counts, n, avgdl, self._params)
@@ -614,11 +614,13 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         for message in await self._source.run_history(run_id=run_id):
             lines = _message_lines(message)
             text = _render(lines, None)
+            words = _tokenize(text)
             indexed.append(
                 IndexedMessage(
                     hash=message_hash(message),
                     deltas=_delta_keys(message),
-                    length=len(_tokenize(text)),
+                    words=' '.join(words),
+                    length=len(words),
                     text=text,
                     layout=_layout(lines),
                 )

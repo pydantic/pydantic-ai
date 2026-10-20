@@ -86,8 +86,15 @@ async def _seed(store: InMemoryStepStore | SqliteStepStore) -> None:
         store, 'r3', [user, call, changed, _reply(long_text), _user('and zebra again')], conversation_id='c1', minute=3
     )
     await _seed_run(store, 'empty', conversation_id='c1', minute=4)
-    # A combining accent, as macOS file names carry it: the scan reads the word as `cafe`.
-    await _seed_run(store, 'decomposed', [_user('open cafe\u0301.txt')], conversation_id='c1', minute=6)
+    # Characters inside a word that FTS5's tokenizer keeps but the scan's splits on: a combining
+    # accent, as macOS file names carry it, and a private-use character.
+    await _seed_run(
+        store,
+        'decomposed',
+        [_user('open nai\u0308ve cafe\u0301.txt and foo\ue000bar, then _ = 1')],
+        conversation_id='c1',
+        minute=6,
+    )
     await _seed_run(
         store,
         'other',
@@ -160,6 +167,9 @@ _QUERIES = (
     'café',
     'snake_case',
     'snake',
+    'nai',
+    'foo',
+    '_',
     'and',
     'NEAR(zebra ok)',
     'zebra*',
@@ -320,47 +330,77 @@ class TestFullTextIndex:
 
         assert results == [expected] * 4
 
-    async def test_a_run_indexed_meanwhile_is_kept(self, tmp_path: Path) -> None:
+    async def test_a_run_indexed_meanwhile_is_kept(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Another process indexing the same run first leaves its rows in place."""
         database = tmp_path / 'sessions.db'
         store = SqliteStepStore(database=database)
         await _seed_run(store, 'r1', [_user('the MOOSE note')], minute=1)
+        original = SnapshotHistorySource.run_history
+        raced: list[bool] = []
 
-        class _RacedSource(SnapshotHistorySource):
-            async def run_history(self, *, run_id: str) -> list[ModelMessage]:
+        async def run_history(source: SnapshotHistorySource, *, run_id: str) -> list[ModelMessage]:
+            if not raced:
+                raced.append(True)
                 # The other process indexes the run between this search's check and its write.
                 await _search(_toolset(SqliteStepStore(database=database)), 'moose')
                 conn = sqlite3.connect(database)
                 with conn:
                     conn.execute("UPDATE conversation_search_messages SET hash = 'written-first'")
                 conn.close()
-                return await super().run_history(run_id=run_id)
+            return await original(source, run_id=run_id)
 
-        toolset = ConversationSearchToolset[None](
-            _RacedSource(store), tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
-        )
-        assert 'the MOOSE note' in await _search(toolset, 'moose')
+        monkeypatch.setattr(SnapshotHistorySource, 'run_history', run_history)
+
+        assert 'the MOOSE note' in await _search(_toolset(store), 'moose')
         assert _rows(database, 'SELECT run_id, hash FROM conversation_search_messages') == [('r1', 'written-first')]
 
-    async def test_a_run_deleted_while_indexing_stays_out(self, tmp_path: Path) -> None:
+    async def test_a_run_deleted_while_indexing_stays_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         database = tmp_path / 'sessions.db'
         store = SqliteStepStore(database=database)
         await _seed_run(store, 'r1', [_user('the BISON note')], minute=1)
+        original = SnapshotHistorySource.run_history
 
-        class _DeletingSource(SnapshotHistorySource):
-            async def run_history(self, *, run_id: str) -> list[ModelMessage]:
-                history = await super().run_history(run_id=run_id)
-                conn = sqlite3.connect(database)
-                with conn:
-                    conn.execute('DELETE FROM runs WHERE run_id = ?', (run_id,))
-                conn.close()
-                return history
+        async def run_history(source: SnapshotHistorySource, *, run_id: str) -> list[ModelMessage]:
+            history = await original(source, run_id=run_id)
+            conn = sqlite3.connect(database)
+            with conn:
+                conn.execute('DELETE FROM runs WHERE run_id = ?', (run_id,))
+            conn.close()
+            return history
 
-        toolset = ConversationSearchToolset[None](
-            _DeletingSource(store), tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
-        )
-        assert 'No persisted conversation history' in await _search(toolset, 'bison')
+        monkeypatch.setattr(SnapshotHistorySource, 'run_history', run_history)
+
+        assert 'No persisted conversation history' in await _search(_toolset(store), 'bison')
         assert _rows(database, 'SELECT COUNT(*) FROM conversation_search_messages') == [(0,)]
+
+    async def test_a_subclassed_source_or_store_scans(self, tmp_path: Path) -> None:
+        """A subclass can change what a run's history holds, so it never shares the index."""
+        database = tmp_path / 'sessions.db'
+        store = SqliteStepStore(database=database)
+        await _seed_run(store, 'r1', [_user('the OTTER password is hunter2')], minute=1)
+        assert 'hunter2' in await _search(_toolset(store), 'otter')
+
+        class _RedactingSource(SnapshotHistorySource):
+            async def run_history(self, *, run_id: str) -> list[ModelMessage]:
+                return [_user('the OTTER password is [redacted]') for _ in await super().run_history(run_id=run_id)]
+
+        class _Store(SqliteStepStore):
+            pass
+
+        redacting = ConversationSearchToolset[None](
+            _RedactingSource(store), tool_id='t', max_matches=10, context_lines=5, bm25_k1=1.5, bm25_b=0.75, scope='all'
+        )
+        assert '[redacted]' in await _search(redacting, 'otter')
+        assert 'hunter2' not in await _search(redacting, 'otter')
+
+        other = _Store(database=tmp_path / 'other.db')
+        await _seed_run(other, 'r1', [_user('an OTTER')], minute=1)
+        assert 'an OTTER' in await _search(_toolset(other), 'otter')
+        assert (
+            _rows(tmp_path / 'other.db', "SELECT name FROM sqlite_master WHERE name LIKE 'conversation_search%'") == []
+        )
 
 
 def _option_unused(_name: str) -> int:
@@ -451,6 +491,26 @@ class TestIndexFallback:
         assert conn.in_transaction is open_transaction
         assert conn.execute('SELECT COUNT(*) FROM conversation_search_messages').fetchone() == (0,)
         assert conn.execute('SELECT COUNT(*) FROM conversation_search_fts').fetchone() == (int(open_transaction),)
+        conn.close()
+
+    async def test_an_index_rolled_back_with_the_caller_is_rebuilt(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        database = tmp_path / 'sessions.db'
+        conn = sqlite3.connect(database, check_same_thread=False)
+        store = SqliteStepStore(connection=conn)
+        await _seed_run(store, 'r1', [_user('the GECKO note')], minute=1)
+        conn.commit()
+        toolset = _toolset(store)
+
+        conn.execute('BEGIN')
+        assert 'the GECKO note' in await _search(toolset, 'gecko')
+        conn.rollback()
+
+        with caplog.at_level(logging.WARNING, logger=_LOGGER):
+            assert 'the GECKO note' in await _search(toolset, 'gecko')
+        assert caplog.records == []
+        assert _rows(database, 'SELECT run_id FROM conversation_search_runs') == [('r1',)]
         conn.close()
 
     async def test_an_open_caller_transaction_is_joined_not_committed(self, tmp_path: Path) -> None:
