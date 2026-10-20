@@ -1594,24 +1594,31 @@ class _CascadeLifecycle(InferredLifecycle):
     def reply_named(self, named: Sequence[InputId]) -> None:
         """The text of the reply under way (or of the one that just ended) came, naming the text inputs it answers.
 
-        Applied with that text, or by `revise_ended()` if it trails the end of its response.
+        Applied with that text, or by `revise_rest()` if the text made no output (it was empty) or trailed the end
+        of its response.
         """
         self._named = tuple(named)
 
-    def revise_ended(self) -> list[LifecycleEvent]:
-        """Revise the response that just ended by the inputs its text named, as that text came after the end."""
+    def revise_rest(self) -> list[LifecycleEvent]:
+        """Revise by the inputs a reply's text named, if that text didn't: the response under way, or the one that ended.
+
+        Called once the frame with the text is through: a response still under way is the text's (an empty one makes
+        no output), and one that isn't was ended by it, or before it (its text trailing the end).
+        """
         named, self._named = self._named, None
+        if named is not None and self._open is not None:
+            return self._revise_open(named)
         if named is None or self._last_ended is None:
             return []
         response_id, answers = self._last_ended
-        _, released = self._revision(named, answers, open_=False)
+        _, released = self._revision(named, answers)
         if not released:
             return []
         self._unanswered[:0] = released
         return [AnswersRevised(response_id=response_id, released=released)]
 
     def _revision(
-        self, named: tuple[InputId, ...], answers: tuple[InputId, ...], *, open_: bool
+        self, named: tuple[InputId, ...], answers: tuple[InputId, ...]
     ) -> tuple[tuple[InputId, ...], tuple[InputId, ...]]:
         """The text inputs a reply claims and releases, given those it names and those it was taken to answer.
 
@@ -1624,22 +1631,25 @@ class _CascadeLifecycle(InferredLifecycle):
         latest = max(named, default=-1)
         claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
         released = tuple(input_id for input_id in answers if input_id in self._text and input_id > latest)
-        return (claimed if open_ else ()), released
+        return claimed, released
+
+    def _revise_open(self, named: tuple[InputId, ...]) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named."""
+        response_id = self._open
+        assert response_id is not None
+        claimed, released = self._revision(named, self._open_answers)
+        if not (claimed or released):
+            return []
+        self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+        self._unanswered[:0] = released
+        self._open_answers = (*(input_id for input_id in self._open_answers if input_id not in released), *claimed)
+        return [AnswersRevised(response_id=response_id, claimed=claimed, released=released)]
 
     def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
         super()._output(event, before, after)
-        named, self._named = self._named, None
-        if named is None or (response_id := self._open) is None:
-            return
-        claimed, released = self._revision(named, self._open_answers, open_=True)
-        if claimed or released:
-            self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
-            self._unanswered[:0] = released
-            self._open_answers = (
-                *(input_id for input_id in self._open_answers if input_id not in released),
-                *claimed,
-            )
-            before.append(AnswersRevised(response_id=response_id, claimed=claimed, released=released))
+        if (named := self._named) is not None:
+            self._named = None
+            before.extend(self._revise_open(named))
 
     def _end(
         self,
@@ -1876,8 +1886,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
         frame = self._name_conversation(self._lifecycle_frame(events)) if events else []
-        # A reply whose text trailed the end of its response (cut off, say) is revised once that response is over.
-        frame += self._lifecycle.revise_ended()
+        # A reply whose text made no output, or trailed the end of its response (cut off, say), is revised now.
+        frame += self._lifecycle.revise_rest()
         cuts, self._cuts = self._cuts, []
         # Last, so that a response the frame ends is recorded by the time its cut applies (one still under way gets
         # it when it is).

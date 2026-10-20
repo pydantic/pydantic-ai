@@ -2984,6 +2984,27 @@ async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> No
     )
 
 
+async def test_an_empty_reply_text_still_revises_the_reply_under_way() -> None:
+    """Reply text that says nothing (only audio tags, say) makes no output, but its names revise the reply all the same."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(connection, ws, [_AUDIO, _reply('', event_id=1, response_id='resp_1', answers=[])])
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [
+                OutputTranscript(text='', is_final=True, item_id='resp_1'),
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+            ],
+        ]
+    )
+
+
 class _PacedWebSocket(FakeWebSocket):
     """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
 
