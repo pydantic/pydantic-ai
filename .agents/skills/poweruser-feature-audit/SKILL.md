@@ -59,11 +59,12 @@ candidate tree, so citing it would route this boundary through the tree the boun
 escape. Note the directory's literal path — later phases run in fresh shells — and remove it by that
 path on every exit.
 
-Every phase fans subagents into the candidate worktree, where they pick up its per-worktree
-instruction file. Give each one `$POLICY_BASE_DIR` as its working directory for instruction reads.
-Saying it in the prompt is not equivalent: a prompt cannot bound a callee against the content it is
-reviewing. What this does not close is the harness autoloading the checked-out branch's root
-instruction file at session start, before any skill runs.
+Launch every phase's subagents from the policy-base checkout so startup loads the stable instructions.
+Supply the candidate diff or immutable candidate content for inspection as data.
+Give subagents absolute artifact paths in the candidate worktree.
+Resolve their `local-notes/` outputs against the candidate worktree, not the temporary policy checkout.
+Directing instruction reads to the policy base after a candidate-worktree launch does not replace startup context.
+The parent harness may already have autoloaded the candidate's root instructions before this skill ran.
 
 ### 2. Scope (one subagent, pure scoping)
 

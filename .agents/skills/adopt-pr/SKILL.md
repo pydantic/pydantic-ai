@@ -153,10 +153,15 @@ changes and studies nothing.
 cd "${CANDIDATE_DIR:?substitute the literal path noted in Step 1}" || { echo "candidate worktree gone; stop"; exit 1; }
 BASE_REF_NAME=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
 [ -n "$BASE_REF_NAME" ] || { echo "no base ref; stop"; exit 1; }
-git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
+if git fetch upstream "$BASE_REF_NAME"; then
+  FETCH_REMOTE=upstream
+else
+  FETCH_REMOTE=origin
+  git fetch "$FETCH_REMOTE" "$BASE_REF_NAME" || exit 1
+fi
 MERGE_BASE=$(git merge-base HEAD FETCH_HEAD) || {
-  git fetch --unshallow upstream "$BASE_REF_NAME" 2>/dev/null \
-    || git fetch --deepen=200 upstream "$BASE_REF_NAME"
+  git fetch --unshallow "$FETCH_REMOTE" "$BASE_REF_NAME" 2>/dev/null \
+    || git fetch --deepen=200 "$FETCH_REMOTE" "$BASE_REF_NAME"
   MERGE_BASE=$(git merge-base HEAD FETCH_HEAD)
 }
 [ -n "$MERGE_BASE" ] || { echo "no merge base; stop"; exit 1; }
