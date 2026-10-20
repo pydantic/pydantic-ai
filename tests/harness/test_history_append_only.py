@@ -288,10 +288,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
         Known('prefix', f'{_ISSUES}8965', 'deferred-tools', match='"name": "forecast"', providers=('anthropic',)),
     ),
     'ConversationSearch': _no_default_id('A `search_conversation_history` tool'),
-    # One rewrite per request after the first: the clock crosses an hour on every step.
-    'LogfireMCP': known_by_provider(
-        'prefix', f'{_PULLS}10543', match='current UTC time is within the hour', sections=_SYSTEM_SECTIONS, count=4
-    ),
     'Macroscope': _no_default_id('You can run a local Macroscope code review'),
     'ManagedPrompt': _no_default_id('You answer questions about the news.'),
     # Added to the turn's user prompt on the write, moved to the next turn's, then grown by the second write.
