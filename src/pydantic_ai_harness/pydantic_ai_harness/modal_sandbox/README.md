@@ -158,7 +158,7 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` terminates the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+The `finally` terminates the sandbox even when setup or the run fails. If the task is cancelled while Modal is still creating the sandbox, `backend.ref` is still `None` there, and the sandbox Modal goes on to create keeps running; its ID is logged at `WARNING` (see [Telemetry](#telemetry)), so terminate it with `ModalSandbox().destroy(...)`. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
 ## Clean up
 
@@ -177,7 +177,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
 
 A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
 
-A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
+A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. A run cancelled while Modal is still creating the sandbox leaves no ref for the hook either; see [Telemetry](#telemetry):
 
 ```python
 from typing import Any

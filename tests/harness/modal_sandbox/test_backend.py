@@ -754,9 +754,13 @@ class TestCreate:
         backend = ModalSandboxBackend()
         fake_modal.create_gate = anyio.Event()
         with caplog.at_level(logging.WARNING, logger=_backend.__name__):
-            with anyio.move_on_after(0.05):
-                await backend.run(['true'])
-            assert fake_modal.create_started
+            task = asyncio.create_task(backend.run(['true']))
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
             assert backend.ref is None
             fake_modal.create_gate.set()
             with anyio.fail_after(5):
