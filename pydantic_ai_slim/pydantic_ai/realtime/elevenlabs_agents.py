@@ -147,6 +147,11 @@ _CONTEXT_USAGE_MISSING = (
     'in the ElevenLabs dashboard) for both.'
 )
 
+_REALTIME_MODE_MANAGED_OVERRIDES = {('agent', 'prompt', 'llm'), ('tts', 'model_id')}
+"""The overrides Pydantic AI sends whose settings ElevenLabs manages itself for an agent in Realtime voice mode.
+
+Verified live: the server accepts them, then answers with the agent's Realtime model and TTS model all the same."""
+
 _MCP_APPROVAL_DENIED = (
     'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
     'do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval '
@@ -235,7 +240,9 @@ class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
     """Per-conversation TTS overrides, each gated by its own override toggle on the agent."""
 
     model_id: str
-    """The ElevenLabs TTS model to synthesize with, e.g. `eleven_v3_conversational`."""
+    """The ElevenLabs TTS model to synthesize with, e.g. `eleven_v3_conversational`.
+
+    Raises for an agent in Realtime voice mode, whose TTS model ElevenLabs picks."""
     stability: float
     """Voice stability (0-1); lower is more expressive, higher more consistent."""
     speed: float
@@ -268,7 +275,9 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     elevenlabs_agents_first_message: str
     """The greeting the agent opens with (the `agent.first_message` override)."""
     elevenlabs_agents_llm: str
-    """The LLM the ElevenLabs agent pipeline runs, e.g. `gpt-5.2` (the `agent.prompt.llm` override)."""
+    """The LLM the ElevenLabs agent pipeline runs, e.g. `gpt-5.2` (the `agent.prompt.llm` override).
+
+    Raises for an agent in Realtime voice mode, whose LLM ElevenLabs picks."""
     elevenlabs_agents_tts: ElevenLabsAgentsTTSSettings
     """TTS model and voice-delivery knobs (the `tts.*` overrides)."""
     elevenlabs_agents_dynamic_variables: dict[str, str | int | float | bool]
@@ -359,6 +368,8 @@ class _ConversationConfig(BaseModel):
 
     agent: _AgentSectionConfig | None = None
     conversation: _ConversationSettings | None = None
+    realtime_model: str | None = None
+    """The Eleven Realtime model of an agent in Realtime voice mode, e.g. `eleven_realtime_v1_mini`; `None` in Custom mode."""
 
 
 class _AgentAuthSettings(BaseModel):
@@ -1355,8 +1366,18 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         settings: ElevenLabsAgentsRealtimeModelSettings,
         requested: Sequence[tuple[tuple[str, ...], Any, str]],
     ) -> None:
-        """Raise a `UserError` naming the toggle for a requested override the agent doesn't permit."""
+        """Raise a `UserError` naming the toggle for a requested override the agent doesn't permit.
+
+        Also for one the agent would ignore: in Realtime voice mode, ElevenLabs picks the LLM and TTS model itself.
+        """
+        realtime_model = agent.conversation_config.realtime_model if agent.conversation_config is not None else None
         for path, _, source in requested:
+            if realtime_model is not None and path in _REALTIME_MODE_MANAGED_OVERRIDES:
+                raise UserError(
+                    f'The ElevenLabs agent {self.agent_id!r} is in Realtime voice mode ({realtime_model!r}), where '
+                    f'ElevenLabs manages the `{".".join(path)}` setting and ignores the override required by {source}. '
+                    'Remove the setting, or switch the agent to Custom voice mode in the ElevenLabs dashboard.'
+                )
             if not _override_allowed(agent.override_permissions, path):
                 dotted = '.'.join(path)
                 raise UserError(
