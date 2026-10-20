@@ -27,10 +27,11 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
@@ -418,32 +419,22 @@ class ConversationResult:
     """The same continuation request built twice from the final history at the same instant."""
     parameters: list[ModelRequestParameters]
 
-    def prefix_breaks(self) -> list[PrefixBreak]:
-        """Pairs whose later request doesn't start with the earlier one.
+    def changes(self) -> list[Change]:
+        """Every way a request fails to start with the previous one, one entry per changed block.
 
-        Anthropic leaves `defer_loading: true` tools out of its cache key, so `canonical_prefix_blocks` drops
-        them; their wire contract is still append-only in first-reveal order, so they're compared on their own.
+        Each section is compared on its own, and every block that changed, went missing or was inserted before
+        the end counts, so an expected change can't hide another one in the same request. Anthropic leaves
+        `defer_loading: true` tools out of its cache key, so `canonical_prefix_blocks` drops them; their wire
+        contract is still append-only in first-reveal order, so they're a section of their own.
         """
         blocks = [_cache_blocks(body, self.provider) for body in self.conversation]
-        breaks = [
-            prefix_break
+        # Without recorded parameters (a hand-built result), instruction changes can't be told apart.
+        parameters: list[ModelRequestParameters | None] = [*self.parameters] or [None] * len(blocks)
+        return [
+            change
             for index, (earlier, later) in enumerate(zip(blocks, blocks[1:]), start=1)
-            if (prefix_break := _first_divergence(index, earlier, later)) is not None
+            for change in _changes(index, earlier, later, parameters[index - 1], parameters[index])
         ]
-        if self.provider == 'anthropic':
-            deferred = [
-                [
-                    ('deferred-tools', block)
-                    for block in anthropic_deferred_tool_blocks(_strip_cache_markers(json.loads(body), unwrap=False))
-                ]
-                for body in self.conversation
-            ]
-            breaks += [
-                prefix_break
-                for index, (earlier, later) in enumerate(zip(deferred, deferred[1:]), start=1)
-                if (prefix_break := _first_divergence(index, earlier, later)) is not None
-            ]
-        return sorted(breaks, key=lambda prefix_break: prefix_break.request_index)
 
     def unaddressable_instructions(self) -> list[str]:
         """Distinct instruction blocks the model saw that carry no `id`."""
@@ -454,11 +445,15 @@ class ConversationResult:
                     seen.setdefault(_shorten(part.content, 120))
         return list(seen)
 
-    def nondeterministic_projection(self) -> str | None:
+    def nondeterministic_projection(self) -> list[Change] | None:
+        """How the same request built twice from the same history differs, or `None` if the bytes are identical."""
         first, second = self.replays
         if first == second:
             return None
-        return _describe_byte_difference(first, second)
+        earlier, later = (_cache_blocks(body, self.provider) for body in (first, second))
+        return _changes(1, earlier, later, None, None) or [
+            Change(1, 'request', 0, 'request', *_around_difference(first.decode(), second.decode()), False, False)
+        ]
 
 
 async def run_conversation(
@@ -502,24 +497,30 @@ async def run_conversation(
 
 
 @dataclass(frozen=True)
-class PrefixBreak:
-    """Request `request_index` does not start with request `request_index - 1`."""
+class Change:
+    """A block of request `request_index - 1` that request `request_index` rewrote, dropped or moved."""
 
     request_index: int
     section: str
     block_index: int
+    """The block's index within its section of the earlier request."""
+    identity: str
+    """What changed, from structure rather than text: `instruction:<id>` (`instruction:anonymous` for a part
+    without one) when an instruction part changed, `system-prompt` for the rest of the standing system prompt,
+    `tool:<name>`, `setting:<field>`, or the history part's kind (`user-prompt`, `tool-return`,
+    `model-response`, `system-prompt`)."""
     earlier: str
     later: str
     in_tail: bool
-    """Whether only the last block of the previous request changed: a request-only tail was dropped or replaced."""
+    """Whether it's the last block of the previous request: a request-only tail was dropped or replaced."""
     in_history: bool
-    """Whether the change is in the conversation history, rather than the settings, tools, deferred tools or
-    standing system prompt (including leading system or developer messages) every request starts with."""
+    """Whether it's in the conversation history, rather than the settings, tools, deferred tools or standing
+    system prompt (including leading system or developer messages) every request starts with."""
 
     def __str__(self) -> str:
         return (
-            f'request {self.request_index} rewrote {self.section} block {self.block_index} of request '
-            f'{self.request_index - 1}:\n    before: {self.earlier}\n    after:  {self.later}'
+            f'request {self.request_index} rewrote {self.section} block {self.block_index} ({self.identity}) of '
+            f'request {self.request_index - 1}:\n    before: {self.earlier}\n    after:  {self.later}'
         )
 
 
@@ -585,30 +586,109 @@ def _cache_blocks(body: bytes, provider: Provider) -> list[PrefixBlock]:
     canonical = canonical_prefix_blocks(parsed, f'https://api.example.com{_ENDPOINTS[provider]}')
     assert canonical is not None
     settings = {key: parsed[key] for key in _CACHE_KEYED_SETTINGS[provider] if key in parsed}
-    return [('settings', json.dumps(settings)), *canonical[1]]
+    deferred = (
+        [('deferred-tools', tool) for tool in anthropic_deferred_tool_blocks(parsed)] if provider == 'anthropic' else []
+    )
+    return [('settings', json.dumps(settings)), *canonical[1], *deferred]
 
 
-def _first_divergence(index: int, earlier: list[PrefixBlock], later: list[PrefixBlock]) -> PrefixBreak | None:
-    if later[: len(earlier)] == earlier:
-        return None
-    block_index = next((i for i, (a, b) in enumerate(zip(earlier, later)) if a != b), min(len(earlier), len(later)))
-    before = earlier[block_index] if block_index < len(earlier) else ('-', '<missing>')
-    after = later[block_index] if block_index < len(later) else ('-', '<missing>')
-    section = before[0] if before[0] != '-' else after[0]
-    before_text, after_text = _around_difference(before[1], after[1])
-    standing = next(
-        (i for i, (level, block) in enumerate(earlier) if level == 'messages' and not _is_system_message(block)),
-        len(earlier),
-    )
-    return PrefixBreak(
-        index,
-        section,
-        block_index,
-        before_text,
-        after_text,
-        in_tail=block_index == len(earlier) - 1,
-        in_history=section == 'messages' and block_index >= standing,
-    )
+def _changes(
+    index: int,
+    earlier: list[PrefixBlock],
+    later: list[PrefixBlock],
+    earlier_parameters: ModelRequestParameters | None,
+    later_parameters: ModelRequestParameters | None,
+) -> list[Change]:
+    changes: list[Change] = []
+    instructions = _changed_instructions(earlier_parameters, later_parameters)
+    for section in dict.fromkeys(level for level, _ in [*earlier, *later]):
+        before = [block for level, block in earlier if level == section]
+        after = [block for level, block in later if level == section]
+        if after[: len(before)] == before:
+            continue
+        # Leading system or developer messages are the standing system prompt on the APIs that send it as messages.
+        standing = (
+            next((i for i, block in enumerate(before) if not _is_system_message(block)), len(before))
+            if section == 'messages'
+            else 0
+        )
+        # Report the fewest blocks that explain the difference: each earlier block rewritten or dropped, and for
+        # content inserted ahead of earlier blocks, whichever is smaller: the inserted blocks, or the earlier
+        # blocks it pushed back (a block that moved to the end looks like everything after it being inserted).
+        # Blocks shifted only because an earlier block was rewritten or dropped aren't counted again.
+        opcodes = SequenceMatcher(None, before, after, autojunk=False).get_opcodes()
+        for position, (tag, i1, i2, j1, j2) in enumerate(opcodes):
+            reported: list[tuple[int, str, str]] = []
+            if tag in ('replace', 'delete'):
+                reported = [
+                    (i, before[i], after[j1 + i - i1] if tag == 'replace' and j1 + i - i1 < j2 else '<missing>')
+                    for i in range(i1, i2)
+                ]
+            elif tag == 'insert' and i1 < len(before):
+                # Something after the insertion point covers the rest of the earlier blocks.
+                following = opcodes[position + 1]
+                shifted = range(following[1], following[2]) if following[0] == 'equal' else range(0)
+                if len(shifted) < j2 - j1:
+                    reported = [(i, before[i], f'<moved to {section} block {i + j2 - j1}>') for i in shifted]
+                else:
+                    reported = [(i1, '<missing>', after[j]) for j in range(j1, j2)]
+            for i, old, new in reported:
+                if section == 'system' or (section == 'messages' and i < standing):
+                    identity = ', '.join(instructions) or 'system-prompt'
+                else:
+                    block = new if old == '<missing>' else old
+                    identity = _block_identity(section, block, new if new.startswith('{') else block)
+                changes.append(
+                    Change(
+                        index,
+                        section,
+                        i,
+                        identity,
+                        *_around_difference(old, new),
+                        in_tail=section == 'messages' and i == len(before) - 1,
+                        in_history=section == 'messages' and i >= standing,
+                    )
+                )
+    return changes
+
+
+def _changed_instructions(earlier: ModelRequestParameters | None, later: ModelRequestParameters | None) -> list[str]:
+    """The instruction parts whose content differs between two requests, by id."""
+    if earlier is None or later is None:
+        return []
+
+    def by_id(parameters: ModelRequestParameters) -> dict[str, list[str]]:
+        parts: dict[str, list[str]] = {}
+        for part in parameters.instruction_parts or ():
+            parts.setdefault(f'instruction:{part.id or "anonymous"}', []).append(part.content)
+        return parts
+
+    before, after = by_id(earlier), by_id(later)
+    return sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
+
+
+def _block_identity(section: str, block: str, other: str) -> str:
+    """What a changed block is, from its structure: a tool's name, a setting's field, or a history part's kind."""
+    value, other_value = json.loads(block), json.loads(other)
+    assert is_str_dict(value) and is_str_dict(other_value), f'expected JSON objects, got {block!r}, {other!r}'
+    if section == 'settings':
+        keys = sorted(value.keys() | other_value.keys())
+        return ', '.join(f'setting:{key}' for key in keys if value.get(key) != other_value.get(key))
+    if section in ('tools', 'deferred-tools'):
+        function = value.get('function')
+        name = function.get('name') if is_str_dict(function) else value.get('name') or value.get('type')
+        return f'tool:{name}'
+    role, kind, content = value.get('role'), value.get('type'), value.get('content')
+    if role in ('system', 'developer'):
+        return 'system-prompt'
+    if role == 'tool' or kind == 'function_call_output':
+        return 'tool-return'
+    if role == 'user':
+        is_tool_result = _is_list(content) and any(
+            is_str_dict(part) and part.get('type') == 'tool_result' for part in content
+        )
+        return 'tool-return' if is_tool_result else 'user-prompt'
+    return 'model-response'
 
 
 def _is_system_message(block: str) -> bool:
@@ -622,11 +702,6 @@ def _around_difference(a: str, b: str, context: int = 100) -> tuple[str, str]:
     start = max(0, offset - context)
     prefix = '…' if start else ''
     return prefix + a[start : offset + context], prefix + b[start : offset + context]
-
-
-def _describe_byte_difference(a: bytes, b: bytes) -> str:
-    before, after = _around_difference(a.decode(errors='replace'), b.decode(errors='replace'))
-    return f'\n    first:  {before}\n    second: {after}'
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -646,12 +721,8 @@ class CapabilityRef:
     """The module that defines it."""
 
     def load(self) -> type[AbstractCapability[Any]]:
-        """Import the class, skipping the test when its optional dependency group isn't installed."""
-        try:
-            module = importlib.import_module(self.module)
-        except ImportError as exc:  # pragma: lax no cover
-            pytest.skip(f'`{self.name}` needs an optional dependency that is not installed: {exc}')
-        cls = getattr(module, self.name)
+        """Import the class. Gate optional dependencies before calling this: any `ImportError` here is a failure."""
+        cls = getattr(importlib.import_module(self.module), self.name)
         assert _is_capability_class(cls), f'`{self.module}.{self.name}` is not a capability class'
         return cls
 
@@ -734,6 +805,17 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
     return inspect.isclass(obj) and issubclass(obj, AbstractCapability)
 
 
+def skip_unless_installed(name: str, optional_dependencies: Mapping[str, str]) -> None:
+    """Skip the case for `name` when the module its optional dependency group provides isn't installed.
+
+    Checked with `find_spec` rather than imported, since several of these SDKs are kept out of collection
+    (`TID253`). Only capabilities listed here may be skipped: any other `ImportError` fails the test.
+    """
+    module = optional_dependencies.get(name)
+    if module is not None and importlib.util.find_spec(module) is None:  # pragma: lax no cover
+        pytest.skip(f'`{name}` needs `{module}`, from an optional dependency group that is not installed')
+
+
 Fixture = Callable[[Path], 'AbstractCapability[Any] | Sequence[AbstractCapability[Any]]']
 """Builds a configured capability, plus any it depends on (a workspace, say), in the test's `tmp_path`."""
 
@@ -770,25 +852,17 @@ Check = Literal['prefix', 'ids', 'determinism']
 class Known:
     """Expected failures of one check, linked to the issue or PR that fixes them.
 
-    An entry explains exactly `count` violations of `check` in `section` whose report contains `match`, on each
-    of `providers`: a further violation with the same text, or one fewer, fails the test, so a known break can't
-    absorb a new one. Sections are a prefix break's request section (`settings`, `tools`, `system`, `messages`,
-    `deferred-tools`), `instructions` for the `ids` check and `request` for `determinism`.
+    An entry explains exactly `count` violations of `check` with the structural `identity` (see
+    `Change.identity`; `instruction:anonymous` for the `ids` check), on each of `providers`. Matching never reads
+    the model-visible text, which untrusted content can imitate. One violation more or fewer fails the test, so
+    a known break can't absorb a new one.
     """
 
     check: Check
     issue: str
-    section: str
-    match: str
+    identity: str
     count: int = 1
     providers: tuple[Provider, ...] = PROVIDERS
-
-
-def known_by_provider(
-    check: Check, issue: str, *, match: str, sections: dict[Provider, str], count: int = 1
-) -> tuple[Known, ...]:
-    """The same expected failure on several providers, which put the affected block in different sections."""
-    return tuple(Known(check, issue, section, match, count, (provider,)) for provider, section in sections.items())
 
 
 @dataclass(frozen=True)
@@ -812,12 +886,12 @@ class Allowed:
 
 @dataclass(frozen=True)
 class Violation:
-    section: str
+    identity: str
     report: str
 
 
-def _break_violations(breaks: Sequence[PrefixBreak]) -> list[Violation]:
-    return [Violation(prefix_break.section, str(prefix_break)) for prefix_break in breaks]
+def _change_violations(changes: Sequence[Change]) -> list[Violation]:
+    return [Violation(change.identity, str(change)) for change in changes]
 
 
 def _violations(
@@ -825,39 +899,42 @@ def _violations(
 ) -> dict[Check, tuple[str, list[Violation]]]:
     """Every violation of each check, as a summary and one item per violation."""
     violations: dict[Check, tuple[str, list[Violation]]] = {}
-    breaks = result.prefix_breaks()
+    changes = result.changes()
     if allowed is not None and result.provider not in allowed.providers:
         allowed = None
+    prefix: list[Violation] = []
     if allowed is None:
-        if breaks:
-            violations['prefix'] = ('rewrote the prefix', _break_violations(breaks))
-    elif not breaks:
-        violations['prefix'] = (
-            'no longer moves the prefix',
-            [Violation('prefix', f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix')],
-        )
-    elif not allowed.standing and (outside := _break_violations([b for b in breaks if not b.in_history])):
-        violations['prefix'] = ('may only rewrite history, but changed the settings, tools or system prompt', outside)
-    elif allowed.tail:
-        if deep := _break_violations([b for b in breaks if not b.in_tail]):
-            violations['prefix'] = (
-                'may only replace the last block of each request, but rewrote earlier history',
-                deep,
+        prefix = _change_violations(changes)
+    elif not changes:
+        prefix = [Violation('allowed', f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix')]
+    else:
+        # Each rule applies to each change on its own, so an allowed move can't carry another one along.
+        for change in changes:
+            if not allowed.standing and not change.in_history:
+                prefix.append(Violation(change.identity, f'may only rewrite history, but {change}'))
+            elif allowed.tail and not change.in_tail:
+                prefix.append(
+                    Violation(change.identity, f'may only replace the last block of each request, but {change}')
+                )
+        moves = len({change.request_index for change in changes})
+        if not allowed.tail and moves > allowed.max_moves:
+            prefix.append(
+                Violation(
+                    'allowed',
+                    f'moved the prefix in {moves} requests, more than the {allowed.max_moves} its `ALLOWED` entry permits',
+                )
             )
-    elif len(breaks) > allowed.max_moves:
-        violations['prefix'] = (
-            f'moved the prefix {len(breaks)} times, more than the {allowed.max_moves} its `ALLOWED` entry permits',
-            _break_violations(breaks),
-        )
+    if prefix:
+        violations['prefix'] = ('broke the append-only prefix', prefix)
     if check_ids and (unaddressable := result.unaddressable_instructions()):
         violations['ids'] = (
             'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
-            [Violation('instructions', block) for block in unaddressable],
+            [Violation('instruction:anonymous', block) for block in unaddressable],
         )
-    if difference := result.nondeterministic_projection():
+    if (differences := result.nondeterministic_projection()) is not None:
         violations['determinism'] = (
             'built the same request twice from the same history with different bytes',
-            [Violation('request', difference.strip())],
+            _change_violations(differences),
         )
     return violations
 
@@ -873,8 +950,8 @@ def check_conversation(
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
     violations = _violations(result, allowed=allowed, check_ids=check_ids)
 
-    # Each violation must be matched by an entry with room for it, so a known break can't absorb a new one
-    # in the same conversation, even one whose report contains the same text.
+    # Each violation must be matched by an entry for its identity with room for it, so a known break can't
+    # absorb a new one in the same conversation.
     applicable = [k for k in known if result.provider in k.providers]
     uses = [0] * len(applicable)
     unexpected: list[str] = []
@@ -885,7 +962,7 @@ def check_conversation(
                 (
                     i
                     for i, k in enumerate(applicable)
-                    if k.check == check and k.section == item.section and k.match in item.report and uses[i] < k.count
+                    if k.check == check and k.identity == item.identity and uses[i] < k.count
                 ),
                 None,
             )

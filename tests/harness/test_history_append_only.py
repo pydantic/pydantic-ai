@@ -78,8 +78,8 @@ from ..append_only import (
     check_conversation,
     discover_capabilities,
     inject_clock,
-    known_by_provider,
     run_conversation,
+    skip_unless_installed,
 )
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
@@ -150,11 +150,10 @@ def _forecast(city: str) -> str:
 
 
 def _modal_sandbox() -> AbstractCapability[Any]:
-    # Imported here, not at module level, so collecting this file never imports the Modal SDK.
-    try:
-        from pydantic_ai_harness.modal_sandbox import ModalSandbox
-    except ImportError as exc:  # pragma: lax no cover
-        pytest.skip(f'`ModalSandbox` needs an optional dependency that is not installed: {exc}')
+    # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
+    # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
+    from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
     return ModalSandbox(warn_if_no_tools=False)
 
 
@@ -268,40 +267,36 @@ EXEMPT: dict[str, Exempt] = {
 }
 
 _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
-_SYSTEM_SECTIONS: dict[Provider, str] = {'anthropic': 'system', 'openai-responses': 'system', 'openai-chat': 'messages'}
-"""Where each provider sends the system prompt: Chat Completions sends it as leading messages."""
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-def _no_default_id(block: str) -> tuple[Known, ...]:
-    """A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
-    return (Known('ids', f'{_ISSUES}7237 (no default `id`)', section='instructions', match=block),)
+_NO_DEFAULT_ID = (Known('ids', f'{_ISSUES}7237 (no default `id`)', 'instruction:anonymous'),)
+"""A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
 
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'AskUser': _no_default_id('When the task is ambiguous'),
+    'AskUser': _NO_DEFAULT_ID,
     'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', section='instructions', match='The following functions are available'),
-        # Discovering a deferred tool rewrites the catalog in the system prompt, and on Anthropic folds the
-        # tool into `run_code` by dropping its deferred declaration.
-        *known_by_provider('prefix', f'{_ISSUES}8965', match='async def forecast', sections=_SYSTEM_SECTIONS),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', match='"name": "forecast"', providers=('anthropic',)),
+        Known('ids', f'{_ISSUES}8965', 'instruction:anonymous'),
+        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
+        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
+        # swapped for the local `search_tools` function once something has been discovered.
+        Known('prefix', f'{_ISSUES}8965', 'instruction:anonymous'),
+        Known('prefix', f'{_ISSUES}8965', 'tool:forecast', providers=('anthropic', 'openai-responses')),
+        Known('prefix', f'{_ISSUES}8965', 'tool:tool_search', providers=('openai-responses',)),
     ),
-    'ConversationSearch': _no_default_id('A `search_conversation_history` tool'),
-    'Macroscope': _no_default_id('You can run a local Macroscope code review'),
-    'ManagedPrompt': _no_default_id('You answer questions about the news.'),
+    'ConversationSearch': _NO_DEFAULT_ID,
+    'Macroscope': _NO_DEFAULT_ID,
+    'ManagedPrompt': _NO_DEFAULT_ID,
     # Added to the turn's user prompt on the write, moved to the next turn's, then grown by the second write.
-    'Memory': (Known('prefix', f'{_ISSUES}8996', 'messages', match='<memory>', count=3),),
-    # The summary takes the place of the standing system prompt's first block instead of joining history. On
-    # Responses the standing prompt is `instructions`, which the summary leaves alone.
-    'SummarizingCompaction': known_by_provider(
-        'prefix',
-        f'{_ISSUES}7289',
-        match='Summary of previous conversation',
-        sections={'anthropic': 'system', 'openai-chat': 'messages'},
+    'Memory': (Known('prefix', f'{_ISSUES}8996', 'user-prompt', count=3),),
+    # The summary takes the place of the agent's instructions in the standing system prompt instead of joining
+    # history. On Responses the standing prompt is `instructions`, which the summary leaves alone.
+    'SummarizingCompaction': (
+        Known('prefix', f'{_ISSUES}7289', 'system-prompt', providers=('anthropic', 'openai-chat')),
     ),
-    'PlaywrightBrowser': _no_default_id('You have a real web browser powered by Playwright'),
-    'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
+    'PlaywrightBrowser': _NO_DEFAULT_ID,
+    'PydanticAIDocs': _NO_DEFAULT_ID,
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
@@ -335,6 +330,21 @@ ALLOWED: dict[str, Allowed] = {
 }
 """Documented prefix movers, checked exactly."""
 
+OPTIONAL_DEPENDENCIES: dict[str, str] = {
+    'BrowserUse': 'browser_use',
+    'E2BSandbox': 'e2b',
+    'ExaAgent': 'exa_py',
+    'ExaSearch': 'exa_py',
+    'ModalSandbox': 'modal',
+    'PlaywrightBrowser': 'playwright',
+    'PromptInjectionDefender': 'stackone_defender',
+    'SmolSandbox': 'smol',
+    'SpritesSandbox': 'sprites',
+    'YouResearch': 'youdotcom',
+    'YouSearch': 'youdotcom',
+}
+"""Capabilities whose module needs an optional dependency group, by the module that group provides."""
+
 ENV: dict[str, dict[str, str]] = {
     'ExaAgent': {'EXA_API_KEY': 'test-key'},
     'ExaSearch': {'EXA_API_KEY': 'test-key'},
@@ -348,7 +358,9 @@ CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
 
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    tables = FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
+    tables = (
+        FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
+    ) | OPTIONAL_DEPENDENCIES.keys()
     stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
@@ -358,6 +370,7 @@ def test_every_capability_has_a_case():
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
+    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
     for key, value in ENV.get(name, {}).items():
         monkeypatch.setenv(key, value)
     if name in VARIANTS:
