@@ -419,15 +419,16 @@ class TaskInfo:
     finished_at: datetime | None
     background: bool
     """Whether it runs in the background, so the run that started it does not wait for it."""
-    backgroundable: bool
-    """Whether `TaskCatalog.background` can let the run that waits for it go on: it runs in the foreground of
-    a run, and its workspace can outlive that run. A task the user prompted is waited for by no run."""
     resumable: bool
-    """Whether `TaskCatalog.resume` can continue it once it has finished; one-shot agents such as `Explore` cannot."""
+    """Whether `TaskCatalog.resume` and `prompt` can continue it once it has finished; one-shot agents such as
+    `Explore` cannot."""
     activity: str
     """Its last action, as the `/tasks` panel shows it, such as `starting`, `thinking`, or `running: shell`."""
     usage: RunUsage
     """What its model requests have reported so far."""
+    backgroundable: bool = False
+    """Whether `TaskCatalog.background` can let the run that waits for it go on: it runs in the foreground of
+    a run, and its workspace can outlive that run. A task the user prompted is waited for by no run."""
 
 
 class TaskCatalog(Protocol):
