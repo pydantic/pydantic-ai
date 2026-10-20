@@ -130,32 +130,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- requested recovery only; workflow_run receives no Z.AI key.
           ISSUE_NUMBER: ${{ inputs.recover_issue }}
-        run: |
-          python3 - <<'PYTHON'
-          import json
-          import os
-          import urllib.request
-
-          request = urllib.request.Request(
-              'https://api.z.ai/api/monitor/usage/quota/limit',
-              headers={'Authorization': os.environ['ZAI_API_KEY'], 'Accept': 'application/json'},
-          )
-          with urllib.request.urlopen(request, timeout=20) as response:
-              payload = json.load(response)
-              print('HTTP status:', response.status)
-          print('Response code:', payload.get('code') == 200)
-          print('Response success:', payload.get('success') is True)
-          for entry in payload.get('data', {}).get('limits', []):
-              row = {}
-              limit_type = entry.get('type')
-              row['type'] = limit_type if limit_type in ('TOKENS_LIMIT', 'CREDIT_LIMIT', 'TIME_LIMIT') else 'unrecognized'
-              for field in ('unit', 'number', 'percentage', 'nextResetTime'):
-                  if field in entry:
-                      value = entry[field]
-                      row[field] = value if value is None or isinstance(value, (int, float, bool)) else 'invalid_type'
-              print(json.dumps(row, allow_nan=False))
-          PYTHON
-          python3 .github/scripts/agent_provider_health.py monitor \
-            --repository "$GITHUB_REPOSITORY" \
-            --recover-issue "$ISSUE_NUMBER" \
-            --dry-run
+        run: >-
+          python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --recover-issue "$ISSUE_NUMBER"
