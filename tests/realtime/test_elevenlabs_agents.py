@@ -154,6 +154,7 @@ def agent_json(
     tools: list[dict[str, Any]] | None = None,
     tool_ids: list[str] | None = None,
     custom_llm_extra_body: bool = False,
+    realtime_model: str | None = None,
 ) -> dict[str, Any]:
     """A `GET /v1/convai/agents/{id}` response holding just what the preflight reads."""
     return {
@@ -164,6 +165,7 @@ def agent_json(
                 'prompt': {'prompt': 'Existing', 'tools': tools or [], 'tool_ids': tool_ids or []},
             },
             'conversation': {'client_events': ['audio', 'agent_response', 'user_transcript', 'context_usage']},
+            'realtime_model': realtime_model,
         },
         'platform_settings': {
             'auth': {'enable_auth': False},
@@ -508,6 +510,47 @@ async def test_each_settings_override_requires_its_toggle() -> None:
         with pytest.raises(UserError, match=toggle_pattern):
             async with _connect(model, model_settings=settings):
                 pass  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('settings', 'setting'),
+    [
+        (ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_llm='gpt-5.2'), r'agent\.prompt\.llm'),
+        (
+            ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tts={'model_id': 'eleven_turbo_v2'}),
+            r'tts\.model_id',
+        ),
+    ],
+    ids=['llm', 'tts-model'],
+)
+async def test_an_agent_in_realtime_voice_mode_refuses_the_overrides_it_ignores(
+    settings: ElevenLabsAgentsRealtimeModelSettings, setting: str
+) -> None:
+    """In Realtime voice mode, ElevenLabs picks the LLM and TTS model itself.
+
+    Verified live: the server accepts both overrides and answers with the agent's Realtime model and TTS model all the
+    same, so the preflight refuses them rather than let them be ignored. A unit test rather than a recording, because
+    the preflight raises before anything is sent.
+    """
+    model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED, realtime_model='eleven_realtime_v1_mini')))
+    with pytest.raises(UserError, match=rf"Realtime voice mode \('eleven_realtime_v1_mini'\).*`{setting}`"):
+        async with _connect(model, model_settings=settings):
+            pass  # pragma: no cover
+
+
+async def test_an_agent_in_realtime_voice_mode_takes_the_overrides_it_honors() -> None:
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    settings = ElevenLabsAgentsRealtimeModelSettings(
+        elevenlabs_agents_voice_id='voice_1', elevenlabs_agents_tts={'stability': 0.4}
+    )
+    model = _model(RestRecorder(agent_json(overrides=ALL_OVERRIDES_ENABLED, realtime_model='eleven_realtime_v1_mini')))
+    with patched_connect(ws):
+        async with _connect(model, instructions='Be helpful.', model_settings=settings):
+            pass
+    assert ws.sent_frames()[0]['conversation_config_override'] == {
+        'agent': {'prompt': {'prompt': 'Be helpful.'}},
+        'tts': {'voice_id': 'voice_1', 'stability': 0.4},
+    }
 
 
 async def test_custom_llm_extra_body_requires_its_sibling_toggle() -> None:
