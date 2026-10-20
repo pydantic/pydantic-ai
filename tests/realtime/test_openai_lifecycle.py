@@ -1012,16 +1012,16 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
-    # The two notes are equal, so only identity tells them apart.
-    assert first == second
+    # The two note the same inputs, so only identity tells them apart.
+    assert first.sent_before == second.sent_before
     lifecycle.audio_commit_failed(second)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
     third = lifecycle.audio_commit_sent()
     lifecycle.audio_commit_failed(first)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
     lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(third)
-    assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
+    assert not lifecycle._commits  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_a_reconnect_asks_again_for_a_request_a_provider_response_overtook() -> None:

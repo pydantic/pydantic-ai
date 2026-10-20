@@ -740,15 +740,106 @@ def test_gemini_async_result_cut_in_does_not_end_the_wait() -> None:
     run_clean(async_gemini(), scenario)
 
 
-@known('SIM-25')
-def test_known_turn_committed_before_closing_is_lost() -> None:
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('transcription', [True, False])
+@pytest.mark.parametrize('ending', ['close', 'drop', 'drop_for_good'])
+@pytest.mark.parametrize('acknowledged', [True, False])
+def test_turn_committed_before_the_end_is_recorded(
+    dialect: Dialect, transcription: bool, ending: str, acknowledged: bool
+) -> None:
+    """SIM-25 and SIM-34, fixed: a turn `commit_audio()` committed is recorded, without the transcript or reply
+    still to come, when the session closes or the connection drops, even before the client read the provider's
+    commit."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.commit_audio()
+        if acknowledged:
+            sim.deliver()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop(refuse_dials=2 if ending == 'drop_for_good' else 0)
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=transcription)),
+        scenario,
+    )
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_hand_commit_unacknowledged_under_vad_ends_the_turn_under_way(dialect: Dialect, ending: str) -> None:
+    """A hand commit server VAD heard the start of is that one turn, not a second, when the session ends first."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_hand_commit_of_nothing_after_a_vad_commit_is_no_turn(dialect: Dialect, ending: str) -> None:
+    """Server VAD committed the audio already, so a hand commit unacknowledged when the session ends commits nothing."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.settle()
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@known('SIM-40')
+def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.send_audio()
+        sim.commit_audio()
+        sim.deliver(3)
         sim.close()
         sim.settle()
 
-    reproduce('SIM-25', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=True)), scenario)
+    reproduce('SIM-40', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect, ending: str) -> None:
+    """A hand commit that went out as server VAD committed the same audio, with neither acknowledgement read when the
+    session ends, isn't taken for a second turn: it may well have committed nothing."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.commit_audio()
+        sim.deliver(3 if dialect == 'xai' else 2)
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
 def test_turn_committed_after_a_racing_clear_is_recorded() -> None:
@@ -798,17 +889,6 @@ def test_input_held_behind_a_lost_reply_is_replayed() -> None:
         sim.settle()
 
     run_clean(OpenAISimulation(), scenario)
-
-
-@known('SIM-34')
-def test_known_core_loses_a_hand_commit_unanswered_at_a_drop() -> None:
-    def scenario(sim: OpenAISimulation) -> None:
-        sim.send_audio()
-        sim.commit_audio()
-        sim.drop()
-        sim.settle()
-
-    reproduce('SIM-34', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
 
 
 def test_clear_after_an_unread_vad_commit_keeps_the_turn() -> None:
