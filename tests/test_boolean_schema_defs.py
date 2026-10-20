@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -33,6 +34,11 @@ def test_inline_boolean_defs(
         expected['not'] = {}
 
     walker = transformer(schema)
+    if transformer is GoogleOpenAPISchemaTransformer and not definition:
+        with pytest.raises(UserError, match='cannot represent a boolean `false` definition'):
+            walker.walk()
+        assert schema == original
+        return
     result = walker.walk()
     assert result == (expected if root else {'type': 'object', 'properties': {'x': expected}, 'required': ['x']})
     assert walker.walk() == result
@@ -50,7 +56,10 @@ def test_openai_boolean_root_defs(definition: bool, strict: bool | None, sibling
     original = deepcopy(schema)
     expected: JsonSchema = {'$defs': {'X': definition}, **deepcopy(siblings)}
     if not definition:
-        expected['not'] = {}
+        with pytest.raises(UserError, match='does not support boolean `false` root schemas'):
+            OpenAIJsonSchemaTransformer(schema, strict=strict)
+        assert schema == original
+        return
 
     transformer = OpenAIJsonSchemaTransformer(schema, strict=strict)
     assert transformer.walk() == expected
@@ -66,6 +75,11 @@ def test_openai_boolean_root_defs(definition: bool, strict: bool | None, sibling
 def test_openai_boolean_root_defs_escaped_names(name: str, reference: str, definition: bool):
     schema: JsonSchema = {'$ref': reference, '$defs': {name: definition}, 'not': {'type': 'string'}}
     original = deepcopy(schema)
+    if not definition:
+        with pytest.raises(UserError, match='does not support boolean `false` root schemas'):
+            OpenAIJsonSchemaTransformer(schema, strict=False)
+        assert schema == original
+        return
     expected: JsonSchema = {'$defs': {name: definition}, 'not': {'type': 'string'} if definition else {}}
     assert OpenAIJsonSchemaTransformer(schema, strict=False).walk() == expected
     assert schema == original
@@ -120,6 +134,15 @@ def test_boolean_defs_tool_preparation(profile: ModelProfile | None, inlined: bo
     )
     original = deepcopy(parameters)
     model = TestModel(profile=profile)
+    if (
+        profile is not None
+        and profile.get('json_schema_transformer') is GoogleOpenAPISchemaTransformer
+        and not definition
+    ):
+        with pytest.raises(UserError, match='cannot represent a boolean `false` definition'):
+            model.prepare_request(None, parameters)
+        assert parameters == original
+        return
     _, prepared = model.prepare_request(None, parameters)
     expected = deepcopy(schema)
     if inlined:

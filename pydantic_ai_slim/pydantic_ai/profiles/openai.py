@@ -646,10 +646,10 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
             root_schema = self.defs.get(root_key)
             if isinstance(root_schema, bool):
+                if not root_schema:
+                    raise UserError('OpenAI does not support boolean `false` root schemas, which reject all inputs.')
                 # Resolve boolean roots before the walk can rewrite their references to `#`.
                 self.schema = {key: value for key, value in schema.items() if key != '$ref'}
-                if not root_schema:
-                    self.schema['not'] = {}
                 self.root_ref = None
 
     def walk(self) -> JsonSchema:
