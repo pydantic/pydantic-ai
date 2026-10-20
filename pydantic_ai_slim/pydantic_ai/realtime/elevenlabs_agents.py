@@ -1570,6 +1570,9 @@ class _CascadeLifecycle(InferredLifecycle):
     ElevenLabs' speech recognition hands the agent's LLM the user's words, and sends their transcript, before
     the LLM answers them. So audio with no transcript is never what a reply answers: microphone audio streamed
     before the agent's greeting (a reply nobody asked for) makes no spoken turn ahead of it.
+
+    A reply's text names the typed turns it answers, by the `id` each went out with (`in_response_to_ids`), which
+    revises what the order said (`AnswersRevised`): a greeting that text cut off as it started answers none of it.
     """
 
     transcripts_lag_replies = False
