@@ -209,8 +209,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_skills,
     ),
     'Memory': Narrows(
-        'one notebook per id; merging two would keep one store and namespace and drop the other notebook',
-        lambda cls: (cls(heading='First'), cls(heading='Second')),
+        'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
+        lambda cls: (cls(namespace='first'), cls(namespace='second')),
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
