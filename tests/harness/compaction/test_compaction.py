@@ -97,7 +97,15 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     _format_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
+from tests.conftest import try_import
 from tests.harness.conftest import agent_run_names
+
+with try_import() as anthropic_imports:
+    from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from tests.models.test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 try:
     from logfire.testing import CaptureLogfire
@@ -142,6 +150,10 @@ def _make_ctx(
         capabilities: dict[str, AbstractCapability[None]] = dataclasses.field(
             default_factory=dict[str, AbstractCapability[None]]
         )
+        enqueued: list[Any] = dataclasses.field(default_factory=list[Any])
+
+        def enqueue(self, *content: Any) -> None:
+            self.enqueued.extend(content)
 
     return _FakeCtx(usage=usage, messages=list(messages or ()), usage_limits=usage_limits)
 
@@ -164,6 +176,47 @@ def _make_request_context(messages: list[ModelMessage], model: Model | None = No
         model_settings=None,
         model_request_parameters=ModelRequestParameters(),
     )
+
+
+def _legacy_warning() -> ModelRequest:
+    """A warning the way older versions of `WarnNearLimits` sent it: a user prompt marked with metadata."""
+    text = '[WarnNearLimits]\nCRITICAL: Configured run limits are approaching.'
+    return ModelRequest(parts=[UserPromptPart([TextContent(text, metadata='pydantic-ai-harness.warn-near-limits.v1')])])
+
+
+def _enqueued_warning(ctx: Any) -> str:
+    """The text of the one warning `WarnNearLimits` enqueued, checking it's a request-scoped system prompt."""
+    [part] = ctx.enqueued
+    assert isinstance(part, SystemPromptPart)
+    assert part.scope == 'request'
+    return part.content
+
+
+def _request_texts(messages: list[ModelMessage]) -> list[str]:
+    """Return the text of every user prompt in *messages*, in order."""
+    return [
+        _part_text(part)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
+def _anthropic_blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Every content block of an Anthropic `messages` list with its role, without `cache_control`."""
+    return [
+        (message['role'], {key: value for key, value in block.items() if key != 'cache_control'})
+        for message in messages
+        for block in message['content']
+    ]
+
+
+def _anthropic_cached_blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """The blocks up to and including the last one carrying a `cache_control` breakpoint: what the request cached."""
+    flagged = [bool(block.get('cache_control')) for message in messages for block in message['content']]
+    assert any(flagged)
+    return _anthropic_blocks(messages)[: len(flagged) - flagged[::-1].index(True)]
 
 
 def _user(text: str) -> ModelRequest:
@@ -722,8 +775,8 @@ class TestWarnNearLimits:
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=10)
         result = await lw.before_model_request(ctx, rc)
-        # No warning appended.
         assert len(result.messages) == 1
+        assert ctx.enqueued == []
 
     async def test_iteration_warning_urgent(self):
         lw = WarnNearLimits(max_iterations=20, warning_threshold=0.7, critical_remaining_iterations=3)
@@ -732,27 +785,22 @@ class TestWarnNearLimits:
         # 15/20 = 75% usage, 5 remaining > critical_remaining_iterations=3 => URGENT.
         ctx = _make_ctx(requests=15)
         result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 2
-        last = result.messages[-1]
-        assert isinstance(last, ModelRequest)
-        text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'URGENT' in text.content
-        assert '[WarnNearLimits]' in text.content
+        # The warning is enqueued, not added to the request's list: the run delivers it into this
+        # request and into history.
+        assert result.messages == messages
+        assert _enqueued_warning(ctx) == snapshot("""\
+URGENT: Configured run limits are approaching.
+- Iterations: 15/20 requests used (75%); 5 remaining.
+Complete the current task efficiently and avoid unnecessary tool calls.\
+""")
 
     async def test_iteration_warning_critical(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7, critical_remaining_iterations=3)
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=9)  # 1 remaining.
-        result = await lw.before_model_request(ctx, rc)
-        last = result.messages[-1]
-        assert isinstance(last, ModelRequest)
-        text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        await lw.before_model_request(ctx, rc)
+        assert _enqueued_warning(ctx).startswith('CRITICAL')
 
     async def test_context_window_warning(self):
         lw = WarnNearLimits(max_context_tokens=10)
@@ -760,50 +808,166 @@ class TestWarnNearLimits:
         messages: list[ModelMessage] = [_user('x' * 40)]  # ~10 tokens.
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
-        result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 2
+        await lw.before_model_request(ctx, rc)
+        assert 'Context window:' in _enqueued_warning(ctx)
 
     async def test_total_tokens_warning(self):
         lw = WarnNearLimits(max_total_tokens=100)
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(input_tokens=50, output_tokens=30)  # 80 total.
-        result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 2
+        await lw.before_model_request(ctx, rc)
+        assert 'Total tokens:' in _enqueued_warning(ctx)
 
-    async def test_strips_old_warnings(self):
+    async def test_strips_legacy_warnings(self):
+        """A user-prompt warning an older version left in a saved history is left out of the request."""
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        old_warning = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nOld warning')])
-        messages: list[ModelMessage] = [_user('hi'), old_warning]
+        messages: list[ModelMessage] = [_user('hi'), _legacy_warning()]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)  # Below threshold.
         result = await lw.before_model_request(ctx, rc)
         # Old warning removed, no new warning added (below threshold).
         assert len(result.messages) == 1
+        assert ctx.enqueued == []
 
-    async def test_strips_legacy_limit_warner_markers(self):
+    async def test_keeps_text_that_only_looks_like_a_warning(self):
+        """Warnings are recognized by their metadata, never by text a user could also write."""
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
-        legacy_warning = ModelRequest(parts=[UserPromptPart(content='[LimitWarner]\nOld warning')])
-        messages: list[ModelMessage] = [_user('hi'), legacy_warning]
-        rc = _make_request_context(messages)
+        messages: list[ModelMessage] = [
+            _user('Why do my logs show [WarnNearLimits] and [LimitWarner] lines?'),
+            _assistant('They are run-limit warnings.'),
+            ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nquoted in a system prompt')]),
+            _user('[WarnNearLimits]\nCRITICAL: Configured run limits are approaching.'),
+        ]
+        rc = _make_request_context(list(messages))
         ctx = _make_ctx(requests=5)  # Below threshold.
         result = await lw.before_model_request(ctx, rc)
-        # Warnings injected before the rename are still recognized and stripped.
-        assert len(result.messages) == 1
+        assert result.messages == messages
+
+    async def test_no_warning_after_a_suspended_response(self):
+        """A provider-resume request continues the paused one, so it gets no warning of its own.
+
+        The core holds anything enqueued then for the next request, which gets a warning of its own.
+        """
+        lw = WarnNearLimits(max_iterations=10, warning_threshold=0.5)
+        messages: list[ModelMessage] = [_user('hi'), ModelResponse(parts=[TextPart('Checking.')], state='suspended')]
+        rc = _make_request_context(list(messages))
+        ctx = _make_ctx(requests=9)
+        result = await lw.before_model_request(ctx, rc)
+        assert result.messages == messages
+        assert ctx.enqueued == []
+
+    async def test_user_prompt_quoting_the_marker_survives_a_run(self):
+        """A user prompt that quotes the warning marker reaches every request and stays in history."""
+        prompt = 'Why do my logs show [WarnNearLimits] lines?'
+        seen: list[list[ModelMessage]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[WarnNearLimits(max_iterations=2, warning_threshold=0.5)])
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'found'
+
+        result = await agent.run(prompt)
+
+        assert result.output == 'done'
+        # The second request is past the threshold; its warning is a system prompt, not user text.
+        assert [_request_texts(messages) for messages in seen] == snapshot(
+            [
+                [prompt],
+                [
+                    prompt,
+                    """\
+<system>CRITICAL: Configured run limits are approaching.
+- Iterations: 1/2 requests used (50%); 1 remaining.
+Complete the current task immediately and avoid unnecessary tool calls.</system>\
+""",
+                ],
+            ]
+        )
+        assert _request_texts(result.all_messages()) == [prompt]
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    @pytest.mark.parametrize('model_name', ['claude-sonnet-4-5', 'claude-opus-5-5'])
+    async def test_warnings_leave_the_cached_prefix_unchanged(self, allow_model_requests: None, model_name: str):
+        """Each request starts with what the previous one cached, byte for byte, with a warning on every request.
+
+        A warning used to be a user prompt sent with its own request only, and the message cache breakpoint
+        landed on it, so the next request, which no longer had it, couldn't read anything the previous one
+        cached. It's a request-scoped system prompt now, kept in history, and the breakpoint goes on the
+        block before it. Opus 5.5 is sent every warning as a `clear_at` system message, so its whole wire is
+        append-only; Sonnet 4.5, which can't clear one itself, is sent only the current one, as `<system>`
+        text after the breakpoint.
+        """
+        responses = [
+            completion_message(
+                [BetaToolUseBlock(id=f'call_{i}', input={}, name='step', type='tool_use')],
+                BetaUsage(input_tokens=10, output_tokens=1),
+            )
+            for i in range(3)
+        ]
+        responses.append(
+            completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=10, output_tokens=1))
+        )
+        client = MockAnthropic.create_mock(responses)
+        model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
+        agent = Agent(
+            model,
+            capabilities=[WarnNearLimits(max_iterations=10, warning_threshold=0.1)],
+            model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        bodies = get_mock_chat_completion_kwargs(client)
+        assert len(bodies) == 4
+        for previous, current in zip(bodies, bodies[1:]):
+            cached = _anthropic_cached_blocks(previous['messages'])
+            assert _anthropic_blocks(current['messages'])[: len(cached)] == cached
+        warnings = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and part.scope == 'request'
+        ]
+        # The first request is under the threshold.
+        assert [warning.splitlines()[1] for warning in warnings] == [
+            f'- Iterations: {n}/10 requests used ({n * 10}%); {10 - n} remaining.' for n in (1, 2, 3)
+        ]
+        last_messages = bodies[-1]['messages']
+        if model_name == 'claude-opus-5-5':
+            for previous, current in zip(bodies, bodies[1:]):
+                blocks = _anthropic_blocks(previous['messages'])
+                assert _anthropic_blocks(current['messages'])[: len(blocks)] == blocks
+            assert [message for message in last_messages if 'clear_at' in message] == [
+                {'role': 'system', 'content': [{'text': warning, 'type': 'text'}], 'clear_at': 'next_user_message'}
+                for warning in warnings
+            ]
+        else:
+            assert last_messages[-1]['content'][-1] == {'text': f'<system>{warnings[-1]}</system>', 'type': 'text'}
+            assert sum('requests used' in str(message) for message in last_messages) == 1
 
     async def test_multiple_warnings_ordered(self):
         lw = WarnNearLimits(max_iterations=10, max_total_tokens=100)
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=8, input_tokens=50, output_tokens=30)
-        result = await lw.before_model_request(ctx, rc)
-        last = result.messages[-1]
-        assert isinstance(last, ModelRequest)
-        text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
+        await lw.before_model_request(ctx, rc)
+        text = _enqueued_warning(ctx)
         # Iterations should come before total_tokens.
-        assert text.content.index('Iterations') < text.content.index('Total tokens')
+        assert text.index('Iterations') < text.index('Total tokens')
 
 
 # ---------------------------------------------------------------------------
@@ -1146,35 +1310,19 @@ class TestWarnNearLimitsEdgeCases:
     """Cover WarnNearLimits edge cases for marker detection and stripping."""
 
     async def test_strip_warning_with_only_marker_message(self):
-        """A message composed entirely of a marker part should be removed."""
+        """A message composed entirely of a warning part should be removed."""
         lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')])
-        messages: list[ModelMessage] = [_user('real'), marker_msg]
+        messages: list[ModelMessage] = [_user('real'), _legacy_warning()]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
         result = await lw.before_model_request(ctx, rc)
         # Marker message should be stripped; only the real message remains.
         assert len(result.messages) == 1
 
-    async def test_strip_warning_system_prompt_marker(self):
-        """Marker in a SystemPromptPart should also be detected."""
-        lw = WarnNearLimits(max_iterations=100)
-        marker_msg = ModelRequest(parts=[SystemPromptPart(content='[WarnNearLimits]\nold')])
-        messages: list[ModelMessage] = [_user('real'), marker_msg]
-        rc = _make_request_context(messages)
-        ctx = _make_ctx(requests=5)
-        result = await lw.before_model_request(ctx, rc)
-        assert len(result.messages) == 1
-
     async def test_strip_mixed_parts_keeps_non_marker(self):
         """A message with both marker and non-marker parts should keep the non-marker parts."""
         lw = WarnNearLimits(max_iterations=100)
-        mixed = ModelRequest(
-            parts=[
-                UserPromptPart(content='keep this'),
-                UserPromptPart(content='[WarnNearLimits]\nremove this'),
-            ]
-        )
+        mixed = ModelRequest(parts=[UserPromptPart(content='keep this'), *_legacy_warning().parts])
         messages: list[ModelMessage] = [mixed]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -1212,13 +1360,8 @@ class TestWarnNearLimitsEdgeCases:
         messages: list[ModelMessage] = [_user('hi')]
         rc = _make_request_context(messages)
         ctx = _make_ctx(input_tokens=60, output_tokens=50)  # 110 total, above limit.
-        result = await lw.before_model_request(ctx, rc)
-        last = result.messages[-1]
-        assert isinstance(last, ModelRequest)
-        text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        await lw.before_model_request(ctx, rc)
+        assert _enqueued_warning(ctx).startswith('CRITICAL')
 
     async def test_context_window_critical(self):
         """Context window at or above limit should produce CRITICAL."""
@@ -1226,13 +1369,8 @@ class TestWarnNearLimitsEdgeCases:
         messages: list[ModelMessage] = [_user('x' * 40)]  # ~10 tokens, well above 5.
         rc = _make_request_context(messages)
         ctx = _make_ctx(messages)
-        result = await lw.before_model_request(ctx, rc)
-        last = result.messages[-1]
-        assert isinstance(last, ModelRequest)
-        text = last.parts[0]
-        assert isinstance(text, UserPromptPart)
-        assert isinstance(text.content, str)
-        assert 'CRITICAL' in text.content
+        await lw.before_model_request(ctx, rc)
+        assert _enqueued_warning(ctx).startswith('CRITICAL')
 
     def test_warn_on_subset(self):
         """Can configure warn_on to only include specific limits."""
@@ -1299,7 +1437,7 @@ class TestWarnNearLimitsMarkerDetection:
         messages: list[ModelMessage] = [
             _user('hi'),
             _assistant('response'),
-            ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nold')]),
+            _legacy_warning(),
         ]
         rc = _make_request_context(messages)
         ctx = _make_ctx(requests=5)
@@ -2013,6 +2151,54 @@ class TestClearToolResults:
     def test_validation_negative_min_clear_tokens(self):
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
+
+    async def test_max_messages_clears_in_batches_without_rewriting_every_step(self):
+        """Once past `max_messages`, consecutive requests append to history rather than rewriting it.
+
+        Clearing removes no messages, so counting the whole history would re-fire on every request
+        and blank one more result at a moving boundary, busting the prompt cache each step.
+        """
+        sent: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            step = len(sent)
+            if step > 11:
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'q': step}, tool_call_id=f'c{step}')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[ClearToolResults(max_messages=8, keep_pairs=2)])
+
+        @agent.tool_plain
+        def lookup(q: int) -> str:
+            return f'result {q}'
+
+        result = await agent.run('go')
+
+        rewritten = [i for i in range(1, len(sent)) if sent[i][: len(sent[i - 1])] != sent[i - 1]]
+        assert rewritten == [4, 7, 10]
+        assert _return_contents(sent[-1]) == snapshot(
+            [
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                '[tool result cleared]',
+                'result 9',
+                'result 10',
+                'result 11',
+            ]
+        )
+
+        # A follow-up run on the persisted history keeps counting from the last cleared result, so
+        # its first request extends the previous run's history instead of clearing again.
+        history = result.all_messages()
+        sent.clear()
+        await agent.run('again', message_history=history)
+        assert sent[0][: len(history)] == history
 
     async def test_no_clear_below_threshold(self):
         cap = ClearToolResults(max_messages=100, keep_pairs=0)

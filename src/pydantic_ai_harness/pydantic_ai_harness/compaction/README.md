@@ -376,6 +376,14 @@ cleared. Framework-typed tool results -- core's `search_tools` and `load_capabil
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
+With `max_messages`, the count starts after the last cleared result, because clearing blanks content
+but removes no messages. Clearing then happens in batches: after a clear, the next one waits until
+more than `max_messages` messages follow the last cleared result, so the requests in between extend
+the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear,
+about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So
+each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and
+at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
+
 ## `WarnNearLimits` thresholds
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL

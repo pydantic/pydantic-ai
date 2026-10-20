@@ -758,7 +758,7 @@ def test_bedrock_single_tool_fallback_filters_when_unsupported():
         thinking=True,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice='none'), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'auto': {}}
@@ -810,7 +810,7 @@ def test_bedrock_tool_or_output_single_resolved_preserves_cache(
         allow_text_output=False,
     )
 
-    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value))  # pyright: ignore[reportPrivateUsage]
+    tool_config = model._map_tool_config(params, BedrockModelSettings(tool_choice=tool_choice_value), [])  # pyright: ignore[reportPrivateUsage]
 
     assert tool_config is not None
     assert tool_config.get('toolChoice') == {'tool': {'name': expected_forced_name}}

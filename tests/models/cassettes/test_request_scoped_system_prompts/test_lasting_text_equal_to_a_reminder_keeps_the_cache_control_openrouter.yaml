@@ -1,0 +1,123 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "748"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: anthropic/claude-haiku-4.5
+        stream: false
+        messages:
+        - role: user
+          content: Weather in Paris?
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: call_1
+          content: "Paris: 18C"
+        - role: user
+          content:
+          - type: text
+            text: <system>Reminder.</system>
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+        - role: user
+          content: <system>Reminder.</system>
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1792166365-aQpjt9TcjJT3nERLfw01
+        object: chat.completion
+        created: 1792166365
+        model: anthropic/claude-haiku-4.5
+        provider: Amazon Bedrock
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: |-
+              The weather in Paris is currently **18°C** (about 64°F).
+
+              Is there anything else you'd like to know about the weather in Paris or any other location?
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 648
+          completion_tokens: 41
+          total_tokens: 689
+          cost: 0.000853
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000853
+            upstream_inference_prompt_cost: 0.000648
+            upstream_inference_completions_cost: 0.000205
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-16T15:59:29.053652+00:00

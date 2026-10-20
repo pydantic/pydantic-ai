@@ -123,7 +123,8 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
     blocks: list[str] = []
     for section in ('system', 'tools'):
         section_blocks = body.get(section)
-        if section_blocks is None:
+        # A plain-string `system` prompt can't carry a breakpoint.
+        if section_blocks is None or isinstance(section_blocks, str):
             continue
         for index, block in enumerate(json_objects(section_blocks)):
             if block.get('cache_control'):

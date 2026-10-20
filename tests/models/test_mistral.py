@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -170,6 +171,32 @@ class MockMistralAI:
                 response = cast(MistralChatCompletionResponse, self.completions)
         self.index += 1
         return response
+
+
+async def test_tool_call_args_sent_as_canonical_json_string(allow_model_requests: None):
+    """String and dict args for the same call go on the wire as the same compact JSON string.
+
+    Mistral returns arguments with whitespace (`{"city": "Paris"}`), while a history loaded back from a UI
+    protocol or storage may hold the same call's args as a dict. Sending both as one string keeps the request
+    bytes, and the prompt cache, stable across that round trip.
+    """
+
+    def history(args: str | dict[str, Any]) -> list[ModelMessage]:
+        return [
+            ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+            ModelResponse(parts=[ToolCallPart('get_weather', args, tool_call_id='call_1')]),
+            ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ]
+
+    sent: list[Any] = []
+    for args in ('{"city": "Paris", "days": 2}', {'city': 'Paris', 'days': 2}):
+        mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='OK')))
+        model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+        await Agent(model).run(message_history=history(args))
+        assistant = cast(MockMistralAI, mock_client).chat_completion_kwargs[0]['messages'][1]
+        sent.append(assistant.tool_calls[0].function.arguments)
+
+    assert sent == snapshot(['{"city":"Paris","days":2}', '{"city":"Paris","days":2}'])
 
 
 def completion_message(
@@ -4011,4 +4038,113 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
             'required': ['priority'],
             'type': 'object',
         }
+    )
+
+
+def _tool_call_ids_on_the_wire(body: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Each message's role with the tool call IDs it carries: an assistant's calls, or a tool message's answer."""
+    ids: list[tuple[str, list[str]]] = []
+    for message in cast(list[dict[str, Any]], body['messages']):
+        if tool_calls := cast(list[dict[str, Any]], message.get('tool_calls') or []):
+            ids.append((message['role'], [call['id'] for call in tool_calls]))
+        elif message['role'] == 'tool':
+            ids.append(('tool', [message['tool_call_id']]))
+    return ids
+
+
+@pytest.mark.vcr()
+async def test_mistral_foreign_tool_call_ids_are_rewritten(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
+):
+    """A history with IDs from other providers and Pydantic AI continues on a model that only takes 9 alphanumerics.
+
+    `voxtral-small` rejects every other ID with a 400. The rewrite is a function of the history, so a second
+    request over the same history sends the same bytes, and the stored history keeps its original IDs.
+    """
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('voxtral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris, London and Berlin?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_abc123def456ghi789jkl012'),
+                ToolCallPart('get_weather', {'city': 'Londres'}, tool_call_id='toolu_01A09q90qw90lq917835lq9'),
+                ToolCallPart('get_weather', {'city': 'Berlin'}, tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny, 21C', tool_call_id='call_abc123def456ghi789jkl012'),
+                RetryPromptPart(
+                    'Use the English city name.', tool_name='get_weather', tool_call_id='toolu_01A09q90qw90lq917835lq9'
+                ),
+                ToolReturnPart('get_weather', 'Cloudy, 15C', tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='aB3dE5gH9')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy, 12C', tool_call_id='aB3dE5gH9')]),
+    ]
+
+    prompt = 'Summarize the weather in those three cities in one sentence, without calling tools.'
+    first = await agent.run(prompt, message_history=history)
+    second = await agent.run(prompt, message_history=history)
+
+    assert first.output and second.output
+    first_body, _ = request_capture.bodies('/chat/completions')
+    # The valid ID passes through, the others become hashes, and every call still pairs with its answer.
+    assert _tool_call_ids_on_the_wire(first_body) == snapshot(
+        [
+            ('assistant', ['2pESUE4jw', 'l4LUGq9qS', '9qOPVjwIC']),
+            ('tool', ['2pESUE4jw']),
+            ('tool', ['l4LUGq9qS']),
+            ('tool', ['9qOPVjwIC']),
+            ('assistant', ['aB3dE5gH9']),
+            ('tool', ['aB3dE5gH9']),
+        ]
+    )
+    assert request_capture.raw_bodies[0] == request_capture.raw_bodies[1]
+    assert [part.tool_call_id for part in history[1].parts if isinstance(part, ToolCallPart)] == [
+        'call_abc123def456ghi789jkl012',
+        'toolu_01A09q90qw90lq917835lq9',
+        'pyd_ai_0123456789abcdef0123456789abcdef',
+    ]
+
+
+@pytest.mark.vcr()
+async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture, image_content: BinaryImage
+):
+    """The `<tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_image() -> BinaryImage:
+        return image_content  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Get the image.')]),
+        ModelResponse(parts=[ToolCallPart('get_image', {}, tool_call_id='call_abc123def456ghi789jkl012')]),
+        ModelRequest(parts=[ToolReturnPart('get_image', image_content, tool_call_id='call_abc123def456ghi789jkl012')]),
+    ]
+
+    result = await agent.run('Which fruit is in the image? Answer in one word.', message_history=history)
+
+    assert result.output
+    body = request_capture.body('/chat/completions')
+    assert _tool_call_ids_on_the_wire(body) == snapshot([('assistant', ['2pESUE4jw']), ('tool', ['2pESUE4jw'])])
+    tags = [
+        chunk['text']
+        for message in cast(list[dict[str, Any]], body['messages'])
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for chunk in cast(list[dict[str, Any]], message['content'])
+        if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
+    ]
+    assert tags == snapshot(
+        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )

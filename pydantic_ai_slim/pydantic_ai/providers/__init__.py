@@ -5,6 +5,7 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -50,11 +51,13 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     When used as an async context manager, providers that create their own HTTP client will close it on exit.
     This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
+    Outside one, a run on a new event loop, while the one the client was last used on isn't running, gets a new client.
     """
 
     _client: InterfaceClient
     _own_http_client: AsyncHTTPClient | None = None
     _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
+    _own_client_loop: asyncio.AbstractEventLoop | None = None
     _entered_count: int = 0
     _model_id_namespace: str | None = None
 
@@ -111,13 +114,43 @@ class Provider(ABC, Generic[InterfaceClient]):
         the new client into their SDK client after re-creation.
         """
 
+    def _moved_to_another_event_loop(self) -> bool:
+        """Record the running event loop as the one this provider's own client is used on.
+
+        Returns whether the client was last used on a different event loop that isn't running now. Connections
+        belong to the event loop that opened them, so a client can't be used from another one, and one whose
+        loop has closed can't be closed either. While the loop it was last used on is still running, for example in
+        another thread, its runs may still be using the client, so it isn't replaced under them. Only that last
+        loop is checked: with three or more loops taking turns, a run still going on an earlier one can see the
+        client replaced.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No asyncio event loop, e.g. under Trio, so there's nothing to compare.
+            return False
+        previous_loop, self._own_client_loop = self._own_client_loop, loop
+        return previous_loop is not None and previous_loop is not loop and not previous_loop.is_running()
+
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client this provider created if it's closed or was used on an event loop that isn't running.
+
+        Called when the provider is entered, and at the start of a run that uses it without entering it. While
+        the provider is entered, whoever entered it owns the client, so it's left alone. The replaced client
+        isn't closed: either it already is, or its event loop is gone or belongs to other code. A client that
+        was passed in is never replaced.
+        """
+        own_client = self._own_http_client
+        if self._entered_count or own_client is None or self._http_client_factory is None:
+            return
+        if self._moved_to_another_event_loop() or own_client.is_closed:
+            new_client = self._http_client_factory()
+            self._own_http_client = new_client
+            self._set_http_client(new_client)
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._entered_count == 0 and self._own_http_client is not None:
-                if self._own_http_client.is_closed and self._http_client_factory is not None:
-                    new_client = self._http_client_factory()
-                    self._own_http_client = new_client
-                    self._set_http_client(new_client)
+            self._refresh_http_client()
             self._entered_count += 1
         return self
 
@@ -157,6 +190,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openai_codex import OpenAICodexProvider
 
         return OpenAICodexProvider
+    elif provider == 'openai-chatgpt':
+        from .openai_chatgpt import OpenAIChatGPTProvider
+
+        return OpenAIChatGPTProvider
     elif provider == 'openai-decisions':
         from .openai_decisions import OpenAIDecisionsProvider
 
@@ -221,6 +258,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .crusoe import CrusoeProvider
 
         return CrusoeProvider
+    elif provider == 'elevenlabs':
+        from .elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider
     elif provider == 'xai':
         from .xai import XaiProvider
 

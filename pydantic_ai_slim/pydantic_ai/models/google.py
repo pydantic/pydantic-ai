@@ -108,6 +108,7 @@ try:
         GoogleSearchDict,
         GroundingMetadata,
         HttpOptionsDict,
+        HttpRetryOptions,
         ImageConfigDict,
         MediaResolution,
         Modality,
@@ -533,6 +534,8 @@ class GoogleModel(Model[Client]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
 
@@ -643,6 +646,10 @@ class GoogleModel(Model[Client]):
         """Return the set of native tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Gemini's native tools apply none of them."""
+        return native_tool.restricting_settings
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -658,11 +665,16 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
-        # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
-        # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
-        # wire beside output tools. A supported one is sent even when optional.
+        # Count only native tools this model supports, including the settings set on them.
+        # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
+        # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
+        # is sent even when optional.
         supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
-        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        sent_native_tools = [
+            t
+            for t in model_request_parameters.native_tools
+            if isinstance(t, supported_native_tools) and not self.unsupported_native_tool_settings(t)
+        ]
         if (
             sent_native_tools
             and model_request_parameters.output_tools
@@ -981,6 +993,30 @@ class GoogleModel(Model[Client]):
         except (errors.APIError, httpx2.TransportError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
+    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
+        http_options: HttpOptionsDict = {'headers': headers}
+        if (timeout := model_settings.get('timeout')) is not None:
+            if isinstance(timeout, int | float):
+                http_options['timeout'] = int(1000 * timeout)
+            else:
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        if (max_retries := model_settings.get('max_retries')) is not None:
+            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+            client_retry_options = (
+                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+                or HttpRetryOptions()
+            )
+            http_options['retry_options'] = {
+                'attempts': max_retries + 1,
+                'initial_delay': client_retry_options.initial_delay,
+                'max_delay': client_retry_options.max_delay,
+                'exp_base': client_retry_options.exp_base,
+                'jitter': client_retry_options.jitter,
+                'http_status_codes': client_retry_options.http_status_codes,
+            }
+        return http_options
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1072,12 +1108,7 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+        http_options = self._build_http_options(model_settings, headers)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)

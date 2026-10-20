@@ -360,7 +360,9 @@ configured retention can delete older snapshots.
 - `SqliteStepStore(database='runs.db')` -- single SQLite file with tables
   `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`, and a sibling `media`
   table for externalized blobs (see [Persisting media](#persisting-media)
-  below). WAL mode is enabled; `tool_effects` upserts per
+  below), plus `snapshot_messages` and `snapshot_message_refs` (see
+  [Storing each message once](#storing-each-message-once)). WAL mode is
+  enabled; `tool_effects` upserts per
   `(run_id, tool_call_id)` so the latest state wins; snapshots use
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it
@@ -370,8 +372,8 @@ configured retention can delete older snapshots.
   `check_same_thread=False` because hook calls are dispatched onto a
   worker thread.
 - `MongoStepStore(client= or db_url=, database=...)` -- MongoDB collections
-  `runs`, `events`, `snapshots`, `snapshot_idempotency_keys`, `tool_effects`,
-  and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
+  `runs`, `events`, `snapshots`, `snapshot_messages`, `snapshot_idempotency_keys`,
+  `tool_effects`, and `counters` (atomic `$inc` for monotonic `seq`). Run registration uses an
   atomic insert by `runs._id = run_id`; duplicate ids raise `ValueError`.
   Needs the `mongodb` extra
   (which installs `pymongo>=4.17.0`); pass a shared `AsyncMongoClient` as `client=`, or a
@@ -379,12 +381,12 @@ configured retention can delete older snapshots.
   `await store.aclose()` to release it).
   Externalizes individual parts at or above `media_threshold_bytes` by
   default to a `MongoMediaStore` on the same client. That is a per-value
-  offload, not an aggregate cap: a snapshot of many below-threshold parts can
+  offload, not an aggregate cap: a message of many below-threshold parts can
   still exceed MongoDB's 16 MiB document limit and fail on insert -- lower the
   threshold if that is a risk for your workload.
 - `PostgresStepStore(pool, table='step_persistence')` -- PostgreSQL tables
   `{table}_runs`, `{table}_events`, `{table}_snapshots`,
-  `{table}_snapshot_keys`, and `{table}_tool_effects`, plus `{table}_media`
+  `{table}_snapshot_keys`, `{table}_messages`, and `{table}_tool_effects`, plus `{table}_media`
   for externalized blobs (see [Persisting media](#persisting-media) below).
   `table` is a prefix, not a table name. `pool` is a caller-owned
   asyncpg-compatible pool: the harness imports no driver and defines no extra
@@ -429,7 +431,7 @@ deployment:
 so their keys become BSON field names: keys containing `.` or starting with
 `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/),
 and a key containing a NULL byte is rejected by the BSON encoder before it
-reaches the server. CI exercises both Mongo backends against `mongo:8`.
+reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
 
 Install MongoDB support:
 
@@ -551,12 +553,45 @@ the bound as a hard limit on how far back such recovery can reach. Leave the
 bound at `None`, or set it high enough to cover the history you need to recover,
 when historical reconstruction matters.
 
+### Storing each message once
+
+`max_snapshots_per_run` bounds the snapshots within a run, but every snapshot
+repeats the history before it, so storing each one in full grows with the number
+of snapshots times the history length. `SqliteStepStore` stores each message's
+content once instead: `snapshot_messages` holds each message's JSON keyed by its
+SHA-256, and `snapshot_message_refs` lists each snapshot's messages in order, as
+a short row per message. Reads rebuild the full history, so `latest_snapshot`
+and `list_snapshots` return the same messages either way.
+
+Deleting a snapshot, by pruning or by deleting its conversation with
+`SqliteConversationStore.delete`, also deletes the messages no remaining
+snapshot references.
+
+A database written by an earlier release keeps working: its rows hold the
+history inline and still read, and new snapshots in the same database store
+their messages once. Earlier releases can't read snapshots written this way, so
+don't downgrade a store that a newer release has written to. An existing
+database doesn't shrink right away: its earlier rows keep their history until
+pruning or deleting their conversation removes them, and SQLite keeps the freed
+space in the file until you run `VACUUM`.
+
+`PostgresStepStore` and `MongoStepStore` store each message once too, in a
+`{table}_messages` table and a `snapshot_messages` collection, with each
+snapshot holding the keys of its messages in order. Unlike `SqliteStepStore`,
+they keep a stored message when the snapshots referencing it are pruned, as they
+do externalized media: with several writers at once, deleting a message along
+with its last snapshot could race with a save that is about to reference it. So
+messages that only pruned snapshots referenced, such as those compaction
+replaced, stay stored, and pruning doesn't bound these stores' size or remove
+that content. `FileStepStore` keeps writing each snapshot as a complete JSON
+file, so a run's directory stays readable and greppable on its own.
+
 ## Persisting media
 
 `BinaryContent` payloads (images, audio, documents, video) inline as
 base64 inside a snapshot would balloon every file/row containing the
 message; a large text part (e.g. a big tool-return string) does the same and
-can push a `MongoStepStore` snapshot past MongoDB's 16 MiB document cap
+can push a `MongoStepStore` message past MongoDB's 16 MiB document cap
 ([#440](https://github.com/pydantic/pydantic-ai-harness/issues/440)). The
 file/sqlite/mongo/postgres backends externalize any `BinaryContent.data`, and any
 part whose string `content` is at or above 64 KiB, through a configured
@@ -800,6 +835,9 @@ returns summaries without loading messages; search matches saved user/assistant
 text and metadata using Unicode case folding, including text entries within
 multimodal prompts. Search does not include tool output, reasoning, or discarded
 pre-compaction history. Unknown metadata schema versions are rejected.
+An application may set `ConversationSummary.checkout` to a `GitCheckout` (repository,
+name, checkout root, branch) for the workspace, so a browser can still group the
+conversation by repository after that folder is removed; the store saves it as given.
 
 Metadata naming uses a separate version. `name(source=..., title=..., ...)` cannot
 overwrite a newer content revision, newer name, or a manual title. Naming does not
@@ -808,6 +846,13 @@ associated run records from the same SQLite database atomically, retaining share
 media. It is not secure erasure. A local live PID marks an unfinished conversation
 as busy; this is not a distributed lease and the database must not be shared
 between hosts. PID reuse is conservatively treated as busy.
+
+`set_archived(conversation_id=..., archived=...)` archives or unarchives a
+conversation through `ConversationSummary.archived_at`, a metadata-only change that
+keeps its messages, content revision, and activity timestamp. Saving new content
+unarchives it, since the conversation is in use again. Archiving deletes nothing.
+`listing(archived=False)` leaves archived conversations out, `archived=True` lists
+only those, and the default `None` lists both, as before archiving existed.
 
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.

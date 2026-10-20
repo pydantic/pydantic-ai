@@ -14,10 +14,10 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
@@ -56,6 +56,13 @@ def test_estimate_includes_tool_argument_deltas() -> None:
 def test_compact_context_usage(used: int | None, window: int | None, expected: str) -> None:
     status = Status(context_tokens=used, context_window=window)
     assert f'context: {expected} tokens' in status.text()
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+def test_an_estimated_context_figure_is_marked() -> None:
+    status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
+    assert 'context: ~13k/1m tokens' in status.text()
+    assert status.toolbar()[1] == (MUTED, '~13k/1m')
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
@@ -115,7 +122,14 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
 
 
 def test_clearing_the_conversation_resets_its_figures() -> None:
-    status = Status(context_tokens=90, context_window=100, context_alert=True, output_tokens=5, streamed_chars=8)
+    status = Status(
+        context_tokens=90,
+        context_estimated=True,
+        context_window=100,
+        context_alert=True,
+        output_tokens=5,
+        streamed_chars=8,
+    )
     status.clear_conversation()
     assert status == Status()
 

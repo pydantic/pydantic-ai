@@ -9,6 +9,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, G
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
 
@@ -19,6 +20,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
@@ -196,6 +198,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage] to compute
     how much budget remains. Treat it as read-only: it is the live object the run enforces against, so
     mutating a field here *would* change what the run enforces on subsequent requests.
+    """
+    deadline: datetime | None = None
+    """The time (timezone-aware, in UTC) by which this run must finish, or `None` if it has no deadline.
+
+    Set from `timeout=` on the agent run methods, such as [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run].
+    A run started from inside another run, like an agent delegated to from a tool, inherits that run's
+    deadline, and its own `timeout=` can only make it earlier. When the deadline passes, the run is
+    cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut]. Use
+    [`remaining_time()`][pydantic_ai.tools.RunContext.remaining_time] to budget work against it.
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
@@ -904,7 +915,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
@@ -966,6 +978,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
             )
         cancellation.cancel()
 
+    def remaining_time(self) -> float | None:
+        """Return the seconds left until [`deadline`][pydantic_ai.tools.RunContext.deadline], or `None` if the run has none.
+
+        Negative once the deadline has passed. Inside a durable workflow, the time is read from the
+        engine's replay-safe clock (such as `workflow.now()` on Temporal).
+        """
+        if self.deadline is None:
+            return None
+        return (self.deadline - current_run_clock()()).total_seconds()
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -998,9 +1020,8 @@ RunContext.__init__ = _run_context_init_with_capability_loaded
 def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
     """A copy of the context with the given tool name path.
 
-    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields:
-    `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
-    outside them.
+    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields: a custom
+    `TemporalRunContext` subclass keeps the extra keys its payload adds outside them.
     """
     return _utils.replace_no_init(ctx, _tool_name_path=path)
 

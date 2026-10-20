@@ -16,7 +16,7 @@ from typing import (
     assert_never,
 )
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
@@ -98,6 +98,7 @@ try:
         COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
+        ENQUEUED_MESSAGES_ACTIVITY_TYPE,
         FILE_ACTIVITY_TYPE,
         MULTIMODAL_VERSION,
         REASONING_VERSION,
@@ -192,6 +193,26 @@ def _new_message_id() -> str:
     return str(uuid.uuid4())
 
 
+_messages_ta: TypeAdapter[list[Message]] = TypeAdapter(list[Message])
+
+
+def _enqueued_messages(content: dict[str, Any]) -> list[Message]:
+    """The AG-UI messages in a `pydantic_ai_enqueued_messages` activity, or none when the client sent something malformed.
+
+    Enqueued-message activities nested inside are dropped: the content is the client's to send, and
+    honoring them would let it recurse `load_messages` as deeply as it liked.
+    """
+    try:
+        messages = _messages_ta.validate_python(content.get('messages'))
+    except ValidationError:
+        return []
+    return [
+        message
+        for message in messages
+        if not (isinstance(message, ActivityMessage) and message.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE)
+    ]
+
+
 def _user_content_to_input(
     item: str | TextContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl | BinaryContent | UploadedFile | CachePoint,
     *,
@@ -260,8 +281,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
       `VideoInputContent`, `DocumentInputContent`) instead of generic `BinaryInputContent`.
-    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction and
-      [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
+    - `>= 0.1.19`: emits `ACTIVITY_SNAPSHOT` events for tool availability, compaction, enqueued
+      messages and [MCP Apps](../mcp/client.md#mcp-apps) during streaming.
 
     `load_messages` always accepts `ReasoningMessage` and multimodal content types regardless
     of this setting, and `build_run_input` skips inbound content types the installed
@@ -276,8 +297,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
     ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
     serialized as sidecar activity messages on `dump_messages` and reconstructed on
-    `load_messages`. A frontend only completes the round-trip if it echoes these activity
-    messages back on the next request.
+    `load_messages`. A frontend only completes the round-trip if it sends these activity
+    messages back on the next request, which `@ag-ui/client` doesn't do; see
+    [Records carried as activity messages](../ui/ag-ui.md#activity-records).
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
     `UploadedFile` still requires
@@ -316,7 +338,13 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            manage_system_prompt=self.manage_system_prompt,
+            preserve_file_data=self.preserve_file_data,
+        )
 
     @classmethod
     async def from_request(
@@ -483,8 +511,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_calls[tool_call_id] = tool_name
 
                             # The claim is client-supplied, so it's set on the base part and promoted
-                            # best-effort by the final `narrow_message_parts` pass (which strips it if
-                            # it doesn't validate against the typed subclass).
+                            # best-effort by the final `narrow_message_parts` pass. A claim whose data
+                            # doesn't validate leaves a base part; only core's kinds are then stripped.
                             tool_kind = (
                                 parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
                             )
@@ -523,11 +551,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
-                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
-                    # results stay untyped — typed return parts imply success to their readers.
-                    # A non-success outcome claim (the return would otherwise reload as `'success'`,
-                    # changing how it serializes to the provider) also keeps the return untyped.
-                    tool_kind = None
+                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. A
+                    # non-success return keeps its kind too: it is never promoted to a typed return
+                    # part, so the kind can't pass it off as a success. A non-success outcome claim
+                    # keeps the return from reloading as `'success'`, which would change how it
+                    # serializes to the provider.
+                    encrypted_tool_kind = (
+                        parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
                     outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
@@ -536,11 +568,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         outcome = encrypted_outcome
                     elif tool_msg.error is not None:
                         outcome = 'failed'
-                    else:
-                        encrypted_tool_kind = (
-                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                        )
-                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -557,8 +584,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     else:
                         # The final `narrow_message_parts` pass parses the rehydrated content into a typed
-                        # return subclass when the `tool_kind` claim validates, and leaves the base
-                        # `ToolReturnPart` (dropping the claim) when it doesn't.
+                        # return subclass when the return succeeded and the `tool_kind` claim validates,
+                        # and otherwise leaves the base `ToolReturnPart` (which keeps the claim, unless
+                        # it is one of core's kinds).
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
@@ -576,7 +604,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
                         metadata = {}
                     builder.add(
                         ThinkingPart(
@@ -594,6 +622,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
                         if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
                             builder.add(compaction_part)
+                    elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
+                        # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                        # They carry their own message ids, so the activity's id isn't kept on them.
+                        # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
+                        builder._append_whole(  # pyright: ignore[reportPrivateUsage]
+                            cls.load_messages(
+                                _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
+                            )
+                        )
+                        continue
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -704,8 +742,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
-                system_content.append(part.content)
+                # A request-scoped prompt is for the model's current request only; loaded back, it would
+                # come back as a lasting system prompt.
+                if part.scope != 'request':
+                    system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
+                # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
+                # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
+                # as one user message instead of one per prompt.
+                flush_user_content()
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
                 else:
@@ -782,6 +827,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
                 else:
+                    flush_user_content()
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
@@ -953,18 +999,22 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
           string is no longer recoverable as args on reload. Unlike the live event stream, which emits
           them verbatim so streamed fragments stay concatenable, history has to hold a sendable value.
+          Args that do parse are dumped as compact JSON, the form the model adapters send, so whitespace
+          in the model's raw string doesn't survive.
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
         - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
           existed), so typed tool parts reload as their base classes.
-        - `tool_kind` is not restored on error/denied tool returns (a typed return implies
-          success to its readers), so those reload as plain `ToolReturnPart`.
+        - A failed, denied or interrupted (native) tool return keeps its `tool_kind`, but reloads as a
+          plain `ToolReturnPart` / `NativeToolReturnPart`: only successful returns are promoted to typed parts.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - Each `UserPromptPart` (and each `RetryPromptPart` without a tool name) is dumped as its own
+          `UserMessage`, so a request's prompts reload as the same separate parts rather than merged into one.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only

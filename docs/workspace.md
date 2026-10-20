@@ -360,6 +360,11 @@ agent = Agent(
 )
 ```
 
+Swap `TemporalDurability` for `DBOSDurability` or `PrefectDurability` and nothing else in the agent
+changes. Only where the run starts differs: a Temporal workflow class on a worker with
+`PydanticAIPlugin`, a `@DBOS.workflow()` function after `DBOS.launch()`, or a Prefect `@flow`, as each
+[engine guide](durable_execution/overview.md) shows.
+
 Tools use `ctx.workspace` as they would in a plain run. On Temporal, a tool that must run
 its orchestration in the workflow (for example, to approve a file change before writing) can
 set `metadata={'temporal': False}` on its tool definition; workspace calls it makes still run as
@@ -368,7 +373,7 @@ activities.
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
   tool uses it; retries, replays and recovery reattach to that same environment. Plain runs stay
   lazy. If a worker dies after creating the environment but before that is recorded, the retry can
-  create a second one.
+  create a second one; for a sandbox, clean up the first with the provider's tools.
 - Without an explicit `run_id`, a run inside a workflow or flow gets an ID derived from the Temporal
   execution run ID, the DBOS workflow ID or the Prefect flow run ID, so its workspace state stays
   addressable after a worker restart or flow retry.
@@ -403,7 +408,40 @@ activities.
     longer match their history: Temporal replay fails with a nondeterminism error, and DBOS can't
     recover the workflow. Let in-flight runs finish first, or deploy the change separately: with
     Temporal worker versioning or a new task queue, or a new DBOS application version. On Prefect,
-    let running flows finish before you deploy.
+    let running flows finish before you deploy. Removing a capability that in-flight runs use changes
+    their history the same way.
+
+### Harness workspace capabilities {#harness-workspace-capabilities}
+
+[Pydantic AI Harness](harness/index.md) capabilities that act in the workspace, such as
+[`Coder`](harness/coder.md), [`Shell`](harness/shell.md), [`FileSystem`](harness/filesystem.md),
+[`RepoContext`](harness/repo-context.md) and [`Researcher`](harness/researcher.md), work under Temporal,
+DBOS and Prefect. Attach them next to the workspace and the durability capability, for example
+`capabilities=[LocalWorkspace('.'), Coder(), TemporalDurability()]`. A later run that continues the
+conversation from `message_history`, in a new workflow or flow, works in the
+[same environment](#continuing-in-the-same-workspace).
+
+| Feature | Temporal | DBOS | Prefect |
+|---|---|---|---|
+| File tools: read, write, edit, search | Yes | Yes | Yes |
+| Commands: `run_command`, `shell` | Yes, within the [activity timeout](durable_execution/temporal.md#harness-command-timeouts) | Yes | Yes |
+| Background jobs: `start_command`, `check_command`, `stop_command` | Yes | Yes | Yes |
+| Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
+| File-change approval: [`FileChangeRequestEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
+| Live tool events | [File-change requests and write events only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
+| Delegation: `delegate_task` | [To `self` only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
+
+The [Temporal guide](durable_execution/temporal.md#harness-workspace-capabilities) explains the Temporal
+limits.
+
+- **Sticky `cd`** is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, keyed by the
+  run ID, so a new worker continues in the same directory after a restart. The file is removed when
+  the run completes. Commands in one run should execute in order; simultaneous commands that change
+  directory can overwrite each other's state.
+- **Background jobs** are keyed by the run and tool-call IDs, so a retried `start_command` reattaches to
+  the job instead of starting a second process. If a launch fails after claiming its job directory, the
+  retry reports a pending launch; once the process has stopped, remove the stale job files under
+  `.pydantic-ai-harness/shell/`.
 
 The engine guides cover the rest, such as matching capabilities across Temporal workers.
 

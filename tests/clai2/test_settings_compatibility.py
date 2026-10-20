@@ -870,6 +870,67 @@ async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
     await loader.close('exit')
 
 
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])
+async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skill toggles existed offers every skill; a build lacking the feature drops the list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"], '
+                '"disabled_skills": ["pre-push-review"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'skill_folders': frozenset({'coder-skill-folders'}),
+            'disabled_skills': frozenset({'coder-disabled-skills'}),
+        },
+    )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-disabled-skills'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.skill_folders, settings.disabled_skills) for name, settings in loaded.items()} == {
+        'coder': (['team-skills'], ['pre-push-review'] if supported else []),
+        'older': (list(DEFAULT_SKILL_FOLDERS), []),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved disabled_skills (needs coder-disabled-skills); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
 @pytest.mark.parametrize(
     ('name', 'previous', 'saved'),
     [

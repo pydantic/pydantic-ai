@@ -82,7 +82,9 @@ reminder lives here: a rename PR is not done until both indexes agree.
 
 Capabilities are grouped by what they give the agent, not by implementation detail:
 **Harnesses** (complete combined capabilities like `Coder`) · **Execution environments** (the
-workspace the agent acts in) · **Tools & native abilities** · **Web & research** ·
+workspace the agent acts in) · **Tools & native abilities** · **Integrations** (one third-party
+service each, like `GitHub` or `Slack`; also list a new one on `docs/harness/integrations.md`) ·
+**Web & research** ·
 **Reasoning, planning & delegation** · **Context management** (how the agent spends the context
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·

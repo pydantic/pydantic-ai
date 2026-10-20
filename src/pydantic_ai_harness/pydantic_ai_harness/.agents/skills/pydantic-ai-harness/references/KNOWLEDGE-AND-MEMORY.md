@@ -226,20 +226,26 @@ agent = Agent(
 ```
 
 Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='error',
-duplicate_names='error', workspace=None)`. `directories` is one path or a sequence of library
+duplicate_names='error', unknown_names='error', workspace=None)`. `directories` is one path or a sequence of library
 directories (not individual skill folders), in precedence order.
 
 To layer project and personal libraries as coding agents do, pass
-`missing_directories='skip'` (absent folders are left out; a file in their place still fails) and
-`duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
+`missing_directories='skip'` (absent folders are left out quietly; a file, or a skill package, in
+their place is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
 a `UserWarning`).
 
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `skill.render(arguments)` as the prompt: `$ARGUMENTS` in the body is substituted, else
 `ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
-`catalog.skipped` lists the `SKILL.md` files left out, for the host to show; `load` emits no
-warnings itself.
+`catalog.skipped` lists the `SKILL.md` files and library paths left out as `SkippedSkill(path,
+reason, message)`, `reason` one of `'invalid'`, `'duplicate_name'`, `'not_a_directory'`,
+`'skill_package'`, for the host to show; `load` emits no warnings itself.
+
+Frontmatter `disable-model-invocation: true` keeps a skill out of the model's catalog
+(`SkillDefinition.model_invocable` is `False`) but `load` still returns it, for a host command.
+`user-invocable: false` sets `SkillDefinition.user_invocable` to `False`, for a host to offer no
+command; the model still sees it. Either field with a value other than `true` or `false` skips the skill.
 
 Gotchas:
 - Without PyYAML (the `skills` extra) importing the loader raises `ImportError`.
@@ -252,6 +258,7 @@ Gotchas:
   not compared) counts once.
 - `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
   duplicate selected names and missing library paths with the default `'error'` options.
+  `unknown_names='skip'` ignores names no library has, for a selection shared across projects.
   Malformed frontmatter or a name not matching its directory warns and skips that skill.
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's

@@ -51,6 +51,9 @@ TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
+ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
+"""Data chunk type for messages delivered into the run by `RunContext.enqueue`, encoded as `UIMessage`s."""
+
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
 
