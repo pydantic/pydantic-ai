@@ -6,7 +6,6 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field
-from functools import cached_property
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -465,12 +464,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         return self.id if self.id is not None else self._instance_token
 
     def _resolved_runs(self) -> ExaAgentRuns:
-        return self.runs if self.runs is not None else self._default_runs_client
-
-    @cached_property
-    def _default_runs_client(self) -> ExaAgentRuns:
-        """One `AsyncExa` client per capability, so its connection pool is reused across calls."""
-        return _default_runs()
+        return self.runs if self.runs is not None else _default_runs()
 
     @classmethod
     def from_spec(
