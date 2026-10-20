@@ -1814,10 +1814,16 @@ class RealtimeSession:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
-        if frames:
-            await self._send_frame(*frames)
         # (Only a response still being generated records the position: a finished one keeps what history
         # recorded, and the position must not land on the next one instead.)
+        if frames:
+            try:
+                await self._send_frame(*frames)
+            except RealtimeError:
+                # The link failed mid-send, so the provider may have applied the truncation already: either way the
+                # listener heard only this much, so history records the cut too.
+                self._apply_core(Interrupted(played_ms=played_ms))
+                raise
         self._apply_core(Interrupted(played_ms=played_ms))
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
@@ -1877,7 +1883,18 @@ class RealtimeSession:
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         truncations = self._truncations_at(playhead)
-        await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        try:
+            await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        except RealtimeError:
+            # As in `interrupt(played_ms=...)`: the truncations may have reached the provider before the link failed.
+            self._apply_core(self._playback_interruption(played_ms, truncations))
+            raise
+        self._apply_core(self._playback_interruption(played_ms, truncations))
+        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
+        return True
+
+    def _playback_interruption(self, played_ms: int, truncations: list[TruncateOutput]) -> Interrupted:
+        """What a barge-in at a playback position cut off, for the core to record."""
         # (Only a response still being generated takes the position as a whole: a finished one is cut off by its
         # item's truncation instead, and the position must not land on the next response.)
         on_this_connection = {
@@ -1888,9 +1905,7 @@ class RealtimeSession:
             for cut in truncations
             if cut.item_id is not None and cut.item_id in on_this_connection
         )
-        self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
-        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
-        return True
+        return Interrupted(played_ms=played_ms, cuts=cuts)
 
     def _bytes_to_ms(self, audio_bytes: int) -> int:
         """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""

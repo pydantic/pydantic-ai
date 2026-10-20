@@ -626,7 +626,8 @@ class SessionCore:
         elif isinstance(command, (ToolReturned, ToolCallRefused, ToolCallsPruned)):
             self._tool_command(command)
         elif isinstance(command, Interrupted):
-            if (response := self._speaking_response()) is not None:
+            # (A later cancel without a position doesn't erase where an earlier interruption cut the response.)
+            if (response := self._speaking_response()) is not None and command.played_ms is not None:
                 response.interrupted_at_ms = command.played_ms
             for item_id, heard_ms in command.cuts:
                 self._cut_recorded_item(item_id, heard_ms)
