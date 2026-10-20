@@ -373,7 +373,10 @@ framework notice in a `SystemPromptPart`, then the child's output in a
 data. The output was written by a model, so it never enters system voice, and a
 closing tag inside it can't end the frame early. Use `is_task_report(part)` to
 recognize the output part, for example to keep it out of a transcript of what the
-user typed. No extra agent loop is implemented. Reports default to `priority='when_idle'`
+user typed. Like `BackgroundTools` completions, the metadata is never sent to the
+model, but the Vercel AI and AG-UI message conversions omit it: a history that
+round-trips through them returns the report as plain user text, and
+`is_task_report` no longer matches it. No extra agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with
