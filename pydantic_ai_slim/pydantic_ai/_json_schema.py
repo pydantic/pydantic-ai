@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
@@ -118,7 +117,9 @@ class JsonSchemaTransformer(ABC):
             # we modify it to avoid collisions.
             defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
-            root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
+            root_key = (
+                None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+            )
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -126,7 +127,7 @@ class JsonSchemaTransformer(ABC):
                     root_key = f'{root_key}_root'
 
             defs[root_key] = handled
-            return {'$defs': defs, '$ref': f'#/$defs/{root_key}'}
+            return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
 
         return handled
 
@@ -135,7 +136,12 @@ class JsonSchemaTransformer(ABC):
             return schema
 
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            key = re.sub(r'^#/\$defs/', '', ref)
+            # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
+            key = (
+                ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+                if ref.startswith('#/$defs/')
+                else ref
+            )
             if key in self.refs_stack:
                 if key not in self.defs:
                     # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.

@@ -45,6 +45,59 @@ def test_inline_boolean_defs(
     assert schema == original
 
 
+@pytest.mark.parametrize('transformer', [InlineDefsJsonSchemaTransformer, GoogleOpenAPISchemaTransformer])
+@pytest.mark.parametrize('definition', [True, False])
+@pytest.mark.parametrize('root', [False, True])
+@pytest.mark.parametrize(
+    'name,reference,encoded_name',
+    [
+        ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
+        ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
+        ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+    ],
+)
+def test_inline_boolean_defs_escaped_names(
+    transformer: type[JsonSchemaTransformer], definition: bool, root: bool, name: str, reference: str, encoded_name: str
+):
+    field: JsonSchema = {'$ref': reference, 'not': {'type': 'string'}}
+    schema: JsonSchema = field if root else {'type': 'object', 'properties': {'x': field}, 'required': ['x']}
+    schema['$defs'] = {name: definition, encoded_name: not definition}
+    original = deepcopy(schema)
+    walker = transformer(schema)
+    if transformer is GoogleOpenAPISchemaTransformer and not definition:
+        with pytest.raises(UserError, match='cannot represent a boolean `false` definition'):
+            walker.walk()
+        assert schema == original
+        return
+    expected: JsonSchema = {'not': {'type': 'string'} if definition else {}}
+    result = walker.walk()
+    assert result == (expected if root else {'type': 'object', 'properties': {'x': expected}, 'required': ['x']})
+    assert walker.walk() == result
+    assert schema == original
+
+
+@pytest.mark.parametrize('recursive', [False, True])
+@pytest.mark.parametrize(
+    'name,reference,encoded_name',
+    [
+        ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
+        ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
+        ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+    ],
+)
+def test_inline_dictionary_defs_escaped_names(name: str, reference: str, encoded_name: str, recursive: bool):
+    definition: JsonSchema = (
+        {'type': 'object', 'properties': {'child': {'$ref': reference}}} if recursive else {'type': 'integer'}
+    )
+    schema: JsonSchema = {'$ref': reference, '$defs': {name: definition, encoded_name: False}}
+    original = deepcopy(schema)
+    expected: JsonSchema = {'$ref': reference, '$defs': {name: deepcopy(definition)}} if recursive else definition
+    walker = InlineDefsJsonSchemaTransformer(schema)
+    assert walker.walk() == expected
+    assert walker.walk() == expected
+    assert schema == original
+
+
 @pytest.mark.parametrize('definition', [True, False])
 @pytest.mark.parametrize('strict', [None, False, True])
 @pytest.mark.parametrize(
