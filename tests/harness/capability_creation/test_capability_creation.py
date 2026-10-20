@@ -154,6 +154,10 @@ def _write(directory: Path, name: str, code: str) -> Path:
     return path
 
 
+_READY_TIMEOUT = 30
+"""Seconds a test waits for a step it ordered with an `Event`; a guard against hangs, never the expected path."""
+
+
 def _gate_module(monkeypatch: pytest.MonkeyPatch, *names: str) -> ModuleType:
     """A module of `threading.Event`s that authored code imports to pause where a test needs it."""
     module = ModuleType('_capability_creation_test_gate')
@@ -211,7 +215,8 @@ class TestValidate:
             validate_capability_file(_write(tmp_path, 'm', 'raise SystemExit(0)\n'))
 
     def test_future_annotations_dataclass_field(self, tmp_path: Path) -> None:
-        # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be findable there.
+        # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be
+        # findable there.
         code = 'from __future__ import annotations\n' + _marker_code('WithField', 'X') + '    value: int = 0\n'
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithField'
 
@@ -425,7 +430,7 @@ class TestCapabilityStore:
         def held_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
             if Path(dst).name == 'manifest.json' and not saving.is_set():
                 saving.set()
-                release.wait(timeout=30)  # hang guard; the test sets it
+                release.wait(timeout=_READY_TIMEOUT)  # hang guard; the test sets it
             real_replace(src, dst)
 
         monkeypatch.setattr(
@@ -438,20 +443,20 @@ class TestCapabilityStore:
         ]
         writers[0].start()
         try:
-            assert saving.wait(timeout=30)
+            assert saving.wait(timeout=_READY_TIMEOUT)
             writers[1].start()
-            assert contended.wait(timeout=30)  # the second store waits for the update the first is making
+            assert contended.wait(timeout=_READY_TIMEOUT)  # the second store waits for the update the first is making
         finally:
             release.set()
             for writer in writers:
-                writer.join(timeout=30)
+                writer.join(timeout=_READY_TIMEOUT)
         assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['first', 'second']
 
     def test_blocking_authored_code_does_not_hold_up_other_writes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         gate = _gate_module(monkeypatch, 'entered', 'release')
-        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(60)\n' + VALID_CODE
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({2 * _READY_TIMEOUT})\n' + VALID_CODE
         writer = threading.Thread(target=CapabilityStore(tmp_path).write, args=('slow', code))
         done = threading.Event()
 
@@ -463,12 +468,12 @@ class TestCapabilityStore:
 
         writer.start()
         try:
-            assert _gate(gate, 'entered').wait(timeout=30)
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
             threading.Thread(target=quick).start()
-            assert done.wait(timeout=30)  # well inside the slow write's 60s hang guard
+            assert done.wait(timeout=_READY_TIMEOUT)  # well inside the slow write's hang guard
         finally:
             _gate(gate, 'release').set()
-            writer.join(timeout=30)
+            writer.join(timeout=_READY_TIMEOUT)
         assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['quick', 'slow']
 
     def test_load_active_keeps_an_entry_rewritten_while_loading(
@@ -478,16 +483,19 @@ class TestCapabilityStore:
         store = CapabilityStore(tmp_path)
         store.write('x', VALID_CODE)
         gate = _gate_module(monkeypatch, 'entered', 'release')
-        broken = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(30)\nraise ValueError("broken")\n'
+        broken = (
+            f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n'
+            'raise ValueError("broken")\n'
+        )
         (tmp_path / 'x.py').write_text(broken, encoding='utf-8')
         loader = threading.Thread(target=store.load_active)
         loader.start()
         try:
-            assert _gate(gate, 'entered').wait(timeout=30)
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
             record = store.write('x', _marker_code('Fixed', 'V2'))
         finally:
             _gate(gate, 'release').set()
-            loader.join(timeout=30)
+            loader.join(timeout=_READY_TIMEOUT)
         assert store.list_all() == [record]
 
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
@@ -648,7 +656,7 @@ class TestCapabilityCreationToolset:
     async def test_author_capability_is_cancellable(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Authored code that blocks must not hold the run past cancellation; the write still completes afterwards.
         gate = _gate_module(monkeypatch, 'entered', 'release')
-        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait(30)\n' + VALID_CODE
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\n' + VALID_CODE
         written = threading.Event()
 
         class SignallingStore(CapabilityStore):
@@ -663,13 +671,13 @@ class TestCapabilityCreationToolset:
             with anyio.CancelScope() as scope:
                 async with anyio.create_task_group() as tg:
                     tg.start_soon(toolset.author_capability, 'slow', code)
-                    assert await anyio.to_thread.run_sync(_gate(gate, 'entered').wait, 30)
+                    assert await anyio.to_thread.run_sync(_gate(gate, 'entered').wait, _READY_TIMEOUT)
                     scope.cancel()
             assert scope.cancelled_caught
             assert not written.is_set()  # the run stopped waiting before the write finished
         finally:
             _gate(gate, 'release').set()
-        assert await anyio.to_thread.run_sync(written.wait, 30)
+        assert await anyio.to_thread.run_sync(written.wait, _READY_TIMEOUT)
         assert [record.name for record in CapabilityStore(tmp_path).list_all()] == ['slow']
 
     async def test_author_validation_failure_message(self, tmp_path: Path) -> None:
