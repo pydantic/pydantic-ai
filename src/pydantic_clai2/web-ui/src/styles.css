@@ -813,6 +813,22 @@ pre {
   overflow-wrap: anywhere;
 }
 
+/* A sent prompt's images, as the composer showed them, above its text. */
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-images.captioned {
+  margin-bottom: 8px;
+}
+
+.attachment.missing {
+  border-style: dashed;
+}
+
 .markdown {
   line-height: 1.65;
   overflow-wrap: anywhere;
