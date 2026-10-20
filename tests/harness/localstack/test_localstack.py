@@ -674,8 +674,11 @@ class TestContainerManagement:
 
         toolset.add_function(extra)
         fresh = await toolset.for_run(_run_context())
+        assert isinstance(fresh, LocalStackToolset)
         assert fresh is not toolset
-        assert set(await fresh.get_tools(_run_context())) == {'aws_cli', 'localstack_health', 'extra'}
+        tools = await fresh.get_tools(_run_context())
+        assert set(tools) == {'aws_cli', 'localstack_health', 'extra'}
+        assert await _call_localstack_tool(fresh, 'extra') == 'extra'
 
     async def test_managed_ipv6_host_address_is_bracketed(self, tmp_path: Path) -> None:
         # `run` fails at once, so the published ports are checked without waiting for readiness.
