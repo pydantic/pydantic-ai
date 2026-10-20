@@ -1331,9 +1331,10 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes, the exchange fails (a tool raised, or a usage limit
-        tripped) so the reply can no longer come, or the provider refuses the request for the reply
-        (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        over; it also returns if the session closes or ends (a response passed a usage limit), if the
+        exchange fails (a tool raised, or its result would pass a usage limit) so the reply can no longer
+        come, or if the provider refuses the request for the reply (reported as a
+        [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
