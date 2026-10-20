@@ -128,11 +128,11 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
 ## Parallel execution
 
 Inside a task, tool calls run sequentially by default. Pass
-`parallel_execution_mode='parallel_ordered_events'` to run them concurrently.
-`AbsurdDurability(parallel_execution_mode='parallel')` raises a `UserError`. Outside a task, the mode
-doesn't apply and the agent runs tools as it would without the capability. Stay sequential if a
-capability hook such as `before_tool_execute` or `wrap_tool_execute` awaits before the tool runs, as
-that can reorder concurrent calls of the same tool on replay.
+`parallel_execution_mode='parallel_ordered_events'` to run them concurrently; plain `'parallel'` is
+not supported. Outside a task, the mode doesn't apply and the agent runs tools as it would without
+the capability. Stay sequential if a capability hook such as `before_tool_execute` or
+`wrap_tool_execute` awaits before the tool runs, as that can reorder concurrent calls of the same
+tool on replay.
 
 ## Code Mode
 
