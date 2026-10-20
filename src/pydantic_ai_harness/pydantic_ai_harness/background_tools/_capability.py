@@ -54,6 +54,13 @@ def _instructions(ctx: RunContext[Any]) -> str | None:
     return None if ctx.realtime else _INSTRUCTIONS
 
 
+def _dispatched_by_tool(ctx: RunContext[Any]) -> bool:
+    """Whether another tool, such as code mode's `run_code`, dispatched this call and awaits its value."""
+    # A nested `ToolManager` carries the context of the call that dispatched it.
+    dispatcher = ctx.tool_manager.ctx if ctx.tool_manager is not None else None
+    return dispatcher is not None and dispatcher.tool_call_id is not None
+
+
 def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     """Add the optional `run_in_background` argument to a tool's schema."""
     properties = tool_def.parameters_json_schema.get('properties', {})
@@ -154,7 +161,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     default is `{'background': True}`.
 
     A tool marked with `metadata={'background': 'optional'}` lets the model decide for each call
-    unless this selector chooses it. Sequential tools and realtime sessions run normally.
+    unless this selector chooses it. Sequential tools, realtime sessions, and calls that code mode's
+    `run_code` makes from its sandbox run normally.
     """
 
     id: str | None = 'background_tools'
@@ -257,7 +265,11 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> Any:
         mode = await self._prepared_mode(ctx, tool_def)
         # The flag was removed before validation, so it is read from the call as the model sent it.
-        if mode is None or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True):
+        if (
+            mode is None
+            or _dispatched_by_tool(ctx)
+            or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True)
+        ):
             return await handler(args)
 
         task_id = call.tool_call_id
