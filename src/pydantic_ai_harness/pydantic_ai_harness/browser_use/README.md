@@ -253,7 +253,8 @@ domain, so add `allowed_domains` to bound where such a request can go.
   inside it. Non-empty custom `guidance` retains this rule automatically;
   `guidance=''` is the explicit opt-out.
 - **File actions.** The default factory disables browser-use's `read_file` and
-  `upload_file` actions and prohibits `file://` navigation. browser-use consults
+  `upload_file` actions, and every session prohibits `file://` navigation in
+  any letter case or spelling Chromium accepts. browser-use consults
   `allowed_domains` or `prohibited_domains`, never both, so a permissive
   allowlist entry would otherwise override that prohibition; host-only entries
   are qualified to `http`/`https` to close that path, and an allowlist
