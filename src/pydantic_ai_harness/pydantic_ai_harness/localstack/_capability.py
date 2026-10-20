@@ -30,7 +30,8 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     Gives the agent AWS CLI tooling wired to a running LocalStack instance, so it
     can provision and interact with AWS services (S3, DynamoDB, SQS, Lambda, etc.)
     without touching real AWS. Start LocalStack separately (`localstack start` or
-    its Docker image) before running the agent.
+    its Docker image) before running the agent, or set `manage_container=True`
+    to have the capability start a container for you.
 
     ```python
     from pydantic_ai import Agent

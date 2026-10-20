@@ -50,7 +50,7 @@ For a first local run, start LocalStack before constructing the agent:
 localstack start
 ```
 
-Or let the capability manage a fresh Docker container for each run:
+Or let the capability start and stop a Docker container for you:
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -94,7 +94,10 @@ filesystem.
 `allowed_services` and `denied_services` are mutually exclusive: set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
-prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
+prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too. Commands that
+pass `--endpoint-url`, `--profile`, `--region`, or `--no-sign-request`, or any
+prefix of them, are rejected, since the capability injects the target and
+credentials.
 
 > **These checks are best-effort, not a security boundary.** They gate which
 > commands the agent issues, not what it can reach. For hard guarantees,
@@ -104,8 +107,9 @@ prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
 ## Managing the container
 
 Set `manage_container=True` and the capability starts a LocalStack Docker
-container for each run and stops it when the run ends, so the agent always gets
-a fresh, isolated environment. Docker must be installed and running.
+container for each run and stops it when the run ends, so each run gets a fresh
+environment; runs inside `async with agent:` share one instead (see below).
+Docker must be installed and running.
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -135,8 +139,8 @@ them at an externally managed instance (`manage_container=False`).
 
 Managed containers bind to `127.0.0.1` by default, reached through
 `localhost.localstack.cloud`. Set `host_address` to publish on a different
-address; a non-loopback value is then also the host of the tool endpoint and of
-the endpoint the instructions name.
+address; any value other than `127.0.0.1` or `0.0.0.0` is then also the host of
+the tool endpoint and of the endpoint the instructions name.
 
 Since LocalStack 2026.03.0, `localstack/localstack` needs an auth token to start
 (a free Hobby token covers community usage). `LOCALSTACK_AUTH_TOKEN`, or the
@@ -223,7 +227,7 @@ LocalStack(
     default_timeout=60.0,                  # seconds, per command and health check
     max_output_chars=50_000,               # output cap returned to the model
     aws_cli_path='aws',                    # CLI executable (e.g. 'aws' or 'awslocal')
-    manage_container=False,                # start/stop a Docker container per run
+    manage_container=False,                # start/stop a Docker container per run or agent context
     image='localstack/localstack',         # image used when managing the container
     host_address='127.0.0.1',              # host address for Docker port publishing
     service_port_range=None,               # e.g. '4510-4559' for non-gateway service ports
