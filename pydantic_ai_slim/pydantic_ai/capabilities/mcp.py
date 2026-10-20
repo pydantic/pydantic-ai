@@ -165,7 +165,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     def _default_native(self) -> MCPServerTool:
         # `native is True` requires `url is not None` (enforced in `__init__`).
         assert self.url is not None
-        return MCPServerTool(
+        tool = MCPServerTool(
             id=self._resolved_id,
             url=self.url,
             authorization_token=self.authorization_token,
@@ -173,6 +173,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             allowed_tools=self.allowed_tools,
             description=self.description,
         )
+        tool._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
+        return tool
 
     def _native_unique_id(self) -> str:
         return f'mcp_server:{self._resolved_id}'

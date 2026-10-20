@@ -11,7 +11,6 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
     model_request_telemetry_url_ids,
 )
-from pydantic_ai.capabilities import DynamicCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.durable_exec._capability_operation import (
@@ -284,22 +283,30 @@ def restore_telemetry_mcp_url_ids(
 ) -> None:
     """Restore URL provenance omitted from the provider request payload."""
     if url_ids is None:
-        url_ids = model_request_telemetry_url_ids(parameters) if agent is None else set()
+        url_ids = model_request_telemetry_url_ids(parameters)
+        explicit_ids: set[tuple[str | None, str | None]] = set()
         if agent is not None:
-            url_ids.update(mcp_telemetry_url_ids([agent.root_capability]))
+            configured_capabilities = list(leaf_capabilities(agent.root_capability))
+            url_ids.update(mcp_telemetry_url_ids(configured_capabilities))
             for toolset in agent.toolsets:
                 url_ids.update(mcp_telemetry_url_ids([], toolset))
-        # Older payloads did not carry URL provenance. A dynamic capability is absent from
-        # the configured tree, but its resolved native tool is present in the request. Restrict
-        # inference to such agents so a static caller-chosen id equal to the derived value stays
-        # caller-chosen. A dynamic explicit id that coincidentally equals the URL-derived value
-        # is indistinguishable in a legacy payload; prefer withholding it from telemetry.
-        if agent is not None and any(
-            isinstance(capability, DynamicCapability) for capability in leaf_capabilities(agent.root_capability)
-        ):
-            for tool in parameters.native_tools:
-                if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id:
-                    url_ids.add(tool.id)
+            # Legacy payloads omit per-run provenance. Static explicit IDs can be recovered
+            # from the agent; dynamic and per-run overrides leave only the resolved native tool.
+            for capability in configured_capabilities:
+                if isinstance(capability, MCP) and capability._telemetry_url_derived_id is None:  # pyright: ignore[reportPrivateUsage]
+                    explicit_ids.add((capability.id, capability.url))
+                    if isinstance(capability.native, MCPServerTool):
+                        explicit_ids.add((capability.native.id, capability.native.url))
+        # An unconfigured native tool could come from a dynamic or per-run capability, or a
+        # direct request. Legacy wire data cannot distinguish an equal caller-chosen ID, so
+        # withhold that spelling from telemetry when no configured explicit ID claims it.
+        for tool in parameters.native_tools:
+            if (
+                isinstance(tool, MCPServerTool)
+                and (tool.id, tool.url) not in explicit_ids
+                and MCP(tool.url, native=True, local=False).id == tool.id
+            ):
+                url_ids.add(tool.id)
     parameters._telemetry_mcp_url_ids = url_ids  # pyright: ignore[reportPrivateUsage]
     if toolset_ids is None:
         toolset_ids = set()
@@ -327,7 +334,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
                 messages=params.messages,
                 model_settings=cast(dict[str, Any] | None, params.model_settings),
                 model_request_parameters=params.model_request_parameters,
-                telemetry_mcp_url_ids=params.model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                telemetry_mcp_url_ids=model_request_telemetry_url_ids(params.model_request_parameters),
                 telemetry_mcp_url_toolset_ids=params.model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                 telemetry_mcp_url_tool_names=params.model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
@@ -371,7 +378,7 @@ class _CompactMessagesTransport(
                 messages=params.request_context.messages,
                 model_settings=cast(dict[str, Any] | None, params.request_context.model_settings),
                 model_request_parameters=params.request_context.model_request_parameters,
-                telemetry_mcp_url_ids=params.request_context.model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                telemetry_mcp_url_ids=model_request_telemetry_url_ids(params.request_context.model_request_parameters),
                 telemetry_mcp_url_toolset_ids=params.request_context.model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                 telemetry_mcp_url_tool_names=params.request_context.model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                 streaming=params.request_context.streaming,

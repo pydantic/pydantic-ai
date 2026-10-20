@@ -497,7 +497,7 @@ async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     assert capability.id not in json.dumps(exported['instruction_parts'])
 
 
-@pytest.mark.parametrize('explicit_id', [None, 'chosen'])
+@pytest.mark.parametrize('explicit_id', [None, 'chosen', 'matching'])
 async def test_direct_model_request_masks_only_url_derived_native_mcp_id(explicit_id: str | None) -> None:
     class SupportsMCP(FunctionModel):
         @classmethod
@@ -507,9 +507,8 @@ async def test_direct_model_request_masks_only_url_derived_native_mcp_id(explici
     url = 'https://mcp.example.test/private/SENTINEL-path'
     capability = MCP(url, native=True, local=False)
     assert capability.id is not None
-    tool = (
-        MCPServerTool(id=explicit_id, url=url) if explicit_id is not None else next(iter(capability.get_native_tools()))
-    )
+    caller_id = capability.id if explicit_id == 'matching' else explicit_id
+    tool = MCPServerTool(id=caller_id, url=url) if caller_id is not None else next(iter(capability.get_native_tools()))
     assert isinstance(tool, MCPServerTool)
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
@@ -530,9 +529,11 @@ async def test_direct_model_request_masks_only_url_derived_native_mcp_id(explici
     assert chat.attributes is not None
     serialized = chat.attributes['model_request_parameters']
     assert isinstance(serialized, str)
-    assert json.loads(serialized)['native_tools'][0]['id'] == (explicit_id or '[REDACTED]')
-    assert f'mcp_server:{explicit_id or "[REDACTED]"}' in str(chat.attributes['gen_ai.output.messages'])
-    assert 'SENTINEL-path' not in str(chat.attributes)
+    assert json.loads(serialized)['native_tools'][0]['id'] == (caller_id or '[REDACTED]')
+    assert json.loads(serialized)['native_tools'][0]['url'] == '[REDACTED]'
+    assert f'mcp_server:{caller_id or "[REDACTED]"}' in str(chat.attributes['gen_ai.output.messages'])
+    if explicit_id != 'matching':
+        assert 'SENTINEL-path' not in str(chat.attributes)
 
 
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')

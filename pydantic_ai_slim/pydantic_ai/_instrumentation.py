@@ -538,19 +538,16 @@ def model_request_telemetry_url_ids(
     parameters: ModelRequestParameters, *, known_ids: set[str] | None = None
 ) -> set[str]:
     """Resolve URL-derived MCP IDs, retaining known provenance across rebuilt parameters."""
-    from pydantic_ai.capabilities.mcp import MCP
     from pydantic_ai.native_tools import MCPServerTool
 
     if parameters._telemetry_mcp_url_ids is not None:  # pyright: ignore[reportPrivateUsage]
         return parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
     if known_ids is not None:
         return known_ids
-    # A raw request cannot distinguish a generated ID from an identical caller-chosen ID.
-    # Keep the URL-derived spelling out of traces when provenance is unknown.
     return {
         tool.id
         for tool in parameters.native_tools
-        if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id
+        if isinstance(tool, MCPServerTool) and tool._telemetry_url_derived_id == tool.id  # pyright: ignore[reportPrivateUsage]
     }
 
 

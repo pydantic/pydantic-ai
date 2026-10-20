@@ -12,6 +12,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai._instrumentation import model_request_telemetry_url_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
@@ -238,7 +239,7 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
-                        telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
                         telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                         telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
@@ -287,7 +288,7 @@ class TemporalModel(WrapperModel):
                         messages=messages,
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
-                        telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_ids=model_request_telemetry_url_ids(model_request_parameters),
                         telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                         telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
