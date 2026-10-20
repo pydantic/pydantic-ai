@@ -93,10 +93,10 @@ def _github_copilot_overlay(model_name: str, family_profile: ModelProfile | None
         # names `OpenAIChatModel` falls back to, so without this the reasoning is dropped — the exact
         # defect this provider exists to fix. Probed live 2026-09-07 on `claude-sonnet-5`,
         # `gemini-3.7-flash` and `gemini-3.8-flash`: all three return `reasoning_text` alongside
-        # `content`, on the streamed deltas as well as the non-streamed message. The Gemini ids are
-        # missing from a bare `GET /models` listing sent without a `copilot-integration-id` header —
-        # the listing is shorter and hides them — and a different id can change which models the
-        # listing returns.
+        # `content`, on the streamed deltas as well as the non-streamed message. `GET /models` lists
+        # the Gemini ids when the request carries `copilot-integration-id: vscode-chat`, this
+        # provider's default; without the header the listing is shorter and hides them, and another
+        # id can change which models it returns.
         #
         # The other reachable families are deliberately left without a field name, because the same
         # probes found they emit none: `gpt-5.4` and `kimi-k3` answer with `content`/`padding`/`role`
@@ -231,8 +231,8 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
                 `GITHUB_COPILOT_API_BASE` environment variable, then to `https://api.githubcopilot.com`.
             integration_id: The `copilot-integration-id` header sent on every request. Copilot
                 attributes the traffic to it and ties its quota and model allowlist to it. Defaults
-                to the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, believed to be the name
-                the Copilot CLI reads, then to `vscode-chat`.
+                to the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI
+                reads, then to `vscode-chat`.
             openai_client: An existing `AsyncOpenAI` client to use. Its `base_url` must already point
                 at the Copilot inference API, and it is used as-is, without the Copilot client
                 headers. If provided, `api_key`, `base_url`, `integration_id` and `http_client` must
