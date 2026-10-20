@@ -540,7 +540,10 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   goes on. When Live reports such a failure only as a session-level error that names no delegation
   (for instance `Responses handoff incomplete.` when the backend runs out of `max_output_tokens`),
   Pydantic AI treats the delegated work in flight as the work that failed, with code
-  `live_delegation_failed`, so the turn still ends.
+  `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for still runs, but its
+  result goes nowhere: if it finishes after the reply, the exchange ends then, so
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] returns and
+  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives once it settles.
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

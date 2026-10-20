@@ -1511,6 +1511,31 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
+def test_live_abandoned_call_finishing_after_the_reply_ends_the_exchange() -> None:
+    """A tool call whose backend gave up still runs; its result, going nowhere, is the last thing the exchange owed.
+
+    No response ends after it, so the exchange ends as the result goes out; otherwise no `RealtimeTurnCompleteEvent` comes
+    for it at all (found live on Eleven Realtime, which abandons a call the same way when a new response starts).
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish(status='failed')
+        sim.send_text()
+        waiter = sim.wait_for_reply(ticks=0)
+        sim.speak()
+        sim.advance_time(1.0)
+        # The reply is over, but the call still runs: the model owes its round until the call settles.
+        assert waiter.returned is None and not sim.turn_completes
+        sim.finish_tool()
+        assert waiter.returned is not None
+        assert len(sim.turn_completes) == 1
+
+    run_clean(LiveSimulation(), scenario)
+
+
 def test_live_text_sent_as_a_delegation_starts_is_answered_by_its_reply() -> None:
     """8763c #3 on GPT-Live: text sent while a delegation the client hasn't read yet opens the reply.
 
