@@ -1213,6 +1213,14 @@ Found 1 match(es) for 'required' in 1 persisted messages. Excerpts quote past me
 [0] Retry [weather]: 1 validation error(s): [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
 """)
 
+    async def test_a_long_term_past_the_cutoff_is_shown_whole(self) -> None:
+        token = 'k' * 300
+        text = 'lead ' * 120 + token + ' trail' * 100
+        rendered = await _search(_StubSource({'r1': [_user(text)]}), token)
+        excerpt = rendered.split('[0] User: ', 1)[1]
+        # The term spans 600-900, so the window ends where it does.
+        assert excerpt == '...' + text[400:900] + '...'
+
     async def test_a_term_near_the_end_keeps_a_full_window(self) -> None:
         text = 'x' * 1000 + ' ENDTERM'
         rendered = await _search(_StubSource({'r1': [_user(text)]}), 'ENDTERM')

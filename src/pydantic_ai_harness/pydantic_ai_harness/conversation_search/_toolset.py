@@ -173,16 +173,18 @@ def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
     """Cut `text` to about `limit` characters for display; `terms=None` keeps it whole for the index.
 
     A head cut alone would report a match whose term the excerpt never shows, so when the
-    first query term ends past `limit` the window is centred on that term instead, or ends
-    with the text when the term is near its end, so the excerpt keeps the full `limit`.
+    first query term ends past `limit` the window is centred on that term instead. It shifts
+    to keep a long term whole when it fits in `limit`, and ends with the text when the term
+    is near its end, so the excerpt keeps the full `limit`.
     """
     if terms is None or len(text) <= limit:
         return text
     focus = next((match for match in _TOKENIZE_RE.finditer(text) if match.group().lower() in terms), None)
     if focus is None or focus.end() <= limit:
         return text[:limit] + '...'
-    # Pull the window back near the end so a late term still gets the full `limit` of context.
-    start = max(0, min(focus.start() - limit // 2, len(text) - limit))
+    # Keep the whole term when it fits (a term longer than `limit // 2` would lose its tail to
+    # plain centring), and pull the window back near the end so a late term keeps the full `limit`.
+    start = min(max(focus.start() - limit // 2, focus.end() - limit), len(text) - limit)
     end = start + limit
     return ('...' if start else '') + text[start:end] + ('...' if end < len(text) else '')
 
