@@ -59,10 +59,18 @@ the capability start and stop a fresh Docker container per run.
 | `localstack_health` | Query LocalStack's health endpoint and return the JSON of which services (s3, dynamodb, sqs, etc.) are available. |
 
 Commands run as an argument vector (no shell), so shell operators and
-redirection in the command string have no effect. Output is labelled with
-`[stdout]` / `[stderr]` markers and an `[exit code: N]` line on non-zero exit.
-When it exceeds `max_output_chars` the **tail** is kept (the head is dropped),
-so errors survive truncation.
+redirection in the command string have no effect. Each command runs with stdin
+closed and with its own empty AWS config and credentials files, so it never
+reads or writes your `~/.aws` files; settings from `aws configure` last for that
+one command. Output is labelled with `[stdout]` / `[stderr]` markers and an
+`[exit code: N]` line on non-zero exit. When it exceeds `max_output_chars` the
+**tail** is kept (the head is dropped), so errors survive truncation. The cap
+applies to the command's result itself, so a durable execution record of it is
+bounded too.
+
+`aws_cli` takes an optional `timeout_seconds` that overrides `default_timeout`
+for one command. It must be a finite number greater than zero. To bound how long
+the model can make any tool call run, set the agent's `tool_timeout`.
 
 The AWS CLI can read from and write to local files through arguments such as
 `--body`, `file://`, `fileb://`, and `s3 cp`. Treat this capability as both
@@ -76,7 +84,9 @@ AWS-emulator access and AWS CLI access to the process's filesystem.
 | `denied_services` | These AWS services are always rejected (denylist). |
 
 `allowed_services` and `denied_services` are mutually exclusive -- set one, not
-both. The service is the first non-flag token of the command (`s3` in `s3 ls`).
+both. The service is the first token that is neither a global option nor its
+value (`s3` in `--output text s3 ls`). Global options are recognized by any
+prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
 
 !!! warning "Best-effort, not a security boundary"
     These checks gate which commands the agent issues, not what it can reach.
@@ -104,17 +114,21 @@ The container's edge port (`4566`) is published on the host port from
 `endpoint_url`, and the capability waits for the health endpoint before the run
 starts, then stops the container when it ends (even if the run raises). Each run
 gets its own container, so concurrent runs of one agent need distinct host ports
-or an externally managed instance (`manage_container=False`).
+or an externally managed instance (`manage_container=False`). Inside
+`async with agent:`, entering the agent starts one container that the runs
+inside share, and exiting stops it.
 
-Since LocalStack 2026.03.0 the default `localstack/localstack` image is a single
-image that requires an auth token to start (a free Hobby/OSS token covers
-community usage). When `LOCALSTACK_AUTH_TOKEN` is set in the current process it
-is forwarded to the container automatically; a legacy `LOCALSTACK_API_KEY` value
-is forwarded when no auth token is set. Auth values are forwarded through the
-Docker CLI environment rather than embedded in the `docker run` arguments. The
-default `localstack/localstack` image requires a token to start, so a managed run
-needs one configured. To run tokenless, set `image` to a tag from before the
-account requirement, such as a `localstack/localstack:4.x` release.
+Managed containers bind to `127.0.0.1` by default, reached through
+`localhost.localstack.cloud`. Set `host_address` to publish on a different
+address; a non-loopback value is then also the host of the tool endpoint and of
+the endpoint the instructions name.
+
+Since LocalStack 2026.03.0, `localstack/localstack` needs an auth token to start
+(a free Hobby token covers community usage). `LOCALSTACK_AUTH_TOKEN`, or the
+legacy `LOCALSTACK_API_KEY` when no token is set, is forwarded from the current
+process through the Docker CLI environment, never the `docker run` arguments,
+unless `container_env` already sets one of them. To run without a token, pin
+`image` to a `localstack/localstack:4.x` tag.
 
 Docker-backed services such as Lambda need the Docker socket mounted, and some
 services expose ports outside the gateway (LocalStack reserves `4510-4559`).

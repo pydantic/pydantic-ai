@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 
 import anyio
 import anyio.to_thread
@@ -23,6 +24,33 @@ _GATEWAY_LISTEN = f'0.0.0.0:{_EDGE_PORT}'
 
 class LocalStackError(RuntimeError):
     """Raised when the LocalStack container cannot be started or becomes ready."""
+
+
+def _url_host(host: str) -> str:
+    """Bracket an IPv6 literal so it can be used in a URL or a Docker port mapping."""
+    return f'[{host}]' if ':' in host else host
+
+
+def managed_endpoint_url(host_address: str, host_port: int) -> str:
+    """Return the edge URL of a container published on `host_address:host_port`.
+
+    For the default loopback publish addresses (`127.0.0.1` and the bind-all
+    `0.0.0.0`, both reachable at `127.0.0.1`), uses LocalStack's
+    `localhost.localstack.cloud` domain, which resolves to `127.0.0.1` and
+    supports the subdomain-style hosts some AWS SDKs need. Any other address is
+    used literally, since `localhost.localstack.cloud` does not resolve there.
+    """
+    host = 'localhost.localstack.cloud' if host_address in ('127.0.0.1', '0.0.0.0') else _url_host(host_address)
+    return f'http://{host}:{host_port}'
+
+
+def endpoint_port(endpoint_url: str) -> int:
+    """Return the port of `endpoint_url`, or LocalStack's edge port when it names none."""
+    try:
+        port = urlsplit(endpoint_url).port
+    except ValueError as e:
+        raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: {e}') from e
+    return port or _EDGE_PORT
 
 
 class LocalStackContainer:
@@ -75,15 +103,14 @@ class LocalStackContainer:
         bind-all `0.0.0.0`, both reachable at `127.0.0.1`), uses LocalStack's
         `localhost.localstack.cloud` domain, which resolves to `127.0.0.1` and
         supports the subdomain-style hosts some AWS SDKs need. For any other
-        `host_address`, uses that address literally, since
-        `localhost.localstack.cloud` does not resolve there.
+        `host_address`, uses that address literally (bracketed when it is an
+        IPv6 literal), since `localhost.localstack.cloud` does not resolve there.
         """
-        host = 'localhost.localstack.cloud' if self._host_address in ('127.0.0.1', '0.0.0.0') else self._host_address
-        return f'http://{host}:{self._host_port}'
+        return managed_endpoint_url(self._host_address, self._host_port)
 
     @property
     def _readiness_url(self) -> str:
-        host = '127.0.0.1' if self._host_address == '0.0.0.0' else self._host_address
+        host = '127.0.0.1' if self._host_address == '0.0.0.0' else _url_host(self._host_address)
         return f'http://{host}:{self._host_port}{_HEALTH_PATH}'
 
     @property
@@ -111,16 +138,17 @@ class LocalStackContainer:
     def _run_argv(self, environment: Mapping[str, str] | None = None) -> list[str]:
         """Build the `docker run` argument vector."""
         container_environment = self._effective_environment() if environment is None else environment
+        host = _url_host(self._host_address)
         argv = [
             self._docker_path,
             'run',
             '-d',
             '--rm',
             '-p',
-            f'{self._host_address}:{self._host_port}:{_EDGE_PORT}',
+            f'{host}:{self._host_port}:{_EDGE_PORT}',
         ]
         if self._service_port_range is not None:
-            argv += ['-p', f'{self._host_address}:{self._service_port_range}:{self._service_port_range}']
+            argv += ['-p', f'{host}:{self._service_port_range}:{self._service_port_range}']
         if self._mount_docker_socket:
             if not Path(self._docker_socket_path).exists():
                 raise LocalStackError(f'Docker socket {self._docker_socket_path!r} not found.')

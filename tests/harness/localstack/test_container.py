@@ -115,6 +115,13 @@ class TestProperties:
             == 'http://127.0.0.2:4599'
         )
 
+    def test_endpoint_url_brackets_an_ipv6_binding(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        assert (
+            LocalStackContainer(docker_path=docker, host_address='::1', host_port=4599).endpoint_url
+            == 'http://[::1]:4599'
+        )
+
     def test_readiness_url_uses_host_binding(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (

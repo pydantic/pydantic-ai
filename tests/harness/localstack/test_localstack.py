@@ -7,6 +7,7 @@ async-context lifecycle (observing the `docker` commands it runs).
 
 from __future__ import annotations
 
+import math
 import stat
 from pathlib import Path
 from typing import Any
@@ -193,6 +194,40 @@ class TestAwsCli:
         with pytest.raises(ModelRetry, match='Could not determine the AWS service'):
             await _toolset(aws_cli_path=stub).aws_cli('--')
 
+    @pytest.mark.parametrize(
+        ('command', 'allowed_services', 'denied_services', 'message'),
+        [
+            ('--out text s3 ls', [], ['s3'], "'s3' is denied"),
+            ('--quer s3 iam list-users', ['s3'], [], "'iam' is not in the allowed list"),
+            ('--co on s3 ls', [], ['s3'], "'s3' is denied"),
+            ('--deb iam list-users', ['s3'], [], "'iam' is not in the allowed list"),
+        ],
+    )
+    async def test_abbreviated_global_option_does_not_bypass_service_lists(
+        self,
+        tmp_path: Path,
+        command: str,
+        allowed_services: list[str],
+        denied_services: list[str],
+        message: str,
+    ) -> None:
+        """The CLI accepts a unique prefix of a global option, so the service parser must skip its value too."""
+        stub = _make_stub(tmp_path, 'echo "$@"')
+        toolset = _toolset(allowed_services=allowed_services, denied_services=denied_services, aws_cli_path=stub)
+        with pytest.raises(ModelRetry, match=message):
+            await toolset.aws_cli(command)
+
+    async def test_ambiguous_global_option_prefix_takes_no_value(self, tmp_path: Path) -> None:
+        """`--cli` starts several global options, so like the CLI it selects none and consumes no value."""
+        stub = _make_stub(tmp_path, 'echo "$@"')
+        with pytest.raises(ModelRetry, match="'iam' is not in the allowed list"):
+            await _toolset(allowed_services=['s3'], aws_cli_path=stub).aws_cli('--cli iam list-users')
+
+    async def test_abbreviated_global_flag_keeps_the_following_service(self, tmp_path: Path) -> None:
+        stub = _make_stub(tmp_path, 'echo "$@"')
+        result = await _toolset(allowed_services=['s3'], aws_cli_path=stub).aws_cli('--deb s3 ls')
+        assert '--deb s3 ls' in result
+
     async def test_allowed_service_permitted(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'echo permitted')
         result = await _toolset(allowed_services=['s3'], aws_cli_path=stub).aws_cli('s3 ls')
@@ -258,7 +293,38 @@ class TestAwsCli:
 
         result = await _toolset(aws_cli_path=stub).aws_cli('s3 ls')
 
-        assert 'unset|unset|unset|unset|unset|unset|test|test' in result
+        assert '/tmp/real-config' not in result
+        assert '/tmp/real-creds' not in result
+        assert '|unset|unset|unset|test|test' in result
+        assert result.startswith('[stdout]\nunset|')
+
+    async def test_cli_config_files_are_isolated_from_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`aws configure set` must not reach the `~/.aws` files of the user running the agent."""
+        home = tmp_path / 'home'
+        monkeypatch.setenv('HOME', str(home))
+        stub = _make_stub(
+            tmp_path,
+            'printf "%s\\n" "$AWS_CONFIG_FILE" "$AWS_SHARED_CREDENTIALS_FILE"\n'
+            'echo "[default]" > "$AWS_SHARED_CREDENTIALS_FILE"',
+        )
+
+        result = await _toolset(aws_cli_path=stub).aws_cli('configure set aws_access_key_id real')
+
+        config_file, credentials_file = (Path(line) for line in result.removeprefix('[stdout]\n').splitlines())
+        assert (config_file.name, credentials_file.name) == ('config', 'credentials')
+        assert config_file.parent == credentials_file.parent
+        assert home not in credentials_file.parents
+        assert not credentials_file.parent.exists()
+        assert not home.exists()
+
+    async def test_stdin_is_closed(self, tmp_path: Path) -> None:
+        """A command that reads stdin, like `s3 cp - s3://bucket/key`, sees EOF instead of hanging."""
+        stub = _make_stub(tmp_path, 'cat')
+        assert await _toolset(default_timeout=5.0, aws_cli_path=stub).aws_cli('s3 cp - s3://bucket/key') == (
+            '(no output)'
+        )
 
     async def test_nonzero_exit_shows_code_and_stderr(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'echo boom >&2\nexit 3')
@@ -278,6 +344,17 @@ class TestAwsCli:
         stub = _make_stub(tmp_path, 'sleep 5')
         result = await _toolset(aws_cli_path=stub).aws_cli('s3 ls', timeout_seconds=0.3)
         assert 'timed out after 0.3s' in result
+
+    @pytest.mark.parametrize('timeout_seconds', [0.0, -5.0, math.inf, math.nan])
+    async def test_rejects_timeout_that_is_not_positive_and_finite(self, timeout_seconds: float) -> None:
+        with pytest.raises(ModelRetry, match='`timeout_seconds` must be a finite number of seconds greater than zero'):
+            await _toolset().aws_cli('s3 ls', timeout_seconds=timeout_seconds)
+
+    async def test_rejects_invalid_timeout_before_a_durable_operation(self) -> None:
+        toolset = LocalStack().get_toolset()
+        assert isinstance(toolset, LocalStackToolset)
+        with pytest.raises(ModelRetry, match='`timeout_seconds` must be'):
+            await toolset.aws_cli('s3 ls', timeout_seconds=math.inf)
 
     async def test_per_call_timeout_overrides_default(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'echo "$@"')
@@ -309,6 +386,24 @@ class TestAwsCli:
         assert result.startswith('[... output truncated, showing last 153 chars]\n')
         assert result.endswith('TAIL')
         assert 'HEAD' not in result
+
+    async def test_durable_operation_returns_capped_output(self, tmp_path: Path) -> None:
+        """The capability's toolset runs `aws_cli` as a durable operation, whose recorded result must be capped."""
+        stub = _make_stub(tmp_path, 'printf "HEAD"; printf "%05000dTAIL" 0')
+        toolset = LocalStack(aws_cli_path=stub, max_output_chars=100).get_toolset()
+        assert isinstance(toolset, LocalStackToolset)
+        result = await toolset.aws_cli('s3 ls')
+        assert len(result) == 100
+        assert result.endswith('TAIL')
+        assert 'HEAD' not in result
+
+    async def test_output_cap_drops_a_character_split_by_the_tail_read(self, tmp_path: Path) -> None:
+        """Only the bytes the cap can use are read, which can start mid-character; the cap then drops that partial one."""
+        stub = _make_stub(tmp_path, 'i=0; while [ $i -lt 500 ]; do printf "\\303\\251"; i=$((i+1)); done; printf x')
+        result = await _toolset(max_output_chars=100, aws_cli_path=stub).aws_cli('s3 ls')
+        assert len(result) == 100
+        assert result.endswith('\u00e9' * 10 + 'x')
+        assert '\ufffd' not in result
 
     async def test_truncation_caps_complete_failure_response(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'printf "%0500d" 0; exit 7')
@@ -392,6 +487,39 @@ class TestLocalStackCapability:
 
     def test_instructions_can_be_disabled(self) -> None:
         assert LocalStack(include_instructions=False).get_instructions() is None
+
+    def test_instructions_name_the_managed_container_endpoint(self) -> None:
+        cap = LocalStack(manage_container=True, host_address='127.0.0.2', endpoint_url='http://localhost:4599')
+        instructions = cap.get_instructions()
+        assert instructions is not None
+        assert 'http://127.0.0.2:4599' in instructions
+        assert 'localhost:4599' not in instructions
+
+    def test_repr_hides_secrets(self) -> None:
+        cap = LocalStack(secret_access_key='secret-key', container_env={'LOCALSTACK_AUTH_TOKEN': 'secret-token'})
+        assert 'secret-key' not in repr(cap)
+        assert 'secret-token' not in repr(cap)
+
+    def test_invalid_settings_raise_at_construction(self) -> None:
+        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
+            LocalStack(allowed_services=['s3'], denied_services=['sqs'])
+        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
+            LocalStack(max_output_chars=0)
+
+    def test_invalid_managed_endpoint_port_raises_at_construction(self) -> None:
+        with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:port' has an invalid port"):
+            LocalStack(manage_container=True, endpoint_url='http://localhost:port')
+
+    def test_loads_from_agent_spec(self) -> None:
+        agent = Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'LocalStack': {'endpoint_url': 'http://ls:4566', 'allowed_services': ['s3']}}],
+            },
+            custom_capability_types=[LocalStack],
+        )
+        loaded = [c for c in agent.root_capability.capabilities if isinstance(c, LocalStack)]
+        assert loaded == [LocalStack(endpoint_url='http://ls:4566', allowed_services=['s3'])]
 
     async def test_agent_integration(self) -> None:
 
@@ -505,3 +633,78 @@ class TestContainerManagement:
             result = await agent.run('provision a bucket')
         assert result.output == 'done'
         assert 'stop managed-xyz' in log.read_text()
+
+    async def test_entered_agent_runs_share_one_container(self, tmp_path: Path) -> None:
+        """`async with agent:` starts the container once; without sharing, each run would publish the same port again."""
+        if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+            pytest.skip('Agent.run() requires asyncio')
+        docker, log = _docker_stub(tmp_path)
+        with http_server([HttpResponse(200)]) as health:
+            cap = LocalStack(endpoint_url=health.endpoint_url, manage_container=True, docker_path=docker)
+            agent: Agent[None, str] = Agent(
+                model=TestModel(custom_output_text='done', call_tools=[]), capabilities=[cap]
+            )
+            async with agent:
+                await agent.run('first')
+                await agent.run('second')
+                assert [line.split()[0] for line in log.read_text().splitlines()] == ['run']
+        assert [line.split()[0] for line in log.read_text().splitlines()] == ['run', 'stop']
+
+    async def test_reentrant_entry_starts_and_stops_one_container(self, tmp_path: Path) -> None:
+        docker, log = _docker_stub(tmp_path)
+        with http_server([HttpResponse(200)]) as health:
+            toolset = _toolset(endpoint_url=health.endpoint_url, manage_container=True, docker_path=docker)
+            async with toolset:
+                assert await toolset.for_run(_run_context()) is toolset
+                async with toolset:
+                    pass
+                assert [line.split()[0] for line in log.read_text().splitlines()] == ['run']
+        assert [line.split()[0] for line in log.read_text().splitlines()] == ['run', 'stop']
+
+    async def test_for_run_shares_an_unmanaged_instance(self) -> None:
+        toolset = _toolset()
+        assert await toolset.for_run(_run_context()) is toolset
+
+    async def test_for_run_keeps_tools_added_after_construction(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        toolset = _toolset(manage_container=True, docker_path=docker)
+
+        def extra() -> str:
+            return 'extra'
+
+        toolset.add_function(extra)
+        fresh = await toolset.for_run(_run_context())
+        assert fresh is not toolset
+        assert set(await fresh.get_tools(_run_context())) == {'aws_cli', 'localstack_health', 'extra'}
+
+    async def test_managed_ipv6_host_address_is_bracketed(self, tmp_path: Path) -> None:
+        docker, log = _docker_stub(tmp_path)
+        instructions = LocalStack(
+            manage_container=True, host_address='::1', endpoint_url='http://localhost:4599'
+        ).get_instructions()
+        assert instructions is not None
+        assert 'http://[::1]:4599' in instructions
+        toolset = LocalStackToolset[None](
+            endpoint_url='http://localhost:4599',
+            region='us-east-1',
+            access_key_id='test',
+            secret_access_key='test',
+            allowed_services=[],
+            denied_services=[],
+            default_timeout=10.0,
+            max_output_chars=50_000,
+            aws_cli_path='aws',
+            manage_container=True,
+            host_address='::1',
+            service_port_range='4510-4559',
+            docker_path=docker,
+            startup_timeout=0.5,
+        )
+        with pytest.raises(LocalStackError, match='did not become ready'):
+            async with toolset:
+                pass  # pragma: no cover
+        assert '-p [::1]:4599:4566 -p [::1]:4510-4559:4510-4559' in log.read_text()
+
+    def test_invalid_managed_endpoint_port_rejected(self) -> None:
+        with pytest.raises(ValueError, match=r"`endpoint_url` 'http://localhost:port' has an invalid port"):
+            _toolset(endpoint_url='http://localhost:port', manage_container=True)

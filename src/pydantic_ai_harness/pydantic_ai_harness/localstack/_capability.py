@@ -10,7 +10,8 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, retry_as_result
-from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset
+from pydantic_ai_harness.localstack._container import endpoint_port, managed_endpoint_url
+from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset, validate_settings
 
 _INSTRUCTIONS = (
     'You have access to an emulated AWS environment powered by LocalStack at {endpoint_url}. '
@@ -58,7 +59,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     access_key_id: str = 'test'
     """AWS access key id. LocalStack accepts any value; defaults to its `test` convention."""
 
-    secret_access_key: str = 'test'
+    secret_access_key: str = field(default='test', repr=False)
     """AWS secret access key. LocalStack accepts any value; defaults to its `test` convention."""
 
     allowed_services: Sequence[str] = field(default_factory=list[str])
@@ -98,7 +99,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     container_name: str | None = None
     """Optional name for the managed container. Leave None to let Docker assign one."""
 
-    container_env: Mapping[str, str] = field(default_factory=dict[str, str])
+    container_env: Mapping[str, str] = field(default_factory=dict[str, str], repr=False)
     """Environment variables passed to the managed container, e.g. `{'DEBUG': '1'}`."""
 
     docker_path: str = 'docker'
@@ -114,6 +115,15 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     id: str | None = 'localstack'
     """Stable identity for durable execution, which records commands against an external instance under it."""
 
+    def __post_init__(self) -> None:
+        validate_settings(
+            allowed_services=self.allowed_services,
+            denied_services=self.denied_services,
+            max_output_chars=self.max_output_chars,
+        )
+        if self.manage_container:
+            endpoint_port(self.endpoint_url)
+
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
@@ -123,7 +133,12 @@ class LocalStack(AbstractCapability[AgentDepsT]):
         """Explain the emulated environment to the model, unless disabled."""
         if not self.include_instructions:
             return None
-        return _INSTRUCTIONS.format(endpoint_url=self.endpoint_url)
+        endpoint_url = (
+            managed_endpoint_url(self.host_address, endpoint_port(self.endpoint_url))
+            if self.manage_container
+            else self.endpoint_url
+        )
+        return _INSTRUCTIONS.format(endpoint_url=endpoint_url)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
