@@ -6,6 +6,7 @@ import json
 import math
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -48,6 +49,14 @@ with independent work. If none remains, end your response; the run will resume w
 
 _RUN_IN_BACKGROUND = 'run_in_background'
 
+_RUN_IN_BACKGROUND_SCHEMA = {
+    'type': 'boolean',
+    'description': 'Set to true to keep working and get the result later as a follow-up message.',
+}
+
+_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar('_backgrounded_call', default=None)
+"""The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
+
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
     # Realtime sessions run tools concurrently already; see `_background_mode`.
@@ -65,15 +74,16 @@ def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     """Add the optional `run_in_background` argument to a tool's schema."""
     properties = tool_def.parameters_json_schema.get('properties', {})
     if _RUN_IN_BACKGROUND in properties:
+        if properties[_RUN_IN_BACKGROUND] == _RUN_IN_BACKGROUND_SCHEMA:
+            return tool_def  # Another `BackgroundTools` instance already added it.
         raise UserError(
             f"Tool '{tool_def.name}' already has a '{_RUN_IN_BACKGROUND}' parameter, "
             'so it cannot be an optional background tool.'
         )
-    flag = {
-        'type': 'boolean',
-        'description': 'Set to true to keep working and get the result later as a follow-up message.',
+    schema = {
+        **tool_def.parameters_json_schema,
+        'properties': {**properties, _RUN_IN_BACKGROUND: _RUN_IN_BACKGROUND_SCHEMA},
     }
-    schema = {**tool_def.parameters_json_schema, 'properties': {**properties, _RUN_IN_BACKGROUND: flag}}
     return replace(tool_def, parameters_json_schema=schema)
 
 
@@ -268,6 +278,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         if (
             mode is None
             or _dispatched_by_tool(ctx)
+            or _backgrounded_call.get() is call
             or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True)
         ):
             return await handler(args)
@@ -280,6 +291,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             try:
                 # A task the run cancelled before it got to start must not run the tool.
                 await anyio.lowlevel.checkpoint_if_cancelled()
+                # Set inside the task, so only this call's own handler chain sees it.
+                _backgrounded_call.set(call)
                 try:
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:

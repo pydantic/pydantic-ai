@@ -54,6 +54,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, CodeMode
+from tests.harness.conftest import IsStr
 
 from ...realtime_connections import InferredConnection
 
@@ -583,6 +584,33 @@ class TestBackgroundTools:
         assert calls == {'first': 1, 'shared': 1, 'plain': 1}
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: first result')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: shared result')
+
+    @pytest.mark.parametrize(
+        ('background', 'args'),
+        [(True, '{}'), ('optional', '{"run_in_background": true}')],
+        ids=['always', 'optional-flag-set'],
+    )
+    async def test_instances_with_distinct_ids_schedule_a_call_once(self, background: bool | str, args: str) -> None:
+        """When two instances select the same tool, the outer one runs it and the inner one stays out of the way."""
+
+        agent = Agent(_model_calling('slow', args), capabilities=[BackgroundTools(id='a'), BackgroundTools(id='b')])
+
+        @agent.tool_plain(metadata={'background': background})
+        async def slow() -> str:
+            return 'slow result'
+
+        result = await agent.run('go')
+
+        follow_ups = [
+            item.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent)
+        ]
+        assert follow_ups == [IsStr(regex=r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result")]
 
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
