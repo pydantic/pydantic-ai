@@ -422,6 +422,10 @@ class Tasks:
             started_at=datetime.fromtimestamp(record.started_at, UTC),
             finished_at=None if record.finished_at is None else datetime.fromtimestamp(record.finished_at, UTC),
             background=record.background,
+            backgroundable=record.status == 'running'
+            and not record.background
+            and record.backgroundable
+            and record.id not in self._prompts,
             resumable=record.resumable,
             activity=progress.activity if progress is not None else 'starting',
             usage=usage,

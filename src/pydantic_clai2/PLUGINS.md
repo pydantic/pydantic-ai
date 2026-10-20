@@ -2676,7 +2676,8 @@ prompt the keyboard does:
   it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
   each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
   (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
-  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  `background`, whether `background(ID)` can act on it (`backgroundable`), whether it is
+  `resumable`, its last `activity`, and its `usage`. `history(ID)` is
   its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
   `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
   `send_input` would. `await prompt(ID, TEXT)` runs a finished task again with `TEXT` as the

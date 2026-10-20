@@ -65,7 +65,7 @@ export function WorkerView({ task, tasks, live, onOpen, onBack, onError }: Props
             {state(task)}
           </span>
         </span>
-        {!finished && !task.background && (
+        {task.backgroundable && (
           <button
             className="ghost small"
             onClick={() => void act('background')}

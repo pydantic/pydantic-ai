@@ -276,6 +276,7 @@ async def test_prompt_runs_a_finished_task_on_its_own() -> None:
     async with ui.router.opened(view=ui):
         await ui.prompt(record.id, ' and the docs? ')
         assert (record.status, record.prompt, record.user_stopped) == ('running', 'and the docs?', False)
+        assert not ui.info(record).backgroundable, 'no Background button for it'
         with pytest.raises(ValueError, match='Nothing waits'):
             ui.background(record.id)
         assert ui.focused() is None, 'the status row is left to the main run'
@@ -339,12 +340,13 @@ async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None
     )
     record = finished(ui)
     await ui.prompt(record.id, 'first')
-    [first_run] = ui._prompts.values()  # pyright: ignore[reportPrivateUsage]
     await ui.prompt(record.id, 'second')
     first, second = ending
     first.set()
-    await first_run
-    assert record.id in ui._prompts, 'still the second run'  # pyright: ignore[reportPrivateUsage]
+    for _ in range(2):  # The first run ends, then its done callback runs.
+        await asyncio.sleep(0)
+    with pytest.raises(ValueError, match='Nothing waits'):
+        ui.background(record.id)  # Still the second run's.
     second.set()
     await settled(ui)
 

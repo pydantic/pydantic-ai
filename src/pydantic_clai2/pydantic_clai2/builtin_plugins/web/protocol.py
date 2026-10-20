@@ -247,6 +247,8 @@ class TaskEntry:
     started_at: datetime
     finished_at: datetime | None
     background: bool
+    backgroundable: bool
+    """Whether the Background button can let the run that waits for it go on."""
     resumable: bool
     activity: str
     """Its last action, such as `thinking` or `running: shell`."""

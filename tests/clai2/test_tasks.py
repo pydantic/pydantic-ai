@@ -350,6 +350,51 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
         assert record.user_stopped
 
 
+async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
+    import asyncio
+
+    keys = iter(['b', 'escape'])
+
+    def alternate(output: object) -> nullcontext[None]:
+        return nullcontext()
+
+    def read(*, timeout: float) -> str:
+        return next(keys)
+
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    gate = asyncio.Event()
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, 'and the docs?')
+        assert await open_tasks(ui, runners=Runners(run_list=lambda menu: menu.run())) == ''
+        assert (record.status, record.background) == ('running', False)
+        gate.set()
+
+
 async def test_promote_all_foreground_siblings() -> None:
     import asyncio
 
