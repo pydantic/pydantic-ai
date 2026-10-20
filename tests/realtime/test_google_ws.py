@@ -1004,8 +1004,9 @@ async def test_typed_turn_while_an_async_tool_runs(
 ) -> None:
     """A typed turn sent while the model talks on past an asynchronous call is recorded after what it had said.
 
-    The calling response ends as the turn goes out, so neither the turn nor the reply to it lands ahead of the call or
-    inside its response, and the tool's result, sent later, still directly follows its call.
+    The model finishes its sentence and ends its turn, which ends the calling response; the typed turn joins the
+    conversation after it, and is answered in a turn of its own while the tool runs. The tool's result, sent later,
+    still directly follows its call.
     """
     provider, _ = gemini_ws_cassette
     model = GoogleRealtimeModel(_MODEL, provider=provider)

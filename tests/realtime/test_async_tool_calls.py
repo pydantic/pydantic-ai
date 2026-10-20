@@ -49,13 +49,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import try_import
-from .test_session import (
-    BlockingRealtimeConnection,
-    FakeRealtimeConnection,
-    RealtimeSession,
-    collect_events,
-    drain_events,
-)
+from .test_session import BlockingRealtimeConnection, FakeRealtimeConnection, RealtimeSession, drain_events
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -181,8 +175,8 @@ async def test_speech_after_the_call_is_recorded_before_its_result() -> None:
 async def test_answer_in_the_turn_the_result_cut_into_is_the_reply() -> None:
     """An answer in the same turn as the call, after its result, is the reply the result asked for.
 
-    `gemini-3.8-live-extended-thinking` says nothing between its call and the result, then answers in that same turn.
-    The answer claims the reply the result asked for, so `wait_for_reply()` returns once it ends.
+    A model that said nothing past its call answers the result in the same provider turn, with no boundary between:
+    the answer claims the reply the result asked for, so `wait_for_reply()` returns once it ends.
     """
     conn = _QueuedConnection()
     tools = _Tools()
@@ -229,10 +223,9 @@ async def test_speech_the_result_cut_into_is_not_the_reply() -> None:
         await _until(lambda: bool(conn.results()))
         conn.say(OutputTranscript(text='ing it up.', is_final=False), ResponseDone(interrupted=True))
         await _until(lambda: len(session.all_messages()) == 4)
-        wait = asyncio.create_task(session.wait_for_reply())
-        await asyncio.sleep(0.05)
         # The turn the result cut into is over, and the model still owes the reply to the result.
-        assert not wait.done()
+        assert session._core.reply_outstanding()  # pyright: ignore[reportPrivateUsage]
+        wait = asyncio.create_task(session.wait_for_reply())
         conn.say(OutputTranscript(text='Found it.', is_final=True), ResponseDone())
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await wait
@@ -296,9 +289,9 @@ async def test_cut_off_while_the_call_runs_keeps_the_round_going() -> None:
         await session.send('Find me a flight.')
         conn.say(_call(), OutputTranscript(text='Still look', is_final=False), ResponseDone(interrupted=True))
         await _until(lambda: len(session.all_messages()) == 2)
+        # The call's answer is still owed.
+        assert session._core.reply_outstanding()  # pyright: ignore[reportPrivateUsage]
         wait = asyncio.create_task(session.wait_for_reply())
-        await asyncio.sleep(0.05)
-        assert not wait.done()
         tools.finish('bg_1')
         await _until(lambda: bool(conn.results()))
         conn.say(OutputTranscript(text='Found it.', is_final=True), ResponseDone())
@@ -455,11 +448,11 @@ async def test_typed_turn_while_the_call_runs() -> None:
         conn.say(OutputTranscript(text='Lisbon.', is_final=True))
         tools.finish('bg_1')
         await _until(lambda: bool(conn.results()))
-        conn.say(ResponseDone(interrupted=True), OutputTranscript(text='Found one.', is_final=True))
-        await asyncio.sleep(0.05)
-        # The answer to the result is still under way.
-        assert not wait.done()
-        conn.say(ResponseDone())
+        conn.say(ResponseDone(interrupted=True))
+        await _until(lambda: len(session.all_messages()) == 5)
+        # The answer to the result is still owed.
+        assert session._core.reply_outstanding()  # pyright: ignore[reportPrivateUsage]
+        conn.say(OutputTranscript(text='Found one.', is_final=True), ResponseDone())
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             await wait
         await session.close()
@@ -530,27 +523,63 @@ async def test_session_closed_while_the_call_runs_records_the_calling_response()
 
 async def test_two_calls_in_one_turn_share_its_response() -> None:
     """Calls the model makes while it talks on are in the one response, with what it said between them."""
+    conn = _QueuedConnection()
     tools = _Tools()
-    conn = FakeRealtimeConnection(
-        [
+    session = RealtimeSession(conn, tools.runner)
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        conn.say(
             _call('a'),
             OutputTranscript(text='And the hotel.', is_final=True),
             _call('b'),
             OutputTranscript(text='Both are running.', is_final=True),
             ResponseDone(),
-        ]
-    )
-    for call_id in ('a', 'b'):
-        tools.finish(call_id)
-    session = RealtimeSession(conn, tools.runner)
-    await collect_events(session)
+        )
+        await _until(lambda: len(session.all_messages()) == 1)
+        tools.finish('a')
+        tools.finish('b')
+        await _until(lambda: len(session.all_messages()) == 3)
+        await session.close()
+        await consumer
 
     assert _shape(session.all_messages()) == snapshot(
         [
-            ('ModelResponse', ['ToolCallPart', 'And the hotel.', 'ToolCallPart']),
+            ('ModelResponse', ['ToolCallPart', 'And the hotel.', 'ToolCallPart', 'Both are running.']),
             ('ModelRequest', ['ToolReturnPart']),
             ('ModelRequest', ['ToolReturnPart']),
-            ('ModelResponse', ['Both are running.']),
+        ]
+    )
+
+
+async def test_speech_between_two_results_follows_both() -> None:
+    """What the model says after the first of two results went out is a response of its own, after both returns.
+
+    Each return directly follows the response with its call, so the speech can't sit between them.
+    """
+    conn = _QueuedConnection()
+    tools = _Tools()
+    session = RealtimeSession(conn, tools.runner)
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        conn.say(_call('a'), _call('b'), OutputTranscript(text='Checking both.', is_final=True))
+        await _until(lambda: 'b' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        tools.finish('a')
+        await _until(lambda: len(conn.results()) == 1)
+        conn.say(OutputTranscript(text='The first is in.', is_final=True))
+        tools.finish('b')
+        await _until(lambda: len(conn.results()) == 2)
+        conn.say(ResponseDone(interrupted=True), OutputTranscript(text='Both are in.', is_final=True), ResponseDone())
+        await _until(lambda: len(session.all_messages()) == 5)
+        await session.close()
+        await consumer
+
+    assert _shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart', 'ToolCallPart', 'Checking both.']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelResponse', ['The first is in.']),
+            ('ModelResponse', ['Both are in.']),
         ]
     )
 

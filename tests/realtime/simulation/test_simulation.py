@@ -301,7 +301,7 @@ def async_gemini() -> GeminiSimulation:
 def test_gemini_async_filler_recorded_before_the_result() -> None:
     """S0: the model narrates after the call and finishes; the result then cuts in, and the model answers.
 
-    Recorded `[call, filler] {return} [answer]`, as it was said (it was `[call] {return} [filler] [answer]`).
+    Recorded `[call, filler] {return} [answer]`, as it was said.
     """
 
     def scenario(sim: GeminiSimulation) -> None:

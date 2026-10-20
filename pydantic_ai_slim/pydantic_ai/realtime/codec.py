@@ -264,10 +264,12 @@ class ToolCall:
     runs_asynchronously: bool = False
     """Whether the model goes on with the same response while this call runs.
 
-    Gemini Live's `NON_BLOCKING` calls do: the model keeps talking ("this might take a moment") in the turn
-    that made the call. An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps
-    that response going past the call, so what the model says before the call's result goes back is recorded
-    with the call, ahead of the result."""
+    Gemini Live's `NON_BLOCKING` calls do on the models that take `INTERRUPT` scheduling (the native-audio models
+    and `gemini-3.8-live`): the model keeps talking ("this might take a moment") in the turn that made the call.
+    An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps that response going past
+    the call, whatever `response_usage_follows` says, so what the model says before the call's result goes back is
+    recorded with the call, ahead of the result. A message the call's tool enqueues `asap` goes out ahead of the
+    result without waiting for that response to end, as the result ends it."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

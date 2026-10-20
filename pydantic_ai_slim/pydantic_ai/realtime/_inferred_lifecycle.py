@@ -96,8 +96,9 @@ class InferredLifecycle:
       or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is
       made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
     - A response whose calls [run asynchronously][pydantic_ai.realtime.codec.ToolCall.runs_asynchronously] goes on
-      past them, as the model keeps talking, until its `ResponseDone`, or until the result of one of them goes out:
-      a result directly follows the response that made its call. What the model says after that, before the
+      past them, as the model keeps talking, until its `ResponseDone`, until the result of one of them goes out (a
+      result directly follows the response that made its call), or until a spoken turn joins the conversation,
+      which follows it too. What the model says after that, before the
       `ResponseDone` that ends its turn, is a response of its own. If the model was mid-sentence when the result
       went out, that is the rest of the sentence, which answers nothing; otherwise it answers the result. Cut off
       while one of those calls still runs, the response ends `completed`: its tool round goes on.
@@ -269,6 +270,9 @@ class InferredLifecycle:
         if isinstance(content, ToolResult) and content.tool_call_id in self._open_async:
             # A result directly follows the response that made its call: what the model says from here is after it.
             self._split(self._pending)
+        if isinstance(content, (str, CreateResponse)):
+            # What the model says next may be the reply to this, rather than the rest of a sentence a result cut into.
+            self._tail = False
         if isinstance(content, CreateResponse):
             # A request for a reply, with nothing of its own to join the conversation.
             self._unanswered.append(input_id)
@@ -604,6 +608,8 @@ class InferredLifecycle:
             # The model was talking on past asynchronous calls it made, which this turn follows, as their results
             # will: neither the turn nor the reply to it goes ahead of them, or into their response.
             self._split(events, tail=False)
+        # What the model says next may be the reply to this turn, rather than the rest of a sentence a result cut into.
+        self._tail = False
         turn.joined = True
         self._spoken_unanswered = turn.id
         events.append(UserTurnEnded(turn_id=turn.id))

@@ -1662,7 +1662,7 @@ class SessionCore:
         return response.open_part_index if response is not None and response.open_part is not None else None
 
     def response_under_way(self, *, besides_caller_of: str | None = None) -> bool:
-        """Whether a response is under way that the session didn't refuse, other than the one that made a tool call."""
+        """Whether a response is under way that the session didn't refuse, other than the one that made `besides_caller_of`."""
         caller = self._call_response.get(besides_caller_of) if besides_caller_of is not None else None
         return any(not response.refused and response is not caller for response in self._open_responses.values())
 
