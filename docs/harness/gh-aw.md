@@ -301,12 +301,6 @@ Key by key:
   the form its [templating reference](https://github.github.com/gh-aw/reference/templating/)
   documents for prompts (`.title` and `.body` expose the two halves separately).
 
-The compile error you get from a missing `imports:` line carries a tip naming an import
-path. Depending on the gh-aw release, that path can be gh-aw's own former copy of the
-definition or the archived `pydantic/pydantic-ai-harness` repository. Write the
-`pydantic/pydantic-ai` line above either way: the definition in this repository is the one
-that is maintained.
-
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
 import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, or a release
