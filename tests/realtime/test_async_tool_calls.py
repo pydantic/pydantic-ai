@@ -677,3 +677,34 @@ async def test_speech_while_tool_ran_hands_off(
         'What temperature did the weather tool report?', message_history=await _speech_while_tool_ran_history()
     )
     assert '24' in result.output
+
+
+async def test_typed_turn_after_the_result_cut_into_speech_gets_the_next_reply() -> None:
+    """A typed turn sent after a result cut into speech, before the turn ended, is answered by what comes next.
+
+    Without it, what the model says next would be the rest of the sentence the result cut into, which answers nothing.
+    """
+    conn = _QueuedConnection()
+    tools = _Tools()
+    session = RealtimeSession(conn, tools.runner)
+    async with session:
+        consumer = asyncio.create_task(drain_events(session))
+        conn.say(_call(), OutputTranscript(text='Look', is_final=False))
+        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        tools.finish('bg_1')
+        await _until(lambda: bool(conn.results()))
+        await session.send('Never mind, is it sunny?')
+        conn.say(OutputTranscript(text='Yes, it is.', is_final=True), ResponseDone())
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            await session.wait_for_reply()
+        await session.close()
+        await consumer
+
+    assert _shape(session.all_messages()) == snapshot(
+        [
+            ('ModelResponse', ['ToolCallPart', 'Look']),
+            ('ModelRequest', ['ToolReturnPart']),
+            ('ModelRequest', ['Never mind, is it sunny?']),
+            ('ModelResponse', ['Yes, it is.']),
+        ]
+    )

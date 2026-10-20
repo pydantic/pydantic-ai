@@ -233,10 +233,10 @@ History follows the order of the provider's own conversation:
   the tool. That speech is recorded in the calling response, after the
   [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], since the model said it before it had the result. The
   response ends when the model ends its turn, when the tool's result goes out, or when a spoken user turn joins
-  the conversation: whatever the model says after that is a response of its own, recorded after the return. That includes the rest of a sentence the result
-  cut into, and what the model says between the results of several calls in one response, whose returns all
-  directly follow it. A calling response the user cuts off while its tool still runs is recorded as complete,
-  as its tool round goes on.
+  the conversation: whatever the model says after that is a response of its own, recorded after the return.
+  That includes the rest of a sentence the result cut into, and what the model says between the results of
+  several calls in one response, whose returns all directly follow it. A calling response the user cuts off
+  while its tool still runs is recorded as complete, as its tool round goes on.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
   interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
