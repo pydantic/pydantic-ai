@@ -168,9 +168,9 @@ class MediaStore(Protocol):
 
     `get` and `get_metadata` raise `FileNotFoundError` for a URI that was
     never stored. `get_metadata` returns the metadata of the first `put` on
-    `SqliteMediaStore`, `PostgresMediaStore`, and `MongoMediaStore`; on
-    `DiskMediaStore` and `S3MediaStore` a later `put` that passes metadata
-    replaces it.
+    `SqliteMediaStore`, `PostgresMediaStore`, and `MongoMediaStore`. On
+    `DiskMediaStore` a later `put` that passes metadata replaces it; on
+    `S3MediaStore` every `put` replaces it, and one without metadata clears it.
 
     `public_url(uri)` returns a URL the model can fetch directly, or `None`
     if the store can't or hasn't been configured to produce one. The forthcoming
@@ -346,7 +346,10 @@ class SqliteMediaStore:
     back via `get_metadata(uri)`.
 
     On a caller-owned connection, `put` commits its insert when the caller
-    had no transaction open, and otherwise leaves the commit to the caller.
+    had no transaction open, and otherwise leaves the commit to the caller
+    (a Python 3.12+ `autocommit=False` connection always has one open).
+    Creating the table on the store's first call commits the connection
+    regardless, as `SqliteStepStore` does.
 
     There is no `key_strategy=` parameter: SqliteMediaStore is
     content-addressed and the digest IS the primary key -- any user-chosen

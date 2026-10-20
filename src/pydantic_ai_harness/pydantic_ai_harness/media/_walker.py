@@ -178,9 +178,12 @@ async def externalize_media(node: object, *, media_store: MediaStore, threshold_
     `node` must be a JSON-shaped tree, such as
     `json.loads(ModelMessagesTypeAdapter.dump_json(messages))` or
     `ModelMessagesTypeAdapter.dump_python(messages, mode='json')`; any other
-    value raises `TypeError`. Each qualifying part becomes a marker dict
-    carrying the canonical `media+sha256://` URI; the raw bytes are written to
-    `media_store`. Returns a new tree -- input is not mutated.
+    value raises `TypeError`. Pass a tree that has not been externalized: a
+    marker in the input is escaped like any caller dict carrying the marker
+    key, so it takes one `restore_media` per `externalize_media`. Each
+    qualifying part becomes a marker dict carrying the canonical
+    `media+sha256://` URI; the raw bytes are written to `media_store`. Returns
+    a new tree -- input is not mutated.
     """
     if _is_json_list(node):
         out_list: list[object] = []

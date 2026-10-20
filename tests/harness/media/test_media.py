@@ -1044,6 +1044,19 @@ class TestExternalizeRestoreWalker:
         externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64)
         assert await restore_media(externalized, media_store=store) == dumped
 
+    async def test_externalizing_a_lean_tree_takes_one_restore_per_pass(self, tmp_path: Path) -> None:
+        """A marker in the input is escaped like caller data, never trusted as a marker.
+
+        Trusting it would let a tool return forge one. Each `externalize_media`
+        pass therefore needs its own `restore_media`.
+        """
+        store = DiskMediaStore(tmp_path)
+        node = {'part_kind': 'text', 'content': 'x' * 128}
+        once = await externalize_media(node, media_store=store, threshold_bytes=64)
+        twice = await externalize_media(once, media_store=store, threshold_bytes=64)
+        assert await restore_media(twice, media_store=store) == once
+        assert await restore_media(once, media_store=store) == node
+
     async def test_externalized_part_inside_a_wrapped_dict_restores(self, tmp_path: Path) -> None:
         store = DiskMediaStore(tmp_path)
         node = {

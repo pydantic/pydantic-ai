@@ -627,14 +627,15 @@ missing snapshot rather than an exception. That rejection is the version gate
 and is intended, but store users have to anticipate it. Keep a current reader
 for persisted snapshots that contain escaped markers.
 
-Two later additions follow the same upgrade-only rule. A dict the walker
-leaves inline but which carries `__harness_external_media__` or
+Two later additions follow the same upgrade-only rule. A dict the walker leaves
+inline but which carries `__harness_external_media__` or
 `__harness_external_literal__` (a tool return, say) is written wrapped as
-`{"__harness_external_literal__": {...}}`, so it is never read back as a
-marker; an older reader leaves the wrapper in place. A binary marker whose
+`{"__harness_external_literal__": {...}}`, so it is never read back as a marker.
+An older reader leaves the wrapper in the restored payload, and still misreads a
+wrapped dict whose `__harness_external_media__` is `true`. A binary marker whose
 source used URL-safe base64, which is how pydantic serializes `bytes`, carries
-`__harness_external_urlsafe__` so the restored `data` uses the same alphabet;
-an older reader keeps that key in the restored part, which validation ignores.
+`__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an
+older reader keeps that key in the restored part, which validation ignores.
 
 | StepStore           | Default `media_store`                  | Where blobs live                      |
 | ------------------- | --------------------------------------- | ------------------------------------- |
@@ -757,8 +758,9 @@ emerge. Pass what you have, ignore the rest.
 **Persistence by store.** `get_metadata(uri)` returns the stored
 `metadata` mapping and raises `FileNotFoundError` for a blob that was
 never stored. A repeated `put` keeps the first metadata on the SQLite,
-MongoDB, and PostgreSQL stores; on `DiskMediaStore` and `S3MediaStore` a
-later `put` with metadata replaces it. `get_metadata` does not return
+MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with
+metadata replaces it; on `S3MediaStore` every `put` replaces it, and one
+without metadata clears it. `get_metadata` does not return
 `media_type`: S3 sends it as `Content-Type`, the database stores keep it
 in a column, and `DiskMediaStore` does not persist it.
 

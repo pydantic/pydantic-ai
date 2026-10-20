@@ -62,7 +62,7 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 
 None of the stores stream: `put` takes the whole payload and `get` returns it, so a blob has to fit in process memory.
 
-`SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection` (created with `check_same_thread=False`). On that connection, `put` commits its insert when no transaction is open and otherwise leaves the commit to you.
+`SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection` (created with `check_same_thread=False`). On that connection, `put` commits its insert when no transaction is open and otherwise leaves the commit to you; a Python 3.12+ `autocommit=False` connection always has one open. Creating the table on the store's first call commits the connection regardless.
 
 `S3MediaStore` uses path-style URLs and its own SigV4 signing, so it works with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. It sends one PUT per blob, so a blob is limited to S3's 5 GB single-PUT cap.
 
@@ -118,7 +118,7 @@ Close the returned pool during application shutdown.
 | `DiskMediaStore` | `<blob>.meta.json` sidecar | Replaces it |
 | `SqliteMediaStore`, `PostgresMediaStore` | JSON column | Is ignored |
 | `MongoMediaStore` | JSON string on the manifest | Is ignored |
-| `S3MediaStore` | Signed `x-amz-meta-*` headers | Replaces it |
+| `S3MediaStore` | Signed `x-amz-meta-*` headers | Replaces it; a `put` without metadata clears it |
 
 S3 keys must match `[A-Za-z0-9-]+` and come back lowercased. `get_metadata` never returns `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
 
@@ -132,7 +132,7 @@ They externalize:
 - Any message part whose string `content` is at least `threshold_bytes` UTF-8 bytes: `TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`.
 - `TextContent` inside a `UserPromptPart.content` sequence or a `ToolReturn`.
 
-Markers use reserved `__harness_external_*` keys. Caller data that uses those keys, such as a tool return, is escaped on write and restored on read, so it is never read back as a marker. `media_uri_for` and `parse_media_uri` compute and parse URIs if you key media yourself.
+Markers use reserved `__harness_external_*` keys. Caller data that uses those keys, such as a tool return, is escaped on write and restored on read, so it is never read back as a marker. The same escaping applies to a marker in the input, so pass trees that have not been externalized yet: restore a lean tree before externalizing it again. `media_uri_for` and `parse_media_uri` compute and parse URIs if you key media yourself.
 
 Older snapshots restore with a newer release; the reverse is not supported. Read persisted snapshots with a release at least as new as the one that wrote them. [Step Persistence](step-persistence.md#persisting-media) lists the marker-format changes.
 
