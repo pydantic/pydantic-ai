@@ -4827,7 +4827,11 @@ class TextPartDelta:
     """
 
     citations_delta: list[Citation] | None = None
-    """Citations to append to the existing text part."""
+    """Citations to append to the existing text part.
+
+    Models send all of a text part's citations in one delta, without text, once the part's text is complete. That delta
+    also sets the part's whole `provider_details['citations']`.
+    """
 
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
