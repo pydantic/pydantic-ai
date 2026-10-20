@@ -123,9 +123,9 @@ async def test_retry_does_not_adopt_a_launch_that_predates_a_native_write() -> N
         if step == 0:
             return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await read()\n1 +'})])
         if step == 1:
-            return ModelResponse(parts=[ToolCallPart('write', {})])
-        if step == 2:
-            return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await read()'})])
+            # The retry follows a sequential native write in the same response, so no step boundary
+            # evicts the failed attempt's launch before the retry dispatches.
+            return ModelResponse(parts=[ToolCallPart('write', {}), ToolCallPart('run_code', {'code': 'await read()'})])
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:

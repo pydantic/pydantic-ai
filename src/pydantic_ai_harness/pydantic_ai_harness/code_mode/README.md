@@ -459,6 +459,8 @@ Code can also reach a tool that is not eligible without naming it, for example t
 helper defined in an earlier snippet. A launch is not used if a call to a tool that is not
 eligible, native or inside `run_code`, starts or finishes after the launch. The dispatch runs
 the tool normally instead and counts as a miss; the launch is discarded as wasted work.
+Only tool calls move this boundary: writes the sandbox makes through `mount` or `os_access`
+do not, so do not make a tool eligible if it reads state those writes change.
 
 To overlap an earlier blocking read with later calls, that read must also be eligible.
 Streamed `run_code` parts following another model tool call wait for normal dispatch.
