@@ -1,3 +1,5 @@
+"""Unit transport tests pin exact requests and synthetic responses that VCR cannot reliably reproduce."""
+
 from __future__ import annotations
 
 import json
@@ -88,7 +90,6 @@ def response_body(answers: dict[str, object], *, model: str = 'clef-flash') -> d
 @dataclass
 class Captured:
     model: CloudflareClefModel
-    provider: CloudflareProvider
     requests: list[httpx2.Request]
 
 
@@ -110,7 +111,7 @@ def mock_model(
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
     provider = CloudflareProvider(api_key='test-token', base_url=ACCOUNT_URL, http_client=client)
-    return Captured(CloudflareClefModel(model_name, provider=provider), provider, requests)
+    return Captured(CloudflareClefModel(model_name, provider=provider), requests)
 
 
 @pytest.mark.parametrize('model_name', MODEL_IDS)
