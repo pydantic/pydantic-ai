@@ -266,6 +266,8 @@ def test_output_json_schema_transitive_collision_preserves_branches(
 
 
 def test_output_json_schema_contains_refs_preserve_branch_types():
+    """Use `json_schema_extra` to move `items` to `contains` and exercise colliding item definitions."""
+
     def use_contains(schema: dict[str, Any]) -> None:
         schema['contains'] = schema.pop('items')
 
@@ -276,9 +278,42 @@ def test_output_json_schema_contains_refs_preserve_branch_types():
 
     schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
 
-    assert schema['anyOf'][0]['properties']['values']['contains'] == {'$ref': '#/$defs/Item'}
-    assert schema['anyOf'][1]['properties']['values']['contains'] == {'$ref': '#/$defs/Second_Item_1'}
-    assert schema['$defs']['Second_Item_1']['properties']['value']['type'] == 'string'
+    assert schema == snapshot(
+        {
+            'anyOf': [
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Item'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'First',
+                    'type': 'object',
+                },
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Second_Item_1'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'Second',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Item': {
+                    'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+                'Second_Item_1': {
+                    'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+            },
+        }
+    )
 
 
 async def test_tool_output_json_schema():
