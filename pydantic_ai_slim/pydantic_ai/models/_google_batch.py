@@ -39,7 +39,7 @@ from pydantic_core import to_json
 from typing_extensions import TypedDict
 
 from .._utils import is_str_dict, now_utc
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests
 from ._batch_codec import batch_priced, prepare_decode, require_ended, shared_group, unrun_error
@@ -168,7 +168,18 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
     if job.dest is None or job.dest.file_name is None:
-        # A job that expired, or was canceled or failed before it ran a request, writes no results.
+        # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't
+        # say which requests it held, so a failed or canceled one fails all of them with its own reason.
+        if job.state == JobState.JOB_STATE_FAILED:
+            error = job.error
+            code = error.code if error is not None else None
+            raise ModelHTTPError(
+                status_code=_RPC_STATUS_CODES.get(code, 500) if code is not None else 500,
+                model_name=model.model_name,
+                body={'error': error.model_dump(exclude_none=True) if error is not None else None},
+            )
+        if job.state == JobState.JOB_STATE_CANCELLED:
+            raise ModelAPIError(model.model_name, 'The batch job was canceled before the model ran the request.')
         return []
     content = await client.aio.files.download(file=job.dest.file_name)
     results: list[BatchResult] = []

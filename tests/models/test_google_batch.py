@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -23,6 +24,8 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import BatchJob
+
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -144,6 +147,59 @@ async def test_gemini_batch_handles_check_their_group_and_status(allow_model_req
     for method in (other_model.batch_status, other_model.batch_cancel):
         with pytest.raises(UserError, match='does not match the batch request group'):
             await method(batch)
+
+
+@pytest.mark.parametrize(
+    'job, expected',
+    [
+        (
+            {'state': 'JOB_STATE_FAILED', 'error': {'code': 8, 'message': 'Quota exceeded.'}},
+            (
+                ModelHTTPError,
+                "status_code: 429, model_name: gemini-2.5-flash-lite, body: {'error': {'code': 8, 'message': 'Quota exceeded.'}}",
+            ),
+        ),
+        (
+            {'state': 'JOB_STATE_FAILED'},
+            (ModelHTTPError, "status_code: 500, model_name: gemini-2.5-flash-lite, body: {'error': None}"),
+        ),
+        (
+            {'state': 'JOB_STATE_CANCELLED'},
+            (ModelAPIError, 'The batch job was canceled before the model ran the request.'),
+        ),
+        ({'state': 'JOB_STATE_EXPIRED'}, None),
+    ],
+)
+async def test_gemini_batch_job_without_results_reports_why(
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+    job: dict[str, Any],
+    expected: tuple[type[Exception], str] | None,
+) -> None:
+    """A job that ended without a results file doesn't say which requests it held, so its own outcome stands for all."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    batch = Batch(
+        id='batches/123',
+        model_name=model.model_name,
+        provider_name=model.system,
+        group=(await model.batch_encode(_request())).group,
+        status='ended',
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        request_count=1,
+    )
+
+    async def get(*, name: str, config: Any = None) -> BatchJob:
+        return BatchJob.model_validate({'name': name, **job})
+
+    monkeypatch.setattr(model.client.aio.batches, 'get', get)
+
+    if expected is None:
+        assert await model.batch_results(batch) == []
+    else:
+        error_type, message = expected
+        with pytest.raises(error_type) as exc_info:
+            await model.batch_results(batch)
+        assert str(exc_info.value) == message
 
 
 @pytest.mark.parametrize('status', ['expired', 'canceled'])

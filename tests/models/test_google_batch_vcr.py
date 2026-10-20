@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.direct import model_request_batch
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models.batch import Batch, BatchRequest
 from pydantic_ai.settings import ModelSettings
@@ -97,7 +97,8 @@ async def test_gemini_batch_cancellation(allow_model_requests: None, gemini_api_
     assert batch.status in ('canceling', 'ended')
     batch = await wait_for_batch(model, batch, vcr)
     assert batch.provider_details is not None and batch.provider_details['state'] == 'JOB_STATE_CANCELLED'
-    assert await model.batch_results(batch) == []
+    with pytest.raises(ModelAPIError, match=r'canceled before the model ran the request'):
+        await model.batch_results(batch)
 
 
 class CityInfo(BaseModel):
