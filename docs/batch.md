@@ -47,6 +47,8 @@ A [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] in the
 
 Streaming isn't supported: a batch result arrives all at once. Batching needs an `asyncio` event loop, so it doesn't run under Trio.
 
+`BatchModelRequests` sends requests through the model's batch API methods rather than its `request()`, so a model wrapper inside it, from a capability listed after it, never has `request()` called. Put behavior that should run once per model request in a [`wrap_model_request`](capabilities/custom.md#model-request-hooks) hook instead.
+
 Requests waiting on the same submission or check share one task. Using the capability as an async context manager, `async with batching:`, cancels those tasks when it exits, and requests still waiting on them fail with a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ### Sharing batches between agents

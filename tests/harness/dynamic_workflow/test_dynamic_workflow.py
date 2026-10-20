@@ -1180,9 +1180,12 @@ async def test_sub_agent_ending_with_deferred_tool_requests_fails_the_call() -> 
 
 
 async def test_sub_agent_ending_with_pending_model_response_fails_the_call() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=pending_agent())])
+    background, model = pending_agent()
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=background)])
     with pytest.raises(ModelRetry) as exc_info:
         await _run_script(ts, "await background(task='x')")
+    # The script can't check on the request later, so it's cancelled.
+    assert model.cancelled == ['job-1']
     assert (
         "RuntimeError: sub-agent 'background' ended with `PendingModelResponse` because it needs the result of a "
         'model request the provider is still processing; a workflow script cannot resume it'

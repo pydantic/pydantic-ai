@@ -679,6 +679,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         When multiple capabilities provide wrappers, they follow middleware semantics: the first capability in the
         list wraps outermost, as with
         [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset].
+        A wrapper that doesn't call its wrapped model's `request()`, such as `BatchModelRequests`, which sends requests
+        through the batch API, skips the wrappers inside it: put behavior that should run once per model request in
+        [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request] instead.
 
         Under [durable execution](../durable_execution/overview.md), requests are sent from a durable unit (an
         activity, step or task), so this is called there too, with the model the unit rebuilds; in a Temporal

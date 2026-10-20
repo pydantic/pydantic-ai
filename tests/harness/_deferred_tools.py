@@ -1,6 +1,7 @@
 """Sub-agents whose runs end early for their caller to resume, shared by the delegation tests."""
 
 from collections.abc import Sequence
+from typing import Any
 
 from pydantic_ai import Agent, DeferredToolRequests, PendingModelResponse
 from pydantic_ai.capabilities import AbstractCapability
@@ -32,17 +33,30 @@ def deferring_agent(
     return agent
 
 
-class _BackgroundModel(FunctionModel):
-    """A model whose responses the provider keeps working on, checked on every second."""
+class BackgroundModel(FunctionModel):
+    """A model whose responses the provider keeps working on, checked on every second, recording cancellations."""
+
+    def __init__(self, *args: Any, fail_cancel: bool = False, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.fail_cancel = fail_cancel
+        self.cancelled: list[str | None] = []
 
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return 1.0
 
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        self.cancelled.append(response.provider_response_id)
+        if self.fail_cancel:
+            raise RuntimeError('cancel failed')
 
-def pending_agent(name: str = 'background') -> Agent[object, str | PendingModelResponse]:
+
+def pending_agent(
+    name: str = 'background', *, fail_cancel: bool = False
+) -> tuple[Agent[object, str | PendingModelResponse], BackgroundModel]:
     """A sub-agent whose model request is left waiting on the provider, so its run ends with `PendingModelResponse`."""
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[], provider_response_id='job-1', state='suspended')
 
-    return Agent(_BackgroundModel(model_fn), name=name, output_type=[str, PendingModelResponse])
+    model = BackgroundModel(model_fn, fail_cancel=fail_cancel)
+    return Agent(model, name=name, output_type=[str, PendingModelResponse]), model

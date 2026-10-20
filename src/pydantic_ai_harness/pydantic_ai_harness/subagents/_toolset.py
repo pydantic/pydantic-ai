@@ -40,7 +40,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason
+from pydantic_ai_harness._sub_agent_output import ServingModelRecorder, cancel_pending_output, resumable_output_reason
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -496,6 +496,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
             capabilities.extend(owner.persistence_capabilities())
+        serving_model = ServingModelRecorder()
+        capabilities.append(serving_model)
         usage_limits: UsageLimits | None
         if sub_agent.usage_limits is not None:
             # Isolated accounting so the per-child budget counts only this child.
@@ -553,7 +555,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         )
         token = _depth.set(_depth.get() + 1)
         try:
-            ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget)
+            ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model)
         except BaseException as exc:
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
@@ -624,6 +626,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         run: Coroutine[Any, Any, AgentRunResult[Any]],
         *,
         own_budget: bool,
+        serving_model: ServingModelRecorder,
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
@@ -672,7 +675,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return self._crash_outcome(agent_name, sub_agent, exc)
         if (reason := resumable_output_reason(result.output)) is not None:
             # The parent cannot resume the child run, and delegating the same task again would most
-            # likely stop the same way, so this is a soft outcome rather than a retry.
+            # likely stop the same way, so this is a soft outcome rather than a retry. Nobody will check
+            # on a request the child left pending, so it's cancelled.
+            await cancel_pending_output(result.output, serving_model)
             return _Ended(
                 outcome='failed',
                 output=self._steer(
