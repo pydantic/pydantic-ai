@@ -111,8 +111,9 @@ consecutive requests. The Vercel AI and AG-UI message conversions omit this meta
 
 Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
 is discarded.
-`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
-other tool exception ends the run with the original exception, as it does for a sequential tool.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
+when a `before_tool_execute` or `after_tool_execute` hook raises them. Any other tool exception
+ends the run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
