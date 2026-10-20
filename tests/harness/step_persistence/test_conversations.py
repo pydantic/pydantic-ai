@@ -68,8 +68,12 @@ async def test_listing_newest_first_reads_an_index_not_every_transcript(tmp_path
     assert [e.id for e in await store.listing()] == [second.id, first.id]
     assert [e.id for e in await store.listing(query='first')] == [first.id]
     with closing(sqlite3.connect(database)) as conn:
+        # The query `listing(archived=False)` runs.
         plan = conn.execute(
-            'EXPLAIN QUERY PLAN SELECT metadata FROM conversations ORDER BY updated_at DESC, id LIMIT 200'
+            'EXPLAIN QUERY PLAN SELECT metadata FROM conversations '
+            "WHERE (? IS NULL OR (json_extract(metadata, '$.archived_at') IS NOT NULL) = ?) "
+            'ORDER BY updated_at DESC, id LIMIT ? OFFSET ?',
+            (False, False, 200, 0),
         ).fetchall()
     # SQLite versions word the plan differently; a temporary B-tree would mean sorting every row.
     steps = ' '.join(row[-1] for row in plan)
