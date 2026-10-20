@@ -1,10 +1,9 @@
 """Tests for `KeepCacheWarm`.
 
 The capability is driven through `Agent(..., capabilities=[...])` with a `FunctionModel` whose profile publishes a
-two-second cache retention. With a 1.8-second margin, a refresh is due 0.2 seconds after a request and dropped
-after 1.1 seconds, so the tests
-wait for the refresh task to finish under a generous hang guard instead of asserting on timing.
-A refresh is the request the model receives with `max_tokens=1`.
+two-second cache retention on Anthropic's tiers. With a 1.8-second margin, a refresh is due 0.2 seconds after a
+request and dropped after 1.1 seconds, so the tests wait for the refresh task (or an event it sets) under a generous
+hang guard instead of asserting on timing. A refresh is the request the model receives with `max_tokens=1`.
 """
 
 from __future__ import annotations
@@ -21,11 +20,12 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import CacheRetention
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness import KeepCacheWarm as RootKeepCacheWarm
 from pydantic_ai_harness.keep_cache_warm import CacheWarmingStoppedWarning, KeepCacheWarm
@@ -33,25 +33,39 @@ from pydantic_ai_harness.keep_cache_warm import CacheWarmingStoppedWarning, Keep
 HANG_GUARD = 10
 """Seconds to wait for a refresh before failing: a hang guard, not a timing assertion."""
 
-TWO_SECONDS = ModelProfile(supports_cache=True, default_cache_retention=timedelta(seconds=2))
+ANTHROPIC_TIERS: tuple[CacheRetention, ...] = ('5m', '1h')
+
+
+def _profile(retention: timedelta | None, *, tiers: tuple[CacheRetention, ...] = ANTHROPIC_TIERS) -> ModelProfile:
+    return ModelProfile(supports_cache=True, supported_cache_retentions=tiers, default_cache_retention=retention)
+
+
+TWO_SECONDS = _profile(timedelta(seconds=2))
+FIVE_MINUTES = _profile(timedelta(minutes=5))
 
 
 class CachingModel:
     """A `FunctionModel` function that reports a cache write per request, and records the refreshes it receives."""
 
-    def __init__(self, *, refresh_read: int = 100, refresh_error: Exception | None = None) -> None:
+    def __init__(
+        self, *, refresh_read: int = 100, refresh_output: int = 1, refresh_error: Exception | None = None
+    ) -> None:
         self.refresh_read = refresh_read
+        self.refresh_output = refresh_output
         self.refresh_error = refresh_error
         self.refreshes: list[list[ModelMessage]] = []
+        self.refreshed = asyncio.Event()
 
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if (info.model_settings or {}).get('max_tokens') == 1:
             self.refreshes.append(messages)
+            self.refreshed.set()
             if self.refresh_error is not None:
                 raise self.refresh_error
-            return ModelResponse(
-                parts=[TextPart('.')], usage=RequestUsage(input_tokens=10, cache_read_tokens=self.refresh_read)
+            usage = RequestUsage(
+                input_tokens=10, output_tokens=self.refresh_output, cache_read_tokens=self.refresh_read
             )
+            return ModelResponse(parts=[TextPart('.')], usage=usage)
         return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=10, cache_write_tokens=100))
 
 
@@ -65,8 +79,8 @@ def _agent(
     return Agent(FunctionModel(model, profile=profile), deps_type=type(None), capabilities=[warm])
 
 
-def _fast(*, max_idle: timedelta = timedelta(minutes=10)) -> KeepCacheWarm[None]:
-    return KeepCacheWarm(margin=timedelta(seconds=1.8), max_idle=max_idle)
+def _fast(*, max_idle: timedelta = timedelta(minutes=10), between_runs: bool = True) -> KeepCacheWarm[None]:
+    return KeepCacheWarm(margin=timedelta(seconds=1.8), max_idle=max_idle, between_runs=between_runs)
 
 
 class TestKeepCacheWarm:
@@ -87,10 +101,8 @@ class TestKeepCacheWarm:
 
     async def test_next_request_of_the_conversation_cancels_the_pending_refresh(self) -> None:
         model = CachingModel()
-        warm = KeepCacheWarm[None](margin=timedelta(seconds=30), max_idle=timedelta(minutes=10))
-        agent = _agent(
-            model, warm, profile=ModelProfile(supports_cache=True, default_cache_retention=timedelta(minutes=5))
-        )
+        warm = KeepCacheWarm[None](between_runs=True)
+        agent = _agent(model, warm, profile=FIVE_MINUTES)
 
         first = await agent.run('hello')
         (pending,) = _warmers()
@@ -105,12 +117,8 @@ class TestKeepCacheWarm:
         assert model.refreshes == []
 
     async def test_each_conversation_has_its_own_refresh(self) -> None:
-        warm = KeepCacheWarm[None](margin=timedelta(seconds=30))
-        agent = _agent(
-            CachingModel(),
-            warm,
-            profile=ModelProfile(supports_cache=True, default_cache_retention=timedelta(minutes=5)),
-        )
+        warm = KeepCacheWarm[None](between_runs=True)
+        agent = _agent(CachingModel(), warm, profile=FIVE_MINUTES)
 
         await agent.run('one')
         await agent.run('two')
@@ -122,14 +130,15 @@ class TestKeepCacheWarm:
     @pytest.mark.parametrize(
         'profile',
         [
-            pytest.param(ModelProfile(default_cache_retention=timedelta(seconds=2)), id='caching-not-configurable'),
-            pytest.param(ModelProfile(supports_cache=True), id='retention-unknown'),
             pytest.param(
-                ModelProfile(supports_cache=True, default_cache_retention=timedelta(hours=1)), id='outlives-max-idle'
+                ModelProfile(supported_cache_retentions=ANTHROPIC_TIERS, default_cache_retention=timedelta(seconds=2)),
+                id='caching-not-configurable',
             ),
-            pytest.param(
-                ModelProfile(supports_cache=True, default_cache_retention=timedelta(seconds=1)), id='within-margin'
-            ),
+            # OpenAI's GPT-5.6 keeps a cached prefix for *at least* 30 minutes, so a refresh buys nothing certain.
+            pytest.param(_profile(timedelta(seconds=2), tiers=('30m',)), id='minimum-retention'),
+            pytest.param(_profile(None), id='retention-unknown'),
+            pytest.param(_profile(timedelta(hours=1)), id='outlives-max-idle'),
+            pytest.param(_profile(timedelta(seconds=1)), id='within-margin'),
         ],
     )
     async def test_not_warmed_when_the_model_cache_cant_be_kept_warm(self, profile: ModelProfile) -> None:
@@ -173,17 +182,57 @@ class TestKeepCacheWarm:
 
         assert len(model.refreshes) == 1
 
-    async def test_refresh_that_reads_no_cache_warns_and_stops(self) -> None:
-        model = CachingModel(refresh_read=0)
+    async def test_refresh_that_rewrites_the_cache_warns_and_stops(self) -> None:
+        model = CachingModel(refresh_read=50)
         warm = _fast()
         await _agent(model, warm).run('hello')
         (warmer,) = _warmers()
 
-        with pytest.warns(CacheWarmingStoppedWarning, match='read no cached tokens'):
+        with pytest.warns(CacheWarmingStoppedWarning, match='read back 50 of the 100 cached tokens'):
             await asyncio.wait_for(warmer, HANG_GUARD)
 
         assert len(model.refreshes) == 1
         assert warm.usage.requests == 1
+
+    async def test_refresh_whose_max_tokens_was_ignored_warns_and_stops(self) -> None:
+        model = CachingModel(refresh_output=500)
+        await _agent(model, _fast()).run('hello')
+        (warmer,) = _warmers()
+
+        with pytest.warns(CacheWarmingStoppedWarning, match=r'produced 500 output tokens'):
+            await asyncio.wait_for(warmer, HANG_GUARD)
+
+        assert len(model.refreshes) == 1
+
+    async def test_warms_during_a_long_tool_call(self) -> None:
+        model = CachingModel()
+
+        def call_tool_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            response = model(messages, info)
+            if len(messages) == 1 and not model.refreshes:
+                response.parts = [ToolCallPart('wait_for_refresh')]
+            return response
+
+        agent = Agent(
+            FunctionModel(call_tool_then_answer, profile=TWO_SECONDS),
+            deps_type=type(None),
+            capabilities=[KeepCacheWarm[None](margin=timedelta(seconds=1.8))],
+        )
+
+        @agent.tool_plain
+        async def wait_for_refresh() -> str:
+            await asyncio.wait_for(model.refreshed.wait(), HANG_GUARD)
+            return 'done'
+
+        result = await agent.run('hello')
+
+        assert model.refreshes[0] == result.all_messages()[:1]
+        assert not _warmers()
+
+    async def test_stops_when_the_run_ends_by_default(self) -> None:
+        await _agent(CachingModel(), KeepCacheWarm[None](), profile=FIVE_MINUTES).run('hello')
+
+        assert not _warmers()
 
     async def test_late_refresh_is_dropped(self) -> None:
         model = CachingModel()
@@ -210,7 +259,7 @@ class TestKeepCacheWarm:
 
         assert model.refreshes == []
 
-    async def test_stops_once_the_cache_outlives_max_idle(self) -> None:
+    async def test_refreshes_until_the_cache_outlives_max_idle(self) -> None:
         model = CachingModel()
         await _agent(model, _fast(max_idle=timedelta(seconds=2.6))).run('hello')
         (warmer,) = _warmers()

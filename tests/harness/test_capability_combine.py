@@ -59,6 +59,7 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
+    KeepCacheWarm,
     Memory,
     Planning,
     Researcher,
@@ -202,6 +203,10 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_keep_cache_warm(merged: Any) -> None:
+    assert merged.between_runs is True
+
+
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
@@ -279,6 +284,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one background scheduler per agent; selectors combine without wrapping a tool twice',
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
         _check_background_tools,
+    ),
+    'KeepCacheWarm': Combines(
+        'two would each replay the same request, doubling the refresh cost',
+        lambda: (KeepCacheWarm[Any](), KeepCacheWarm[Any](between_runs=True)),
+        _check_keep_cache_warm,
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': Anonymous('repairing valid arguments again is a no-op'),

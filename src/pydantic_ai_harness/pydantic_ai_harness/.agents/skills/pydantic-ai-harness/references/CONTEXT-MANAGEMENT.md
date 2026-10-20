@@ -23,7 +23,7 @@ tool-return pairs intact, and their edits persist into the run's message history
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
 | A single tool return is huge (file read, logs, JSON) | `ToolOutputLimits` |
 | Cache hit rate drops / costs jump with no error | `WarnOnCacheBusts` |
-| Cache expires while the user thinks or a tool runs (Anthropic 5-minute TTL) | `KeepCacheWarm` |
+| Cache expires during long tool calls, or between turns (Anthropic 5-minute TTL) | `KeepCacheWarm` (`between_runs=True` for turns) |
 | OpenAI Responses or Anthropic only, server-side compaction is fine | core `OpenAICompaction` / `AnthropicCompaction` |
 | Need exact details compaction dropped | `ConversationSearch` (see KNOWLEDGE-AND-MEMORY.md) |
 
@@ -330,10 +330,11 @@ it can't tell a moved prefix from an expired cache.
 
 After each model request, a background asyncio task replays that request with `max_tokens=1` shortly
 (`margin=30s`) before the provider's cache retention ends, discarding the response; the read restarts
-the provider's timer. The conversation's next model request cancels it. Applies to models with
-`supports_cache` and a known retention (settings, else `default_cache_retention`) whose response
-reported cached tokens; stops `max_idle=30min` after the last real request, on a late wake, or with
-a `CacheWarmingStoppedWarning` when a refresh raises or reads no cache.
+the provider's timer. The conversation's next model request cancels it. By default only during a run
+(long tool calls); `between_runs=True` also warms after the run, until the next turn or
+`max_idle=30min`. Applies to fixed-TTL caches (a `'5m'` tier: Anthropic, Bedrock Claude/Nova,
+OpenRouter Anthropic), not OpenAI's minimum-lifetime cache. Stops with a `CacheWarmingStoppedWarning`
+when a refresh raises, reads back under 95% of the cached prefix, or outputs more than 16 tokens.
 
 ```python
 from pydantic_ai import Agent
@@ -341,14 +342,16 @@ from pydantic_ai.capabilities import Caching
 
 from pydantic_ai_harness import KeepCacheWarm
 
-keep_warm = KeepCacheWarm()
+keep_warm = KeepCacheWarm(between_runs=True)
 agent = Agent('test', capabilities=[Caching(), keep_warm])
 # on shutdown: await keep_warm.stop()
 ```
 
 Gotchas: needs a running event loop (async apps; not between `run_sync()` calls); not for durable
 execution; Anthropic budget thinking can't replay with `max_tokens=1` (warns, stops). Refresh usage
-is in `keep_warm.usage`, not in run usage. Each refresh is a root `keep_cache_warm` span.
+is in `keep_warm.usage`, not in run usage; refreshes skip other capabilities' model hooks. Between
+runs, six refreshes at 0.1x cost about half of one 1.25x rewrite. Each refresh is a root
+`keep_cache_warm` span.
 
 ## Media externalization (not a capability)
 

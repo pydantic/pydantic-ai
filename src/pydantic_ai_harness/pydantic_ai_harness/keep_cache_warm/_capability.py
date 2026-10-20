@@ -6,24 +6,40 @@ import asyncio
 import warnings
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import timedelta
+from typing import Any
 
 from opentelemetry import context as otel_context
 from opentelemetry.trace import StatusCode, Tracer
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
 
+_MIN_READ_BACK_RATIO = 0.95
+"""A refresh must read back at least this fraction of the prefix the real request cached.
+
+An exact replay reads the whole prefix back. Reading back less means the replay wrote part of the prefix
+again, at the cache-write price, so further refreshes would keep paying for writes instead of reads.
+"""
+
+_MAX_REFRESH_OUTPUT_TOKENS = 16
+"""A refresh producing more output tokens than this means the provider ignored `max_tokens=1`.
+
+An honoured cap yields at most 1 token; 16 leaves slack for providers that round small caps up.
+"""
+
 
 class CacheWarmingStoppedWarning(UserWarning):
-    """Warned when `KeepCacheWarm` stops warming a conversation because a refresh request didn't refresh the cache.
+    """Warned when `KeepCacheWarm` stops warming a conversation because a refresh request didn't work as a cheap read.
 
-    That's a refresh request that raised, such as on a provider that rejects `max_tokens=1` or with Anthropic
-    extended thinking, whose `budget_tokens` `max_tokens` must exceed; or one that read no cached tokens back,
-    so it wrote the cache again. The conversation isn't warmed again until its next model request.
+    That's a refresh request that raised, such as with Anthropic extended thinking, whose `budget_tokens`
+    `max_tokens` must exceed; one that read back less of the cached prefix than the real request cached, so it
+    paid to write the cache again; or one that produced more output than `max_tokens=1` allows, so the provider
+    ignored the cap. The conversation isn't warmed again until its next model request.
     """
 
 
@@ -37,22 +53,29 @@ class _Refresh:
     model_request_parameters: ModelRequestParameters
     retention: float
     """How long the provider keeps the cached prefix, in seconds."""
+    cached_tokens: int
+    """The prefix the real request cached: its cache reads plus writes."""
     requested_at: float
     """When the real request started, on the event loop's clock."""
 
 
 @dataclass
 class KeepCacheWarm(AbstractCapability[AgentDepsT]):
-    """Keep a conversation's prompt cache warm while it's idle, by replaying its last model request before the cache expires.
+    """Keep a conversation's prompt cache from expiring between model requests, by replaying the last request before it does.
 
     After each model request, a background task waits until shortly before the provider's cache retention
     window ends, then sends the same request again with `max_tokens=1` and discards the response. Reading the
     cached prefix back restarts the provider's retention timer, so the next real request reads the cache
     instead of paying to write it again. The conversation's next model request cancels the pending refresh.
 
-    Warming applies to models whose prompt caching is configured on the request (the profile's
-    `supports_cache`) and whose retention is known: the retention the request's settings ask for, else the
-    provider's `default_cache_retention`. It stops `max_idle` after the conversation's last real request.
+    By default the cache is kept warm only while a run is in progress, such as during a long tool call, where
+    the next model request is certain to come. With `between_runs=True` it's also kept warm after a run ends,
+    for the conversation's next turn.
+
+    Warming applies to models whose cache expires a fixed time after its last use, which each read restarts:
+    a profile with a `'5m'` cache tier, as on Anthropic, Claude on Amazon Bedrock, and OpenRouter's Anthropic
+    routes. The retention is the one the request's settings ask for, else the provider's
+    `default_cache_retention`. It stops `max_idle` after the conversation's last real request.
 
     The refresh runs on the event loop the run ran on, so it needs that loop to keep running, as in an async
     application; between `run_sync()` calls nothing is refreshed. It isn't for durable execution, where model
@@ -60,6 +83,20 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
     """
 
     _: KW_ONLY
+
+    id: str | None = 'keep_cache_warm'
+    """One-off: two on one agent would each replay the same request, doubling the refresh cost.
+
+    Two of them resolve to one via `combine`, which keeps the last. Pass a distinct `id` to keep both.
+    """
+
+    between_runs: bool = False
+    """Whether to keep the cache warm after a run ends, until the conversation's next run or `max_idle`.
+
+    Off by default: whether the next turn comes before `max_idle` is unknown, and each refresh costs a cache
+    read of the whole prefix. At Anthropic's 0.1x read and 1.25x write prices, the refreshes of a 30-minute
+    `max_idle` cost about half of the one rewrite they avoid.
+    """
 
     max_idle: timedelta = timedelta(minutes=30)
     """How long after a conversation's last real model request to keep its cache warm.
@@ -100,6 +137,19 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
             warmer.cancel()
         await asyncio.gather(*warmers, return_exceptions=True)
 
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[Any]:
+        """Stop warming when the run ends, unless `between_runs` is set."""
+        try:
+            return await handler()
+        finally:
+            if not self.between_runs and (warmer := self._warmers.pop(_conversation_key(ctx), None)) is not None:
+                warmer.cancel()
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -137,6 +187,7 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
             model_settings={**(request_context.model_settings or {}), 'max_tokens': 1},
             model_request_parameters=request_context.model_request_parameters,
             retention=retention.total_seconds(),
+            cached_tokens=usage.cache_read_tokens + usage.cache_write_tokens,
             requested_at=started,
         )
         if (previous := self._warmers.pop(key, None)) is not None:
@@ -197,12 +248,9 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
                             'keep_cache_warm.retention_seconds': refresh.retention,
                         }
                     )
-            if not response.usage.cache_read_tokens:
+            if (stopped := _stop_reason(response, refresh)) is not None:
                 warnings.warn(
-                    'Stopped keeping the prompt cache warm: the refresh request read no cached tokens, '
-                    'so it wrote the cache again instead of refreshing it.',
-                    CacheWarmingStoppedWarning,
-                    stacklevel=1,
+                    f'Stopped keeping the prompt cache warm: {stopped}.', CacheWarmingStoppedWarning, stacklevel=1
                 )
                 return
             last_use = started
@@ -220,6 +268,22 @@ def _retention(request_context: ModelRequestContext) -> timedelta | None:
     except NotImplementedError:
         # `FallbackModel` resolves its model per request, so which provider's cache a replay would hit isn't known.
         return None
-    if not profile.get('supports_cache', False):
+    # A provider whose cache lives *at least* some time, like OpenAI's, may keep it longer anyway, so refreshing
+    # it buys nothing certain. A `'5m'` tier marks a cache that expires a fixed time after its last use.
+    if not profile.get('supports_cache', False) or '5m' not in profile.get('supported_cache_retentions', ()):
         return None
     return model.resolve_cache_retention(request_context.model_settings) or profile.get('default_cache_retention')
+
+
+def _stop_reason(response: ModelResponse, refresh: _Refresh) -> str | None:
+    usage = response.usage
+    if usage.output_tokens > _MAX_REFRESH_OUTPUT_TOKENS:
+        return (
+            f'the refresh request produced {usage.output_tokens} output tokens, so the provider ignored `max_tokens=1`'
+        )
+    if usage.cache_read_tokens < refresh.cached_tokens * _MIN_READ_BACK_RATIO:
+        return (
+            f'the refresh request read back {usage.cache_read_tokens} of the {refresh.cached_tokens} cached tokens, '
+            'so it wrote the cache again instead of refreshing it'
+        )
+    return None
