@@ -6,7 +6,6 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import anyio
 from starlette.testclient import WebSocketTestSession
 
 from pydantic_ai import Agent
@@ -255,20 +254,27 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
 
 
 def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeWeb) -> None:
-    web_ = make_web(create_stock_agent(TestModel()))
-    web_.run()
-    web_.portal.call(anyio.wait_all_tasks_blocked)
-    record = finished_task(web_)
-    record.user_stopped = True
-    response = web_.post(f'/api/tasks/{record.id}/prompt', {'text': 'and the docs?'})
-    assert response.status_code == 400
-    assert response.json()['detail'] == (
-        'This agent delegates no tasks now, so its tasks take no prompts. Turn sub-agents on first.'
-    )
-    assert record.user_stopped and record.status == 'finished', 'left as it was'
-    assert prompts(record.messages) == ['child']
-    assert web_.shell.session.messages == []
-    assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hi'
+
+    web_ = make_web(create_stock_agent(FunctionModel(stream_function=stream)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers=ORIGIN) as socket:
+        web_.run()
+        # A turn ending means the prompt is open, and with it the session's tasks.
+        assert web_.post('/api/input', {'text': 'hello'}).json() == {'menu': None}
+        receive_until(socket, TurnEnded)
+        conversation = list(web_.shell.session.messages)
+        record = finished_task(web_)
+        record.user_stopped = True
+        response = web_.post(f'/api/tasks/{record.id}/prompt', {'text': 'and the docs?'})
+        assert response.status_code == 400
+        assert response.json()['detail'] == (
+            'This agent delegates no tasks now, so its tasks take no prompts. Turn sub-agents on first.'
+        )
+        assert record.user_stopped and record.status == 'finished', 'left as it was'
+        assert prompts(record.messages) == ['child']
+        assert web_.shell.session.messages == conversation
+        assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
 
 
 def test_without_a_task_owner(make_web: MakeWeb) -> None:
