@@ -11,7 +11,9 @@ own suites, which check that a durable run sends the same requests as a plain on
 
 from __future__ import annotations
 
+import importlib
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -334,7 +336,8 @@ def test_discovery_finds_capabilities_with_nested_type_arguments(tmp_path: Path,
         'class Leaf(Base, metaclass=type):\n    pass\n\n'
         'class _Private(AbstractCapability[dict[str, Any]]):\n    pass\n'
     )
-    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    importlib.invalidate_caches()
     found = discover_capabilities(('nested_generic_capabilities',))
     assert sorted(found) == ['Base', 'Leaf']
     assert found['Leaf'].module == 'nested_generic_capabilities._caps'

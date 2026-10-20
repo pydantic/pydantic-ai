@@ -663,10 +663,7 @@ def _base_names(bases: str) -> set[str]:
     for base in statement.bases:
         while isinstance(base, ast.Subscript):
             base = base.value
-        if isinstance(base, ast.Name):
-            names.add(base.id)
-        elif isinstance(base, ast.Attribute):
-            names.add(base.attr)
+        names.add(ast.unparse(base).rsplit('.', 1)[-1])
     return names
 
 
