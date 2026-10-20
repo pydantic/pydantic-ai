@@ -29,7 +29,7 @@ Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -
 
 ## Usage
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`; wrap a comparison on a NumPy or tensor score in `bool()`.
 
 ```python
 from pydantic_ai import Agent
@@ -447,7 +447,7 @@ Parallel mode trades tokens for latency: sequential mode never calls the model w
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature: a second required positional parameter, or a first parameter annotated `RunContext`, means the guard takes it. Keyword-only and defaulted parameters are left to the guard, so prompt-only guards need not declare anything:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required, or when the first one is annotated `RunContext`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from pydantic_ai import RunContext

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -44,6 +45,7 @@ from pydantic_ai_harness.guardrails._capability import (
     _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
+from pydantic_ai_harness.guardrails._shared import _annotated_as_run_context  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
 
@@ -1267,6 +1269,26 @@ class TestFindPromptPart:
 
     def test_stringifies_non_str_content(self):
         assert _prompt_text(['multimodal', 'content']) == str(['multimodal', 'content'])
+
+
+class TestAnnotatedAsRunContext:
+    """`_annotated_as_run_context` reads an annotation without resolving it."""
+
+    @pytest.mark.parametrize(
+        ('annotation', 'expected'),
+        [
+            (RunContext, True),
+            (RunContext[object], True),
+            ('RunContext', True),
+            ('RunContext[MyDeps]', True),
+            ('str', False),
+            (str, False),
+            (inspect.Parameter.empty, False),
+        ],
+    )
+    def test_annotation(self, annotation: object, expected: bool):
+        parameter = inspect.Parameter('ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation)
+        assert _annotated_as_run_context(parameter) is expected
 
 
 class TestInputGuardrailOrdering:

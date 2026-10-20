@@ -596,7 +596,35 @@ class TestResultGuardOnAFailedTool:
 
     @pytest.mark.parametrize('error', [ModelRetry('boom'), ToolFailed('boom')])
     async def test_an_unwrapped_failure_the_guard_allows_is_reraised_unchanged(self, error: Exception):
-        guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.allow())
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.allow()
+
+        guard = ToolGuardrail[object](result_guard=result_guard)
+        ctx, call = _run_ctx(), _call()
+
+        async def handler(args: dict[str, Any]) -> NoReturn:
+            args = await guard.before_tool_execute(ctx, call=call, tool_def=_tool_def(), args=args)
+            raise error
+
+        with pytest.raises(type(error)) as raised:
+            await guard.wrap_tool_execute(ctx, call=call, tool_def=_tool_def(), args={}, handler=handler)
+
+        assert raised.value is error
+        assert seen == ['boom']
+
+    @pytest.mark.parametrize('error', [ModelRetry('validator: say please'), ToolFailed('validator: say please')])
+    async def test_an_unwrapped_failure_raised_outside_the_tool_is_not_screened(self, error: Exception):
+        """Raised before the tool started, it is another capability's message, not tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:  # pragma: no cover - must not run
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        guard = ToolGuardrail[object](result_guard=result_guard)
 
         async def handler(args: dict[str, Any]) -> NoReturn:
             raise error
@@ -605,6 +633,47 @@ class TestResultGuardOnAFailedTool:
             await guard.wrap_tool_execute(_run_ctx(), call=_call(), tool_def=_tool_def(), args={}, handler=handler)
 
         assert raised.value is error
+        assert seen == []
+
+    async def test_another_capabilitys_retry_after_the_tool_is_not_screened(self):
+        """A result validator's instruction reaches the model as written, and the guard sees only tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        class DemandsUppercase(AbstractCapability[None]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                if result != str(result).upper():
+                    raise ModelRetry('validator: result must be uppercase')
+                return result  # pragma: no cover - the guard always blocks
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[DemandsUppercase(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        ]
+
+        assert seen == ['ok']
+        assert [part.content for part in retries] == ['validator: result must be uppercase']
 
     async def test_its_own_retry_verdict_is_not_screened_again(self):
         """The retry instruction is the guard's own text, not tool output."""

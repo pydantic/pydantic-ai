@@ -11,11 +11,10 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, assert_never
+from typing import Literal, assert_never, get_origin
 
 from typing_extensions import TypeIs
 
-from pydantic_ai._utils import takes_run_context
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -170,7 +169,20 @@ def takes_ctx(func: Callable[..., object]) -> bool:
     ]
     if len(positional) < 2:
         return False
-    return positional[1].default is inspect.Parameter.empty or takes_run_context(func)
+    return positional[1].default is inspect.Parameter.empty or _annotated_as_run_context(positional[0])
+
+
+def _annotated_as_run_context(parameter: inspect.Parameter) -> bool:
+    """Whether `parameter` is annotated `RunContext`, read without resolving the annotation.
+
+    A string annotation (under `from __future__ import annotations`) is matched by name rather
+    than evaluated: resolving it fails when a type it mentions is imported only for type checking,
+    and that would turn a guard which worked into an error.
+    """
+    annotation = parameter.annotation
+    if isinstance(annotation, str):
+        return annotation == 'RunContext' or annotation.startswith('RunContext[')
+    return annotation is RunContext or get_origin(annotation) is RunContext
 
 
 async def evaluate(
@@ -189,7 +201,8 @@ async def evaluate(
     # Refused rather than read for truthiness: a classifier label such as `'unsafe'`, or a
     # verdict object of the wrong type, is truthy and would let the value through.
     raise UserError(
-        f'A guard must return True, False, or a GuardrailResult; {guard!r} returned {type(outcome).__name__}.'
+        f'A guard must return True, False, or a GuardrailResult; {guard!r} returned {type(outcome).__name__}. '
+        'Wrap a comparison on a NumPy or tensor score in bool().'
     )
 
 

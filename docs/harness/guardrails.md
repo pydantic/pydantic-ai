@@ -53,7 +53,7 @@ agent = Agent(
 )
 ```
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`; wrap a comparison on a NumPy or tensor score in `bool()`. Guards may also be async -- return an awaitable `bool`/`GuardrailResult`, for example to call a moderation API.
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
@@ -266,7 +266,7 @@ OutputGuardrail(guard=must_cite_sources)
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature: a second required positional parameter, or a first parameter annotated `RunContext`, means the guard takes it. Keyword-only and defaulted parameters are left to the guard, so prompt-only guards need not declare anything:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required, or when the first one is annotated `RunContext`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from pydantic_ai import RunContext
