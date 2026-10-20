@@ -2065,7 +2065,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         message[sent_field] = ''
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        instruction_parts = self._system_instruction_parts(messages, model_request_parameters) or []
         if instruction_parts:
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
@@ -3263,7 +3263,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             instructions = self._relocate_cached_instructions(
                 instructions,
                 openai_messages,
-                self._get_instruction_parts(messages, wire_request_parameters) or [],
+                self._system_instruction_parts(messages, wire_request_parameters) or [],
                 system_prompt_role,
             )
 

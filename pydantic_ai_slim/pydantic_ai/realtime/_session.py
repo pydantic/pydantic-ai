@@ -22,7 +22,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
-from .._framing import SYSTEM_TAG, wrap
+from .._framing import SYSTEM_TAG, neutralize_voice_tag, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
@@ -483,31 +483,47 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
     )
 
 
-def _pending_message_text(pending: PendingMessage) -> str:
-    """Render enqueued messages down to the text a realtime session can deliver.
+def _pending_message_parts(pending: PendingMessage) -> list[UserPromptPart | SystemPromptPart]:
+    """The text-only parts of enqueued messages, in order, as a realtime session can deliver them.
 
-    Text-only parts join across messages, and a mid-conversation `SystemPromptPart` is delivered as
-    `<system>`-tagged user text — the same degradation `Model.prepare_messages` applies for a
-    standard run's non-leading system prompts. Anything else can't cross the live input channel.
+    Anything else can't cross the live input channel.
     """
     error = UserError(
         '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
         'parts only. Multimodal content and model responses cannot be delivered over the live input '
         'channel.'
     )
-    texts: list[str] = []
+    parts: list[UserPromptPart | SystemPromptPart] = []
     for message in pending.messages:
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                texts.append(part.content)
-            elif isinstance(part, SystemPromptPart):
-                texts.append(wrap(SYSTEM_TAG, part.content))
+            if (isinstance(part, UserPromptPart) and isinstance(part.content, str)) or isinstance(
+                part, SystemPromptPart
+            ):
+                parts.append(part)
             else:
                 raise error
-    if not texts:
+    if not parts:
         raise error
+    return parts
+
+
+def _pending_message_text(parts: Sequence[UserPromptPart | SystemPromptPart]) -> str:
+    """Render enqueued parts down to the one user turn a realtime session delivers.
+
+    A realtime session has no mid-conversation system role, so this is the projection
+    `Model.prepare_messages` applies for a model that takes none: a `SystemPromptPart` is delivered as
+    `<system>`-tagged user text, and `<system>` tags in the user text around it are neutralized so
+    that only the framework can write one.
+    """
+    texts: list[str] = []
+    for part in parts:
+        if isinstance(part, SystemPromptPart):
+            texts.append(wrap(SYSTEM_TAG, part.content))
+        else:
+            assert isinstance(part.content, str), '`_pending_message_parts` only lets text prompts through'
+            texts.append(neutralize_voice_tag(part.content))
     return '\n\n'.join(texts)
 
 
@@ -522,7 +538,7 @@ class _RealtimePendingMessages(PendingMessageQueue):
         self._on_append = on_append
 
     def append(self, pending: PendingMessage) -> None:
-        _pending_message_text(pending)
+        _pending_message_parts(pending)
         super().append(pending)
         if self._on_append is not None:
             self._on_append(pending.priority)
@@ -1537,7 +1553,9 @@ class RealtimeSession:
         """
         self._ensure_can_send()
         if isinstance(content, str):
-            await self._send_text(content, respond=respond is not False)
+            await self._send_text(
+                neutralize_voice_tag(content), respond=respond is not False, parts=[UserPromptPart(content=content)]
+            )
         elif isinstance(content, BinaryContent):
             if content.is_image:
                 await self._send_image(content, respond=respond is True)
@@ -1564,8 +1582,9 @@ class RealtimeSession:
         else:
             assert_never(content)
 
-    async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        request = self._new_request([UserPromptPart(content=content)])
+    async def _send_text(self, content: str, *, respond: bool, parts: Sequence[ModelRequestPart]) -> ModelRequest:
+        """Send `content` as one text turn, recording `parts` as the history entry it renders."""
+        request = self._new_request(list(parts))
         await self._send_frame(content if respond else TextContext(content), request=request)
         return request
 
@@ -2461,7 +2480,8 @@ class RealtimeSession:
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
-                request = await self._send_text(_pending_message_text(pending), respond=True)
+                parts = _pending_message_parts(pending)
+                request = await self._send_text(_pending_message_text(parts), respond=True, parts=parts)
                 self._queue_put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
             if priority == 'asap':
                 self._asap_drain_deferred = False

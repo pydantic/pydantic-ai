@@ -643,7 +643,7 @@ class DecisionModel(Model[InterfaceClient]):
         ):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        instruction_parts = self._system_instruction_parts(messages, model_request_parameters) or []
         instructions = '\n\n'.join(part.content for part in instruction_parts) or None
         settings = cast(DecisionModelSettings, model_settings or {})
         # The bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding

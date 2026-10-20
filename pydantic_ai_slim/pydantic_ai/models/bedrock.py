@@ -1647,7 +1647,7 @@ class BedrockConverseModel(Model[BaseClient]):
             processed_messages.append(current_message)
             last_message = cast(dict[str, Any], current_message)
 
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+        if instruction_parts := self._system_instruction_parts(messages, model_request_parameters):
             for part in instruction_parts:
                 system_prompt.append({'text': part.content})
 

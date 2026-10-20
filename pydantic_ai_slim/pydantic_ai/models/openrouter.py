@@ -947,7 +947,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
         ttl: OpenRouterCacheTTL,
     ) -> None:
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        instruction_parts = self._system_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
             for msg in reversed(openai_messages):
                 if msg.get('role') in ('system', 'developer'):

@@ -604,7 +604,7 @@ class GroqModel(Model[AsyncGroq]):
                 groq_messages.append(message_param)
             else:
                 assert_never(message)
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
+        if instruction_parts := self._system_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
             )

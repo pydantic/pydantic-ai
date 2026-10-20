@@ -86,7 +86,7 @@ from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._utils import seed_pcm_audio, seed_speech_content, seed_user_content
+from ._utils import project_seed_history, seed_pcm_audio, seed_speech_content, seed_user_content
 from .codec import (
     AudioDelta,
     InputRejected,
@@ -555,13 +555,15 @@ async def seed_items(
     Text, transcripts, images, retained user audio, thinking, and function-tool rounds are replayed in
     part order. Thinking becomes tag-wrapped assistant text; its signature and `provider_details` are
     provider-session-bound and are not replayed. Native-tool parts are metadata about how an answer was
-    produced and are skipped while the answer itself is retained. `SystemPromptPart`s are routed through
-    the session `instructions` field, and `CachePoint`s are ignored.
+    produced and are skipped while the answer itself is retained. The standing `SystemPromptPart`s are
+    routed through the session `instructions` field, a mid-conversation one is replayed as
+    `<system>`-tagged user text (see `project_seed_history`), and `CachePoint`s are ignored.
 
     Retained user audio is decoded by the new session's configured input-audio format. Assistant audio
     cannot be inserted by the API, so assistant speech requires a transcript. Any other content that
     cannot be represented faithfully raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
+    messages = project_seed_history(messages)
     items: list[dict[str, Any]] = []
     call_ids: dict[str, str] = {}
     seeded_calls: set[str] = set()

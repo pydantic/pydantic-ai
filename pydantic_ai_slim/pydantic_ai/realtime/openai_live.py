@@ -109,7 +109,13 @@ from ._openai_protocol import (
     tool_choice_config,
 )
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
-from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    project_seed_history,
+    reconnect_with_backoff,
+    resolve_advertised_tools,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -462,8 +468,8 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
 def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
-    `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
-    protocol. A tool result becomes user-level text because Live has nowhere to put a function part in
+    The standing `SystemPromptPart`s are routed through `instructions` instead, exactly as on the
+    Realtime protocol, and a mid-conversation one has already become `<system>`-tagged user text. A tool result becomes user-level text because Live has nowhere to put a function part in
     seeded history, and not a developer note: its content comes from whatever the tool read, which
     must not be replayed with more authority than it had as a tool result.
     """
@@ -509,7 +515,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     before we get here.
     """
     items: list[dict[str, Any]] = []
-    for message in messages:
+    for message in project_seed_history(messages):
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:

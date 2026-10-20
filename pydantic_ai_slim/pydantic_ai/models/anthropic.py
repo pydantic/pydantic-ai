@@ -2866,7 +2866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     ]
                     message['content'] = [*existing, *extra]
 
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
+        instruction_parts = self._system_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
 
         # Build system prompt blocks: each instruction part becomes a separate text block.

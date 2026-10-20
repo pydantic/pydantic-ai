@@ -26,7 +26,7 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._framing import SYSTEM_TAG, neutralize_closing_tag, wrap
+from .._framing import SYSTEM_TAG, VOICE_TAG_ANNOUNCEMENT, neutralize_closing_tag, neutralize_voice_tag, wrap
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -69,6 +69,7 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ThinkingPart,
     ToolAvailabilityDeltaPart,
@@ -1150,6 +1151,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             messages = _move_request_scoped_prompts_to_tail(messages)
 
         if not self.profile.get('supports_inline_system_prompts', False):
+            # Before the framework adds its own `<system>` blocks, so the rule is by part type alone.
+            messages = _neutralize_user_voice_tags(messages)
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
         messages = _order_tool_results_by_call(messages)
@@ -1329,6 +1332,25 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
         _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
+
+    def _system_instruction_parts(
+        self, messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[InstructionPart] | None:
+        """The instruction parts this model sends as its standing system prompt.
+
+        These are [`_get_instruction_parts`][pydantic_ai.models.Model._get_instruction_parts], plus, on a
+        model that receives mid-conversation instructions as `<system>`-tagged user text, a fixed
+        announcement of what those blocks are: where they come from, that no one else can write one,
+        and how text whose tags were neutralized is reproduced. Without it, Gemini ignored a genuine
+        block in a live probe. The announcement goes after the static instructions and before any
+        dynamic ones, and it is fixed text, so the prompt prefix it sits in stays the same bytes on
+        every request. It is rendering, like the `<system>` wrap itself, so it never appears in
+        `ModelRequestParameters.instruction_parts`.
+        """
+        parts = self._get_instruction_parts(messages, model_request_parameters)
+        if self.profile.get('supports_inline_system_prompts', False):
+            return parts
+        return InstructionPart.sorted([*(parts or []), InstructionPart(content=VOICE_TAG_ANNOUNCEMENT)])
 
     @staticmethod
     def _get_instruction_parts(
@@ -2816,6 +2838,54 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
         for part in request.parts[-count:]
         if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str)
     )
+
+
+def _neutralize_user_voice_tags(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Neutralize `<system>` tags in every user-channel text, for a model that receives `<system>` blocks as user text.
+
+    On such a model the framework's mid-conversation instructions arrive as `<system>`-tagged user
+    text, so any other user-channel text could open a block of its own and pass for the application
+    speaking: a prompt typed by the user, a tool's report that a capability delivers as a user
+    message, a transcript of the user's speech. The rule is by part type, never by what the text
+    says. A `SystemPromptPart` is framework or operator voice and is wrapped after this runs; every
+    `UserPromptPart` is not, so the `<` of each `<system>` tag in its text is escaped. Files, tool
+    results and model responses are left alone: they don't travel as user text.
+
+    This changes only the outgoing copy, never the history, and it is the same for the same history,
+    so it is as stable for the provider's prompt cache as the text it replaces.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                _neutralize_user_prompt_voice_tags(part) if isinstance(part, UserPromptPart) else part
+                for part in message.parts
+            ]
+            if any(new is not old for new, old in zip(parts, message.parts)):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _neutralize_user_prompt_voice_tags(part: UserPromptPart) -> UserPromptPart:
+    if isinstance(part.content, str):
+        content = neutralize_voice_tag(part.content)
+        return part if content == part.content else replace(part, content=content)
+    items = [_neutralize_user_content_voice_tags(item) for item in part.content]
+    return part if all(new is old for new, old in zip(items, part.content)) else replace(part, content=items)
+
+
+def _neutralize_user_content_voice_tags(item: UserContent) -> UserContent:
+    if isinstance(item, str):
+        text = neutralize_voice_tag(item)
+        return item if text == item else text
+    if isinstance(item, TextContent) and (text := neutralize_voice_tag(item.content)) != item.content:
+        return replace(item, content=text)
+    return item
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
