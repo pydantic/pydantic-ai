@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, Workspace, WorkspaceCommand
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceCommand,
+)
 from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 from .conftest import tools_path
@@ -228,9 +234,9 @@ async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_gi
 
 
 async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
     # many times over, so `head` closes the pipe while the search is still writing.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     bin_dir, scratch, root = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'ws'
     path = tools_path(bin_dir, exclude=frozenset({'rg', 'mktemp'}))
     # Put the search's temp files in a known directory: BSD mktemp ignores TMPDIR here.
@@ -251,8 +257,8 @@ async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: 
 async def test_posix_output_cap_drops_the_match_line_it_cuts(
     tmp_path: Path, no_rg_git_path: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    # A smaller cap stands in for `MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search.MAX_OUTPUT_BYTES', 50_000)
     (tmp_path / 'a.txt').write_text('needle\n')
     (tmp_path / 'b.txt').write_text('needle' + 'x' * 100_000 + '\n')
     backend = CountingBackend(tmp_path, no_rg_git_path)
@@ -353,3 +359,32 @@ async def test_the_fallback_is_logged_once_per_workspace(
         assert await tools.list_files(workspace=workspace) == 'a.txt'
     (record,) = caplog.records
     assert record.getMessage().startswith(f'`rg` is not on the PATH of the workspace at {tmp_path.resolve()}')
+
+
+async def test_include_glob_matches_alike_on_every_search_path(tmp_path: Path, no_rg_path: str) -> None:
+    """`include_glob` is an `fnmatch` glob against root-relative paths, whatever runs the search.
+
+    `rg --glob` anchors a glob with a `/` and its `*` stops at `/`, so `src/*.py` alone would miss
+    `src/pkg/m.py` there while the walker and the POSIX fallback find it.
+    """
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    (tmp_path / 'src' / 'pkg' / 'm.txt').write_text('needle\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_m.py').write_text('needle\n')
+    (tmp_path / 'test_root.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspaces = {
+        'rg': LocalWorkspaceBackend(tmp_path),
+        'posix': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}),
+        'walker': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
+    }
+    for name, workspace in workspaces.items():
+        nested = await tools.search_files('needle', include_glob='src/*.py', workspace=workspace)
+        assert nested == 'src/pkg/m.py:1:needle', name
+        # Without a `/` the glob still matches the whole root-relative path, not just the file name.
+        rooted = await tools.search_files('needle', include_glob='test_*.py', workspace=workspace)
+        assert rooted == 'test_root.py:1:needle', name
+        below = await tools.search_files('needle', path='src', include_glob='*.py', workspace=workspace)
+        assert below == 'src/pkg/m.py:1:needle', name
