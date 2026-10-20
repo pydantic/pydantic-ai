@@ -2441,7 +2441,7 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
 
 def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.MonkeyPatch):
-    """`logfire.instrument_httpx()` patches `httpx2.AsyncHTTPTransport`, which every retry attempt goes through."""
+    """Every retry attempt goes through `httpx2.AsyncHTTPTransport`, which `logfire.instrument_httpx()` patches."""
     transport = shim.rate_limit_retry_transport()
     transport.config['wait'] = wait_none()
     assert isinstance(transport.wrapped, httpx2.AsyncHTTPTransport)
@@ -2479,9 +2479,14 @@ def agent_spans() -> Iterator[InMemorySpanExporter]:
     Agent.instrument_all(False)
 
 
-def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[str, str, object]]:
+def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[object, str, object]]:
+    """Each span's GenAI operation, status and `error.type`, independent of agent and model names."""
     return sorted(
-        (span.name, span.status.status_code.name, (span.attributes or {}).get('error.type'))
+        (
+            (span.attributes or {}).get('gen_ai.operation.name'),
+            span.status.status_code.name,
+            (span.attributes or {}).get('error.type'),
+        )
         for span in exporter.get_finished_spans()
     )
 
@@ -2530,12 +2535,12 @@ def test_subagent_timeout_marks_the_spans_it_cuts_off(
         )
     assert rc == 0
     assert _span_outcomes(agent_spans) == [
-        ('chat function::_stream', 'ERROR', 'cancelled'),
-        ('chat function::_stream', 'UNSET', None),
-        ('chat function::_stream', 'UNSET', None),
-        ('execute_tool Task', 'ERROR', 'timeout'),
-        ('invoke_agent agent', 'ERROR', 'cancelled'),
-        ('invoke_agent agent', 'UNSET', None),
+        ('chat', 'ERROR', 'timeout'),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'ERROR', 'timeout'),
+        ('invoke_agent', 'ERROR', 'timeout'),
+        ('invoke_agent', 'UNSET', None),
     ]
     [cut_off_chat] = [
         span
@@ -2553,7 +2558,7 @@ def test_run_timeout_marks_the_spans_it_cuts_off(agent_spans: InMemorySpanExport
     async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
         yield {0: DeltaToolCall(name='hang', json_args='{}')}
 
-    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 60)
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '3')  # a 60s run budget
     with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
         rc = runner.run(
             shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
@@ -2561,11 +2566,35 @@ def test_run_timeout_marks_the_spans_it_cuts_off(agent_spans: InMemorySpanExport
             )
         )
     assert rc == 1
+    # pydantic-ai records the cancelled tool span as an error itself.
     assert _span_outcomes(agent_spans) == [
-        ('chat function::_stream', 'UNSET', None),
-        ('execute_tool hang', 'ERROR', 'cancelled'),
-        ('invoke_agent agent', 'ERROR', 'cancelled'),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'ERROR', None),
+        ('invoke_agent', 'ERROR', 'timeout'),
     ]
+
+
+def test_a_failed_stream_is_not_marked_as_timed_out(agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch):
+    """pydantic-ai cancels a request whose stream failed, which no wall-clock cap caused."""
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        yield 'partial'
+        raise ModelHTTPError(529, 'glm-5.3-flash')
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=FunctionToolset[object](),
+                mcp_servers=[],
+                session_id='stream-failure',
+            )
+        )
+    assert rc == 1
+    assert _span_outcomes(agent_spans) == [('chat', 'UNSET', None), ('invoke_agent', 'ERROR', None)]
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):

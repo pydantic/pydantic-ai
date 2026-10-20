@@ -31,8 +31,6 @@ google-genai = "2026-10-13T00:38:20Z"
 
 [manifest]
 requirements = [
-    { name = "logfire" },
-    { name = "opentelemetry-instrumentation-httpx" },
     { name = "pydantic-ai-harness", editable = "../../src/pydantic_ai_harness" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "logfire", "mcp", "retries"], editable = "../../pydantic_ai_slim" },
 ]

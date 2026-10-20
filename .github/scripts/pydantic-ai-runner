@@ -7,8 +7,6 @@
 #   # harness FileSystem/Shell; the adjacent script lock pins the production
 #   # dependency graph and hashes.
 #   "pydantic-ai-harness",
-#   "logfire",
-#   "opentelemetry-instrumentation-httpx",
 # ]
 #
 # # The shim's code is this checkout, so its library must be too: resolving

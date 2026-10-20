@@ -43,8 +43,9 @@ import pathlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any, TypeAlias, cast
 
@@ -63,10 +64,8 @@ from pydantic_ai.capabilities import (
     NativeTool,
     ProcessEventStream,
     ProcessHistory,
-    ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapRunHandler,
-    WrapToolExecuteHandler,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
@@ -173,27 +172,33 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
         return f'error: {message}'
 
 
-def _mark_failed(span: Span, error_type: str) -> None:
-    span.set_attribute('error.type', error_type)
-    span.set_status(Status(StatusCode.ERROR, error_type))
+def _mark_timed_out(span: Span) -> None:
+    span.set_attribute('error.type', 'timeout')
+    span.set_status(Status(StatusCode.ERROR, 'timeout'))
+
+
+def _wall_clock_cap_expired() -> bool:
+    return any(expired() for expired in _wall_clock_caps.get())
 
 
 @dataclass
-class _MarkCancelledSpans(AbstractCapability[object]):
-    """Mark the agent-run, model-request and tool spans a cancellation cuts off.
+class _MarkTimedOutSpans(AbstractCapability[object]):
+    """Mark the agent-run and model-request spans that one of the shim's wall-clock caps cuts off.
 
-    OpenTelemetry does not treat `asyncio.CancelledError` as an error, so work cancelled by
-    `task`'s or `_run_with_timeout`'s wall-clock cap ends its span with status `UNSET` and no
-    exception, like work that finished. A cut-off request also has no finish reason, and no usage
-    when the provider reports it only at the end of the stream. Each hook runs inside the span
-    pydantic-ai opens for it.
+    OpenTelemetry does not record `asyncio.CancelledError` as an error, so a run or request that
+    `task`'s or `_run_with_timeout`'s cap cancels ends its span `UNSET`, like work that finished.
+    A cut-off request also has no finish reason, and no usage when the provider reports it only at
+    the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
+    failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
+    Each hook runs inside the span pydantic-ai opens for it.
     """
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         try:
             return await handler()
         except asyncio.CancelledError:
-            _mark_failed(get_current_span(), 'cancelled')
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
             raise
 
     async def wrap_model_request(
@@ -202,22 +207,8 @@ class _MarkCancelledSpans(AbstractCapability[object]):
         try:
             return await handler(request_context)
         except asyncio.CancelledError:
-            _mark_failed(get_current_span(), 'cancelled')
-            raise
-
-    async def wrap_tool_execute(
-        self,
-        ctx: RunContext[object],
-        *,
-        call: ToolCallPart,
-        tool_def: ToolDefinition,
-        args: ValidatedToolArgs,
-        handler: WrapToolExecuteHandler,
-    ) -> object:
-        try:
-            return await handler(args)
-        except asyncio.CancelledError:
-            _mark_failed(get_current_span(), 'cancelled')
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
             raise
 
 
@@ -469,6 +460,20 @@ TIME_BUDGET_NOTICE = (
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
 _run_deadline: float | None = None
+
+# Whether each wall-clock cap the current work runs under has expired, innermost last.
+_wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+
+
+@asynccontextmanager
+async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
+    """`asyncio.timeout`, registered so `_MarkTimedOutSpans` can tell its cancellation from others."""
+    async with asyncio.timeout(seconds) as cap:
+        token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+        try:
+            yield
+        finally:
+            _wall_clock_caps.reset(token)
 
 
 def _run_seconds_left() -> float | None:
@@ -1237,7 +1242,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
-            _MarkCancelledSpans(),
+            _MarkTimedOutSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1247,17 +1252,17 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     sub_usage = RunUsage()
     _subagent_requests_in_flight += sub_request_limit
     try:
-        result = await asyncio.wait_for(
-            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=timeout,
-        )
+        async with _wall_clock_cap(timeout):
+            result = await sub.run(
+                RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage
+            )
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
-        # The `execute_tool Task` span, which otherwise looks like a successful call.
-        _mark_failed(get_current_span(), 'timeout')
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
+        # The `execute_tool Task` span, which otherwise looks like a successful call.
+        _mark_timed_out(get_current_span())
         return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
@@ -1290,10 +1295,8 @@ async def _run_with_timeout(
         async with AsyncExitStack() as stack:
             if isinstance(model, AnthropicModel):
                 await stack.enter_async_context(model.client)
-            return await asyncio.wait_for(
-                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-                timeout=budget,
-            )
+            async with _wall_clock_cap(budget):
+                return await run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage)
     except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
@@ -1340,11 +1343,11 @@ async def run(
         capabilities=[
             # The Claude tools act on `ctx.workspace`: the checkout at `$GITHUB_WORKSPACE`.
             local_workspace(),
-            _MarkCancelledSpans(),
             _RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
+            _MarkTimedOutSpans(),
         ],
     )
     agent.output_validator(require_safe_output)
