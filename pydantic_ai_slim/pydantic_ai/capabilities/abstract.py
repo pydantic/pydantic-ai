@@ -672,7 +672,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Called for every model request, with the model that will send it: the one
         [`get_model`][pydantic_ai.capabilities.AbstractCapability.get_model], the run's `model=` or a
         [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook selected,
-        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model.
+        after every `before_model_request` hook has run, so the wrapper also applies when a hook swaps the model. It's
+        meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
         Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
         are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does.
 
