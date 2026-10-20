@@ -1293,6 +1293,7 @@ class TestBackgroundTools:
         with pytest.raises(UserError, match='already has a'):
             await agent.run('go')
 
+    # The nested case is deep enough to raise `RecursionError` on 3.14+ too, where `json` limits depth by C stack size.
     @pytest.mark.parametrize(
         'args',
         ['{', '[' * 100_000 + ']' * 100_000, '[]', '{"run_in_background": "yes"}'],
