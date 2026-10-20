@@ -243,11 +243,13 @@ def _format_messages(
 _TranscriptRole: TypeAlias = Literal['user', 'system', 'assistant', 'tool_call', 'tool_return', 'summary']
 """The `role` of a `<message>` element in the summarizer transcript."""
 
-_TRANSCRIPT_TAG_OPENER = re.compile(r'<(?=\s*/?\s*(?:messages?|previous-summary)(?:[\s/>]|$))', re.IGNORECASE)
+_TRANSCRIPT_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:messages?|previous-summary)(?:[\s/>]|$))', re.IGNORECASE)
 """The `<` of an opening or closing tag of the summarizer transcript's own markup.
 
-Any case, whitespace around the `/`, attributes and a trailing `/>` all match, as in core's
-`_framing`; a longer tag name that merely starts with one of these doesn't.
+Any case, whitespace around the `/`, attributes and a trailing `/>` all match, matching the framing
+helper in #10547; a longer tag name that merely starts with one of these doesn't. The optional `/` is
+grouped with the whitespace after it, so a long run of whitespace with no tag name after it is
+scanned once rather than split every possible way.
 """
 
 
