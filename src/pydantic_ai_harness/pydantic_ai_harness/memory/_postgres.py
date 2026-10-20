@@ -275,9 +275,11 @@ class PostgresMemoryStore:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
+            # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = await connection.fetch(
                 f'SELECT path, left(content, $2), length(content) FROM {self._table} '
-                'WHERE starts_with(path, $1) ORDER BY path LIMIT $3',
+                "WHERE starts_with(path, $1) AND strpos(substr(path, length($1) + 1), '/') = 0 "
+                'ORDER BY path LIMIT $3',
                 prefix,
                 max_file_chars,
                 max_files + 1,

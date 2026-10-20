@@ -101,14 +101,25 @@ class MemoryOperationConflictError(RuntimeError):
 
 
 def validate_store_path(path: str) -> None:
-    r"""Reject path strings that could escape a store's root directory."""
-    if not all(_VALID_SEGMENT_RE.fullmatch(segment) and '..' not in segment for segment in path.split('/')):
+    r"""Reject path strings that could escape a store's root directory or name another path.
+
+    A `.` segment is rejected because a filesystem resolves `a/./b` to `a/b`, which would let one
+    namespace address another's files.
+    """
+    if not all(
+        _VALID_SEGMENT_RE.fullmatch(segment) and '..' not in segment and segment != '.' for segment in path.split('/')
+    ):
         raise ValueError(f'invalid memory path: {path!r}')
 
 
 def validate_store_prefix(prefix: str) -> None:
     if prefix:
         validate_store_path(prefix.removesuffix('/'))
+
+
+def _is_direct_child(prefix: str, path: str) -> bool:
+    """Whether `path` sits directly below `prefix` rather than in a deeper scope nested under it."""
+    return '/' not in path.removeprefix(prefix)
 
 
 def _enable_wal(connection: sqlite3.Connection) -> None:
@@ -403,6 +414,8 @@ class InMemoryStore:
                 path = self._paths[index]
                 if not path.startswith(prefix):
                     break
+                if not _is_direct_child(prefix, path):
+                    continue
                 selected.append(path)
                 if len(selected) > max_files:
                     break
@@ -730,6 +743,10 @@ class FileStore:
         return await self._mutate('delete', path, None, expected_version, operation)
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
+        return await self._list_paths(prefix, limit=limit, nested=True)
+
+    async def _list_paths(self, prefix: str, *, limit: int, nested: bool) -> list[str]:
+        """List paths below `prefix`; with `nested=False`, only those directly below it."""
         validate_store_prefix(prefix)
         if limit <= 0:
             raise ValueError('limit must be positive')
@@ -751,11 +768,15 @@ class FileStore:
                 if entry.is_dir:
                     # Walking from the real root, a directory whose real path differs is a symlink:
                     # following it could list another scope's files or leave the store.
-                    if await workspace.realpath(entry.path) == entry.path:
+                    if nested and await workspace.realpath(entry.path) == entry.path:
                         pending.append(entry.path)
                     continue
                 relative = posixpath.relpath(entry.path, root)
-                if relative.startswith(prefix) and not entry.name.startswith(_HIDDEN_PREFIXES):
+                if (
+                    relative.startswith(prefix)
+                    and (nested or _is_direct_child(prefix, relative))
+                    and not entry.name.startswith(_HIDDEN_PREFIXES)
+                ):
                     paths.append(relative)
         return heapq.nsmallest(limit, paths)
 
@@ -771,7 +792,8 @@ class FileStore:
     ) -> MemorySearchResult:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
-        paths = await self.list_paths(prefix, limit=max_files + 1)
+        # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
+        paths = await self._list_paths(prefix, limit=max_files + 1, nested=False)
         workspace = self._workspace()
         # Resolved once here rather than per file.
         root = await workspace.realpath(await self._root(workspace))
@@ -1061,10 +1083,12 @@ class SqliteMemoryStore:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
 
         def op(connection: sqlite3.Connection) -> list[tuple[str, str, int]]:
+            # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
                 'SELECT path, substr(content, 1, ?), length(content) FROM memory_files '
-                'WHERE substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',
-                (max_file_chars, prefix, prefix, max_files + 1),
+                'WHERE substr(path, 1, length(?)) = ? AND instr(substr(path, length(?) + 1), ?) = 0 '
+                'ORDER BY path LIMIT ?',
+                (max_file_chars, prefix, prefix, prefix, '/', max_files + 1),
             ).fetchall()
             return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
 

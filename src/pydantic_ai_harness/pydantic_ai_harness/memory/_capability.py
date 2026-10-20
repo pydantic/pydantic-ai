@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Callable
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -45,6 +46,8 @@ _DEFAULT_GUIDANCE = (
 
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
+_MEMORY_TAG_RE = re.compile(r'<(?=\s*/?\s*memory\b)', re.IGNORECASE)
+"""The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
 
 
@@ -262,7 +265,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     span.set_attributes({'memory.outcome': 'error', 'memory.exception_type': error_type})
                 return request_context
 
-            main_content = '' if main is None else main.content
+            main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
             rendered = ''
             guidance = self._render_guidance()
             content_budget = (

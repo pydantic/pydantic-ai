@@ -162,6 +162,8 @@ agent = Agent(
 
 Namespace isolation controls which records the capability addresses. It is not an authorization system for a custom or shared backing store. Validate the identity in application dependencies, restrict backend credentials, and ensure custom stores cannot escape the resolved namespace.
 
+A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, and `.`; a segment of `.` or one containing `..` raises `ValueError` when the run starts. `FileStore` keeps each namespace in a directory, so on a case-insensitive filesystem, the macOS and Windows default, `Alice` and `alice` share files: normalize the case of the identity before returning it. Spans record `memory.scope_hash`, an unsalted hash of the namespace and `agent_name`. It keeps the identity out of telemetry, but anyone who can guess an identity can confirm it.
+
 ## Multiple memories on one agent
 
 An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Three constraints apply:
@@ -196,6 +198,8 @@ agent = Agent(
 - `max_search_files` limits how many files a fallback scan may inspect, default 1,000.
 
 The bundled stores implement `SearchableMemoryStore`. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
+
+Search reads only the files directly in the run's scope. Files of a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`, are skipped.
 
 Before backend dispatch, queries are limited to 1,000 characters and 32 unique whitespace-separated terms. Repeated case-insensitive terms are collapsed so they cannot inflate scoring or scan work.
 
@@ -259,7 +263,7 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 ## Security and provenance
 
-Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
+Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. A `<memory>` or `</memory>` tag inside stored content is injected as `&lt;memory>`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations or verified provenance. If an application needs auditable facts, store provenance in the note itself or implement a custom store and schema. Optimistic concurrency prevents lost updates; it does not establish that a remembered claim is true.
 

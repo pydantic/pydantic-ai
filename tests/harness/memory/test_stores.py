@@ -101,6 +101,25 @@ async def test_local_store_versions_do_not_repeat_after_delete_and_recreate(tmp_
 
 
 @pytest.mark.parametrize('index', range(3))
+async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int) -> None:
+    store = _local_stores(tmp_path)[index]
+    await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
+    await store.write('acme/main/main/MEMORY.md', 'tea tea', expected_version=None)
+
+    result = await store.search('acme/main/', 'tea', limit=10, max_files=1, max_chars=100, max_file_chars=100)
+    assert [match.path for match in result.matches] == ['acme/main/MEMORY.md']
+    assert result.scanned == 1
+    assert not result.truncated
+    assert await store.list_paths('acme/main/', limit=10) == ['acme/main/MEMORY.md', 'acme/main/main/MEMORY.md']
+
+
+@pytest.mark.parametrize('path', ['./main.md', 'tenant/./main.md', 'tenant/.'])
+async def test_store_paths_reject_dot_segments(path: str) -> None:
+    with pytest.raises(ValueError, match='invalid memory path'):
+        await InMemoryStore().write(path, 'content', expected_version=None)
+
+
+@pytest.mark.parametrize('index', range(3))
 async def test_local_store_read_and_listing_bounds(tmp_path: Path, index: int) -> None:
     store = _local_stores(tmp_path)[index]
     created = await store.write('a.md', '0123456789', expected_version=None)
@@ -784,9 +803,11 @@ class FakePostgresConnection:
         prefix = str(args[0])
         files = sorted((path, file) for path, file in self._database.files.items() if path.startswith(prefix))
         if query.startswith('SELECT path, left(content'):
+            assert "strpos(substr(path, length($1) + 1), '/') = 0" in query
+            direct = [(path, file) for path, file in files if '/' not in path.removeprefix(prefix)]
             max_chars = int(str(args[1]))
             limit = int(str(args[2]))
-            return [(path, file.content[:max_chars], len(file.content)) for path, file in files[:limit]]
+            return [(path, file.content[:max_chars], len(file.content)) for path, file in direct[:limit]]
         if query.startswith('SELECT path'):
             limit = int(str(args[1]))
             return [(path,) for path, _ in files[:limit]]
@@ -841,11 +862,12 @@ async def test_postgres_store_contract_schema_and_parameterization() -> None:
     with pytest.raises(MemoryConflictError):
         await store.write('tenant/main.md', 'stale', expected_version=file.version)
     await store.write('other/private.md', 'alpha alpha alpha', expected_version=None)
+    await store.write('tenant/nested/deep.md', 'alpha', expected_version=None)
     result = await store.search('tenant/', 'alpha', limit=10, max_files=10, max_chars=100, max_file_chars=1_000)
     assert [match.path for match in result.matches] == ['tenant/main.md']
-    assert await store.list_paths('tenant/', limit=100) == ['tenant/main.md']
+    assert await store.list_paths('tenant/', limit=100) == ['tenant/main.md', 'tenant/nested/deep.md']
 
-    assert pool.database.transactions == 7
+    assert pool.database.transactions == 8
     assert len([query for query in pool.database.statements if query.startswith('CREATE TABLE')]) == 3
     assert len([query for query in pool.database.statements if query.startswith('ALTER TABLE')]) == 2
     for query in pool.database.statements:

@@ -438,7 +438,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise_tool_failure(exc)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -472,7 +472,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 return memory_file.content + (_READ_TRUNCATION_MARKER if memory_file.truncated else '')
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -527,7 +527,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise_tool_failure(exc)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -732,6 +732,11 @@ def _bounded_search_matches(
         bounded.append(_search_match(match, prefix, snippet))
         remaining -= len(snippet)
     return bounded, truncated
+
+
+def _escape_message(name: str) -> str:
+    # The store's own message names the scope-qualified path, which includes the namespace.
+    return f'memory file {name!r} resolves outside the store directory; use a different filename.'
 
 
 def _scope_hash(scope: str) -> str:
