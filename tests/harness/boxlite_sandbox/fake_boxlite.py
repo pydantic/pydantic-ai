@@ -80,6 +80,7 @@ class FakeBoxLite:
             BoxliteError=boxlite.BoxliteError,
             NotFoundError=boxlite.NotFoundError,
             StoppedError=boxlite.StoppedError,
+            ConfigError=boxlite.ConfigError,
         )
 
     def stop(self, name: str) -> None:

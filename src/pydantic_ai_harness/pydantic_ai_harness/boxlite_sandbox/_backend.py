@@ -7,7 +7,9 @@ command, or error handling:
 - A process opens one runtime per BoxLite home directory (`~/.boxlite`, or `BOXLITE_HOME`). A second
   process opening the same one fails with a Rust panic, which Python sees as a `BaseException`.
 - `Boxlite.create` only records a box; `Box.start()` boots it, and an image that can't be pulled fails
-  there, leaving the record behind. `start()` on a running box returns at once.
+  there, leaving the record behind. `start()` on a running box returns at once. On Linux it jails the
+  VM engine with bubblewrap, and raises `ConfigError` where it can't, such as Ubuntu 24.04 with only
+  BoxLite's bundled `bwrap` (verified on GitHub's `ubuntu-latest`).
 - A box stops when this process drops its last handle to it or exits. With `auto_delete=0` its disk,
   unflushed writes included, survives, and `get` plus `start()` boots it again.
 - `Box.exec` raises instead of exiting 127 for a missing program, and leaves the command's stdin open.
@@ -407,7 +409,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             if create:
                 try:
                     box = await boxes.create(self._options, name=name)
-                    await box.start()
+                    await _boot(box)
                 except BaseException:
                     # A box that never booted is no use: delete it, and a retry creates another under a new
                     # name. If the deletion fails, the ref stays so its holder can delete the box later.
@@ -424,7 +426,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 box = await boxes.get(name)
                 if box is None:
                     raise WorkspaceUnavailableError(_gone_message(name))
-                await box.start()
+                await _boot(box)
             if self._working_dir is not None:
                 try:
                     result = await self._exec(
@@ -633,6 +635,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 f'The BoxLite box {box.name!r} is {info.state.status}: it was stopped during the command.'
             )
         return None
+
+
+async def _boot(box: _Box) -> None:
+    try:
+        await box.start()
+    except boxlite.ConfigError as error:
+        # Raised for a host that can't run boxes at all, such as one where BoxLite can't jail its engine.
+        raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
 
 
 def _gone_message(name: str | None) -> str:

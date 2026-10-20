@@ -383,6 +383,17 @@ async def test_failed_creation_can_retry(fake_boxlite: FakeBoxLite, working_dir:
     assert backend.ref is not None
 
 
+async def test_a_host_that_cannot_run_boxes_is_unavailable(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    fake_boxlite.start_error = boxlite.ConfigError(
+        'configuration error: The sandbox could not be initialized on this host.'
+    )
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    with pytest.raises(WorkspaceUnavailableError, match=r'This host cannot run a BoxLite box: .* on this host'):
+        await backend.run(['true'])
+    # The box it recorded is deleted again.
+    assert fake_boxlite.boxes == {} and backend.ref is None
+
+
 async def test_a_runtime_that_cannot_open_is_unavailable(fake_boxlite: FakeBoxLite) -> None:
     # Another process holding the BoxLite home directory makes the runtime panic.
     fake_boxlite.runtime_error = PanicException('Failed to acquire runtime lock at /home/.boxlite')
