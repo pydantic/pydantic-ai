@@ -5237,7 +5237,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        if isinstance(self._response.source, AsyncStream):
+        if not self._is_websocket:
             return super().get_stream_cancel_errors()
         from ._openai_responses_websocket import WebSocketTransportError
 
