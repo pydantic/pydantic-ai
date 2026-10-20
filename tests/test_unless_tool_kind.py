@@ -26,8 +26,8 @@ INDEX_READ = ToolKind('test_unless_tool_kind', 'index_read')
 
 def _with(
     *, tool_kind: ToolKindLike | None = None, unless_tool_kind: ToolKindLike | None = None
-) -> ToolPrepareFunc[None]:
-    def prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+) -> ToolPrepareFunc[object]:
+    def prepare(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, tool_kind=tool_kind, unless_tool_kind=unless_tool_kind)
 
     return prepare
@@ -45,7 +45,7 @@ def read_index() -> str:
     return 'index'
 
 
-def _offered_tools(agent: Agent[None, str], prompt: str = 'hello') -> list[list[str]]:
+def _offered_tools(agent: Agent[object, str], prompt: str = 'hello') -> list[list[str]]:
     offered: list[list[str]] = []
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -163,7 +163,7 @@ def test_tool_name_for_kind_names_the_prefixed_tool():
     )
 
     @agent.instructions
-    def instructions(ctx: RunContext[None]) -> str:
+    def instructions(ctx: RunContext[object]) -> str:
         seen.append((ctx.tool_name_for_kind(FILE_READ), ctx.tool_name_for_kind(NOTES_READ.id)))
         return 'Read files.'
 
@@ -179,7 +179,7 @@ def test_tool_name_for_kind_returns_the_first_of_several():
     agent = Agent(tools=[Tool(read_file, tool_kind=FILE_READ), Tool(read_other_file, tool_kind=FILE_READ)])
 
     @agent.instructions
-    def instructions(ctx: RunContext[None]) -> str:
+    def instructions(ctx: RunContext[object]) -> str:
         seen.append(ctx.tool_name_for_kind(FILE_READ))
         return 'Read files.'
 
@@ -197,7 +197,7 @@ def test_tool_name_for_kind_skips_a_superseded_tool():
     )
 
     @agent.instructions
-    def instructions(ctx: RunContext[None]) -> str:
+    def instructions(ctx: RunContext[object]) -> str:
         seen.append(ctx.tool_name_for_kind(NOTES_READ))
         return 'Read notes.'
 
@@ -213,7 +213,7 @@ def test_tool_name_for_kind_without_a_tool_manager():
 def test_instructions_see_the_current_steps_tools():
     """Instruction functions get the tool manager prepared for their own step, not the previous one's."""
 
-    async def from_second_step(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def from_second_step(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition | None:
         return tool_def if ctx.run_step > 1 else None
 
     instructions_by_step: list[str | None] = []
@@ -230,7 +230,7 @@ def test_instructions_see_the_current_steps_tools():
     )
 
     @agent.instructions
-    def instructions(ctx: RunContext[None]) -> str:
+    def instructions(ctx: RunContext[object]) -> str:
         return f'File reader: {ctx.tool_name_for_kind(FILE_READ)}'
 
     agent.run_sync('hello')
