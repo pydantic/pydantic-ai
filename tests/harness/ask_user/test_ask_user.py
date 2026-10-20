@@ -447,7 +447,7 @@ class TestSchema:
         [
             pytest.param('Use\u00a0tabs?', id='no-break space'),
             pytest.param('\u3069\u3061\u3089\u3000\u306b\u3059\u308b\uff1f', id='ideographic space'),
-            pytest.param('Ship \U0001f469\u200d\U0001f4bb?', id='emoji joined with ZWJ'),
+            pytest.param('Ship \U0001f680?', id='emoji'),
         ],
     )
     def test_ordinary_unicode_text_is_accepted(self, text: str) -> None:
@@ -464,11 +464,20 @@ class TestSchema:
             pytest.param('A\u202eB', id='bidi override'),
             pytest.param('A\u2028B', id='line separator'),
             pytest.param('A\u200bB', id='zero-width space'),
+            pytest.param('A\u200dB', id='zero-width joiner'),
         ],
     )
     def test_invisible_formatting_is_rejected(self, label: str) -> None:
         with pytest.raises(ValidationError, match='control characters'):
             QuestionOption(label=label)
+
+    def test_labels_that_only_differ_in_space_width_are_duplicates(self) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label='Delete all'), QuestionOption(label='Delete\u00a0all')),
+            )
 
     def test_whitespace_is_stripped(self) -> None:
         option = QuestionOption(label='  Keep  ')

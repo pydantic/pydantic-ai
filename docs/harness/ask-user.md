@@ -67,10 +67,11 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   offer, several labels on a single-select question, a missing answer) is a bug in the answerer
   and raises `ValueError`, which fails the run. `check_response` is exported so an answerer can
   validate before returning.
-- Two `ask_user_question` calls in one model response reach the answerer concurrently, so
-  serialize in the answerer if your UI shows one request at a time. Other tool calls from that
-  response run while the user decides: an answer shapes the model's next response, not calls it
-  already made.
+- By default, two `ask_user_question` calls in one model response reach the answerer
+  concurrently, so serialize in the answerer if your UI shows one request at a time. Other tool
+  calls from that response may run while the user decides: an answer shapes the model's next
+  response, not calls it already made. `Agent.parallel_tool_call_execution_mode('sequential')`
+  runs a response's calls one at a time.
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
@@ -82,9 +83,10 @@ bound that wait. When it runs out, the answerer is cancelled, `AskUserAnsweredEv
 (the `TIMED_OUT` result) and continues.
 
 The timeout cancels the answerer, so the answerer must be cancellable. A thread cannot be
-cancelled: run blocking work such as `input()` with
-`anyio.to_thread.run_sync(..., abandon_on_cancel=True)`. Otherwise the run waits for the thread
-and then uses its late answer.
+cancelled: run blocking work with `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, or the
+run waits for the thread and then uses its late answer. An abandoned thread keeps running, so a
+terminal answerer should read input with an async prompt library rather than `input()` in a
+thread, which would take the next line the user types.
 
 ```python {test="skip"}
 AskUser(answerer=pick_first, timeout=300)
@@ -188,9 +190,9 @@ The tool schema mirrors [Code Puppy](https://github.com/mpfaffenberger/code_pupp
 
 These strings are drawn on terminals, where an escape sequence in a prompt-injected call is an
 attack, so control characters and invisible formatting such as bidirectional overrides are
-rejected. Spaces of any width and the zero-width joiners in emoji sequences are allowed. A call
-outside these limits, or with a field the schema does not have, goes back to the model as a
-validation retry and never reaches the answerer. Once validated the questions are frozen: what
+rejected, as are zero-width characters. Spaces of any width are allowed, and uniqueness treats
+them as an ordinary space. A call outside these limits, or with a field the schema does not have,
+goes back to the model as a validation retry and never reaches the answerer. Once validated the questions are frozen: what
 the answerer sees is what the model asked.
 
 The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence

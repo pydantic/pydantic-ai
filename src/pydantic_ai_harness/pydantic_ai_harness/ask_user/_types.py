@@ -25,19 +25,14 @@ MAX_DESCRIPTION_LENGTH = 200
 MAX_QUESTION_LENGTH = 500
 
 
-_JOINERS = frozenset('\u200c\u200d')
-"""Zero-width non-joiner and joiner: emoji sequences and several scripts need them, and they move no cursor."""
-
-
 def _printable(value: str, *, newlines: bool) -> str:
     """Reject control and format characters: these strings are drawn on terminals, and an escape sequence is an attack.
 
-    Space separators, such as the no-break and ideographic spaces, and the zero-width joiners are ordinary text.
-    Bidirectional overrides, which make text display differently from its content, stay rejected.
+    Space separators, such as the no-break and ideographic spaces, are ordinary text. Zero-width characters and
+    bidirectional overrides are not: they make two strings that differ look the same.
     """
     if not all(
-        char.isprintable() or char in _JOINERS or unicodedata.category(char) == 'Zs' or (newlines and char == '\n')
-        for char in value
+        char.isprintable() or unicodedata.category(char) == 'Zs' or (newlines and char == '\n') for char in value
     ):
         raise ValueError('must not contain control characters')
     return value
@@ -105,7 +100,8 @@ class Question(BaseModel):
 
 
 def _require_unique(values: list[str], *, what: str) -> None:
-    folded = [value.casefold() for value in values]
+    # NFKC folds the wide spaces into ' ', so values that only look alike count as duplicates.
+    folded = [unicodedata.normalize('NFKC', value).casefold() for value in values]
     if len(folded) != len(set(folded)):
         raise ValueError(f'{what} must be unique')
 
