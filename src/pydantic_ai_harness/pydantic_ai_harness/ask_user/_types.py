@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Annotated, Protocol
 from uuid import uuid4
@@ -10,6 +11,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, 
 from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ToolCallPart
+
+TOOL_NAME = 'ask_user_question'
 
 MAX_QUESTIONS = 10
 """Most questions one `ask_user_question` call may carry."""
@@ -22,9 +25,20 @@ MAX_DESCRIPTION_LENGTH = 200
 MAX_QUESTION_LENGTH = 500
 
 
+_JOINERS = frozenset('\u200c\u200d')
+"""Zero-width non-joiner and joiner: emoji sequences and several scripts need them, and they move no cursor."""
+
+
 def _printable(value: str, *, newlines: bool) -> str:
-    """Reject control characters: these strings are drawn on terminals, and an escape sequence is an attack."""
-    if not all(char.isprintable() or (newlines and char == '\n') for char in value):
+    """Reject control and format characters: these strings are drawn on terminals, and an escape sequence is an attack.
+
+    Space separators, such as the no-break and ideographic spaces, and the zero-width joiners are ordinary text.
+    Bidirectional overrides, which make text display differently from its content, stay rejected.
+    """
+    if not all(
+        char.isprintable() or char in _JOINERS or unicodedata.category(char) == 'Zs' or (newlines and char == '\n')
+        for char in value
+    ):
         raise ValueError('must not contain control characters')
     return value
 
@@ -130,7 +144,12 @@ class AskUserRequest:
 
     @classmethod
     def from_tool_call(cls, call: ToolCallPart) -> AskUserRequest:
-        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user."""
+        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user.
+
+        Raises `ValueError` when `call` is for another tool.
+        """
+        if call.tool_name != TOOL_NAME:
+            raise ValueError(f'expected an {TOOL_NAME!r} call, got {call.tool_name!r}')
         arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
         return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
