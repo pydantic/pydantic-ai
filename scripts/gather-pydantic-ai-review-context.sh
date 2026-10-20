@@ -679,8 +679,11 @@ async def before_model_request(self, ctx, request_context):
 read, and here it is sent in operator voice. It belongs in the tool result
 channel, or in a framed and escaped data wrapper on a user turn. The same goes
 for a hook that rewrites or strips earlier messages on every request, for
-framework guidance enqueued as a plain `str` (it becomes a user message), and
-for code that finds its own earlier parts by matching their text.
+framework guidance enqueued as a plain `str` (it becomes a user message), for
+code that finds its own earlier parts by matching their text, and for a new
+wrapper that escapes only the exact `</name>` spelling (`</NAME >` or
+`< / name>` still closes it), uses a `kebab-case` tag name, or puts an
+untagged "Tool X completed." line in front of the frame.
 
 **Don't flag this:**
 ```python

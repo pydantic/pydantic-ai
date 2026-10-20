@@ -22,7 +22,9 @@ For any code change:
   boundaries, or testing any of those: `concurrency.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
 - Adding to or editing message history, instructions or tools, or wrapping
-  content in tags: core's `agent_docs/message-history-and-caching.md`
+  content in tags (tag naming, escaping, attributes, preambles): core's
+  `agent_docs/message-history-and-caching.md`, "One voice tag, and every
+  wrapper escapes its payload"
 - Adding a retry, fallback or error-handling field to a capability that takes a
   pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable
   Component"

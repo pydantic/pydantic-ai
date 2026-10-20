@@ -81,7 +81,11 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   no rewrite of earlier history outside compaction, no untrusted content in
   system voice, no framework voice sent as a user string, no unescaped wrapper
   payload, no framework record found by its text, and the same history always
-  renders to the same bytes. Calibration is Example 6 in
+  renders to the same bytes. For tags: lowercase `snake_case` names, an
+  existing tag before a new one, an escape that matches every spelling of the
+  closing tag (with tests for the variants), attributes limited to identity and
+  outcome, no unframed framework preamble before a frame on a user turn, no
+  "the tag that follows" references, and a live probe for new framing. Calibration is Example 6 in
   `.review-context/review-instructions.md`.
 
 ## Review process
