@@ -965,11 +965,18 @@ class XaiModel(Model[AsyncClient]):
                 part_provider_details: dict[str, Any] | None = None
                 if output.logprobs and output.logprobs.content:
                     part_provider_details = {'logprobs': _map_logprobs(output.logprobs)}
+                citations = _map_citations(message.citations, message.content)
+                if citations:
+                    part_provider_details = {
+                        **(part_provider_details or {}),
+                        **_citations_provider_details(message.citations),
+                    }
                 parts.append(
                     TextPart(
                         content=message.content,
+                        provider_name=self.system if citations else None,
                         provider_details=part_provider_details,
-                        citations=_map_inline_citations(message.citations, message.content),
+                        citations=citations,
                     )
                 )
 
@@ -1308,8 +1315,14 @@ class XaiStreamedResponse(StreamedResponse):
         ]
         if len(messages) != 1 or messages[0].content != text_part.content:
             return
-        if citations := _map_inline_citations(messages[0].citations, text_part.content):
-            yield from self._parts_manager.handle_text_delta(vendor_part_id=None, content='', citations=citations)
+        if citations := _map_citations(messages[0].citations, text_part.content):
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id=None,
+                content='',
+                provider_name=self.provider_name,
+                provider_details=_citations_provider_details(messages[0].citations),
+                citations=citations,
+            )
 
     @property
     def model_name(self) -> str:
@@ -1562,7 +1575,7 @@ def _attach_x_search_citations(
         part.content = {'citations': citations_list}
 
 
-def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], text: str) -> list[Citation] | None:
+def _map_citations(inline_citations: Sequence[chat_pb2.InlineCitation], text: str) -> list[Citation] | None:
     citations: list[Citation] = []
     for inline_citation in inline_citations:
         match inline_citation.WhichOneof('citation'):
@@ -1575,19 +1588,13 @@ def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], t
                     continue
                 source = WebCitationSource(url=url)
             case 'collections_citation':
+                # The chunk and collection IDs stay in the raw citation data.
                 collection = inline_citation.collections_citation
-                collection_ids = list(collection.collection_ids)
-                if not any((collection.file_id, collection.chunk_id, collection_ids, collection.chunk_content)):
+                if not (collection.file_id or collection.chunk_content):
                     continue
-                provider_details: dict[str, Any] = {}
-                if collection.chunk_id:
-                    provider_details['chunk_id'] = collection.chunk_id
-                if collection_ids:
-                    provider_details['collection_ids'] = collection_ids
                 source = DocumentCitationSource(
                     document_id=collection.file_id or None,
                     excerpts=[collection.chunk_content] if collection.chunk_content else [],
-                    provider_details=provider_details or None,
                 )
             case _:
                 continue
@@ -1600,6 +1607,32 @@ def _map_inline_citations(inline_citations: Sequence[chat_pb2.InlineCitation], t
             )
         )
     return citations or None
+
+
+def _citations_provider_details(inline_citations: Sequence[chat_pb2.InlineCitation]) -> dict[str, Any]:
+    """Map xAI inline citations to a dictionary format."""
+    citations: list[dict[str, Any]] = []
+    for inline_citation in inline_citations:
+        citation: dict[str, Any] = {
+            'id': inline_citation.id,
+            'start_index': inline_citation.start_index,
+            'end_index': inline_citation.end_index,
+        }
+        if inline_citation.HasField('web_citation'):
+            citation['web_citation'] = {'url': inline_citation.web_citation.url}
+        elif inline_citation.HasField('x_citation'):
+            citation['x_citation'] = {'url': inline_citation.x_citation.url}
+        elif inline_citation.HasField('collections_citation'):
+            collection = inline_citation.collections_citation
+            citation['collections_citation'] = {
+                'file_id': collection.file_id,
+                'chunk_id': collection.chunk_id,
+                'chunk_content': collection.chunk_content,
+                'score': collection.score,
+                'collection_ids': list(collection.collection_ids),
+            }
+        citations.append(citation)
+    return {'citations': citations}
 
 
 def _get_tool_result_content(content: str) -> dict[str, Any] | str | None:

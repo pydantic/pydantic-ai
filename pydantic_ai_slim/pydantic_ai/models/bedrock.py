@@ -508,24 +508,28 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
 ) -> WebCitationSource | DocumentCitationSource | None:
-    details = dict(citation)
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
-    details.pop('title', None)
-    details.pop('sourceContent', None)
     if url := citation.get('location', {}).get('web', {}).get('url'):
-        details.pop('location', None)
-        return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
-    if not (title or excerpts or details):
+        return WebCitationSource(url=url, title=title, excerpts=excerpts)
+    if not (title or excerpts):
         return None
-    return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
+    # The location in the document stays in the raw citation data.
+    return DocumentCitationSource(title=title, excerpts=excerpts)
 
 
 def _map_citations(
-    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor | None
+    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], text: str
 ) -> list[Citation] | None:
     sources = [source for citation in citations if (source := _map_citation_source(citation))]
-    return [Citation(sources=sources, anchor=anchor)] if sources else None
+    if not sources:
+        return None
+    # Bedrock cites whole blocks of text, so the citation covers the whole part.
+    return [Citation(sources=sources, anchor=ContentCitationAnchor(start=0, end=len(text)) if text else None)]
+
+
+def _citations_provider_details(citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef]) -> dict[str, Any]:
+    return {'citations': [dict(citation) for citation in citations]}
 
 
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
@@ -1098,9 +1102,18 @@ class BedrockConverseModel(Model[BaseClient]):
                     items.append(TextPart(content=text))
                 elif citations_content := item.get('citationsContent'):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
-                    anchor = ContentCitationAnchor(start=0, end=len(text)) if text else None
-                    citations = _map_citations(citations_content.get('citations', []), anchor)
-                    items.append(TextPart(content=text, citations=citations))
+                    block_citations = citations_content.get('citations', [])
+                    if citations := _map_citations(block_citations, text):
+                        items.append(
+                            TextPart(
+                                content=text,
+                                provider_name=self.system,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=citations,
+                            )
+                        )
+                    else:
+                        items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1439,7 +1452,8 @@ class BedrockConverseModel(Model[BaseClient]):
                             await self._map_user_prompt(
                                 part,
                                 document_count,
-                                include_citations=settings.get('include_citations', False),
+                                include_citations=settings.get('include_citations', False)
+                                and profile.get('bedrock_supports_citations', False),
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                                 prior_messages=bedrock_messages,
                             )
@@ -2164,17 +2178,16 @@ class BedrockStreamedResponse(StreamedResponse):
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
-                        if block_citations := citations.pop(index, None):
-                            part = self._parts_manager.get_part_by_vendor_id(index)
-                            anchor = (
-                                ContentCitationAnchor(start=0, end=len(part.content))
-                                if isinstance(part, TextPart) and part.content
-                                else None
-                            )
+                        block_citations = citations.pop(index, [])
+                        part = self._parts_manager.get_part_by_vendor_id(index)
+                        text = part.content if isinstance(part, TextPart) else ''
+                        if block_citations and (block_text_citations := _map_citations(block_citations, text)):
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=index,
                                 content='',
-                                citations=_map_citations(block_citations, anchor),
+                                provider_name=self.provider_name,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=block_text_citations,
                             ):
                                 yield event
                         if return_part := builtin_tool_returns.get(index):

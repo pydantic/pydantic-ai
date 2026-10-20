@@ -1386,16 +1386,26 @@ async def test_bedrock_unified_service_tier_auto_omits(
     assert 'serviceTier' not in kwargs
 
 
-@pytest.mark.parametrize('include_citations', [False, True])
+@pytest.mark.parametrize(
+    ('model_name', 'include_citations', 'citations_enabled'),
+    [
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False, False, id='claude-not-asked'),
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', True, True, id='claude-asked'),
+        # Models without citation support reject a request that enables citations, so the setting is ignored.
+        pytest.param('us.amazon.nova-pro-v1:0', True, False, id='nova-asked'),
+    ],
+)
 async def test_bedrock_include_citations_request_setting(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
     mocker: MockerFixture,
     text_document_content: BinaryContent,
+    model_name: str,
     include_citations: bool,
+    citations_enabled: bool,
 ) -> None:
-    """The shared setting is forwarded on Bedrock document blocks only when enabled."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    """The shared setting is forwarded on Bedrock document blocks only when enabled and the model supports it."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'The document is a test.'}]}},
@@ -1412,9 +1422,9 @@ async def test_bedrock_include_citations_request_setting(
     expected: dict[str, object] = {
         'name': 'Document 1',
         'format': 'txt',
-        'source': {'text': 'Dummy TXT file\n'} if include_citations else {'bytes': b'Dummy TXT file\n'},
+        'source': {'text': 'Dummy TXT file\n'} if citations_enabled else {'bytes': b'Dummy TXT file\n'},
     }
-    if include_citations:
+    if citations_enabled:
         expected['citations'] = {'enabled': True}
     assert document == expected
 
@@ -1750,6 +1760,18 @@ async def test_bedrock_trace_streamed_metadata_before_stop(
 async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvider) -> None:
     """Bedrock maps list-valued `sourceContent` to public source excerpts."""
     text = 'The policy allows thirty days for returns.'
+    citations = [
+        {
+            'title': 'Returns policy',
+            'source': 'Document 1',
+            'sourceContent': [
+                {'text': 'Returns are accepted within thirty days.'},
+                {'text': 'Proof of purchase is required.'},
+            ],
+            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+        },
+        {'title': 'Pydantic AI', 'location': {'web': {'url': 'https://ai.pydantic.dev'}}},
+    ]
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
         cast(
@@ -1758,28 +1780,7 @@ async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvid
                 'output': {
                     'message': {
                         'role': 'assistant',
-                        'content': [
-                            {
-                                'citationsContent': {
-                                    'content': [{'text': text}],
-                                    'citations': [
-                                        {
-                                            'title': 'Returns policy',
-                                            'source': 'Document 1',
-                                            'sourceContent': [
-                                                {'text': 'Returns are accepted within thirty days.'},
-                                                {'text': 'Proof of purchase is required.'},
-                                            ],
-                                            'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                                        },
-                                        {
-                                            'title': 'Pydantic AI',
-                                            'location': {'web': {'url': 'https://ai.pydantic.dev'}},
-                                        },
-                                    ],
-                                }
-                            }
-                        ],
+                        'content': [{'citationsContent': {'content': [{'text': text}], 'citations': citations}}],
                     }
                 },
                 'stopReason': 'end_turn',
@@ -1792,6 +1793,8 @@ async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvid
     assert response.parts == [
         TextPart(
             text,
+            provider_name='bedrock',
+            provider_details={'citations': citations},
             citations=[
                 Citation(
                     sources=[
@@ -1801,10 +1804,6 @@ async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvid
                                 'Returns are accepted within thirty days.',
                                 'Proof of purchase is required.',
                             ],
-                            provider_details={
-                                'source': 'Document 1',
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                            },
                         ),
                         WebCitationSource(
                             url='https://ai.pydantic.dev',
@@ -1831,16 +1830,9 @@ _RETURNS_POLICY_CITATION = {
             {'content': [], 'citations': [_RETURNS_POLICY_CITATION]},
             TextPart(
                 '',
-                citations=[
-                    Citation(
-                        sources=[
-                            DocumentCitationSource(
-                                title='Returns policy',
-                                provider_details={'location': _RETURNS_POLICY_CITATION['location']},
-                            )
-                        ]
-                    )
-                ],
+                provider_name='bedrock',
+                provider_details={'citations': [_RETURNS_POLICY_CITATION]},
+                citations=[Citation(sources=[DocumentCitationSource(title='Returns policy')])],
             ),
             id='citation-without-text',
         ),
@@ -1881,22 +1873,16 @@ async def test_bedrock_stream_citation_mapping(
 ) -> None:
     """Bedrock streaming attaches citation deltas to the text block they support."""
     text = 'The policy allows thirty days for returns.'
+    citation = {
+        'title': 'Returns policy',
+        'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
+        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
+    }
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
 
     def _stream() -> Iterator[dict[str, Any]]:
         yield {'messageStart': {'role': 'assistant'}}
-        yield {
-            'contentBlockDelta': {
-                'contentBlockIndex': 0,
-                'delta': {
-                    'citation': {
-                        'title': 'Returns policy',
-                        'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
-                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                    }
-                },
-            }
-        }
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'citation': citation}}}
         yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': text}}}
         yield {'contentBlockStop': {'contentBlockIndex': 0}}
         yield {'messageStop': {'stopReason': 'end_turn'}}
@@ -1910,15 +1896,14 @@ async def test_bedrock_stream_citation_mapping(
     assert result.response.parts == [
         TextPart(
             text,
+            provider_name='bedrock',
+            provider_details={'citations': [citation]},
             citations=[
                 Citation(
                     sources=[
                         DocumentCitationSource(
                             title='Returns policy',
                             excerpts=['Returns are accepted within thirty days.'],
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
-                            },
                         )
                     ],
                     anchor=ContentCitationAnchor(start=0, end=len(text)),
@@ -1936,17 +1921,7 @@ async def test_bedrock_stream_empty_citation_mapping(
 
     def _stream() -> Iterator[dict[str, Any]]:
         yield {'messageStart': {'role': 'assistant'}}
-        yield {
-            'contentBlockDelta': {
-                'contentBlockIndex': 0,
-                'delta': {
-                    'citation': {
-                        'title': 'Returns policy',
-                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-                    }
-                },
-            }
-        }
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'citation': _RETURNS_POLICY_CITATION}}}
         yield {'contentBlockStop': {'contentBlockIndex': 0}}
         yield {'messageStop': {'stopReason': 'end_turn'}}
 
@@ -1959,18 +1934,9 @@ async def test_bedrock_stream_empty_citation_mapping(
     assert result.response.parts == [
         TextPart(
             '',
-            citations=[
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}}
-                            },
-                        )
-                    ]
-                )
-            ],
+            provider_name='bedrock',
+            provider_details={'citations': [_RETURNS_POLICY_CITATION]},
+            citations=[Citation(sources=[DocumentCitationSource(title='Returns policy')])],
         )
     ]
 

@@ -1463,6 +1463,22 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
     assert isinstance(response_message, ModelResponse)
     text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
 
+    # The chunk and collection IDs and the score stay in the raw citation data.
+    assert text_part.provider_name == 'xai'
+    assert text_part.provider_details is not None
+    assert text_part.provider_details['citations'][2] == {
+        'id': '',
+        'start_index': 14,
+        'end_index': 17,
+        'collections_citation': {
+            'file_id': 'file-1',
+            'chunk_id': 'chunk-1',
+            'chunk_content': 'provider-selected supporting excerpt',
+            'score': pytest.approx(0.8),
+            'collection_ids': ['collection-1'],
+        },
+    }
+
     assert text_part.citations == [
         Citation(
             sources=[WebCitationSource(url='https://example.com')],
@@ -1477,10 +1493,6 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
                 DocumentCitationSource(
                     document_id='file-1',
                     excerpts=['provider-selected supporting excerpt'],
-                    provider_details={
-                        'chunk_id': 'chunk-1',
-                        'collection_ids': ['collection-1'],
-                    },
                 )
             ],
             anchor=MarkerCitationAnchor(start=14, end=17),

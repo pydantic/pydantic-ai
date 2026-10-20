@@ -172,6 +172,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
     """
+    bedrock_supports_citations: bool
+    """Whether this model returns citations for documents with citations enabled.
+
+    Other models reject a request that enables citations (`"This model doesn't support citations."`), so
+    [`include_citations`][pydantic_ai.settings.ModelSettings.include_citations] is ignored for them. Verified against
+    Bedrock `us-east-1` on 2026-10-20: Claude models return citations; Amazon Nova, Meta Llama, Mistral Pixtral and
+    DeepSeek reject the request.
+
+    Default: `False`.
+    """
     bedrock_supports_tool_result_status: bool
     """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
 
@@ -289,6 +299,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
             bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
             bedrock_supports_leading_assistant_message=True,
+            bedrock_supports_citations=True,
             bedrock_thinking_variant='anthropic',
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,

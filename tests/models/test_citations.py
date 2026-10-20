@@ -768,9 +768,6 @@ DOCUMENT_CASES = [
                         DocumentCitationSource(
                             title='Document 1',
                             excerpts=['The return window is thirty days from purchase.'],
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}
-                            },
                         )
                     ],
                     anchor=ContentCitationAnchor(start=0, end=47),
@@ -789,9 +786,6 @@ DOCUMENT_CASES = [
                         DocumentCitationSource(
                             title='Document 1',
                             excerpts=['The return window is thirty days from purchase.'],
-                            provider_details={
-                                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 47}}
-                            },
                         )
                     ],
                     anchor=ContentCitationAnchor(start=0, end=47),
@@ -810,7 +804,6 @@ DOCUMENT_CASES = [
                         DocumentCitationSource(
                             title='Document 1',
                             excerpts=['Dummy PDF file'],
-                            provider_details={'location': {'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}},
                         )
                     ],
                     anchor=ContentCitationAnchor(start=0, end=42),
