@@ -204,7 +204,8 @@ Gotchas:
   grows with in-scope history.
 - History a run inherits through `message_history` is indexed once, under the run that first
   persisted it. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
-  the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced CJK or Thai text.
+  the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
+  CJK or Thai text.
 
 ## Skills
 

@@ -848,7 +848,7 @@ class TestSearchScope:
         assert 'Retry [' not in rendered
 
     async def test_long_parts_clip_around_a_term_past_the_cutoff(self) -> None:
-        """A term past the 500-char cutoff matches and is shown: the excerpt centres on it."""
+        """A term past the 500-char cutoff matches and is shown: the excerpt shows the text around it."""
         long_user = 'pomegranate ' * 60 + 'USERTAIL'
         long_text = 'cranberry ' * 80 + 'TEXTTAIL'
         source = _StubSource(
