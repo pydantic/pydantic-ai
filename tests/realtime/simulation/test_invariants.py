@@ -10,6 +10,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import ModelResponse, SpeechPart, TextPart
+    from pydantic_ai.realtime.codec import ToolCall
 
     from . import _findings
     from ._invariants import is_cut_off_copy
@@ -66,6 +67,19 @@ def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
         truth.inputs.append(replace(t1))
         with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't1' 3 times"):
             sim.checker.check_at_rest()
+
+
+def test_codec_contract_violation_is_reported() -> None:
+    """A connection breaking the codec contract fails the next step's check, naming the event that broke it."""
+    with OpenAISimulation(strict=True) as sim:
+        call = ToolCall(tool_call_id='call_1', tool_name='lookup', args='{}')
+        checker = sim.checker
+        checker._codec_issues += checker.lifecycle.feed(call) + checker.lifecycle.feed(call)  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(
+            InvariantViolation,
+            match=r"\[codec\.duplicate_tool_call\] tool call 'call_1' reported twice \(codec event #1\)",
+        ):
+            sim.check()
 
 
 def test_reconnect_without_replay_loses_the_history() -> None:

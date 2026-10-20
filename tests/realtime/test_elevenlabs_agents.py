@@ -2879,7 +2879,7 @@ def _mcp_call(state: str, **fields: Any) -> dict[str, Any]:
     }
 
 
-def _native_parts(frames: list[RealtimeFrame]) -> list[Any]:
+def _native_parts(frames: list[RealtimeFrame]) -> list[NativeToolCallPart | NativeToolReturnPart]:
     return [
         event.part
         for frame in frames

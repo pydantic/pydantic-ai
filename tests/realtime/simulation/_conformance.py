@@ -20,7 +20,11 @@ would get wrong if an adapter broke it:
 The three rules keyed on response ids (`content_after_terminal`, `duplicate_terminal`,
 `overlapping_responses`) only apply to the OpenAI-protocol adapters, which report the provider's response
 ids. Gemini Live and GPT-Live have none, so for them those rules never fire; their turn boundaries are
-checked by the simulator's invariants against the fake server's ground truth instead.
+checked by the simulator's invariants against the fake server's ground truth instead. They don't apply to a
+stream whose connection brackets each response by id with lifecycle events either (`brackets_responses`):
+the session then assembles each response apart, so responses can overlap (the `response.done` of a reply the
+user barged in on can come after the next reply started), and the connection marks what trails a terminal
+stale. The lifecycle rules below hold such a connection to its brackets instead.
 
 A connection on the second version of the lifecycle contract (`_lifecycle.py`) is also held to the rules
 its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker(lifecycle=True)`):
@@ -82,6 +86,9 @@ class LifecycleChecker:
     """
 
     lifecycle: bool = False
+    brackets_responses: bool = False
+    """Whether the connection brackets each response by id with lifecycle events, so the codec rules keyed on
+    response ids don't apply to its codec stream (see the module docstring)."""
     inputs_sent: Callable[[], int] | None = None
     """How many inputs the connection has been sent so far, for `lifecycle.unknown_answer`."""
     issues: list[ConformanceIssue] = field(default_factory=list[ConformanceIssue])
@@ -148,7 +155,7 @@ class LifecycleChecker:
             unknown = [call_id for call_id in event.tool_call_ids if call_id not in self._tool_calls]
             if unknown:
                 issue('codec.unknown_cancellation', f'cancellation of calls never reported: {unknown}')
-        response_id = _content_response_id(event)
+        response_id = None if self.brackets_responses else _content_response_id(event)
         if response_id is not None and response_id in self._ended:
             issue('codec.content_after_terminal', f'{type(event).__name__} for {response_id!r} after its ResponseDone')
         elif response_id is not None:
@@ -156,7 +163,7 @@ class LifecycleChecker:
                 issue('codec.overlapping_responses', f'content for {response_id!r} while {self._open!r} is still open')
             # A response's usage comes with its terminal: a function-call-only response has no `ResponseDone`.
             self._open = None if isinstance(event, SessionUsage) else response_id
-        if isinstance(event, ResponseDone) and event.provider_response_id is not None:
+        if isinstance(event, ResponseDone) and event.provider_response_id is not None and not self.brackets_responses:
             if event.provider_response_id in self._ended:
                 issue('codec.duplicate_terminal', f'second ResponseDone for {event.provider_response_id!r}')
             self._ended.add(event.provider_response_id)
