@@ -105,7 +105,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     """The managed prompt name (declared as the variable `prompt__<name>`), or a pre-built `logfire.Variable`."""
 
     default: str | None = None
-    """Code-default prompt text. Required when `name` is a prompt name; ignored, with a warning, when `name` is a `Variable`."""
+    """Code-default prompt text. Required when `name` is a prompt name; ignored, with a warning, when
+    `name` is a `Variable`."""
 
     label: str | None = None
     """Label on the Logfire managed prompt to resolve (e.g. `'production'`).
@@ -128,7 +129,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.template.TemplateStr]); `{{field}}` is
     filled from `deps`. Anyone who can edit the prompt in Logfire can then place any `deps` value
     in the system prompt. A remote prompt that fails to compile falls back to the code default
-    with a `RuntimeWarning`, and the run is then reported as the code default. Defaults to `False`, so the resolved prompt is used verbatim."""
+    with a `RuntimeWarning`, and the run is then reported as the code default. Defaults to `False`,
+    so the resolved prompt is used verbatim."""
 
     logfire_instance: Logfire | None = None
     """Logfire instance to resolve the variable on. When `None`, the global default instance
