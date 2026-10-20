@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -70,6 +71,7 @@ from pydantic_ai.realtime import (
     RealtimeSession as _RealtimeSession,
     RealtimeSessionReconnectEvent,
 )
+from pydantic_ai.realtime._instrumentation import SessionInstrumentation
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -678,6 +680,40 @@ async def test_mcp_url_derived_identity_is_withheld_from_realtime_request_config
         assert isinstance(serialized, str)
         assert 'SENTINEL-mcp-path-token' not in serialized
         assert json.loads(serialized)['function_tools']
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_realtime_chat_and_session_mask_url_derived_native_names(include_content: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    settings, exporter = _settings(include_content=include_content)
+    instrumentation = SessionInstrumentation(
+        settings,
+        model_request_parameters=ModelRequestParameters(_telemetry_mcp_url_ids={identity}),
+    )
+    response = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{identity}', tool_call_id='call-1')])
+    instrumentation.start_session_span()
+    instrumentation.ensure_chat_span('response-1')
+    instrumentation.end_chat_span('response-1', [ModelRequest.user_text_prompt('go')], response)
+    instrumentation.end_session_span(
+        None,
+        usage=RunUsage(),
+        messages=[response],
+        new_message_index=0,
+        final_result=None,
+        audio_chunks_dropped=0,
+        transcript_items_dropped=0,
+        queue_dropped_deltas=0,
+        queue_dropped_structural=0,
+    )
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    chat_attributes = spans['chat'].attributes
+    session_attributes = spans['invoke_agent agent'].attributes
+    assert chat_attributes is not None and session_attributes is not None
+    assert identity not in str(chat_attributes['gen_ai.output.messages'])
+    assert identity not in str(session_attributes['pydantic_ai.all_messages'])
+    assert isinstance(response.parts[0], NativeToolCallPart)
+    assert response.parts[0].tool_name == f'mcp_server:{identity}'
 
 
 async def test_tool_call_otel_metadata_comes_from_definition() -> None:

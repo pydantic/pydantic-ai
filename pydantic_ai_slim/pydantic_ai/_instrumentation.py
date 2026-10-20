@@ -30,10 +30,12 @@ if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from pydantic_ai.capabilities.abstract import AbstractCapability
-    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.native_tools import AbstractNativeTool
     from pydantic_ai.settings import ModelSettings
+    from pydantic_ai.tools import AgentDepsT, ToolDefinition
     from pydantic_ai.toolsets.abstract import AbstractToolset
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
@@ -81,105 +83,6 @@ TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 26214
 TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES = (
     0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
 )  # fmt: skip
-
-# Each nested dataclass has its own allowlist. These are the currently supported telemetry
-# fields, not a reflection of whatever a future request type happens to contain.
-_TELEMETRY_PARAMETER_FIELDS: set[str] = {
-    'function_tools',
-    'native_tools',
-    'tool_visibility',
-    'revealed_tool_names',
-    'deferred_capability_ids',
-    'output_mode',
-    'output_object',
-    'output_tools',
-    'prompted_output_template',
-    'allow_text_output',
-    'allow_image_output',
-    'instruction_parts',
-    'thinking',
-    'cache',
-}
-_TELEMETRY_TOOL_FIELDS: set[str] = {
-    'name',
-    'parameters_json_schema',
-    'description',
-    'outer_typed_dict_key',
-    'strict',
-    'sequential',
-    'kind',
-    'timeout',
-    'defer_loading',
-    'unless_native',
-    'with_native',
-    'tool_kind',
-    'return_schema',
-    'include_return_schema',
-    'toolset_id',
-    'capability_id',
-}
-_TELEMETRY_NATIVE_FIELDS: dict[str, set[str]] = {
-    'web_search': {
-        'kind',
-        'optional',
-        'search_context_size',
-        'user_location',
-        'blocked_domains',
-        'allowed_domains',
-        'max_uses',
-        'external_web_access',
-    },
-    'x_search': {
-        'kind',
-        'optional',
-        'allowed_x_handles',
-        'excluded_x_handles',
-        'from_date',
-        'to_date',
-        'enable_image_understanding',
-        'enable_video_understanding',
-        'include_output',
-    },
-    'code_execution': {'kind', 'optional'},
-    'web_fetch': {
-        'kind',
-        'optional',
-        'max_uses',
-        'allowed_domains',
-        'blocked_domains',
-        'enable_citations',
-        'max_content_tokens',
-    },
-    'image_generation': {
-        'kind',
-        'optional',
-        'action',
-        'background',
-        'input_fidelity',
-        'moderation',
-        'model',
-        'output_compression',
-        'output_format',
-        'partial_images',
-        'quality',
-        'size',
-        'aspect_ratio',
-    },
-    'memory': {'kind', 'optional'},
-    'mcp_server': {
-        'kind',
-        'optional',
-        'id',
-        'url',
-        'authorization_token',
-        'description',
-        'allowed_tools',
-        'headers',
-    },
-    'file_search': {'kind', 'optional', 'file_store_ids', 'max_num_results', 'instructions', 'retrieval_mode'},
-    'advisor': {'kind', 'optional', 'model', 'max_uses', 'max_tokens', 'caching'},
-    'tool_search': {'kind', 'optional', 'strategy'},
-}
 
 _model_request_span_captures: ContextVar[
     tuple[tuple[ModelRequestContext, Callable[[ModelRequestContext], ModelRequestContext]], ...]
@@ -314,6 +217,8 @@ class CachedMessageJson:
     than served stale."""
     fragment: bytes
     """The serialized fragment (see `message_json_fragment`)."""
+    mcp_url_ids: frozenset[str] = frozenset()
+    """URL-derived MCP ids used to project native tool names in this fragment."""
 
 
 MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
@@ -456,14 +361,16 @@ def safe_to_json(value: object) -> bytes:
         return json.dumps(value, separators=(',', ':')).encode()
 
 
-def message_json_fragment(settings: InstrumentationSettings, message: ModelMessage) -> bytes:
+def message_json_fragment(
+    settings: InstrumentationSettings, message: ModelMessage, mcp_url_ids: frozenset[str] = frozenset()
+) -> bytes:
     """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
 
     A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
     system/user messages) or to none (an empty request), so the fragment is the whole serialized
     array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
     """
-    return safe_to_json(settings.messages_to_otel_messages([message]))[1:-1]
+    return safe_to_json(settings.messages_to_otel_messages([message], mcp_url_ids=mcp_url_ids))[1:-1]
 
 
 def has_stale_message_json(
@@ -488,7 +395,7 @@ def has_stale_message_json(
         if (
             entry is not None
             and entry.parts is message.parts
-            and entry.fragment != message_json_fragment(settings, message)
+            and entry.fragment != message_json_fragment(settings, message, entry.mcp_url_ids)
         ):
             return True
     return False
@@ -555,8 +462,6 @@ def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
     serialized = _serialize_model_request_parameters(model_request_parameters)
-    if serialized is None:
-        return {}
     if not include_content:
         serialized = _redact_model_request_parameters(serialized)
         if serialized is None:
@@ -564,15 +469,13 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': safe_to_json(serialized).decode()}
 
 
-def mcp_telemetry_sensitive_ids(
-    capabilities: Iterable[AbstractCapability[Any]], toolset: AbstractToolset[Any] | None = None
+def mcp_telemetry_url_ids(
+    capabilities: Iterable[AbstractCapability[AgentDepsT]], toolset: AbstractToolset[AgentDepsT] | None = None
 ) -> set[str]:
-    """Collect MCP IDs from capability and toolset paths, including wrappers."""
+    """Collect only MCP identities derived from URLs, including wrapped capabilities and toolsets."""
     from pydantic_ai.capabilities.combined import CombinedCapability
     from pydantic_ai.capabilities.mcp import MCP
-    from pydantic_ai.capabilities.native_tool import NativeTool
     from pydantic_ai.capabilities.wrapper import WrapperCapability
-    from pydantic_ai.native_tools import MCPServerTool
 
     identities: set[str] = set()
     pending = list(capabilities)
@@ -582,67 +485,40 @@ def mcp_telemetry_sensitive_ids(
         if id(capability) in seen:
             continue
         seen.add(id(capability))
-        if isinstance(capability, MCP) and capability.id:
-            identities.add(capability.id)
-        elif isinstance(capability, NativeTool) and isinstance(capability.tool, MCPServerTool):
-            identities.add(capability.tool.id)
+        if isinstance(capability, MCP) and capability._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
+            identities.add(capability._telemetry_url_derived_id)  # pyright: ignore[reportPrivateUsage]
         elif isinstance(capability, WrapperCapability):
             pending.append(capability.wrapped)
         elif isinstance(capability, CombinedCapability):
             pending.extend(capability.capabilities)
 
     if toolset is not None and 'pydantic_ai.mcp' in sys.modules:
-        # Constructing an MCPToolset loads this optional module; ordinary agent requests should
-        # not import FastMCP just to check for a toolset they do not use.
+        # Import only when the optional MCP module has already been loaded by a real toolset.
         from pydantic_ai.mcp import MCPToolset
 
-        def collect_mcp_toolset(child: AbstractToolset[Any]) -> None:
-            if isinstance(child, MCPToolset) and child.id:
-                identities.add(child.id)
+        if isinstance(MCPToolset, type):
 
-        toolset.apply(collect_mcp_toolset)
+            def collect_mcp_toolset(child: AbstractToolset[Any]) -> None:
+                if isinstance(child, MCPToolset) and child._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
+                    identities.add(child._telemetry_url_derived_id)  # pyright: ignore[reportPrivateUsage]
+
+            toolset.apply(collect_mcp_toolset)
     return identities
-
-
-def request_telemetry_sensitive_ids(parameters: ModelRequestParameters) -> set[str]:
-    """Include native MCP IDs, and withhold unknown-provenance IDs on direct model requests."""
-    from pydantic_ai.native_tools import MCPServerTool
-
-    sensitive_ids = parameters.telemetry_sensitive_ids
-    if sensitive_ids is None:
-        # Direct model calls do not have an Agent to identify MCP-owned function tools.
-        # A toolset or capability ID can be derived from an MCP URL, so omit IDs whose
-        # provenance is unknown rather than exporting them as apparently harmless text.
-        sensitive_ids = set[str]()
-        for tool in (*parameters.function_tools, *parameters.output_tools):
-            if tool.toolset_id:
-                sensitive_ids.add(tool.toolset_id)
-            if tool.capability_id:
-                sensitive_ids.add(tool.capability_id)
-            for native_name in (tool.unless_native, tool.with_native):
-                if native_name and native_name.startswith('mcp_server:'):
-                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
-        sensitive_ids.update(parameters.deferred_capability_ids)
-        for part in parameters.instruction_parts or ():
-            if part.id is not None:
-                for source in ('toolset:', 'capability:'):
-                    if str(part.id).startswith(source):
-                        sensitive_ids.add(str(part.id).removeprefix(source).partition(':')[0])
-
-    return sensitive_ids | {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
 
 
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
-    Instruction parts, file-search instructions, and the prompted-output template can contain
-    prompt text. Instruction parts keep their origin and ids, so what the parts are and how they
-    cache stays visible. Tool and output *schemas* stay too -- they are the request's
+    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
+    the prompted-output template. Instruction parts keep their origin and ids, so what the parts are
+    and how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
     structure rather than message content, and `include_model_request_parameters=False` drops the
     whole attribute for anyone who wants them gone as well.
 
-    The telemetry serializer withholds the whole attribute when it cannot serialize a field,
-    so this function only receives a structured projection.
+    `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
+    walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
+    representation, instructions and all. There is nothing to redact in a string, so that is reported
+    as unredactable rather than exported.
     """
     if not isinstance(serialized_parameters, dict):
         return None
@@ -654,119 +530,96 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
-    native_tools = parameters.get('native_tools')
-    if isinstance(native_tools, list):
-        for raw_tool in cast('list[Any]', native_tools):
-            if not isinstance(raw_tool, dict):
-                continue
-            tool = cast('dict[str, Any]', raw_tool)
-            if tool.get('kind') == 'file_search':
-                # File-search instructions are free-form prompt text, not request structure.
-                tool.pop('instructions', None)
     return parameters
 
 
-def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> dict[str, Any] | None:  # noqa: C901
-    """Project request parameters through an explicit telemetry schema.
+def _serialize_model_request_parameters(model_request_parameters: ModelRequestParameters) -> Any:
+    """Serialize the parameters through their own schema, falling back to inference.
 
-    The declared serializer preserves `InstructionPart.id`'s namespace. The projection keeps
-    only fields reviewed for telemetry, so a new provider or tool field is withheld by default.
-    A serialization failure withholds the entire attribute; inferred serialization can bypass
-    field exclusions and must never be used for this security boundary.
+    `serialize_any` infers a shape from the value, which reads a dataclass as its fields and so
+    loses whatever its class meant. `InstructionPart.id` is exactly that case: its source is a
+    class rather than a tagged field, so inference renders a toolset and a capability sharing an
+    `id` identically and drops the agent's source to `{}`. The declared schema renders the id as
+    the same flat key it serializes to everywhere else.
     """
-    from pydantic_ai.native_tools import NATIVE_TOOL_TYPES
+    from pydantic_ai.messages import CapabilityInstructionSource, ToolsetInstructionSource
+    from pydantic_ai.native_tools import MCPServerTool
 
-    try:
-        serialized = _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
-    except Exception:
-        return None
-    if not isinstance(serialized, dict):
-        return None
-    serialized = cast('dict[str, Any]', serialized)
+    url_ids = model_request_parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+    if not url_ids and not any(isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools):
+        # Keep the established serializer, including its fallback, byte-for-byte for requests
+        # outside the affected MCP paths.
+        try:
+            return _model_request_parameters_adapter().dump_python(model_request_parameters, mode='json')
+        except Exception:
+            return serialize_any(model_request_parameters)
 
-    projected: dict[str, Any] = {key: value for key, value in serialized.items() if key in _TELEMETRY_PARAMETER_FIELDS}
-    sensitive_ids = request_telemetry_sensitive_ids(model_request_parameters)
+    native_tools: list[AbstractNativeTool] = []
+    for tool in model_request_parameters.native_tools:
+        if isinstance(tool, MCPServerTool):
+            tool = replace(
+                tool,
+                id='[REDACTED]' if tool.id in url_ids else tool.id,
+                url='[REDACTED]',
+                authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+                headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+            )
+        native_tools.append(tool)
 
-    for collection in ('function_tools', 'output_tools'):
-        tools = projected.get(collection)
-        if not isinstance(tools, list):
-            return None
-        projected_tools: list[dict[str, Any]] = []
-        for raw_tool in cast('list[Any]', tools):
-            if not isinstance(raw_tool, dict):
-                return None
-            tool = cast('dict[str, Any]', raw_tool)
-            entry: dict[str, Any] = {key: value for key, value in tool.items() if key in _TELEMETRY_TOOL_FIELDS}
-            for key in ('toolset_id', 'capability_id'):
-                if entry.get(key) in sensitive_ids:
-                    entry[key] = '[REDACTED]'
-            for key in ('unless_native', 'with_native'):
-                if any(entry.get(key) == f'mcp_server:{identity}' for identity in sensitive_ids):
-                    entry[key] = 'mcp_server:[REDACTED]'
-            projected_tools.append(entry)
-        projected[collection] = projected_tools
-
-    native_tools = projected.get('native_tools')
-    if not isinstance(native_tools, list) or len(cast('list[Any]', native_tools)) != len(
-        model_request_parameters.native_tools
-    ):
-        return None
-    projected_native: list[dict[str, Any]] = []
-    for tool, raw_tool in zip(model_request_parameters.native_tools, cast('list[Any]', native_tools)):
-        if not isinstance(raw_tool, dict):
-            return None
-        serialized_tool = cast('dict[str, Any]', raw_tool)
-        approved_fields = _TELEMETRY_NATIVE_FIELDS.get(tool.kind)
-        if approved_fields is None or type(tool) is not NATIVE_TOOL_TYPES.get(tool.kind):
-            continue
-        entry = {key: value for key, value in serialized_tool.items() if key in approved_fields}
-        if tool.kind == 'mcp_server':
-            entry['id'] = '[REDACTED]'
-            entry['url'] = '[REDACTED]'
-            if entry.get('authorization_token') is not None:
-                entry['authorization_token'] = '[REDACTED]'
-            if isinstance(headers := entry.get('headers'), dict):
-                entry['headers'] = {key: '[REDACTED]' for key in cast('dict[str, Any]', headers)}
-            elif headers is not None:
-                return None
-        projected_native.append(entry)
-    projected['native_tools'] = projected_native
-
-    if isinstance(output_object := projected.get('output_object'), dict):
-        output_object = cast('dict[str, Any]', output_object)
-        projected['output_object'] = {
-            key: value
-            for key, value in output_object.items()
-            if key in {'json_schema', 'name', 'description', 'strict'}
-        }
-    elif output_object is not None:
-        return None
-
-    if isinstance(parts := projected.get('instruction_parts'), list):
-        projected_parts: list[dict[str, Any]] = []
-        for raw_part in cast('list[Any]', parts):
-            if not isinstance(raw_part, dict):
-                return None
-            part = cast('dict[str, Any]', raw_part)
-            entry = {
-                key: value for key, value in part.items() if key in {'content', 'dynamic', 'name', 'id', 'part_kind'}
-            }
-            if isinstance(identity := entry.get('id'), str) and any(
-                identity == f'{source}:{sensitive_id}' or identity.startswith(f'{source}:{sensitive_id}:')
-                for source in ('toolset', 'capability')
-                for sensitive_id in sensitive_ids
+    native_names = {f'mcp_server:{identity}' for identity in url_ids}
+    redacted_tool_lists: list[list[ToolDefinition]] = []
+    for tools in (model_request_parameters.function_tools, model_request_parameters.output_tools):
+        redacted_tools: list[ToolDefinition] = []
+        for tool in tools:
+            if (
+                tool.toolset_id in url_ids
+                or tool.capability_id in url_ids
+                or tool.unless_native in native_names
+                or tool.with_native in native_names
             ):
-                entry['id'] = '[REDACTED]'
-            projected_parts.append(entry)
-        projected['instruction_parts'] = projected_parts
-    elif parts is not None:
-        return None
+                tool = replace(
+                    tool,
+                    toolset_id='[REDACTED]' if tool.toolset_id in url_ids else tool.toolset_id,
+                    capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
+                    unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
+                    with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
+                )
+            redacted_tools.append(tool)
+        redacted_tool_lists.append(redacted_tools)
 
-    if isinstance(capability_ids := projected.get('deferred_capability_ids'), list):
-        projected['deferred_capability_ids'] = [
-            '[REDACTED]' if identity in sensitive_ids else identity for identity in cast('list[str]', capability_ids)
-        ]
-    return projected
+    instruction_parts: list[InstructionPart] | None = model_request_parameters.instruction_parts
+    if instruction_parts is not None and url_ids:
+        instruction_parts = []
+        for part in model_request_parameters.instruction_parts or ():
+            instruction_id = part.id
+            if (
+                instruction_id is not None
+                and isinstance(source := instruction_id.source, ToolsetInstructionSource | CapabilityInstructionSource)
+                and source.id in url_ids
+            ):
+                instruction_parts.append(
+                    replace(part, id=replace(instruction_id, source=replace(source, id='[REDACTED]')))
+                )
+            else:
+                instruction_parts.append(part)
+
+    safe_parameters = replace(
+        model_request_parameters,
+        function_tools=redacted_tool_lists[0],
+        output_tools=redacted_tool_lists[1],
+        native_tools=native_tools,
+        instruction_parts=instruction_parts,
+        deferred_capability_ids={
+            '[REDACTED]' if identity in url_ids else identity
+            for identity in model_request_parameters.deferred_capability_ids
+        },
+        _telemetry_mcp_url_ids=set(),
+    )
+    try:
+        return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')
+    except Exception:
+        # A tool definition carrying something unserializable must not take the span down with it.
+        return serialize_any(safe_parameters)
 
 
 @cache

@@ -6,7 +6,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
@@ -37,6 +37,9 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
@@ -109,9 +112,9 @@ class InstrumentationSettings:
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
-                model request spans. This includes a reviewed subset of `ModelRequestParameters`, such as
-                output configuration and tool definitions. Opaque tool metadata and uploaded-file references
-                are omitted; MCP server URLs and credentials are redacted. Defaults to `True`. Set to `False` to
+                model request spans. This serializes the full `ModelRequestParameters` (output configuration
+                and every tool definition, including fields that are not sent to the model such as tool
+                `metadata` and, when not requested, `return_schema`). Defaults to `True`. Set to `False` to
                 omit it entirely, which is useful when large tool output schemas make the attribute big enough
                 to strain span export. The OpenTelemetry `gen_ai.tool.definitions` attribute (tool name,
                 description, and parameters) is always emitted regardless of this setting.
@@ -203,9 +206,20 @@ class InstrumentationSettings:
                 **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
+            if sensitive_names and isinstance(message, ModelResponse):
+                projected_parts: list[ModelResponsePart] = [
+                    replace(part, tool_name='mcp_server:[REDACTED]')
+                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                    else part
+                    for part in message.parts
+                ]
+                message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
                 for role, group in itertools.groupby(
                     message.parts, key=functools.partial(_otel_message_role, version=self.version)
@@ -224,7 +238,10 @@ class InstrumentationSettings:
         return result
 
     def _input_messages_json(
-        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
+        mcp_url_ids: frozenset[str] = frozenset(),
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -236,14 +253,16 @@ class InstrumentationSettings:
         Without a cache (one-off requests), the whole history is serialized in a single call.
         """
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages))
+            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=mcp_url_ids))
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
-            if entry is None or entry.parts is not message.parts:
-                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+            if entry is None or entry.parts is not message.parts or entry.mcp_url_ids != mcp_url_ids:
+                entry = CachedMessageJson(
+                    message, message.parts, message_json_fragment(self, message, mcp_url_ids), mcp_url_ids
+                )
             fresh_entries[id(message)] = entry
             if entry.fragment:
                 fragments.append(entry.fragment)
@@ -260,7 +279,12 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        output_messages = self.messages_to_otel_messages([response])
+        mcp_url_ids: frozenset[str] = (
+            frozenset(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
+            if parameters is not None
+            else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1
         output_message = output_messages[0]
 
@@ -268,7 +292,9 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
+            'gen_ai.input.messages': self._input_messages_json(
+                input_messages, message_json_cache, mcp_url_ids
+            ).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(

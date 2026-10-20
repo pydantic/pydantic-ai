@@ -698,7 +698,6 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     from pydantic_ai.durable_exec.temporal._transports import (
         _CompactMessagesParams,  # pyright: ignore[reportPrivateUsage]
         _CompactMessagesTransport,
-        _RequestParams,
     )
 
     # Converter round-tripping inspects these callables but cannot dispatch them.
@@ -724,12 +723,8 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     durability = TemporalDurability.from_agent(agent)
     assert durability is not None
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-    sensitive_ids = {'SENTINEL-mcp-url-derived-id'}
     request_context = ModelRequestContext(
-        model=model,
-        messages=[],
-        model_settings=None,
-        model_request_parameters=ModelRequestParameters(telemetry_sensitive_ids=sensitive_ids),
+        model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
     )
     transport = _CompactMessagesTransport(durability)
     wire = transport.dump(
@@ -741,20 +736,6 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
 
     assert decoded[0].messages == []
     assert decoded[0].model_request_parameters == ModelRequestParameters()
-    assert decoded[0].telemetry_sensitive_ids == sensitive_ids
-    restored = transport.load(decoded, runtime=None)
-    assert restored.request_context.model_request_parameters.telemetry_sensitive_ids == sensitive_ids
-
-    request_wire = _RequestParams(
-        messages=[],
-        model_settings=None,
-        model_request_parameters=request_context.model_request_parameters,
-        telemetry_sensitive_ids=sensitive_ids,
-        serialized_run_context=None,
-    )
-    payloads = await pydantic_data_converter.encode([request_wire])
-    [decoded_request] = await pydantic_data_converter.decode(payloads, [_RequestParams])
-    assert decoded_request.telemetry_sensitive_ids == sensitive_ids
 
 
 async def test_temporal_backend_labels_validation_activity(

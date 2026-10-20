@@ -349,9 +349,14 @@ class Instrumentation(AbstractCapability[Any]):
         new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        mcp_url_ids = (
+            frozenset(self._last_model_request_parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
+            if self._last_model_request_parameters is not None
+            else frozenset[str]()
+        )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(list(message_history))
+                settings.messages_to_otel_messages(list(message_history), mcp_url_ids=mcp_url_ids)
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }

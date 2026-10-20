@@ -93,6 +93,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # be disclosing that segment to the model. Deriving an id is for naming a durable operation,
         # which is ours to see; putting one in the prompt is the user's call to make deliberately.
         self.id = id if id is not None else (None if defer_loading else self._derive_id(url))
+        # Only a URL-derived id can carry a credential from the URL path. An explicit id,
+        # including one supplied by an MCPServerTool, is the caller's chosen label.
+        self._telemetry_url_derived_id = (
+            self._derive_id(url) if id is None and url is not None and not isinstance(native, MCPServerTool) else None
+        )
         # Non-string runtime `local=` inputs the base class doesn't recognize (Path, transport,
         # FastMCP server, pre-built `fastmcp.Client`, `AnyUrl`, etc.) are wrapped into an
         # `MCPToolset` here. Strings flow through `_resolve_local_strategy` below; pre-built
@@ -111,6 +116,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
             local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
+            local._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
         self.local = local
         self.authorization_token = authorization_token
         self.headers = headers
@@ -206,7 +212,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id onto the local toolset so it can be used with durable execution
             # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
             # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
-            return MCPToolset(url, headers=local_headers or None, include_instructions=True, id=self._derive_id(url))
+            toolset = MCPToolset(url, headers=local_headers or None, include_instructions=True, id=self._derive_id(url))
+            if self.id is None and not isinstance(self.native, MCPServerTool):
+                toolset._telemetry_url_derived_id = toolset.id  # pyright: ignore[reportPrivateUsage]
+            else:
+                toolset._telemetry_url_derived_id = self._telemetry_url_derived_id  # pyright: ignore[reportPrivateUsage]
+            return toolset
         except ImportError as e:
             raise UserError(
                 'Please install the `mcp` package to run MCP servers locally, you can use the '

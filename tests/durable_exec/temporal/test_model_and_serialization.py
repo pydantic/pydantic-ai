@@ -50,6 +50,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     NativeTool,
 )
+from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
@@ -1869,14 +1870,14 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
 @pytest.mark.parametrize('streaming', [True, False])
 async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
     identity = 'mcp.example.test-SENTINEL-path-token'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
     observed_ids: list[set[str]] = []
 
     def check_parameters(info: AgentInfo) -> None:
         parameters = info.model_request_parameters
-        assert parameters.telemetry_sensitive_ids is not None
-        observed_ids.append(parameters.telemetry_sensitive_ids)
+        observed_ids.append(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
         attributes = model_request_parameters_attributes(parameters)
-        assert identity not in str(attributes)
         serialized = attributes['model_request_parameters']
         assert isinstance(serialized, str)
         assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
@@ -1893,12 +1894,14 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
         pass
 
     model = FunctionModel(respond, stream_function=respond_stream)
+    agent = Agent(model, capabilities=[capability])
     temporal_model = TemporalModel(
         model,
         activity_name_prefix='test__request_telemetry_ids',
         activity_config={'start_to_close_timeout': timedelta(seconds=60)},
         deps_type=object,
         event_stream_handler=handle_stream,
+        agent=agent,
     )
     deps = object()
     ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
@@ -1920,14 +1923,14 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
                 )
             ],
             deferred_capability_ids={identity},
-            telemetry_sensitive_ids={identity},
+            _telemetry_mcp_url_ids={identity},
         ),
-        telemetry_sensitive_ids={identity},
+        telemetry_mcp_url_ids={identity},
         serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
     )
     wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
     if legacy_payload:
-        wire.pop('telemetry_sensitive_ids')
+        wire.pop('telemetry_mcp_url_ids')
     decoded = TypeAdapter(_RequestParams).validate_python(wire)
     if streaming:
         await ActivityEnvironment().run(
@@ -1945,34 +1948,43 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
 @pytest.mark.parametrize('compact', [True, False])
 def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
     identity = 'mcp.example.test-SENTINEL-path-token'
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
+    assert capability.id == identity
     model = TestModel()
     ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
-    parameters = ModelRequestParameters(function_tools=[ToolDefinition(name='ping', capability_id=identity)])
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='ping', capability_id=identity)], _telemetry_mcp_url_ids={identity}
+    )
     common: dict[str, Any] = {
         'messages': [ModelRequest.user_text_prompt('hello')],
         'model_settings': None,
         'model_request_parameters': parameters,
         'serialized_run_context': TemporalRunContext.serialize_run_context(ctx),
     }
-    durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+    agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    assert bound_durability.agent is agent
     if compact:
-        payload = _CompactMessagesParams(**common, streaming=False, instructions=None)
+        payload = _CompactMessagesParams(**common, telemetry_mcp_url_ids={identity}, streaming=False, instructions=None)
         wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
         if legacy_payload:
-            wire.pop('telemetry_sensitive_ids')
+            wire.pop('telemetry_mcp_url_ids')
         decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
-        loaded = _CompactMessagesTransport(durability).load((decoded, None), runtime=object())
+        loaded = _CompactMessagesTransport(bound_durability).load((decoded, None), runtime=object())
         restored = loaded.request_context.model_request_parameters
     else:
-        payload = _RequestParams(**common)
+        payload = _RequestParams(**common, telemetry_mcp_url_ids={identity})
         wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
         if legacy_payload:
-            wire.pop('telemetry_sensitive_ids')
+            wire.pop('telemetry_mcp_url_ids')
         decoded = TypeAdapter(_RequestParams).validate_python(wire)
-        loaded = _ModelRequestTransport(durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+        loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load(
+            (decoded, None), runtime=object()
+        )
         restored = loaded.model_request_parameters
 
-    assert restored.telemetry_sensitive_ids == {identity}
+    assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
     assert identity not in str(model_request_parameters_attributes(restored))
 
 

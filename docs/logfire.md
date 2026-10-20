@@ -444,7 +444,7 @@ This setting is particularly useful in production environments where compliance 
 
 ### Excluding model request parameters
 
-By default, each model request span carries a `model_request_parameters` attribute with a reviewed subset of [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including output configuration and tool definitions. Opaque tool metadata, uploaded-file references, and connection details are omitted. Tools that carry large output schemas can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
+By default, each model request span carries a `model_request_parameters` attribute that serializes the full [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters], including the output configuration and every tool definition. Tools that carry large output schemas (some MCP toolsets, for example) can make this attribute big enough to strain span export and inflate memory use. Set `include_model_request_parameters=False` to omit it entirely:
 
 ```python {title="excluding_model_request_parameters.py"}
 from pydantic_ai import Agent

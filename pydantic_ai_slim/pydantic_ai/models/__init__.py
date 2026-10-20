@@ -199,15 +199,10 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    telemetry_sensitive_ids: Annotated[set[str] | None, Field(exclude=True)] = field(
-        default=None, repr=False, compare=False
+    _telemetry_mcp_url_ids: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
     )
-    """MCP identities that may expose server URL data; never include them in request telemetry.
-
-    `None` means the request's tool identities have unknown provenance, so telemetry must
-    conservatively withhold them. An agent supplies a set after inspecting its toolsets and
-    capabilities. This is transport metadata, not part of the provider request or public serialization.
-    """
+    """URL-derived MCP identities to mask in telemetry, without changing provider requests."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
