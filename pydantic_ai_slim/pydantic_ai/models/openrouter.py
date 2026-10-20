@@ -10,11 +10,7 @@ from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
 from .._utils import is_str_dict
-from ..exceptions import (
-    ModelAPIError,
-    ModelHTTPError,
-    UserError,
-)
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
