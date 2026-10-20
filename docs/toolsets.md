@@ -258,7 +258,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Toolset instructions that change {#toolset-instructions-that-change}
 
-Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of a short replacement in the history for each change.
+Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of the block's complete new text being added to the history for each change.
 
 To opt in, give the toolset an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions]. The `@toolset.instructions` decorator doesn't take `on_change`, so override the method on a `FunctionToolset` subclass:
 

@@ -98,7 +98,7 @@ def add_user_name(ctx: RunContext[str]) -> str:
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
-For instructions that change mid-conversation (operator state, todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is a short replacement in history per change.
+For instructions that change mid-conversation (operator state, todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is the block's complete new text added to history per change.
 Use `@agent.instructions(name='state', on_change='append')` on the agent.
 The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
 Return `None` or an empty string to withdraw the block.

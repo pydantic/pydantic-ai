@@ -1687,7 +1687,7 @@ Two consequences worth knowing before you key configuration on an id:
 
 Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run, or that changes between runs of a conversation. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
 
-We recommend append mode for any instruction that changes partway through a conversation. The instruction prefix, and the conversation cached behind it, stays the same; the cost is a short replacement (or diff) added to the history for each change, which stays there. An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
+We recommend append mode for any instruction that changes partway through a conversation. The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
 
 ```python {title="instruction_changes.py"}
 from dataclasses import dataclass

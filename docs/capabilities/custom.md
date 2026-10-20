@@ -266,29 +266,32 @@ Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractC
 
 ### Instructions that change during a conversation
 
-When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of a short replacement in the history for each change. This needs the capability to have an `id`.
+When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of the block's complete new text being added to the history for each change. This needs the capability to have an `id`.
 
 For text that changes between runs, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from `get_instructions()`. It's read when the agent is built and reused, except in a run where [`for_run`](#per-run-state-isolation) returns a replacement, which is read again. So a capability that `for_run` rebuilds from the run's dependencies can change it from one run to the next:
 
 ```python {title="capability_instruction_changes.py"}
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
 from pydantic_ai.models.test import TestModel
 
+Language = Literal['English', 'Spanish', 'French']  # (1)!
+
 
 @dataclass
 class User:
-    language: str
+    language: Language
 
 
 @dataclass
 class PreferredLanguage(AbstractCapability[User]):
     """Tells the agent which language to reply in."""
 
-    language: str = 'English'
+    language: Language = 'English'
 
     async def for_run(self, ctx: RunContext[User]) -> 'PreferredLanguage':
         return PreferredLanguage(id=self.id, language=ctx.deps.language)
@@ -311,6 +314,8 @@ print(
 )
 #> ['Reply in Spanish.']
 ```
+
+1. Only one of a fixed set of values reaches the instructions, never free-form text: see [keep untrusted text out of instructions](../toolsets.md#toolset-instructions-that-change).
 
 _(This example is complete, it can be run "as is")_
 
