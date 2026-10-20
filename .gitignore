@@ -29,11 +29,17 @@ AGENTS.override.md
 .agents/skills/*
 !.agents/skills/complete-partial-pr/
 !.agents/skills/complete-partial-pr/SKILL.md
+!.agents/skills/pushing-commits-to-the-repo/
+.agents/skills/pushing-commits-to-the-repo/*
+!.agents/skills/pushing-commits-to-the-repo/SKILL.md
+!.agents/skills/pushing-commits-to-the-repo/label-catalog
+!.agents/skills/pushing-commits-to-the-repo/labels.tsv
 .claude/*
 !.claude/plans/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/complete-partial-pr
+!.claude/skills/pushing-commits-to-the-repo
 !.claude/skills/address-feedback
 !.claude/skills/pre-push-review
 !.claude/skills/testing-skill

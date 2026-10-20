@@ -21,19 +21,19 @@ allowed-tools:
 Use the strongest locally available reviewer to catch problems while they are still cheap
 to fix. Run this before the first push and again before every later push to an existing PR.
 
-This is the local counterpart to the `review` job in `.github/workflows/bots.yml`, which the
-`auto-review` label triggers: a high-judgment standards review paid for by the developer's
-model subscription. It is independent of the automatic `Pydantic AI PR Review`
-(`.github/workflows/pydantic-ai-pr-review.md`), which runs on GitHub when a PR is opened or
-updated.
+This is the local counterpart to `douwebot`, the on-demand deep review that GitHub runs from
+`main`'s `bots.yml` on a `v1` PR (see `.github/workflows/AGENTS.md`): a high-judgment standards
+review paid for by the developer's model subscription. It is independent of the automatic
+`Pydantic AI PR Review` (`.github/workflows/pydantic-ai-pr-review.md`), which runs on GitHub
+when a PR is opened or updated.
 
 ## Read the review rubric
 
-Read the `prompt:` of the `review` job in `.github/workflows/bots.yml`. It is the
-source of truth for what to look for, how to prioritise concerns, and what makes feedback
-useful. Apply its review judgment and comment-quality rules, but ignore its hosted workflow
-mechanics: triggers, checkout, model selection, pre-gathered file paths, and GitHub comment
-tools.
+Read the `prompt:` of the `review` job in `.github/workflows/bots.yml`. `v1`'s copy of that job
+no longer runs, but its prompt is the source of truth for what to look for, how to prioritise
+concerns, and what makes feedback useful. Apply its review judgment and comment-quality rules,
+but ignore its hosted workflow mechanics: triggers, checkout, model selection, pre-gathered file
+paths, and GitHub comment tools.
 
 Read the root `AGENTS.md`, `agent_docs/index.md` and its relevant topic guides, plus every
 directory-specific `AGENTS.md` governing a changed file.

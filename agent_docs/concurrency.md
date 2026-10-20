@@ -1,0 +1,50 @@
+# Async & Concurrency
+
+> Rules for `asyncio`/`anyio` code, most of them paid for by a real bug in this repo
+
+**When to check**: Whenever you write or review code that spawns a task, opens a task group or cancel scope, creates a lock/event/stream, writes an async context manager or async generator, crosses a thread or event-loop boundary, or tests any of those
+
+Most rules name the symbol, file, or test that proves them; a rule with no anchor is judgment, not evidence. Check the anchor before you argue with a rule, and before you extend one — the usual way to get this wrong is to state a true general mechanism more broadly than the code supports, or to describe a design that was proposed but never shipped. If the code has moved, update the rule.
+
+Before adding any of this, name the scope that guarantees teardown for every task, scope, lock, stream, span, and connection you create. "The garbage collector" or "the caller remembers" is a bug, not a design.
+
+## Rules
+
+### Ownership
+
+- Iteration owns no teardown. `async for ... break` doesn't close an async iterator, and asyncio finalizes an abandoned async generator in *a different task, under an unrelated copied context* (`loop._asyncgen_finalizer_hook`), so nothing may depend on that cleanup having run. A task born during iteration must still be stored on and drained by the enclosing context manager — `_utils.group_by_temporal` starts its pending `anext()` task while iterating, and its context-manager exit cancels it and closes the source (`_utils._cleanup_temporal_group`).
+- Prefer a task group, whose `async with` encloses everything the children touch, over loose tasks. Avoid `asyncio.gather(..., return_exceptions=False)` when one failure should stop the batch — it propagates the first failure while siblings keep running. Use `_utils.gather`, which cancels and drains them. `return_exceptions=True` is fine for a cleanup-only drain (`_utils.cancel_and_drain`).
+- Use `asyncio.create_task` only for a task that must outlive the frame starting it. Then keep the handle where the owner can reach it at teardown (`MCPServer.__aenter__` stores `session_task` on its session state, and `__aexit__` awaits it, in `mcp.py`) and cancel *and await* it there — `_utils.cancel_and_drain` does both; `cancel()` requests, it does not tear down. Pass `name=` when there are many of a kind (`_agent_graph.py` names each parallel tool task by tool).
+
+### Cancellation: level vs. edge
+
+`asyncio` is edge-triggered: catching the delivered `CancelledError` resumes execution until something cancels again. A cancelled `anyio` scope is level-triggered: every later cancellation checkpoint raises again unless shielded, so async cleanup inside one cannot finish. Know which you are in before writing cleanup.
+
+- Shield cleanup that must complete under an outer `anyio` cancel — `_utils.cancel_and_drain` is the ready-made task drain: it cancels each task natively, then waits for all of them inside an `anyio` shield. It discards each task's outcome. Read `task.result()` afterwards when a failure must still propagate. When you cancel and await a task yourself, suppress the `CancelledError` your own cancel leaves there, and the `StopAsyncIteration` of a pull whose source ended first (`_utils._cleanup_temporal_group`). Your `finally` and each child's cleanup are unprotected unless they shield themselves. Don't shield task-group exit alone: `TaskGroup.__aexit__` already shields the parent's *remaining* wait once the first cancel reaches it (anyio #695).
+- Choose how to cancel a task by the cleanup it may be running; no mechanism protects every cleanup. A native `Task.cancel()` is edge-triggered, so unshielded async cleanup can finish. On asyncio it also interrupts code inside an `anyio` shield. An `anyio` scope cancel lets shielded cleanup finish, but unshielded async cleanup cannot.
+- Await a task whose cancellation another scope owns with `await asyncio.wait((task,))`, then read `task.result()` — `_utils.group_by_temporal` waits on its pending pull this way so a timeout doesn't cancel it. A plain `await task` forwards the awaiter's cancellation into the task natively. Do not use `asyncio.shield(task)`: on CPython 3.14 releases without the fix for python/cpython#156321, once the awaiter is cancelled, it reports the task's later exception to the loop's exception handler even when teardown retrieves it. A `gather` inside an `anyio` shield stops only `anyio` cancels: a native cancel of the awaiting task still reaches every child. A teardown drain still uses it, because `asyncio.shield(gather(...))` would stop waiting on that native cancel while the children still run (`_utils.cancel_and_drain`).
+- One owner per deadline. `FunctionToolset.call_tool` takes the per-tool timeout when set, else its toolset timeout (which the agent's `tool_timeout` populates), and enforces exactly one scope — so a longer per-tool value *replaces* the agent default instead of being capped by it. `ToolManager` adds no timeout; MCP, custom, and external toolsets own deadlines at their own transport.
+- A deadline can't interrupt blocking sync work: `anyio.to_thread.run_sync`, which `_utils.run_in_executor` uses for sync tools, shields its wait, so an enclosing `fail_after` returns late and raises only if a checkpoint follows inside the scope (`toolsets/function.py`). A sync hook runs inline under its `timeout` in `capabilities/hooks.py`, so that deadline cannot fire while the hook blocks the loop.
+- Enter and exit an `anyio.CancelScope` in the same task, in strict LIFO order. A scope may span a `yield` only if one persistent task performs every resume and finalization — a per-item `anext()` bridge can straddle tasks. anyio checks this at scope exit, not at the yield. `MCPServer` runs its transport inside its own `session_task` for this reason: its docstring notes that entering the server from different tasks is safe because the transport's cancel scopes never cross task boundaries (`mcp.py`).
+- Unwrap only an accidental single-child `BaseExceptionGroup` before a public API; preserve a genuine multi-failure group (`_utils.gather`). On 3.10 the name comes from the `exceptiongroup` backport re-exported by `_utils`, not builtins, and `except*` is 3.11+ *syntax* that the backport cannot provide — match on `BaseExceptionGroup` and use `.split()`/`.subgroup()`.
+- Give partial streamed parts a valid replay form — a cancel leaves them in history for the next request.
+
+### Threads and event loops
+
+- Async work driven by a sync entry point stays on the caller's loop. `run_sync()` and `run_stream_sync()` drive the run with `_utils.get_event_loop().run_until_complete(...)` (`agent/abstract.py`). Pooled transports bind per connection, so moving that work to a portal thread breaks clients reused across sync calls (<https://github.com/pydantic/pydantic-ai/pull/6454>).
+- Defer shared-object entry locks with the `_enter_lock` `cached_property` pattern (`agent/__init__.py`, `providers/__init__.py`, `mcp.py`, `models/fallback.py`). First use binds the lock to that loop and backend; deferring keeps it out of `__init__` and Temporal's sandbox. It does not make an entered object reusable from a later loop.
+- Sync callbacks are dispatched off-thread, and that costs `ContextVar` writes — an accepted tradeoff, since a `def` callback is assumed to block. `_utils.run_in_executor` copies the caller's context *in* (reads work) and discards writes, and `asyncio.get_running_loop()` raises there, silently breaking libraries that keep state in context variables such as tracing and logging. Make the callback `async` if it needs any of that. Covers `def` tools and output functions (`_function_schema.py`), output validators (`_output.py`), `system_prompt`/`instructions` functions (`_system_prompt.py`), and history processors (`capabilities/process_history.py`); see `docs/tools-advanced.md`.
+- Not every sync callback is dispatched. `Tool.prepare` (`tools.py`), `PreparedToolset.prepare_func` (`toolsets/prepared.py`), `FallbackModel` handlers (`models/fallback.py`), and `Hooks` callbacks (`capabilities/hooks.py`) are called inline: they block the loop and their `ContextVar` writes stick. `_utils.disable_threads()` (entered by `TemporalAgent`) puts *every* callback in that lane. Choose the lane deliberately when adding a sync-callable extension point.
+
+### Locks
+
+- Ask whether you need a lock at all before adding one. A critical section with no `await` in it is already atomic against other tasks on the same loop, so a problem you can restructure to compute first and mutate in one unbroken stretch needs no lock. You need one when the section suspends, or when a worker thread touches the same state — the no-`await` argument covers neither.
+- `async with` on a shared object is not concurrency-safe by default. Guard entry with `_enter_lock` plus an entered-count (`_entered_count` in `providers/__init__.py`, `_running_count` in `mcp.py`), or give each task its own instance.
+
+### Testing it
+
+- Assert the concurrency fact itself, not the output it produces. Fixture and interpreter-global state can quietly remove the trigger and leave the test green — use a clean subprocess when event-loop policy or similar global state is the subject.
+- Exercise the public syntax — `async with`, `async for ... break` — not `__aenter__` or `agen.aclose()` by hand. A test that calls `aclose()` itself can pass while the shipped syntax leaks its tasks.
+- Order steps with `Event`s, not sleeps, and wait on them with a module-level timeout constant, not a one-second timeout — short waits flake under `xdist` (<https://github.com/pydantic/pydantic-ai/issues/5399>).
+- Prove ownership directly: diff `asyncio.all_tasks()` for leak checks (`test_parallel_tool_exception_cancels_sibling_tasks` in `tests/test_agent.py`).
+- Reach the real trigger. Loop affinity needs one async client reused across consecutive sync entry points plus assertions on the actual loop identities; level-cancellation behavior needs a real outer `anyio` cancel scope, not a bare `CancelledError` raise.
