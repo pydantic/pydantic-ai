@@ -48,6 +48,7 @@ with try_import() as imports_successful:
         XaiMachine,
     )
     from ._simulation import FindingReproduced, SessionOptions, Simulation
+    from ._wire import SendFault
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs or hypothesis not installed')
 
@@ -807,8 +808,12 @@ def test_hand_commit_of_nothing_after_a_vad_commit_is_no_turn(dialect: Dialect, 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
-@known('SIM-40')
-def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+def test_hand_commit_of_unheard_audio_after_a_vad_commit_is_no_turn(dialect: Dialect) -> None:
+    """Retired SIM-40, as first pinned: under server VAD, the provider commits only speech its VAD heard (checked
+    live), so a hand commit of audio sent after VAD committed the turn before it commits nothing, acknowledged or not.
+    """
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.speech_start(deliver=False)
@@ -819,7 +824,73 @@ def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
         sim.close()
         sim.settle()
 
-    reproduce('SIM-40', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_unacknowledged_hand_commit_of_silence_under_vad_is_no_turn(dialect: Dialect, ending: str) -> None:
+    """Under server VAD, a hand commit sent after VAD committed the turn (audio streaming on in the silence after it)
+    commits nothing, so the session ending before the provider refuses it records no turn for it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.settle()
+        sim.send_audio()
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_scenario_unacknowledged_commit_of_speech_not_yet_heard_starting_is_accepted(ending: str) -> None:
+    """SIM-42: a commit of speech whose start the client hadn't read yet, unacknowledged when the session ends, can't
+    be told from a commit of silence, so it makes no turn (shrunk from exploration)."""
+
+    with OpenAISimulation(
+        openai=OpenAIOptions(dialect='azure', vad_interrupts=False, vad_responds=False), strict=False
+    ) as sim:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+        assert ('SIM-42', 'history.turn_missing') in sim.checker.known_hits
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_hand_commit_mid_speech_after_an_empty_one_keeps_its_turn(dialect: Dialect) -> None:
+    """A hand commit sent as VAD stopped is refused as empty, the user goes on, and a second hand commit mid-speech
+    commits that speech; the session closes before its acknowledgement is read. Each turn is recorded once (the
+    probe frames this follows are pinned in `test_openai_lifecycle.py`)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(deliver=False)
+        sim.commit_audio()
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.commit_audio()
+        # VAD's stop, commit and item, the refusal of the first hand commit, and the second turn's start: not its
+        # commit.
+        sim.deliver(5)
+        sim.close()
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False, vad_responds=False)), scenario
+    )
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
@@ -1428,6 +1499,76 @@ def test_baseline_openai_barge_in_and_reconnect() -> None:
         sim.finish()
 
     run_clean(OpenAISimulation(), scenario)
+
+
+@pytest.mark.parametrize('fault', ['ambiguous', 'lost'])
+@pytest.mark.parametrize(
+    'mode,finished',
+    [
+        pytest.param('played_bytes', False, id='played_bytes-speaking'),
+        pytest.param('played_bytes', True, id='played_bytes-finished'),
+        # (A reply that finished keeps what history recorded under `played_ms`: see `interrupt()`.)
+        pytest.param('played_ms', False, id='played_ms-speaking'),
+    ],
+)
+def test_interrupt_whose_send_fails_records_the_cut(mode: str, finished: bool, fault: SendFault) -> None:
+    """The link dies while the truncation is sent, so `interrupt()` raises, and the session reconnects.
+
+    The truncation may have reached the provider (`ambiguous`) or not (`lost`): the session can't tell which. The
+    listener heard only what they heard either way, so history records the reply as cut off there, rather than as
+    heard in full or interrupted with no position, and the reconnect replays it as cut off.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak(chunks=2)
+        if finished:
+            sim.finish()
+            sim.settle()
+        sim.play()
+        sim.fail_next_send(fault=fault)
+        sim.interrupt(mode=mode)  # pyright: ignore[reportArgumentType]
+        sim.settle()
+        sim.send_text()
+
+    # (The failed interrupt is known finding G3b, `send.failed_across_reconnect`, tolerated here.)
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_interrupt_racing_the_end_of_the_reply_records_the_cut(dialect: str) -> None:
+    """The reply ends on the provider while `interrupt(played_ms=...)` is on its way: the truncation still applies.
+
+    The cancel comes too late to stop the reply, which the provider reports as completed, but the listener heard only
+    what they heard, so history records it as cut off, as it does a reply that had ended before the interrupt.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak()
+        sim.finish(deliver=False)
+        sim.interrupt(mode='played_ms')
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=False)),  # pyright: ignore[reportArgumentType]
+        scenario,
+    )
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_cancel_after_a_cut_keeps_the_cut(dialect: str) -> None:
+    """A plain `interrupt()` after one that truncated the reply: the reply stays cut where the first one cut it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak()
+        sim.interrupt(mode='played_ms')
+        sim.interrupt(mode='cancel')
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=False)),  # pyright: ignore[reportArgumentType]
+        scenario,
+    )
 
 
 def test_baseline_openai_barge_in_after_the_reply_finished_and_reconnect() -> None:
