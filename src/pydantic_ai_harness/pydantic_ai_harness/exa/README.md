@@ -83,7 +83,8 @@ rejects or a response it can't parse.
 Titles, excerpts, page text, and deep search answers come from third-party
 pages, so they can carry instructions aimed at the model. Each title, author,
 and excerpt is rendered on one line, so a page can't fake another result's
-`Title:` or `URL:` line.
+`Title:` or `URL:` line. The `text_summary` summary and the `deep_search`
+answer are Exa's own synthesized text and are passed through as returned.
 
 `include_domains` and `exclude_domains` don't restrict `get_page`: it reads any
 URL the model passes, including one a page told it to read, and the URL can
@@ -298,7 +299,8 @@ each, so a response that starts several runs can wait up to `timeout_ms` per
 run. A run whose polling times out keeps running on Exa, and the retry prompt
 gives the model its run ID to follow up on. When the agent run is cancelled
 while it polls, the capability cancels the Exa runs it hasn't finished polling,
-if the `runs` client has a `cancel` method, as `exa_py`'s does. Under durable
+if the `runs` client has a `cancel` method, as `exa_py`'s does, and holds the
+cancellation up to about 5 seconds while Exa accepts it. Under durable
 execution the runs are left running, since the engine can resume the wait. If
 creating a run fails in a way that Exa may have acted on (a 5xx response, or a
 network failure after the request was sent), the error is raised instead of
