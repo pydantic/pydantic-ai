@@ -532,6 +532,8 @@ class _TextResponsePart(BaseModel):
     text: str = ''
     type: str | None = None
     """`start`, `delta`, or `stop`."""
+    response_id: str | None = None
+    """The agent message the part belongs to, the `response_id` its `agent_response` will carry."""
 
 
 class _AgentChatResponsePartEvent(BaseModel):
@@ -543,6 +545,10 @@ class _AgentResponseCorrectionPayload(BaseModel):
 
     original_agent_response: str | None = None
     corrected_agent_response: str
+    response_id: str | None = None
+    """The agent message corrected. A turn can hold several (text said before a tool call, then the answer to its
+    result), and one barge-in corrects each the user didn't hear in full, with a correction of its own (verified
+    live): the message cut off is cut down to what was heard, and those after it, never heard, to `''`."""
 
 
 class _AgentResponseCorrectionEvent(BaseModel):
@@ -1548,6 +1554,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # Whether the model has streamed response output since the last turn boundary, so a boundary
         # event never finalizes a turn that produced nothing.
         self._response_open = False
+        # The agent message the open response streams, once its text parts have named it.
+        self._open_response_id: str | None = None
         self._turn_interrupted = False
         self._tail: _AudioTail | None = None
         # The MCP calls ElevenLabs runs itself, reported as native tool parts: those whose call part is out, and
@@ -1960,6 +1968,9 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # `client_events` set). Deltas map incrementally; the empty start/stop markers carry
             # nothing (a tool-call-only model response is exactly one empty start/stop pair).
             part = _AgentChatResponsePartEvent.model_validate(data).text_response_part
+            if part.type == 'start':
+                # (A message's `stop` part can trail its `agent_response`, so only its `start` names the open one.)
+                self._open_response_id = part.response_id
             if part.type == 'delta' and part.text:
                 self._response_open = True
                 text = part.text if self._tag_stripper is None else self._tag_stripper.feed(part.text)
@@ -1996,24 +2007,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             )
             return [transcript]
         if event_type == 'agent_response_correction':
-            # After an interruption the server truncates the stored transcript to what was actually
-            # spoken. The already-emitted transcript cannot be shrunk through the codec (a final
-            # `OutputTranscript` only extends), so the corrected text is retained on the finalized
-            # response's `provider_details` and the interruption closes the turn here. When the user
-            # barged in during *playback*, after the reply's last audio had already arrived and ended it
-            # (the common audio-mode case: synthesis outruns playback), there is nothing left to finalize
-            # and the correction is dropped.
-            correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
-            corrected = correction.corrected_agent_response
-            if self._tag_stripper is not None:
-                corrected, _ = _strip_audio_tags(corrected)
-            details = {'corrected_agent_response': corrected}
-            if (tail := self._tail) is not None:
-                # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
-                tail.interrupted = True
-                tail.provider_details = {**(tail.provider_details or {}), **details}
-                return self._end_tail()
-            return self._finalize_response(interrupted=True, provider_details=details)
+            return self._map_correction(data)
         if event_type == 'agent_response_complete':
             # Gated behind `client_events` (off by default) and text-mode only, arriving right after
             # `agent_response` has already closed the turn (verified live), so this is normally a
@@ -2043,6 +2037,34 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # failing the stream.
         return []
 
+    def _map_correction(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        """End the reply a barge-in cut off with what the user heard of it, as `agent_response_correction` says."""
+        # After an interruption the server truncates the stored transcript to what was actually
+        # spoken. The already-emitted transcript cannot be shrunk through the codec (a final
+        # `OutputTranscript` only extends), so the corrected text is retained on the finalized
+        # response's `provider_details` and the interruption closes the turn here. When the user
+        # barged in during *playback*, after the reply's last audio had already arrived and ended it
+        # (the common audio-mode case: synthesis outruns playback), there is nothing left to finalize
+        # and the correction is dropped. A correction only describes the message it names: one naming an
+        # earlier message of the turn, which has ended already, says nothing about the response under way.
+        correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
+        corrected = correction.corrected_agent_response
+        if self._tag_stripper is not None:
+            corrected, _ = _strip_audio_tags(corrected)
+        details = {'corrected_agent_response': corrected}
+        if (tail := self._tail) is not None:
+            if None not in (correction.response_id, tail.response_id) and correction.response_id != tail.response_id:
+                # An earlier message's: the reply being voiced gets a correction of its own in the same batch, or
+                # ends with its audio as the interruption left it.
+                return []
+            # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
+            tail.interrupted = True
+            tail.provider_details = {**(tail.provider_details or {}), **details}
+            return self._end_tail()
+        # The turn was cut off, so the response under way ends; it keeps the correction only if it is the one named.
+        names_open = correction.response_id is None or correction.response_id == self._open_response_id
+        return self._finalize_response(interrupted=True, provider_details=details if names_open else None)
+
     def _end_tail(self) -> list[RealtimeCodecEvent]:
         """End the reply whose text is complete: its audio, if any more was coming, won't."""
         tail, self._tail = self._tail, None
@@ -2067,6 +2089,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         self._mcp_denied.clear()
         self._native_part_index = 0
         self._response_open = False
+        self._open_response_id = None
         # The conversation id rides on every response's `provider_details`: nothing billable reaches
         # the socket, so it is the key a consumer needs for the post-hoc cost lookup on the
         # conversations API, and the response is where it survives into persisted history. A
