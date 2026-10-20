@@ -103,9 +103,10 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
     message (and fills `instructions` on requests) after the boundary snapshot
     that first carries it is serialized, so the same logical message has
     different bytes before and after stamping. It likewise appends instruction
-    bookkeeping (`InstructionDeltaPart`, `InstructionBaselinePart`) to a request
-    that an earlier snapshot already holds, when an `on_change='append'`
-    instruction changes. Clearing exactly those makes the dedup key stable across
+    bookkeeping to a request that an earlier snapshot already holds: an
+    `InstructionDeltaPart` when an `on_change='append'` block changes, an
+    `InstructionBaselinePart` when an instruction window opens or closes.
+    Clearing exactly those makes the dedup key stable across
     the boundary; every other field keeps participating in the key, so two
     genuinely distinct messages sharing parts stay distinct.
     """
