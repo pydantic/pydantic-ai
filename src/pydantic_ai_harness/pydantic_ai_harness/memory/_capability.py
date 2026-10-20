@@ -293,7 +293,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 span.set_attributes(
                     {
                         'memory.outcome': 'ok',
-                        'memory.main_chars': len(main_content),
+                        'memory.main_chars': 0 if main is None else len(main.content),
                         'memory.files': len(subfiles),
                         'memory.files_truncated': files_truncated,
                         'memory.main_truncated': main is not None and main.truncated,
