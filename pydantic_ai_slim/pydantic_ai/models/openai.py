@@ -460,7 +460,7 @@ class _AzureContentFilterResult(BaseModel):
 
 
 class _AzureInnerError(BaseModel):
-    code: str
+    code: str | None = None
     content_filter_result: _AzureContentFilterResult | None = None
 
 

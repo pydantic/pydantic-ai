@@ -6404,7 +6404,10 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
         agent.run_sync('bad prompt')
 
 
-def test_responses_azure_prompt_filter_error_without_filter_result(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('innererror', [{'code': 'ContentFiltered'}, {}])
+def test_responses_azure_prompt_filter_error_without_filter_result(
+    allow_model_requests: None, innererror: dict[str, Any]
+) -> None:
     """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
@@ -6414,7 +6417,7 @@ def test_responses_azure_prompt_filter_error_without_filter_result(allow_model_r
                 'error': {
                     'code': 'content_filter',
                     'message': 'The response was filtered due to the prompt triggering the content management policy.',
-                    'innererror': {'code': 'ContentFiltered'},
+                    'innererror': innererror,
                 }
             },
         )
