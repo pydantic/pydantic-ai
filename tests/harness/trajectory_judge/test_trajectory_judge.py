@@ -434,8 +434,9 @@ class TestSteering:
     ) -> None:
         """Anthropic puts a request's mid-conversation system entry after its user content, so the note can't say "follows".
 
-        The steering is appended after the earlier request, so the cached prefix the first request sent is
-        sent again byte for byte.
+        The steering is appended after the earlier request, so everything the first request sent is sent again
+        byte for byte, cache breakpoints included. The one exception is the breakpoint on the last message,
+        which moves to the new last message by design.
         """
         delivered = asyncio.Event()
         client = MockAnthropic.create_mock(
@@ -454,7 +455,12 @@ class TestSteering:
             capabilities=[
                 TrajectoryJudge(model=_steer_model(), every=1, name='focus', on_verdict=lambda _: delivered.set())
             ],
-            model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+            instructions='Fix the bug.',
+            model_settings=AnthropicModelSettings(
+                anthropic_cache_instructions=True,
+                anthropic_cache_tool_definitions=True,
+                anthropic_cache_messages=True,
+            ),
         )
 
         @agent.tool_plain
@@ -464,7 +470,13 @@ class TestSteering:
 
         await agent.run('do the thing')
 
-        first, second = (body['messages'] for body in get_mock_chat_completion_kwargs(client))
+        first_body, second_body = get_mock_chat_completion_kwargs(client)
+        # System and tool breakpoints are fixed, so they and their markers are identical.
+        assert second_body['system'] == first_body['system']
+        assert second_body['tools'] == first_body['tools']
+        assert any('cache_control' in block for block in first_body['system'])
+        assert any('cache_control' in tool for tool in first_body['tools'])
+        first, second = first_body['messages'], second_body['messages']
         user_turn, system_entry = second[-2:]
         assert user_turn['role'] == 'user'
         assert [block['type'] for block in user_turn['content']] == ['tool_result', 'text']
@@ -473,15 +485,19 @@ class TestSteering:
         assert [block['text'] for block in system_entry['content']] == [_FRAMING]
 
         def blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-            return [
-                (message['role'], {key: value for key, value in block.items() if key != 'cache_control'})
-                for message in messages
-                for block in message['content']
-            ]
+            return [(message['role'], block) for message in messages for block in message['content']]
 
-        flagged = [bool(block.get('cache_control')) for message in first for block in message['content']]
-        cached = blocks(first)[: len(flagged) - flagged[::-1].index(True)]
-        assert blocks(second)[: len(cached)] == cached
+        def without_breakpoint(block: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in block.items() if key != 'cache_control'}
+
+        sent, resent = blocks(first), blocks(second)
+        moving = max(index for index, (_, block) in enumerate(sent) if 'cache_control' in block)
+        # Every block before the moving breakpoint is resent exactly, markers included.
+        assert resent[:moving] == sent[:moving]
+        # The moving breakpoint's block is resent with the same content; its marker moved to the new last block.
+        (role, block), (resent_role, resent_block) = sent[moving], resent[moving]
+        assert (resent_role, without_breakpoint(resent_block)) == (role, without_breakpoint(block))
+        assert 'cache_control' in resent[-1][1]
 
     async def test_judge_run_belongs_to_the_judged_conversation(self) -> None:
         judged = asyncio.Event()

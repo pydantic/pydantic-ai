@@ -22,7 +22,7 @@ Long-horizon runs drift. Instructions fade, unsupported claims compound, and the
 The judge delivers exactly one verdict per evaluation, as its output type:
 
 - `AllGood` -- the run is on track; nothing happens.
-- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation (`RunContext.enqueue`, `'asap'` priority) and delivered on the next model request, attributed to the judge. It comes in two parts in one request. A fixed framework note is a system prompt. The judge's message is user-channel data in a `<judge_feedback>` tag, because a model wrote it after reading the run's tool results. Its own closing tag is escaped, so it can't end the element early. The note refers to the "accompanying" tag rather than the one that follows, because providers order the two differently: Anthropic, for example, sends a request's user content before its system entry.
+- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], `'asap'` priority) and delivered on the next model request, attributed to the judge. It comes in two parts in one request. A fixed framework note is a system prompt. The judge's message is user-channel data in a `<judge_feedback>` tag, because a model wrote it after reading the run's tool results. Its own closing tag is escaped, so it can't end the element early. The note refers to the "accompanying" tag rather than the one that follows, because providers order the two differently: Anthropic, for example, sends a request's user content before its system entry.
 
     The system prompt note:
 
