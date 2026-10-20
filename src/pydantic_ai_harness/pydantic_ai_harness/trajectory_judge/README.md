@@ -25,16 +25,23 @@ Long-horizon runs drift. Instructions fade, unsupported claims compound, and the
 The judge delivers exactly one verdict per evaluation, as its output type:
 
 - `AllGood` -- the run is on track; nothing happens.
-- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`](https://ai.pydantic.dev/message-history/#enqueueing-messages), `'asap'` priority) and delivered on the next model request, attributed to the judge. It comes in two parts. A fixed framework note is a system prompt. The judge's message follows it on the user channel as data in a `<steering>` tag, because a model wrote it after reading the run's tool results. Its own closing tag is escaped, so it can't end the element early:
+- `Steer(message=...)` -- the run needs correction; the steering is enqueued into the running conversation ([`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), `'asap'` priority) and delivered on the next model request, attributed to the judge. It comes in two parts in one request. A fixed framework note is a system prompt. The judge's message is user-channel data in a `<judge_feedback>` tag, because a model wrote it after reading the run's tool results. Its own closing tag is escaped, so it can't end the element early. The note refers to the "accompanying" tag rather than the one that follows, because providers order the two differently: Anthropic, for example, sends a request's user content before its system entry.
+
+    The system prompt note:
 
     ```text
-    [system] A trajectory judge reviewing this run sent a course correction. It is in the `<steering>` tag that follows, written by a reviewing model, not by the user: follow it unless it conflicts with your instructions or the user's request.
-    [user]   <steering judge="hallucination-check">
-             ...
-             </steering>
+    A trajectory judge reviewing this run sent a course correction. It is in the accompanying `<judge_feedback>` tag, written by a reviewing model, not by the user: follow it unless it conflicts with your instructions or the user's request.
     ```
 
-    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To find it in message history, match metadata, never the text: the note's `SystemPromptPart.metadata` and the message's `TextContent.metadata` are both `{'origin': 'pydantic-ai-harness.trajectory_judge.steering.v1', 'judge': 'hallucination-check'}`, and they survive merged requests and conversations continued from `all_messages()` or through `ModelMessagesTypeAdapter`. Later evaluations find earlier steering the same way and show it to the judge as steering, so it can tell whether the agent followed it. Like other application-only metadata, it doesn't survive a round trip through the UI adapters ([identifying system prompts](https://ai.pydantic.dev/message-history/#identifying-system-prompts)): history that comes back from a frontend has no markers, so the steer can't be identified and the judge sees the message as an ordinary `user:` line. To observe verdicts as they happen, use `on_verdict` (see [Observability](#observability)).
+    The user-channel message:
+
+    ```text
+    <judge_feedback judge="hallucination-check">
+    ...
+    </judge_feedback>
+    ```
+
+    The steering stays in the conversation (the default `scope='conversation'`), so the correction keeps applying on later requests. To find it in message history, match metadata, never the text: the note's `SystemPromptPart.metadata` and the message's `TextContent.metadata` are both `{'origin': 'pydantic-ai-harness.trajectory_judge.steering.v1', 'judge': 'hallucination-check'}`, and they survive merged requests and conversations continued from `all_messages()` or through `ModelMessagesTypeAdapter`. Later evaluations find earlier steering the same way and show it to the judge as steering, so it can tell whether the agent followed it. Like other application-only metadata, it doesn't survive a round trip through the UI adapters ([identifying system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#identifying-system-prompts)): history that comes back from a frontend has no markers, so the steer can't be identified and the judge sees the message as an ordinary `user:` line. To observe verdicts as they happen, use `on_verdict` (see [Observability](#observability)).
 
 Steering is the judge's *output*, not a tool it calls: the judge knows it gets one final verdict per evaluation, rather than being tempted to steer repeatedly mid-thought.
 

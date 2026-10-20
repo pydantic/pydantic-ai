@@ -511,7 +511,7 @@ agent = Agent(
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
 run as a framework-note `SystemPromptPart` plus the message as user-channel data in
-`<steering judge="...">`, delivered on the next request. Find it by `SystemPromptPart.metadata['origin']`
+`<judge_feedback judge="...">`, delivered on the next request. Find it by `SystemPromptPart.metadata['origin']`
 (`'pydantic-ai-harness.trajectory_judge.steering.v1'`), never by text; observe verdicts with `on_verdict`.
 
 ```python

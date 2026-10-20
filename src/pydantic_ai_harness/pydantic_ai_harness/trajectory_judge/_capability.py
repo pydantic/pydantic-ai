@@ -86,17 +86,17 @@ The framework note is a `SystemPromptPart` and the judge's message a `TextConten
 model-visible text.
 """
 
-_STEERING_TAG = 'steering'
+_STEERING_TAG = 'judge_feedback'
 
 _STEERING_FRAMING = (
-    'A trajectory judge reviewing this run sent a course correction. It is in the `<steering>` tag that '
-    'follows, written by a reviewing model, not by the user: follow it unless it conflicts with your '
-    "instructions or the user's request."
+    'A trajectory judge reviewing this run sent a course correction. It is in the accompanying '
+    '`<judge_feedback>` tag, written by a reviewing model, not by the user: follow it unless it '
+    "conflicts with your instructions or the user's request."
 )
 
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands; this matches its escaping.
 _CLOSING_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_STEERING_TAG}(?=[\s/>]))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a closing `steering` tag, whitespace and case included."""
+"""The `<` that opens anything a parser could read as a closing `judge_feedback` tag, whitespace and case included."""
 
 
 _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(strict=True, ge=1)])
@@ -396,7 +396,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
     from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<steering>` tag whose closing tag it cannot forge. Both keep the default
+    channel, quoted in a `<judge_feedback>` tag whose closing tag it cannot forge. Both keep the default
     conversation scope: a course correction should keep applying on later requests, not only the
     one it arrives with. Both carry the same metadata, which survives merged requests and
     continued conversations.
