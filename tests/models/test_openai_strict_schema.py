@@ -14,6 +14,7 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
 from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -434,6 +435,7 @@ class ProfileCase:
 PROFILE_CASES: list[ProfileCase] = [
     ProfileCase('openai', 'gpt-4o', OpenAIProvider.model_profile, True, True),
     ProfileCase('openai-finetuned', 'ft:gpt-4o:org::id', OpenAIProvider.model_profile, False, False),
+    ProfileCase('chatgpt', 'gpt-5.6-luna', OpenAIChatGPTProvider.model_profile, True, True),
     ProfileCase('shared-profile', 'gpt-4o', openai_model_profile, False, False),
     ProfileCase('azure', 'gpt-4o', AzureProvider.model_profile, False, False),
     ProfileCase('openrouter', 'openai/gpt-4o', OpenRouterProvider.model_profile, False, False),

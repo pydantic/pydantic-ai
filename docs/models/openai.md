@@ -144,9 +144,11 @@ with a rate-limit error before anything generates. Complex prompts can take up t
 
 ## Structured output schemas
 
-For ordinary, non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], string
-fields with `min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned `ft:` models use a
-conservative schema transformer because OpenAI documents additional Structured Outputs restrictions for those models.
+For ordinary, non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] or
+[`OpenAIChatGPTProvider`][pydantic_ai.providers.openai_chatgpt.OpenAIChatGPTProvider], which serves the same public
+OpenAI API, string fields with `min_length` or `max_length` keep those bounds in strict structured outputs. Fine-tuned
+`ft:` models use a conservative schema transformer because OpenAI documents additional Structured Outputs restrictions
+for those models.
 The strict tuple and string-bound support described here has not been verified against the Codex backend, so
 [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider] retains its existing schema handling.
 
