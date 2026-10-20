@@ -436,15 +436,15 @@ class TestPathSecurity:
         result = (await toolset._resolve_path(await toolset._scope(ws), 'hello.txt'))[0]  # pyright: ignore[reportPrivateUsage]
         assert result == str(fs_root / 'hello.txt')
 
-    def test_first_matching_pattern_match(self, toolset: FileSystemToolset[None]) -> None:
+    def test_first_matching_pattern_match(self) -> None:
         result = first_matching_pattern('secret.key', ['*.txt', '*.key'])
         assert result == '*.key'
 
-    def test_first_matching_pattern_no_match(self, toolset: FileSystemToolset[None]) -> None:
+    def test_first_matching_pattern_no_match(self) -> None:
         result = first_matching_pattern('readme.md', ['*.txt', '*.key'])
         assert result is None
 
-    def test_first_matching_pattern_empty(self, toolset: FileSystemToolset[None]) -> None:
+    def test_first_matching_pattern_empty(self) -> None:
         result = first_matching_pattern('anything.py', [])
         assert result is None
 
