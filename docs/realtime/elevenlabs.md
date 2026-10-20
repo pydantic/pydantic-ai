@@ -17,8 +17,8 @@ The difference is where the agent is defined. Use Eleven Realtime unless you nee
 Pydantic AI agent defines the conversation, as it does with any other realtime provider, and a reconnect replays
 the history. Use ElevenLabs Agents when the agent lives on ElevenAgents, for its knowledge bases, workflows, and
 guardrails, or to run a cascaded pipeline with an LLM of your choice. Pydantic AI then overrides the agent's
-instructions and settings per conversation, and by default checks its client tools against your agent's tools, or can
-[syncs them](#tool-synchronization) to match (see [Configuration ownership](#configuration-ownership)). An
+instructions and settings per conversation, and by default checks its client tools against your agent's tools
+(or [syncs them](#tool-synchronization) to match; see [Configuration ownership](#configuration-ownership)). An
 ElevenAgents agent can also run on an Eleven Realtime model, in [Realtime voice mode](#configuration-ownership):
 that's configured on the agent, and you connect to it through ElevenLabs Agents.
 
