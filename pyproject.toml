@@ -209,6 +209,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
+# Admit Pixeltable 0.7.18 for the Harness integration; later releases stay quarantined.
+# TODO: Remove after 2026-10-23 18:08 UTC.
+pixeltable = "2026-10-16T18:08:00Z"
 # google-genai 2.30.0 is the `google-genai` floor: it continues long decode itself.
 # TODO(dsfaccini): Remove after 2026-10-20 00:39 UTC.
 google-genai = "2026-10-13T00:38:20Z"
@@ -268,6 +271,8 @@ dev = [
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
+    # Pixeltable needs this to validate Markdown documents in the integration tests.
+    "mistune>=3.0.2 ; python_full_version >= '3.11'",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
     # interleavings of client operations and provider events, shrunk to a minimal failing trace.
     "hypothesis>=6.153.2",

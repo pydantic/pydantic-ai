@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
-from collections.abc import Iterator
+import sys
+from collections.abc import Generator, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -138,4 +140,64 @@ def current_event_loop_for_sync_tests(
     """
     if not inspect.iscoroutinefunction(request.function):
         asyncio.set_event_loop(session_event_loop)
+    yield
+
+
+# Set when a test may have left Pixeltable connection cycles. The next test collects them
+# at the start of its call, once the previous teardown has dropped its frames.
+_drain_pixeltable_before_next_test = False
+
+
+def _test_opened_pixeltable(item: pytest.Item) -> bool:
+    """Whether this test might have opened a Pixeltable catalog.
+
+    Mentioning Pixeltable in the node id is enough to check; nothing is collected until a
+    catalog is running. Store-contract cases are the exception: they select the backend with
+    an integer index, so the node id never says Pixeltable.
+    """
+    if 'pixeltable' in item.nodeid.casefold():
+        return True
+    return item.path.name == 'test_stores.py' and '[3]' in item.nodeid
+
+
+def _pixeltable_catalog_running() -> bool:
+    env_module = sys.modules.get('pixeltable.env')
+    env_type = getattr(env_module, 'Env', None) if env_module is not None else None
+    return getattr(env_type, '_instance', None) is not None
+
+
+def _drain_pixeltable_cycles() -> None:
+    """Finalize unclosed Pixeltable sockets while the suite still ignores those ResourceWarnings.
+
+    The cycles are already in an older generation, so generation 0 is not enough. The first full
+    pass finalizes connection cycles and drops their sockets and loops; those are unreachable
+    only on the next pass.
+    """
+    gc.collect()
+    gc.collect()
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Generator[None, None, None]:
+    """Collect Pixeltable cycles again at the start of the next test.
+
+    psycopg leaves unclosed AF_UNIX sockets and event loops in cycles. On 3.13+ those can stay
+    reachable until after this hook returns. `pytest.warns` and `warnings.simplefilter('error')`
+    override the suite's ResourceWarning ignores, so a later test that collects the cycles fails:
+    `len(record)` counts the warnings, or `__del__` becomes an `ExceptionGroup` of unraisables.
+    """
+    global _drain_pixeltable_before_next_test
+    yield
+    if _test_opened_pixeltable(item) and _pixeltable_catalog_running():
+        _drain_pixeltable_cycles()
+        _drain_pixeltable_before_next_test = True
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call() -> Generator[None, None, None]:
+    # After the previous teardown and this test's fixtures, before the body widens warning filters.
+    global _drain_pixeltable_before_next_test
+    if _drain_pixeltable_before_next_test:
+        _drain_pixeltable_before_next_test = False
+        _drain_pixeltable_cycles()
     yield

@@ -17,7 +17,8 @@ The three answers, and what picks between them:
 
 Declaring a default `id` is the whole policy: there is no `combine` to write unless the merge needs
 something the field-by-field default cannot express, such as a budget that should take the *smaller*
-value.
+value. `Pixeltable` is one that does: its `tables` allowlist is an access boundary, so two
+instances intersect rather than union.
 
 The core half of this lives in `pydantic-ai`'s `tests/test_capability_combine.py`.
 
@@ -164,6 +165,11 @@ def _check_memory(merged: Any) -> None:
     assert merged.heading == 'Second'
 
 
+def _check_pixeltable(merged: Any) -> None:
+    assert merged.tables == ['app.docs']
+    assert merged.max_rows == 5
+
+
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -217,6 +223,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one memory configuration per agent; its toolset registers fixed tool names',
         lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
         _check_memory,
+    ),
+    'Pixeltable': Combines(
+        'an access boundary: two allowlists intersect, and the tighter row and character caps win',
+        lambda: (
+            importlib.import_module('pydantic_ai_harness.pixeltable').Pixeltable(tables=['app']),
+            importlib.import_module('pydantic_ai_harness.pixeltable').Pixeltable(tables=['app.docs'], max_rows=5),
+        ),
+        _check_pixeltable,
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
