@@ -22,6 +22,9 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
 - [`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] and
   [`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused] settle the inputs no
   response will ever answer.
+- [`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about an
+  output item on the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] records
+  that the listener heard only part of it, even after its response ended.
 
 An input is identified by its position among every [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send]
 call made on the connection, counting from `0`, as
@@ -42,6 +45,7 @@ from ._lifecycle import (
     InputId,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     RealtimeFrame,
     ResponseEnded,
@@ -61,6 +65,7 @@ __all__ = (
     'InputId',
     'InputLost',
     'LifecycleEvent',
+    'OutputItemCut',
     'OutputItemDetails',
     'RealtimeFrame',
     'ResponseEnded',
