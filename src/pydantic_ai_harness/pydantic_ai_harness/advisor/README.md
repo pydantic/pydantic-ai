@@ -113,7 +113,7 @@ The context depends on the execution path:
 
 The local advisor has its own instructions and no access to the executor's dependencies, tools, or toolsets. For portable behavior, tell the executor to put the question and all relevant evidence in its consultation prompt; the local tool description asks for this too.
 
-Local consultations go to the advisor model's provider. With `forward_history=True`, that request also carries the executor's earlier messages as structured message history, including its tool calls and their results. Native consultations stay with the executor's provider.
+Local consultations go to the advisor model's provider. With `forward_history=True`, that request also carries the executor's earlier messages as structured message history, including any `system_prompt` parts, its tool calls, and their results. Native consultations stay with the executor's provider.
 
 ## Usage, failures, and observability
 
