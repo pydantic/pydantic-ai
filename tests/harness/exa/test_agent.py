@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import TypeVar
 
 import anyio
 import httpx
@@ -165,6 +166,27 @@ class _CancellableRuns(_FakeRuns):
         if self.cancel_error is not None:
             raise self.cancel_error
         return _run('cancelled', run_id=run_id)
+
+
+_RunsT = TypeVar('_RunsT', bound=_FakeRuns)
+
+
+def _patch_async_exa(monkeypatch: pytest.MonkeyPatch, runs_type: type[_RunsT]) -> list[_RunsT]:
+    """Replace `exa_py.AsyncExa` for the default client, returning the runs doubles it builds."""
+    monkeypatch.setenv('EXA_API_KEY', 'test-key')
+    built: list[_RunsT] = []
+
+    class _AgentNamespace:
+        def __init__(self, runs: _RunsT) -> None:
+            self.runs = runs
+
+    class _AsyncExa:
+        def __init__(self, *, api_key: str) -> None:
+            built.append(runs_type())
+            self.agent = _AgentNamespace(built[-1])
+
+    monkeypatch.setattr('pydantic_ai_harness.exa._toolset.AsyncExa', _AsyncExa)
+    return built
 
 
 class _Facts(BaseModel):
@@ -344,6 +366,24 @@ class TestExaAgent:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         toolset = ExaAgent[None]().get_toolset()
         assert isinstance(toolset, ExaAgentToolset)
+
+    async def test_default_runs_client_is_built_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each `AsyncExa` owns an httpx connection pool, so one run must not build one per request."""
+        built = _patch_async_exa(monkeypatch, _FakeRuns)
+        await Agent(TestModel(), capabilities=[ExaAgent()]).run('Research something.')
+        [runs] = built
+        assert len(runs.create_calls) == len(runs.poll_calls) == 1
+
+    async def test_default_runs_client_cancels_the_exa_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        built = _patch_async_exa(monkeypatch, _CancellableRuns)
+        agent = Agent(TestModel(), capabilities=[ExaAgent()])
+        [runs] = built
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(agent.run, 'Research something.')
+                await runs.polling.wait()
+                group.cancel_scope.cancel()
+        assert runs.cancelled == ['run_1']
 
     @pytest.mark.parametrize(
         ('poll_interval', 'timeout_ms', 'message'),

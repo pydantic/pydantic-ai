@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -14,17 +15,23 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
+from pydantic_ai.exceptions import CallDeferred, ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness._workspace_provider import stop_shielded
-from pydantic_ai_harness.exa._toolset import is_recoverable, recoverable, source_list, source_map, with_sources
+from pydantic_ai_harness.exa._toolset import (
+    DefaultExa,
+    is_recoverable,
+    recoverable,
+    source_list,
+    source_map,
+    with_sources,
+)
 
 try:
-    from exa_py import AsyncExa
     from exa_py.agent.types import AgentEffort, AgentEvent, AgentRun
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -104,14 +111,11 @@ _CANCEL_GRACE_SECONDS = 5.0
 
 
 def _default_runs() -> ExaAgentRuns:
-    """Build the Agent runs client of an `AsyncExa` from the `EXA_API_KEY` environment variable."""
-    try:
-        return AsyncExa().agent.runs
-    except ValueError as error:
-        raise UserError(
-            'ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
-            'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
-        ) from error
+    """Build the default Agent runs client from the `EXA_API_KEY` environment variable."""
+    return DefaultExa(
+        missing_key_hint='ExaAgent needs an Exa API key: set the EXA_API_KEY environment variable, '
+        'or pass a configured runs client, e.g. ExaAgent(runs=AsyncExa(api_key=...).agent.runs).'
+    )
 
 
 def agent_run_result(
@@ -464,7 +468,12 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         return self.id if self.id is not None else self._instance_token
 
     def _resolved_runs(self) -> ExaAgentRuns:
-        return self.runs if self.runs is not None else _default_runs()
+        return self.runs if self.runs is not None else self._default_runs_client
+
+    @cached_property
+    def _default_runs_client(self) -> ExaAgentRuns:
+        """One default client per capability, so its connection pool is reused across requests."""
+        return _default_runs()
 
     @classmethod
     def from_spec(

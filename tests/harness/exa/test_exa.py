@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
+from pydantic_ai_harness.exa._toolset import DefaultExa
 
 
 def _text(output: ToolReturn[str]) -> str:
@@ -595,6 +597,56 @@ class TestExaSearch:
         assert metadata['web_search'] == {'sources': [{'url': 'https://a.dev', 'title': 'A'}]}
         assert metadata['get_page'] == {'sources': [{'url': 'https://b.dev', 'title': 'B'}]}
         assert metadata['deep_search'] == {'sources': [{'url': 'https://c.dev', 'title': 'C'}]}
+
+
+class _LoopRecordingExa:
+    """Stands in for `exa_py.AsyncExa`, recording the event loop each request runs on."""
+
+    def __init__(self, built: list[_LoopRecordingExa], *, api_key: str) -> None:
+        self.api_key = api_key
+        self.loops: list[asyncio.AbstractEventLoop] = []
+        built.append(self)
+
+    async def search(self, query: str, **kwargs: object) -> SearchResponse[Result]:
+        self.loops.append(asyncio.get_running_loop())
+        return _response(_result())
+
+
+class TestDefaultClient:
+    @pytest.fixture
+    def built(self, monkeypatch: pytest.MonkeyPatch) -> list[_LoopRecordingExa]:
+        built: list[_LoopRecordingExa] = []
+
+        def build(*, api_key: str) -> _LoopRecordingExa:
+            return _LoopRecordingExa(built, api_key=api_key)
+
+        monkeypatch.setenv('EXA_API_KEY', 'test-key')
+        monkeypatch.setattr('pydantic_ai_harness.exa._toolset.AsyncExa', build)
+        return built
+
+    def test_rebuilt_on_a_new_event_loop(self, built: list[_LoopRecordingExa]) -> None:
+        """An httpx pool belongs to the loop that opened it, so a second `asyncio.run` needs a new client."""
+        toolset = ExaSearch[None]().get_toolset()
+
+        async def search(query: str) -> None:
+            await toolset.web_search(query)
+
+        asyncio.run(search('a'))
+        asyncio.run(search('b'))
+        assert [len(client.loops) for client in built] == [1, 1]
+        assert built[0].loops[0] is not built[1].loops[0]
+        assert {client.api_key for client in built} == {'test-key'}
+
+    async def test_reused_on_the_same_event_loop(self, built: list[_LoopRecordingExa]) -> None:
+        toolset = ExaSearch[None]().get_toolset()
+        await toolset.web_search('a')
+        await toolset.web_search('b')
+        assert [len(client.loops) for client in built] == [2]
+
+    def test_kept_outside_an_asyncio_event_loop(self, built: list[_LoopRecordingExa]) -> None:
+        client = DefaultExa(missing_key_hint='unused')
+        assert client.exa is client.exa
+        assert len(built) == 1
 
 
 class TestAgentSpec:
