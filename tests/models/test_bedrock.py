@@ -4200,8 +4200,10 @@ async def test_bedrock_default_max_tokens_stream_closed_on_failure(
 
     with anyio.CancelScope() as scope:
 
-        def stream() -> Iterator[dict[str, Any]]:
-            try:
+        class Stream:
+            """Like botocore's `EventStream`, a failing stream stays open until it's closed."""
+
+            def __iter__(self) -> Iterator[dict[str, Any]]:
                 yield {'messageStart': {'role': 'assistant'}}
                 if cancel:
                     anyio.from_thread.run_sync(scope.cancel)
@@ -4209,10 +4211,11 @@ async def test_bedrock_default_max_tokens_stream_closed_on_failure(
                 raise ClientError(
                     {'Error': {'Code': 'ServiceUnavailableException', 'Message': 'broken'}}, 'ConverseStream'
                 )
-            finally:
+
+            def close(self) -> None:
                 closed.append(True)
 
-        mocker.patch.object(model.client, 'converse_stream', return_value={'stream': stream(), 'ResponseMetadata': {}})
+        mocker.patch.object(model.client, 'converse_stream', return_value={'stream': Stream(), 'ResponseMetadata': {}})
         if cancel:
             await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
         else:
