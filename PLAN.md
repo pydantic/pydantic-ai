@@ -1,156 +1,146 @@
-# Finish CI Review within its existing budget
+# Recover CI Review work through retained evidence
 
-## Proposal
+## Proposal and scope
 
-Retain useful delegate evidence as work progresses, and give repository CI Review an enforced finalization phase. A delegate timeout should leave the parent with candidate findings and an honest coverage record. Stop broad investigation early enough to verify consequential candidates and prepare a review within the existing run budget.
+Retain completed investigation, diagnose delegate failures, and recover missing work through a corrected operation, a useful saved conversation, or a fresh narrow assignment. Incomplete coverage is the last resort when recovery cannot complete. A successful exit is not evidence of a complete review.
 
-This is a design proposal. This PR changes only this file. Implementation follows human agreement on the decisions below; the plan can then be removed.
+This PR changes only `PLAN.md`. Implement only after agreement on this design and after public-engine migration [#10347](https://github.com/pydantic/pydantic-ai/pull/10347) merges. As checked on 2026-10-19, that PR remains open at [`3f4e3e76`](https://github.com/pydantic/pydantic-ai/tree/3f4e3e76a8a2df28247552f7d3e7725b8a142097). Reconcile its merged source before implementation.
 
-## Evidence and existing behavior
+Keep existing job, request, time, account and concurrency limits, models, token settings and provider retry policy. Add no investigation cutoff, replacement timer or retry allowance. Preserve existing admission/reserves: outstanding child-request reservations, the parent's final request tenth, and child timeout bounded by remaining run time minus the five-minute parent reserve. Preserve the prompt's final-20-percent guidance. These are source behavior, not new enforcement phases.
 
-The public incident runs show two separate failure paths:
+Two explicit policy changes are proposed: replace blanket redispatch prohibition with cause-specific recovery; replace wait-for-all with consumption of settled evidence and concurrent verification preparation. Neither permits a broad duplicate review or bypasses admission.
 
-- [#10259](https://github.com/pydantic/pydantic-ai/issues/10259): [run 38601315565](https://github.com/pydantic/pydantic-ai/actions/runs/38601315565) logged three delegate timeouts and returned only timeout errors to the parent, which later reached its own 28-minute cutoff.
-- [#10309](https://github.com/pydantic/pydantic-ai/issues/10309): [run 38661230896](https://github.com/pydantic/pydantic-ai/actions/runs/38661230896) logged all three delegate returns before the parent still reached its 28-minute cutoff. Retaining delegate results alone does not solve parent completion.
-- [#10570](https://github.com/pydantic/pydantic-ai/issues/10570#issuecomment-6228556788) records another typed run deadline after overlapping delegate assignments. These incidents predate the merged safeguards; they demonstrate failure modes, not a measured regression after those safeguards.
+## Evidence and implementation boundary
 
-[#10501](https://github.com/pydantic/pydantic-ai/pull/10501), merged as [`d7d15bf9`](https://github.com/pydantic/pydantic-ai/commit/d7d15bf9cc0c4a70e756fdf1929edd8c52e2a637), already introduced disjoint balanced assignments, explicit reviewed/unreviewed lists, wrapped provider-timeout classification, and a prompt-level final-20-percent reserve. Preserve those changes.
+Public incidents [#10259](https://github.com/pydantic/pydantic-ai/issues/10259), [#10309](https://github.com/pydantic/pydantic-ai/issues/10309) and [#10570](https://github.com/pydantic/pydantic-ai/issues/10570#issuecomment-6228556788) document run deadlines. Their [first](https://github.com/pydantic/pydantic-ai/actions/runs/38601315565) and [second](https://github.com/pydantic/pydantic-ai/actions/runs/38661230896) runs motivate separating delegate interruption from parent work after delegation. They predate [#10501](https://github.com/pydantic/pydantic-ai/pull/10501), merged as [`d7d15bf9`](https://github.com/pydantic/pydantic-ai/commit/d7d15bf9cc0c4a70e756fdf1929edd8c52e2a637). They establish neither failure of its prompt reserve nor the prevalence of repeated investigation.
 
-At source revision [`62b7bf0a`](https://github.com/pydantic/pydantic-ai/tree/62b7bf0aeac9a03066263469e650f40957d84cae):
+References use migration head `3f4e3e76` for repository integration and current main [`5c8a6c12`](https://github.com/pydantic/pydantic-ai/tree/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7) for reusable harness mechanisms.
 
-- [`scripts/gather-pydantic-ai-review-context.sh`](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/scripts/gather-pydantic-ai-review-context.sh) prepares assignments and annotated diffs. Assignment is not evidence of inspection.
-- [`cli.py :: task()`](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/scripts/pydantic_ai_gh_aw_shim/cli.py) runs a read-only delegate under a timeout, returning final output or an error string. It does not return a structured partial review on failure. Its stream handler emits tool activity but truncates live tool-result text; logs are not a reliable candidate store.
-- In the same file, `_run_timeout_secs()` derives the effective agent budget from the job timeout minus teardown headroom. `_run_with_timeout()` cancels at that deadline and emits a typed error. `task()` enforces an existing five-minute parent reserve; `time_budget_notice()` advises the parent to finish. Neither stops parent investigation at the prompt's 20% boundary.
-- `require_safe_output()` retries an empty sink. Outside Attention, an inline comment alone can satisfy its non-emptiness check; this does not prove a final review exists.
-- The [review prompt](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/workflows/shared/prompts/pydantic-ai-pr-review.md) requires parent verification and forbids restarting broad coverage after delegate failure. The [workflow](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/workflows/pydantic-ai-pr-review.md) gives the agent read-only GitHub permissions. The [compiled host job](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/workflows/pydantic-ai-pr-review.lock.yml) applies safe outputs after detection and does not run on workflow cancellation.
+| Existing mechanism | Reuse and boundary |
+|---|---|
+| [Context preparation][context] and [review prompt][prompt] | Reuse annotated diffs, balanced disjoint baseline assignments, prior threads, reviewed/unreviewed lists and parent verification rules. Assignment proves no inspection. |
+| [`cli.py :: task`, transport, compaction and output validation][cli] | Custom read-only `Task` returns output or error text; streamed tool results are truncated. Compaction already trims/summarizes history. Preserve reservations and usage debit in `finally`, including cancellation. |
+| [`DelegationTasks` / `DelegationReports`][tasks] | Reuse stable identity, generation/run identity, captured interrupted messages, atomic history save, steering, explicit resume, untrusted reports and cancellation/draining. Custom `Task` does not currently use this opt-in owner. |
+| [`StepPersistence`][steps] and [`inspect_recovery`][recovery] | Reuse snapshots, completed-call events and unresolved tool effects. Failed effects can have happened; persistence grants no replay permission. Memory capture cannot survive process loss. |
+| [Typed delegation events][events] | Correlate identity, outcomes and usage. Text can be truncated; unmanaged refusal can emit no start event and propagating failure no end event. Missing events prove no completion. |
+| [`WorkflowPolicy`, `build_agent`][policy] and [engine import][engine] | Coordinate around repository `Task`/policy composition. Keep public engine/CLAI canonical session and usage reporting. Migration retains `Coder(sub_agents=False)` and custom `Task`. |
+| [Safe outputs][workflow] and [compiled host application][host] | Preserve read-only permissions, detection, host-owned writes, markers, head binding and deduplication. Nonempty output does not prove final review publication. |
 
-## Established invariants
+Recommend a narrow custom-`Task` adapter to the managed task owner, retaining the current runner/accounting and attaching existing capture/persistence capabilities. Keep review semantics repository-local. Wholesale `SubAgents` adoption would change accounting: managed live shared ceilings differ from `Task` reservations/debit. Prove adapter compatibility first. A missing public primitive requires a separate API decision; add no generic scheduler or public checkpoint/review API.
 
-- Verified HIGH or CRITICAL findings require `REQUEST_CHANGES`, even with incomplete coverage. Without such a finding, incomplete coverage requires `COMMENT`, never approval. Complete coverage follows the existing severity mapping.
-- Delegate content remains untrusted data. Retention, valid syntax and completed reads do not verify a finding. The parent checks the trigger, surrounding code, false-positive rules, prior threads and commentable location.
-- Name every unreviewed changed file in the review body. Omitted or invalid coverage is incomplete. Preserve existing generated-file treatment.
-- Preserve bot-author verdict restrictions, the 30-inline-comment ceiling, head binding, review markers and safe-output permission/detection boundaries. Preserve the redundant-review/noop path.
-- Keep existing run/request budgets, model, token settings, provider limits and account concurrency. Do not replay the whole review after a timeout or ambiguous publication failure.
-- Scope enforcement to repository CI Review. Ordinary `Agent` runs, other workflows and public library APIs retain their behavior.
+## Failure matrix
 
-## Reuse before adding machinery
+**S** means a source path/guard exists, not measured frequency. **I** means public incident evidence. **H** means a review-specific hypothesis requiring reproduction and deployment evidence. Error text alone does not select recovery.
 
-| Existing mechanism | Contribution | Boundary |
+| Failure | Evidence | Diagnosis and recovery |
 |---|---|---|
-| Prepared assignments, diffs and review instructions | Assignment membership and verification inputs | Do not create another partition or copy severity policy |
-| `capture_run_messages`, tool events and read-only toolsets | Completed-call evidence and interrupted history | An attempted read or narrative does not prove inspection |
-| [`DelegationTasks` and `DelegationReports`](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/src/pydantic_ai_harness/pydantic_ai_harness/subagents/README.md#managed-delegation-sessions) | Stable identity, cancellation/draining, atomic history persistence and explicitly untrusted reports | These are opt-in managed `SubAgents` features; custom `Task` does not currently use that owner |
-| Budget derivation and request admission | One effective deadline and shared accounting | Finalization cannot reset either budget |
-| Safe-output tools, detection, host application and markers | Validated transport, GitHub writes and deduplication | Prepared output is not proof of publication |
-| Migration's repository `WorkflowPolicy` | Application-specific lifecycle and terminal health metadata | Reuse this integration point; do not fork the public engine |
+| Transient provider/transport failure | **S:** SDK retries and retryable-429 transport [CLI][cli] | Let existing retries act first. After exhaustion, distinguish provider timeout from child/run deadline. Retry a known idempotent operation only when dependency health and existing admission permit; no stacked blind loop. |
+| Account quota/auth/shared outage | **S:** non-retryable account/quota codes and health classification [CLI][cli]; **H:** cause of a particular failure | Inspect structured cause and existing provider health. A fresh subagent on the same broken dependency cannot recover. Preserve cooldown/gates, credentials, models and limits; retained facts may still support local work. |
+| Deterministic tool/config/permission error | **S:** MCP error handling [CLI][cli]; migration [path correction](https://github.com/pydantic/pydantic-ai/pull/10347) | Correct proven bad arguments/paths, then repeat only the safe failed operation. Do not restart arbitrary bugs, permission denials or missing configuration as transient. Surface uncorrectable causes. |
+| Context loss/repeated unproductive investigation | **S:** compaction [CLI][cli]; **H:** resulting repetition/coverage loss | Compare retained evidence and unanswered questions. Steer/resume useful history; replace a contaminated/stalled conversation with accepted source evidence and residual work. |
+| Isolated crash/child timeout | **S:** `task` error/timeout [CLI][cli], [managed lifecycle][tasks]; **I:** historical deadlines | Inspect cause, completed steps and pending effects. Correct a recoverable cause first. Resume useful history or replace missing work after settling/draining the prior child. Unknown crashes do not authorize replay. |
+| Local child budget exhausted | **S:** child allowance [CLI][cli], [local/shared distinction][toolset] | Keep spent usage charged. Residual work uses only currently admissible parent headroom; local exhaustion does not imply shared exhaustion. No reset allowance. |
+| Shared requests/time/account exhausted | **S:** [admission][cli], [run deadline][policy], host limits | Replacement cannot restore the exhausted resource. Prepare an honest terminal result from retained verified evidence if still possible. Existing run deadline remains terminal. |
+| Refusal before start | **S:** [admission][cli], [event contracts][events] | Record refusal separately; claim no inspection. Reconsider only when existing reservations settle and admission genuinely changes. User/external refusal grants no bypass. |
+| Malformed/incomplete successful output | **S:** string output and list validation [CLI][cli]/[prompt][prompt]; **H:** particular malformed report | Preserve valid evidence, reject invalid claims, request report repair from useful history or recover actual coverage gaps. Exit success proves neither coverage nor findings. |
+| Verification failure | **S:** parent checks [prompt][prompt]; **H:** disputed candidate | Discard disproved claims; target reproducible unresolved questions without repeating baseline review. Failed reproduction cannot promote a finding. |
+| External/user cancellation | **S:** [cancellation/draining][tasks], [deadline][policy], [host guard][host] | Propagate cancellation; do not resume/replace automatically. Distinguish child timeout. Saving is best effort; hard kill can prevent cleanup, artifacts and output. |
+| Failed/ambiguous publication | **S:** [detection/host stages][host] | Distinguish prepared, queued, detected and applied output. Reconcile GitHub target/head/marker before repeating a possibly applied write. Never rerun investigation to repair publication. |
 
-Managed delegation already [captures interrupted messages and saves task state](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_tasks.py). Evaluate a narrow adapter before adding another child-lifetime store. Raw history still needs CI Review interpretation. Legacy [`TodoWrite`](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/scripts/pydantic_ai_gh_aw_shim/todo_write.py) retains no state across calls and is not an evidence store.
+## Evidence and recovery contract
 
-This favors deterministic workflow checks over a longer deadline prompt. Matt Pocock and Robert C. Martin discuss tool constraints and the limits of prompt steering in [their agent-practice discussion](https://www.youtube.com/watch?v=zcLPGC-tvgk). That is design guidance; repository source and incident evidence establish this problem.
+Keep run-scoped semantic records alongside managed tasks; reference existing histories/artifacts. A CI-Review-only progress tool submits inspection claims/candidates to the owner; step persistence supplies operation receipts. This tool grants no repository-write or publication access. The adapter records typed runtime causes before rendering parent-visible output. Preserve attempt history when the managed task's generation changes. Record:
 
-## Recommended design
+- Repository, reviewed head, source/artifact version/hash, workflow run/attempt, parent, assignment, purpose/question and owner.
+- Task/conversation/run/generation identity, predecessor attempt and recovery reason; refusal even before a task exists.
+- Completed evidence with source locations and successful read/tool receipts; pending files/questions, candidates and uncertainty.
+- Runtime failure cause/scope, unresolved effects, existing budget/admission state and publication stage.
+- Separate untrusted claims, parent-accepted source facts and parent-verified findings. Only the parent promotes findings.
 
-### Retain progress outside the final delegate response
+Validate head, assignment and attempt before accepting updates. Persist validated updates before acknowledgment. Serialize conflicting updates; late/duplicate delivery cannot overwrite accepted state. Missing/corrupt records leave coverage unknown. Retain range/truncation information. Baseline inspection needs the required diff/full source and the assigned reviewer's explicit completion claim; reads, summaries and assignment membership alone are insufficient.
 
-Keep run-scoped records owned by the CI Review supervisor. Bind records to repository, PR head, run/attempt, assignment and delegate invocation. A narrow typed tool lets delegates report progress without repository writes, permission to mark findings verified, or publication access. Commit each validated update to supervisor-owned state before acknowledging it. Preserve completed updates across delegate cancellation, with atomic local snapshots where the existing task owner supports them. Do not reuse evidence across runs or resume automatically.
+Three distinct recovery operations:
 
-Progress contains:
+1. **Retry an operation:** diagnose and correct/repeat an idempotent read/tool. Reconcile partial effects first, including publication. Exceptions do not prove nothing happened.
+2. **Steer/resume:** continue useful history with accepted evidence and a concrete missing question. Steering reaches the next request; settled work needs explicit resume. Preserve original parent/shared accounting and current admission. Never use `allow_resume` to undo a user stop.
+3. **Replace:** settle/drain the old child and preserve evidence. Give a fresh conversation accepted source facts, pending questions, relevant failed attempts and verification purpose. Do not reissue the broad review or treat prior conclusions as independent proof.
 
-- Candidate identity, changed-file location, concrete suspected trigger, severity claim and evidence references or remaining uncertainty.
-- Separate completed/pending coverage claims.
-- Runtime-owned invocation status: running, complete, timed out, refused, failed or cancelled.
+Progress means completed new coverage, a resolved concrete question or a reproducible verified finding. Activity, elapsed time and exit status are not progress. An unchanged dependency or repeated no-progress result requires diagnosis and a useful changed action. Recover while a justified action is feasible under existing admission; otherwise record why recovery cannot complete. Add no numeric retry/token/time caps.
 
-Validate assignment membership, path containment, disjoint coverage, identity and update order at ingestion. Reject malformed, stale and cross-assignment data. Bound record sizes as data validation without adding model token caps. Serialize concurrent updates per invocation and freeze a consistent snapshot at finalization.
+## Parallel investigation and parent verification
 
-Report a candidate before attempting its full proof. A timeout can then return its error/status plus the last accepted progress to the parent. Retained history can support a targeted check when no candidate was reported, but partial reasoning never becomes a finding automatically. A thought never emitted cannot be recovered.
+Keep complete baseline coverage: every non-generated changed source file has exactly one baseline owner. Preserve generated-file treatment. Track concern assignments separately; overlapping checks name distinct questions and outputs. Use existing slots, without increasing concurrency or turning every file into an all-angles matrix.
 
-Count a file as reviewed only with both runtime evidence that its diff and full source were successfully read and a delegate claim that inspection finished, for the same head and assignment. Reads are necessary, not sufficient. Failed, truncated or partial-range reads require evidence that the missing content was read. Missing updates remain unreviewed; do not infer coverage from time spent or successful delegate exit.
+For a streaming change, one owner can inspect changed implementation, another wire-format compatibility, while the parent prepares cancellation/reproduction checks. Share head-bound source artifacts and prior-thread facts; preserve independent judgments. A shared conclusion cannot satisfy both checks. If no slot is available, queue the question under existing admission.
 
-Parent verification creates a separate accepted-finding record with evidence and disposition. Only the parent can promote a candidate. Late delegate updates cannot overwrite accepted findings or frozen publication state. A lost or unavailable store degrades coverage and is reported; it cannot produce approval.
+Consume settled reports while unrelated work continues. Validate coverage/evidence and prepare targeted verification immediately. For each surviving finding, the parent still inspects surrounding source, verifies trigger/reproduction and severity, checks false-positive rules/prior threads, and validates the commentable location. Reuse exact source artifacts/receipts instead of repeating all searches and baseline investigation. Unresolved required independent checks stay pending even when another reviewer agrees.
 
-### Enforce finalization within the existing deadline
+| Before | Proposed behavior |
+|---|---|
+| Delegate inspects `a.py`, then times out investigating `b.py`; only an error returns. | Retain `a.py` evidence/candidate status. Diagnose, then resume useful history or assign only unresolved `b.py` work under existing admission. |
+| Delegate rereads files after compaction. | Restore accepted source references and unanswered question; steer or replace when history no longer helps. No new completed evidence means no progress. |
+| Successful report omits `c.py`; parent waits for every other result. | Preserve valid results, recover `c.py`, and prepare verification of settled candidates concurrently. Approval still requires complete coverage/resolved required checks. |
+| Account rejects requests, or GitHub may have accepted a review. | Diagnose shared unavailability or reconcile publication. Another broad delegate solves neither. |
 
-Use the existing monotonic deadline and effective agent budget. Recommended investigation cutoff: the earlier of the existing delegate-reserve boundary and the start of the final 20% of that budget. Preserve teardown headroom outside the agent budget. The internal verification/publication split remains a design choice; neither adds time.
+## Tradeoffs and implementation sequence
 
-The supervisor owns a one-way transition:
+| Choice | Benefit and cost |
+|---|---|
+| Managed-task adapter plus repository-local evidence | Reuses lifetime/history without another scheduler; must prove tool, accounting, cancellation and reporting compatibility. |
+| Raw history alone | Useful supporting evidence, but reconstructing semantic coverage/trust from prose wastes work. Add only missing review records. |
+| Resume versus replacement | Resume preserves context; replacement removes a bad trajectory but rebuilds context. Choose from saved progress and residual questions. |
+| Shared source facts, independent concerns | Avoids repeated acquisition while protecting judgment; needs explicit purpose/ownership. |
+| Existing reserves and cause-specific recovery | Improves useful work without changing limits. Cannot guarantee completion/publication before hard termination. |
 
-1. **Investigate:** admit the existing disjoint delegates and normal parent inspection. Check admission at execution as well as advertisement, including queued calls.
-2. **Stop investigation:** close admission, cancel and drain owned investigation/delegate tasks, and retain completed updates. Include in-flight model, shell and compaction calls; their ordinary timeouts must not consume the reserve. Keep publisher resources alive. Reject updates racing after snapshot freeze. Cleanup shares the absolute deadline. If cleanup cannot finish, report failure rather than start conflicting work or claim completion.
-3. **Verify and prepare:** provide retained candidates, accepted findings and missing coverage to the parent. Admit only targeted verification of recorded candidates, with an internal cutoff that leaves output time. No replacement delegates or broad second review. Stop unfinished verification at that cutoff; leave candidates unverified and mark affected coverage incomplete.
-4. **Publish:** disable investigation tools and assemble the review from accepted findings and coverage through existing safe outputs. If requests are exhausted or the provider is unavailable, prepare an honest incomplete `COMMENT` without another model call, or `REQUEST_CHANGES` for already verified blocking findings. Include verified finding text in the review body if inline preparation cannot finish. Never invent proof for an unfinished candidate.
+After migration merge and design agreement:
 
-The timer interrupts in-flight investigation instead of waiting for another model turn. Keep retained state outside the cancelled task. A model-assisted finalizer uses only remaining shared requests and time, without a fresh allowance. Early normal completion enters the same final output validation.
+1. Reconcile main, migration and published runtime. Reproduce source-observed failures and relevant hypotheses at the repository boundary. Prove the managed-task adapter before adding machinery.
+2. Add evidence/attempt records using managed identity, capture, step persistence and effect inspection. Validate trust, interrupted updates and duplicate delivery.
+3. Add cause-specific operation repair, steering/resume and residual replacement around custom `Task`. Preserve reservations, spent usage, deadline, provider gates and resource ownership.
+4. Update seed/managed review prompts together: replace blanket refusal and wait-for-all; retain baseline coverage, reserves and rigorous verification. Test concern ownership/concurrent preparation.
+5. Validate final review against findings/coverage through existing safe outputs. Inline-only is insufficient. Preserve bot-author restrictions, 30-inline ceiling, markers, head binding and redundant-review/noop policy. Add no GitHub writer.
+6. Run targeted [runner][tests], [headless][headless], delegation/output tests and workflow guard; recompile affected workflows only. Verify eligible deployed execution through host publication before comparing outcomes.
 
-For CI Review, require a final review or policy-valid redundant noop; an inline-only sink is incomplete. Reject approval with unknown coverage and reject a non-blocking verdict with accepted blocking findings, subject to existing bot-author restrictions. Proposed refinement: compare coverage as well as verdict before selecting a redundant noop, so a prior review cannot hide newly incomplete coverage. Do not change Attention's completion predicate or other workflows' sink behavior.
+## Deterministic acceptance cases
 
-### Keep publication failures explicit
-
-Distinguish a prepared review, accepted safe output, host-applied output and publication failure. Enqueue comments and the single review through existing safe-output tools, preserving caps, target and marker. Bind output to the reviewed head and attempt. Only host application and the resulting GitHub review establish publication.
-
-If preparation, detection or GitHub application fails, retain the prepared result and a compact diagnostic through existing artifacts/summary reporting where available. Surface the failed stage through terminal classification and recovery handling. Do not mark completion or recovery. For an ambiguous write response, reconcile the existing marker and target before retrying. Add no independent GitHub writer and never blindly resubmit a possibly applied review.
-
-A graceful application deadline offers an opportunity to prepare an honest result. Hard Actions cancellation, process termination, resource loss or a failed GitHub write can prevent publication. Cleanup, snapshots and artifact upload are best effort under an external kill. Automatic replay/resume is outside this proposal.
-
-## Compatibility with the public-engine migration
-
-As checked on 2026-10-19, [#10347](https://github.com/pydantic/pydantic-ai/pull/10347) is **open**, at [`3f4e3e76`](https://github.com/pydantic/pydantic-ai/tree/3f4e3e76a8a2df28247552f7d3e7725b8a142097). Its [`agent.py :: WorkflowPolicy`](https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/pydantic_ai_gh_aw_shim/agent.py) wraps CLAI's run, enforces the existing deadline and emits health metadata. `build_agent()` retains the custom read-only `Task`; switching engines does not itself add partial review retention or enforced finalization. Its [tests](https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/test_workflow_agent.py) exercise the headless entry point and tool surface.
-
-Prefer implementing after #10347, at that repository boundary, after reconciling its current head. If implementation must precede migration, agree a single repository-local policy owner and migration adapter first, then run the same acceptance cases through both entry paths. Do not copy policy into the public engine or invent a second result/health protocol. Preserve canonical session/usage reporting, task-key fallback, stale-PR noop preflight and host output ownership.
-
-There is no demonstrated need for a new public abstraction. If adapting `DelegationTasks` needs a reusable library change, demonstrate the missing behavior and seek a separate explicit API decision before widening scope.
-
-## Alternatives and human decisions
-
-| Option | Benefit | Tradeoff |
-|---|---|---|
-| Prompts only | Small change | Cannot interrupt in-flight work or enforce publication; #10501 already reserves prompt time |
-| Recover raw history only | Reuses capture/persistence | Reconstructing ambiguous partial text consumes finalization time; useful supporting evidence |
-| Typed progress plus supervisor phases | Explicit trust boundary and deterministic fallback | Adds workflow state and cancellation/race tests; recommended |
-| Adopt managed delegation wholesale | Reuses identity, persistence and cancellation | Changes `Task` integration/accounting; prove a narrow adapter first |
-| Public review/checkpoint API | Could serve other callers | No demonstrated missing primitive or second caller; separate API decision required |
-
-Before implementation, decide:
-
-- Whether to accept typed progress and parent acceptance records, including the stricter coverage evidence rule.
-- Whether managed-delegation adaptation or a small custom-`Task` record best preserves request admission, cancellation and read-only behavior.
-- The enforced cutoff and verification/publication split, including deterministic output without a final model call and coverage-sensitive noop selection.
-- Sequencing with #10347 and the precise safe-output preparation integration, retaining the host writer and wire formats.
-
-Honest verified findings and coverage within existing limits are invariants. The proposed storage, tools and phase boundaries are design choices, not established framework contracts.
-
-## Implementation sequence after agreement
-
-1. Recheck main and #10347. Add deterministic failing cases for interruption and parent cutoff at the chosen repository entry point. Prove the managed-delegation reuse path before adding a store.
-2. Add candidate/coverage retention and read-evidence validation. Preserve successful `Task` results; add bounded partial data only for CI Review. Cover concurrent and interrupted updates.
-3. Add enforced phases with an injected clock and controllable in-flight operations. Preserve shared time/request accounting and timeout classification.
-4. Add CI Review final-output validation and deterministic fallback through existing safe-output preparation. Test host failures and ambiguous outcomes without network writes. Update the seed prompt and managed-prompt deployment together to match enforcement.
-5. Run targeted workflow/headless/delegate/output tests and the workflow guard. Recompile affected workflows only if integration requires it. Verify ordinary workflow and Agent compatibility.
-6. After deployment, observe eligible agent execution and successful host publication bound to one target/run/attempt. Compare coverage, verified findings, tokens and elapsed time only on comparable executed samples. Keep telemetry details private. Incident closure needs separate recovery proof or explicit verified task retirement; this plan closes none.
-
-## Minimal deterministic acceptance matrix
-
-Use in-process scripted models/tools, an injected monotonic clock, temporary state and fake safe-output/host transport. Avoid real deadline waits, interpreter spawns and live providers. Extend existing [shim tests](https://github.com/pydantic/pydantic-ai/blob/62b7bf0aeac9a03066263469e650f40957d84cae/.github/scripts/test_pydantic_ai_runner.py) and migration headless tests rather than create another harness.
+Use in-process scripted models/tools, injected time, controlled events, temporary stores and fake host transport. Extend existing tests; avoid real waits and live providers. These are future implementation criteria, not implemented behavior.
 
 | Case | Required result |
 |---|---|
-| Candidate reported, delegate interrupted during next operation | Completed update survives; invocation is interrupted; unverified claim never becomes a published fact |
-| One file inspected, another only assigned/read partially | Only fully read and reported-complete files count; remaining paths are unreviewed |
-| Malformed/cross-assignment/stale updates and concurrent delegates | Reject invalid data, isolate records, preserve valid updates; no coverage inflation |
-| Delegate returns incomplete lists, refuses or fails before reporting | Missing coverage remains unreviewed; no replacement fan-out |
-| Cutoff with model, tool, delegate or compaction in flight | Cancel/drain owned investigation within original deadline; no broad work or late mutation |
-| Parent receives all delegates, then attempts more broad work | Execution gate rejects post-cutoff work; finalization still runs |
-| Verification reaches its cutoff | Candidate stays unverified; coverage gap recorded; output reserve remains |
-| Partial coverage with/without accepted HIGH/CRITICAL finding | `REQUEST_CHANGES` with verified blocker, otherwise `COMMENT`; never approval |
-| Complete coverage, bot author, redundant prior review | Existing severity/bot restrictions and coverage-sensitive noop policy preserved |
-| Requests exhausted/provider unavailable during finalization | No new allowance/model; deterministic honest review from retained state |
-| Wrapped provider transport timeout versus supervisor deadline | Preserve provider-timeout classification; only the run deadline is a run-time-limit failure, and external cancellation remains cancellation |
-| Inline-only sink, valid final review, failed/ambiguous host write | Inline-only incomplete; verdict checked against state; failures remain failures, reconcile before retry |
-| Hard cancellation and unrelated callers | Cancellation propagates without publication guarantee; ordinary Agent/other workflows unchanged |
+| Interrupted after completed inspection; crash before first request | Acknowledged evidence survives; no invented coverage. Diagnose before resume/replacement. |
+| Retryable transport versus quota/auth/outage | Existing SDK/transport policy; no nested blind retry or fresh child on unchanged broken dependency. |
+| Bad path versus denial/bug; unknown effects | Correct proven safe call only; deterministic uncorrectable cause stays explicit. Reconcile before repeating. |
+| Useful history versus lost/repetitive context | Steer/resume useful history; replace contaminated history with residual work. Preserve completed evidence, no broad replay. |
+| Local limit versus shared exhaustion; concurrent children | Preserve spent usage/reservations; recovery passes current admission. No reset or excess over original budgets. |
+| Pre-start refusal; reservation later released | No false start/coverage; reconsider only after admission changes and missing work is feasible. |
+| Malformed/omitted/stale/cross-assignment claims | Reject invalid claims, retain valid evidence, recover gaps; successful exit cannot yield approval. |
+| Concurrent/late updates, corrupt store, head change | Isolate attempts, freeze publication input; stale updates cannot overwrite accepted facts. Unknown coverage cannot approve. |
+| Baseline plus independent concern; early settled report | Complete baseline ownership, shared facts/independent judgments; prepare verification before unrelated work settles, without higher concurrency. |
+| Disproved candidate or unfinished verification | Discard false positive; keep unresolved proof/checks pending and recover when feasible. No unverified findings. |
+| Repeated activity without evidence progress | Diagnose/change next action; never reward elapsed time or blindly repeat. |
+| Recovery infeasible, with/without verified HIGH/CRITICAL | Name all unreviewed files/required checks. Verified HIGH/CRITICAL requires `REQUEST_CHANGES`; otherwise `COMMENT`, never approval, subject to bot-author restrictions. |
+| Inline-only sink, detection failure, ambiguous host write | Require final review or policy-valid noop; distinguish preparation/publication. Reconcile marker/head before retry; no investigation replay. |
+| External cancellation/hard kill; unrelated callers | Propagate cancellation, no automatic recovery/publication guarantee. Ordinary `Agent`, other workflows and public APIs retain behavior. |
 
-This design-only PR needs source/prose review and normal text checks. The matrix is acceptance work for implementation, not a claim these behaviors exist today.
+## Validation limits and agreement gate
 
-## Validation limits
+Bounded telemetry study did not establish a comparable current-source post-#10501 CI Review execution through publication. Historical overlapping delegates and parent work after delegation do not measure duplicated coverage, its causes or concurrent-verification benefit. No speed, token, quota or quality improvement is established.
 
-A bounded Logfire baseline check did not establish a comparable post-#10501 agent-execution sample. No speed, usage or quality improvement is established. Successful pre-activation or provider-gated runs do not prove review completion. [Provider incident #10583](https://github.com/pydantic/pydantic-ai/issues/10583) remains open as checked on 2026-10-19; this can gate deployed acceptance but does not prove a deadline defect or recovery.
+[Provider incident #10583](https://github.com/pydantic/pydantic-ai/issues/10583) closed on 2026-10-19; closure is not successful execution. Provider-gated/skipped reviews prove no execution. The smallest deployed check must join current-source eligibility, root/delegate execution and head-bound host publication. Establish normal/error/cancellation/fallback telemetry coverage; repair demonstrated gaps before comparing outcomes. Keep private measurements/payloads private. Distinguish observed tokens/API-equivalent cost from shared quota and actual charges.
 
-The smallest live integration check is one eligible execution that reaches the affected review phases and successfully applies a head-bound review. Deterministic interruption tests establish the failure-path behavior; comparable normal and interrupted execution samples are needed before claiming operational improvement. If an eligible execution lacks root/delegate/detection telemetry, repair that coverage before drawing conclusions. Hard cancellation and failed GitHub writes remain outside any publication guarantee.
+Seek agreement on this contract and adapter before runtime work. Admission/reserve policy stays unchanged. If compatibility needs a policy/public API change, return with the concrete conflict. Hard cancellation, unavailable resources/provider and failed host writes can still prevent publishing an honest incomplete review.
+
+[context]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/scripts/gather-pydantic-ai-review-context.sh
+[prompt]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/workflows/shared/prompts/pydantic-ai-pr-review.md
+[cli]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/pydantic_ai_gh_aw_shim/cli.py
+[tasks]: https://github.com/pydantic/pydantic-ai/blob/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_tasks.py
+[toolset]: https://github.com/pydantic/pydantic-ai/blob/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_toolset.py
+[events]: https://github.com/pydantic/pydantic-ai/blob/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7/src/pydantic_ai_harness/pydantic_ai_harness/subagents/_events.py
+[steps]: https://github.com/pydantic/pydantic-ai/blob/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/_capability.py
+[recovery]: https://github.com/pydantic/pydantic-ai/blob/5c8a6c12cbdd9ea709d635b0d6e7a15cbb8d0ae7/src/pydantic_ai_harness/pydantic_ai_harness/step_persistence/recovery.py
+[policy]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/pydantic_ai_gh_aw_shim/agent.py
+[engine]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/workflows/shared/engine-zai.md
+[workflow]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/workflows/pydantic-ai-pr-review.md
+[host]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/workflows/pydantic-ai-pr-review.lock.yml
+[tests]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/test_pydantic_ai_runner.py
+[headless]: https://github.com/pydantic/pydantic-ai/blob/3f4e3e76a8a2df28247552f7d3e7725b8a142097/.github/scripts/test_workflow_agent.py
