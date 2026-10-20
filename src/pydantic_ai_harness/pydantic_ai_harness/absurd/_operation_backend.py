@@ -38,7 +38,7 @@ class UnserializableStepResultError(UserError):
 def serialization_failure(error: Exception) -> UnserializableStepResultError:
     return UnserializableStepResultError(
         f'Absurd stores each step result as JSON, and this one could not be serialized: {error}. '
-        'Return a JSON-serializable value from the tool.'
+        'If it is a tool result, return a JSON-serializable value from the tool.'
     )
 
 
@@ -82,8 +82,10 @@ def _from_checkpoint(stored: object) -> object:
 
 
 def _heartbeat_interval(task_ctx: AsyncTaskContext) -> float:
-    # The SDK keeps the claim timeout private; this is the interval its own long waits heartbeat at.
-    return max(0.5, task_ctx._claim_timeout / 2)  # pyright: ignore[reportPrivateUsage]
+    # The SDK keeps the worker's claim timeout private; fall back to its default rather than fail
+    # every step if that changes. Half of it is the interval the SDK's own long waits heartbeat at.
+    claim_timeout: int = getattr(task_ctx, '_claim_timeout', 120)
+    return max(0.5, claim_timeout / 2)
 
 
 async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awaitable[object]]) -> object:

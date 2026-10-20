@@ -61,6 +61,8 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_unit_noun='step',
         durable_container_noun='task',
         codec=JSON_CODEC,
+        # Not terminal: Absurd has no non-retryable error, so the task still retries, but a tool call's
+        # failure is checkpointed and the retries don't run the tool again.
         serialization_failure=serialization_failure,
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
         # Steps run in the task's own process, so a run keeps one MCP session.

@@ -48,11 +48,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
-from pydantic_ai_harness.absurd import AbsurdDurability, _operation_backend
+from pydantic_ai_harness.absurd import AbsurdDurability
 from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
-    UnserializableStepResultError,
 )
 
 from ._task import checkpoints, claim_expires_at, reenter_running_task, running_task_context
@@ -678,19 +677,19 @@ class TestToolResults:
         )
 
         async with running_task_context(absurd) as ctx:
-            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
+            with pytest.raises(UserError, match='could not be serialized'):
                 await agent.run('go')
         stored = await checkpoints(absurd, ctx.task_id)
         assert stored['opaque__function_toolset__tools.call_tool:charge'] == snapshot(
             {
                 '__pydantic_ai_harness_absurd_tool_result__': {
                     'kind': 'unserializable',
-                    'error': "Absurd stores each step result as JSON, and this one could not be serialized: Unable to serialize unknown type: <class 'object'>. Return a JSON-serializable value from the tool.",
+                    'error': "Absurd stores each step result as JSON, and this one could not be serialized: Unable to serialize unknown type: <class 'object'>. If it is a tool result, return a JSON-serializable value from the tool.",
                 }
             }
         )
         async with reenter_running_task(absurd, ctx.task_id):
-            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
+            with pytest.raises(UserError, match='could not be serialized'):
                 await agent.run('go')
 
         assert calls['calls'] == 1
@@ -821,6 +820,10 @@ class TestMcpSessions:
         assert requests[0].instructions is not None and 'Echo things.' in requests[0].instructions
 
 
+# Heartbeating every `claim_timeout / 2` would make these tests wait; they heartbeat back to back instead.
+_HEARTBEAT_INTERVAL = 'pydantic_ai_harness.absurd._operation_backend._heartbeat_interval'
+
+
 def _no_heartbeat_wait(task_ctx: object) -> float:
     return 0
 
@@ -828,9 +831,8 @@ def _no_heartbeat_wait(task_ctx: object) -> float:
 class TestClaim:
     async def test_long_step_extends_the_claim(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
         # A step can outlast the worker's `claim_timeout`; the claim is extended while it runs, so no
-        # other worker claims the task and runs the step again. The interval is shortened so the
-        # tool can watch the claim move without waiting.
-        monkeypatch.setattr(_operation_backend, '_heartbeat_interval', _no_heartbeat_wait)
+        # other worker claims the task and runs the step again.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
         toolset = FunctionToolset(id='tools')
         task: dict[str, str] = {}
 
@@ -857,7 +859,7 @@ class TestClaim:
     async def test_lost_claim_cancels_the_step(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
         # Once the run can't extend its claim (here, the task was cancelled), the step stops instead
         # of running on alongside whichever worker owns the task now.
-        monkeypatch.setattr(_operation_backend, '_heartbeat_interval', _no_heartbeat_wait)
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
         toolset = FunctionToolset(id='tools')
         task: dict[str, str] = {}
 
