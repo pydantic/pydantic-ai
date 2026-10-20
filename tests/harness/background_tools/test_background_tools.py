@@ -605,7 +605,7 @@ class TestBackgroundTools:
 
         assert result.output == 'done'
         assert not _ack_seen(result.all_messages())
-        assert not _follow_up_seen(result.all_messages(), 'Background tool')
+        assert not _follow_up_seen(result.all_messages(), '<tool_result')
 
     async def test_run_scoped_sequential_mode_uses_normal_execution(self) -> None:
         agent = Agent(TestModel(), capabilities=[BackgroundTools()])
@@ -707,7 +707,9 @@ class TestBackgroundTools:
             for item in part.content
             if isinstance(item, TextContent)
         ]
-        assert follow_ups == [IsStr(regex=r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result")]
+        assert follow_ups == [
+            IsStr(regex=r'<tool_result tool_name="slow" tool_call_id="[^"]+">\nslow result\n</tool_result>')
+        ]
 
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
@@ -869,7 +871,7 @@ class TestBackgroundTools:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             first_part = messages[0].parts[-1] if isinstance(messages[0], ModelRequest) else None
             run_name = first_part.content if isinstance(first_part, UserPromptPart) else ''
-            if _follow_up_seen(messages, 'completed'):
+            if _follow_up_seen(messages, '<tool_result'):
                 return ModelResponse(parts=[TextPart(content='done')])
             if _ack_seen(messages):
                 return ModelResponse(parts=[TextPart(content='waiting')])

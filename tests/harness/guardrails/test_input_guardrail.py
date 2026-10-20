@@ -378,7 +378,7 @@ class TestInputGuardrailRedaction:
 
         def guard(prompt: str) -> bool | GuardrailResult:
             guard_calls.append(prompt)
-            if prompt.startswith('Background tool'):
+            if prompt.startswith('<tool_result'):
                 return GuardrailResult.replace('[redacted]')
             return True
 
