@@ -1967,18 +1967,26 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
     assert isinstance(bound_durability, TemporalDurability)
     assert bound_durability.agent is agent
     if compact:
-        payload = _CompactMessagesParams(**common, telemetry_mcp_url_ids={identity}, streaming=False, instructions=None)
+        payload = _CompactMessagesParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            streaming=False,
+            instructions=None,
+        )
         wire = TypeAdapter(_CompactMessagesParams).dump_python(payload, mode='json')
         if legacy_payload:
             wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
         decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
         loaded = _CompactMessagesTransport(bound_durability).load((decoded, None), runtime=object())
         restored = loaded.request_context.model_request_parameters
     else:
-        payload = _RequestParams(**common, telemetry_mcp_url_ids={identity})
+        payload = _RequestParams(**common, telemetry_mcp_url_ids={identity}, telemetry_mcp_url_toolset_ids={identity})
         wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
         if legacy_payload:
             wire.pop('telemetry_mcp_url_ids')
+            wire.pop('telemetry_mcp_url_toolset_ids')
         decoded = TypeAdapter(_RequestParams).validate_python(wire)
         loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load(
             (decoded, None), runtime=object()
@@ -1986,6 +1994,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
         restored = loaded.model_request_parameters
 
     assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_toolset_ids == (set() if legacy_payload else {identity})  # pyright: ignore[reportPrivateUsage]
     assert identity not in str(model_request_parameters_attributes(restored))
 
 

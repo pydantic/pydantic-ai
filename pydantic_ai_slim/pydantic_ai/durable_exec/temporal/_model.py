@@ -102,7 +102,12 @@ class TemporalModel(WrapperModel):
         self._agent = agent
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            restore_telemetry_mcp_url_ids(params.model_request_parameters, params.telemetry_mcp_url_ids, self._agent)
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -126,7 +131,12 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
-            restore_telemetry_mcp_url_ids(params.model_request_parameters, params.telemetry_mcp_url_ids, self._agent)
+            restore_telemetry_mcp_url_ids(
+                params.model_request_parameters,
+                params.telemetry_mcp_url_ids,
+                params.telemetry_mcp_url_toolset_ids,
+                self._agent,
+            )
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -227,6 +237,7 @@ class TemporalModel(WrapperModel):
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
                         telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -274,6 +285,7 @@ class TemporalModel(WrapperModel):
                         model_settings=cast(dict[str, Any] | None, model_settings),
                         model_request_parameters=model_request_parameters,
                         telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),

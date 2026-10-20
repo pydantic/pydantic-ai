@@ -27,6 +27,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -237,10 +238,15 @@ def test_model_parameter_customization_preserves_url_identity_provenance() -> No
     assert capability.id is not None
     tool = next(iter(capability.get_native_tools()))
     assert isinstance(tool, MCPServerTool)
-    parameters = ModelRequestParameters(native_tools=[tool], _telemetry_mcp_url_ids={capability.id})
+    parameters = ModelRequestParameters(
+        native_tools=[tool],
+        _telemetry_mcp_url_ids={capability.id},
+        _telemetry_mcp_url_toolset_ids={capability.id},
+    )
     _, prepared = RebuildsParameters().prepare_request(None, parameters)
 
     assert prepared._telemetry_mcp_url_ids == {capability.id}  # pyright: ignore[reportPrivateUsage]
+    assert prepared._telemetry_mcp_url_toolset_ids == {capability.id}  # pyright: ignore[reportPrivateUsage]
     assert isinstance(prepared.native_tools[0], MCPServerTool)
     assert prepared.native_tools[0].id == capability.id
     serialized = model_request_parameters_attributes(prepared)['model_request_parameters']
@@ -406,6 +412,66 @@ async def test_explicit_mcp_toolset_id_remains_in_request_telemetry() -> None:
     serialized = chat.attributes['model_request_parameters']
     assert isinstance(serialized, str)
     assert json.loads(serialized)['function_tools'][0]['toolset_id'] == 'github'
+
+
+async def test_unrelated_toolset_id_matching_mcp_url_id_is_retained() -> None:
+    class SupportsMCP(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
+            return frozenset({MCPServerTool})
+
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
+    assert capability.id is not None
+    unrelated = FunctionToolset(id=capability.id, instructions='public guidance')
+
+    @unrelated.tool_plain
+    def lookup() -> str:
+        return 'ok'
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup()
+    await Agent(
+        SupportsMCP(respond), toolsets=[unrelated], capabilities=[capability, Instrumentation(settings=settings)]
+    ).run('go')
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    exported = json.loads(serialized)
+    assert exported['native_tools'][0]['id'] == '[REDACTED]'
+    assert exported['function_tools'][0]['toolset_id'] == capability.id
+    assert capability.id in json.dumps(exported['instruction_parts'])
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
+    server = FastMCP('test', instructions='server guidance')
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    assert capability.id is not None
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup()
+    await Agent(FunctionModel(respond), capabilities=[capability, Instrumentation(settings=settings)]).run('go')
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    exported = json.loads(serialized)
+    assert exported['function_tools'] == []
+    assert '[REDACTED]' in json.dumps(exported['instruction_parts'])
+    assert capability.id not in json.dumps(exported['instruction_parts'])
 
 
 class Output(BaseModel):

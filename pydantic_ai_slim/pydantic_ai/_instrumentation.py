@@ -492,7 +492,15 @@ def mcp_telemetry_url_ids(
         elif isinstance(capability, CombinedCapability):
             pending.extend(capability.capabilities)
 
-    if toolset is not None and 'pydantic_ai.mcp' in sys.modules:
+    if toolset is not None:
+        identities.update(mcp_telemetry_url_toolset_ids(toolset))
+    return identities
+
+
+def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[str]:
+    """Collect URL-derived identities owned by local MCP toolsets."""
+    identities: set[str] = set()
+    if 'pydantic_ai.mcp' in sys.modules:
         # Import only when the optional MCP module has already been loaded by a real toolset.
         from pydantic_ai.mcp import MCPToolset
 
@@ -546,7 +554,10 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     from pydantic_ai.native_tools import MCPServerTool
 
     url_ids = model_request_parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
-    if not url_ids and not any(isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools):
+    toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+    if not (url_ids or toolset_ids) and not any(
+        isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools
+    ):
         # Keep the established serializer, including its fallback, byte-for-byte for requests
         # outside the affected MCP paths.
         try:
@@ -571,15 +582,17 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     for tools in (model_request_parameters.function_tools, model_request_parameters.output_tools):
         redacted_tools: list[ToolDefinition] = []
         for tool in tools:
+            # A separate toolset may have a caller-chosen id equal to an MCP URL-derived id.
+            # Its tool definitions are not MCP-owned merely because the strings collide.
             if (
-                tool.toolset_id in url_ids
+                tool.toolset_id in toolset_ids
                 or tool.capability_id in url_ids
                 or tool.unless_native in native_names
                 or tool.with_native in native_names
             ):
                 tool = replace(
                     tool,
-                    toolset_id='[REDACTED]' if tool.toolset_id in url_ids else tool.toolset_id,
+                    toolset_id='[REDACTED]' if tool.toolset_id in toolset_ids else tool.toolset_id,
                     capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
                     unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
                     with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
@@ -588,14 +601,13 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         redacted_tool_lists.append(redacted_tools)
 
     instruction_parts: list[InstructionPart] | None = model_request_parameters.instruction_parts
-    if instruction_parts is not None and url_ids:
+    if instruction_parts is not None and (url_ids or toolset_ids):
         instruction_parts = []
         for part in model_request_parameters.instruction_parts or ():
             instruction_id = part.id
-            if (
-                instruction_id is not None
-                and isinstance(source := instruction_id.source, ToolsetInstructionSource | CapabilityInstructionSource)
-                and source.id in url_ids
+            if instruction_id is not None and (
+                (isinstance(source := instruction_id.source, ToolsetInstructionSource) and source.id in toolset_ids)
+                or (isinstance(source, CapabilityInstructionSource) and source.id in url_ids)
             ):
                 instruction_parts.append(
                     replace(part, id=replace(instruction_id, source=replace(source, id='[REDACTED]')))
@@ -614,6 +626,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
             for identity in model_request_parameters.deferred_capability_ids
         },
         _telemetry_mcp_url_ids=set(),
+        _telemetry_mcp_url_toolset_ids=set(),
     )
     try:
         return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')

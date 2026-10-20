@@ -203,6 +203,10 @@ class ModelRequestParameters:
         default_factory=set[str], repr=False, compare=False
     )
     """URL-derived MCP identities to mask in telemetry, without changing provider requests."""
+    _telemetry_mcp_url_toolset_ids: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
+    )
+    """URL-derived local MCP toolset identities to mask in telemetry."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -939,6 +943,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             _telemetry_mcp_url_ids=(
                 customized_params._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
                 | model_request_parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+            ),
+            _telemetry_mcp_url_toolset_ids=(
+                customized_params._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+                | model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
             ),
         )
         params = prepare_return_schemas(
