@@ -135,6 +135,10 @@ class GuardrailResult:
         return cls(action='approve')
 
 
+TextDetector = Callable[[str], GuardrailResult]
+"""A check over text. Adapt one with `for_text` or `for_tool_result_text` at non-text guard boundaries."""
+
+
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
@@ -260,7 +264,7 @@ async def evaluate_all(
     ctx: RunContext[AgentDepsT],
     value: object,
     *,
-    check_replacement: Callable[[object, int], None] | None = None,
+    check_replacement: Callable[[object, int], object] | None = None,
 ) -> tuple[GuardrailResult, int]:
     """Run each guard in order over the value, threading replacements through.
 

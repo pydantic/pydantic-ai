@@ -30,7 +30,9 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeGuard, assert_never, cast
+from typing import TYPE_CHECKING, Any, TypeGuard, assert_never
+
+from typing_extensions import TypeIs
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapRunHandler
 from pydantic_ai.exceptions import (
@@ -46,6 +48,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
+    GuardrailResult,
     evaluate,
     trace_approval,
     trace_block,
@@ -96,7 +99,12 @@ def _is_arguments(value: object) -> TypeGuard[Mapping[str, Any]]:
     because they become keyword arguments, where a non-string one raises a bare
     `TypeError` from the interpreter that names neither the tool nor the guard.
     """
-    return isinstance(value, Mapping) and all(isinstance(key, str) for key in cast('Mapping[object, object]', value))
+    return _is_mapping(value) and all(isinstance(key, str) for key in value)
+
+
+def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
+    """Whether `value` is a mapping, typed so its keys can be inspected without a cast."""
+    return isinstance(value, Mapping)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -452,31 +460,36 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         screened, except one from an error hook: that hook hands its retry to this guardrail's
         error hook, which closes the window.
         """
-        if self.result_guard is None or not self._guards(call.tool_name):
+        result_guard = self.result_guard
+        if result_guard is None or not self._guards(call.tool_name):
             return await handler(args)
         try:
             return await handler(args)
         except ModelRetry as error:
             if _is_verdict_retry(error) or id(call) not in self._running:
                 raise
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+            message = await self._screen_failure(result_guard, ctx, call=call, args=args, content=error.message)
             if message is None:
                 raise
             raise ModelRetry(message) from error
         except ToolFailed as error:
             if id(call) not in self._running:
                 raise
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+            message = await self._screen_failure(result_guard, ctx, call=call, args=args, content=error.message)
             if message is None:
                 raise
             raise ToolFailed(message) from error
         except ToolRetryError as error:
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_retry.content)
+            message = await self._screen_failure(
+                result_guard, ctx, call=call, args=args, content=error.tool_retry.content
+            )
             if message is None:
                 raise
             raise ToolRetryError(replace(error.tool_retry, content=message)) from error
         except ToolFailedError as error:
-            message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_failed.content)
+            message = await self._screen_failure(
+                result_guard, ctx, call=call, args=args, content=error.tool_failed.content
+            )
             if message is None:
                 raise
             raise ToolFailedError(replace(error.tool_failed, content=message)) from error
@@ -498,6 +511,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
 
     async def _screen_failure(
         self,
+        result_guard: ToolResultGuardrailFunc[AgentDepsT],
         ctx: RunContext[AgentDepsT],
         *,
         call: ToolCallPart,
@@ -509,38 +523,8 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         The failure keeps its own type either way: a failure screened into a refusal is still
         a failure, and turning it into a success would tell the model the call worked.
         """
-        assert self.result_guard is not None
-        info = ToolResultInfo(
-            name=call.tool_name, args=MappingProxyType(deepcopy(args)), tool_call_id=call.tool_call_id, result=content
-        )
-        verdict = await evaluate(self.result_guard, ctx, info)
-        match verdict.action:
-            case 'allow':
-                return None
-            case 'retry':
-                # The tool already failed, but `retry` still means retry: collapsing it into a
-                # replacement message would hand the model a failed result where it was asked
-                # to redo the call, and skip the run's retry accounting with it.
-                raise _verdict_retry(verdict.message or _DEFAULT_RETRY_MESSAGE)
-            case 'block':
-                message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
-                trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
-                return message
-            case 'replace':
-                trace_redaction(
-                    ctx,
-                    direction=_RESULT_DIRECTION,
-                    replacement=verdict.replacement,
-                    tool_name=call.tool_name,
-                )
-                return str(verdict.replacement)
-            case 'approve':
-                raise UserError(
-                    'A tool result guard cannot return GuardrailResult.approve() -- the tool has already run. '
-                    'Return approve() from the argument guard instead.'
-                )
-            case _:  # pragma: no cover - assert_never exhaustiveness guard
-                assert_never(verdict.action)
+        verdict = await self._screen_result(result_guard, ctx, call=call, args=args, result=content)
+        return None if verdict.action == 'allow' else str(verdict.replacement)
 
     async def after_tool_execute(
         self,
@@ -553,34 +537,52 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Evaluate `result_guard` against the tool result and act on its verdict."""
         self._running.discard(id(call))
-        if self.result_guard is None or not self._guards(call.tool_name):
+        result_guard = self.result_guard
+        if result_guard is None or not self._guards(call.tool_name):
             return result
+        verdict = await self._screen_result(result_guard, ctx, call=call, args=args, result=result)
+        return result if verdict.action == 'allow' else verdict.replacement
 
+    async def _screen_result(
+        self,
+        result_guard: ToolResultGuardrailFunc[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        args: dict[str, Any],
+        result: object,
+    ) -> GuardrailResult:
+        """Evaluate `result_guard` over what a tool returned or failed with, and act on the verdict.
+
+        Returns `allow`, or `replace` carrying what the model sees instead: the refusal message
+        for `block`, the substituted value for `replace`. `retry` and `approve` raise. A failed
+        tool and a successful one go through here alike, so both get the same verdicts.
+        """
         info = ToolResultInfo(
             name=call.tool_name, args=MappingProxyType(deepcopy(args)), tool_call_id=call.tool_call_id, result=result
         )
-        verdict = await evaluate(self.result_guard, ctx, info)
+        verdict = await evaluate(result_guard, ctx, info)
         match verdict.action:
             case 'allow':
-                return result
+                return verdict
             case 'block':
                 message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
-                return message
+                return GuardrailResult.replace(message)
+            case 'replace':
+                trace_redaction(
+                    ctx, direction=_RESULT_DIRECTION, replacement=verdict.replacement, tool_name=call.tool_name
+                )
+                return verdict
             case 'retry':
+                # Even for a tool that already failed, `retry` still means retry: collapsing it into
+                # a replacement message would hand the model a failed result where it was asked to
+                # redo the call, and skip the run's retry accounting with it.
                 raise _verdict_retry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'approve':
                 raise UserError(
                     'A tool result guard cannot return GuardrailResult.approve() -- the tool has already run. '
                     'Return approve() from the argument guard instead.'
                 )
-            case 'replace':
-                trace_redaction(
-                    ctx,
-                    direction=_RESULT_DIRECTION,
-                    replacement=verdict.replacement,
-                    tool_name=call.tool_name,
-                )
-                return verdict.replacement
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)

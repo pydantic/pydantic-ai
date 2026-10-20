@@ -8,13 +8,13 @@ A guard returns a bare `bool` (`True` = allow) or a
 [`GuardrailResult`][pydantic_ai_harness.guardrails.GuardrailResult] -- one of five
 outcomes:
 
-- `allow` — let the value through unchanged.
-- `block` — refuse: `InputGuardrail` short-circuits the model call with a refusal
+- `allow`: let the value through unchanged.
+- `block`: refuse. `InputGuardrail` short-circuits the model call with a refusal
   message via [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest];
   `OutputGuardrail` raises [`OutputBlocked`][pydantic_ai_harness.guardrails.OutputBlocked].
-- `replace` — substitute a sanitized value (redaction) and continue.
-- `retry` -- send the output back to the model to try again (not valid for input).
-- `approve` -- defer a tool call for human approval
+- `replace`: substitute a sanitized value (redaction) and continue.
+- `retry`: send the output back to the model to try again (not valid for input).
+- `approve`: defer a tool call for human approval
   ([`ToolGuardrail`][pydantic_ai_harness.ToolGuardrail] arguments only).
 
 A guard that raises propagates the exception so the caller sees a hard
@@ -68,7 +68,7 @@ InputGuardrailFunc = (
 
 The callable receives the user prompt and returns `True` / `GuardrailResult`. It
 may optionally take a [`RunContext`][pydantic_ai.tools.RunContext] as a first
-argument — for `deps`, message history, or other run state — and may be sync
+argument -- for `deps`, message history, or other run state -- and may be sync
 or async. Raising an exception is treated as a hard failure and propagates up
 to the caller.
 """
@@ -79,19 +79,20 @@ OutputGuardrailFunc = (
 )
 """Signature of the callable passed to `OutputGuardrail`.
 
-The callable receives the agent output unchanged — for typed outputs this is
-the Pydantic model — and returns `True` / `GuardrailResult`. It may optionally take
+The callable receives the agent output unchanged -- for typed outputs this is
+the Pydantic model -- and returns `True` / `GuardrailResult`. It may optionally take
 a [`RunContext`][pydantic_ai.tools.RunContext] first, and may be sync or async.
 """
 
 
-def _require_prompt_text(replacement: object, position: int) -> None:
+def _require_prompt_text(replacement: object, position: int) -> str:
     """A prompt replacement has to be text, since it is written back into the message."""
     if not isinstance(replacement, str):
         raise UserError(
             f'GuardrailResult.replace() for an input guardrail must provide replacement prompt text (str); '
             f'guard at position {position} returned {type(replacement).__name__}.'
         )
+    return replacement
 
 
 def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> UserPromptPart | None:
@@ -198,7 +199,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     ```
 
     The guard may take a [`RunContext`][pydantic_ai.tools.RunContext] as a
-    first parameter when it needs run state — `deps` for tenant/role-aware
+    first parameter when it needs run state -- `deps` for tenant/role-aware
     policy, `messages` for conversation-aware checks. The parameter is detected
     from the signature, so prompt-only guards stay as-is.
 
@@ -207,7 +208,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     network call) with the model round-trip so it adds no latency on the pass
     path. The model call is cancelled the moment the guard reports a
     violation. Trade-off: sequential mode never calls the model on a blocked
-    prompt, whereas parallel mode has already started it — if the guard trips
+    prompt, whereas parallel mode has already started it -- if the guard trips
     only after the model has responded, those tokens were still spent. Prefer
     sequential for fast local guards. `replace` (redaction) is incompatible
     with `parallel=True`, since the model call has already started with the
@@ -288,11 +289,7 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                         'InputGuardrail(parallel=True) is incompatible with GuardrailResult.replace(): the model call has '
                         'already started with the original prompt. Use sequential mode for prompt redaction.'
                     )
-                replacement = verdict.replacement
-                if not isinstance(replacement, str):  # pragma: no cover - `_require_prompt_text` ran on the way here
-                    raise UserError(
-                        'GuardrailResult.replace() for an input guardrail must provide replacement prompt text (str).'
-                    )
+                replacement = _require_prompt_text(verdict.replacement, position)
                 if part is None:
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
                 _replace_prompt(part, replacement)
@@ -371,8 +368,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
 class OutputGuardrail(AbstractCapability[AgentDepsT]):
     """Validate the agent output as it is produced.
 
-    The `guard` callable receives the output — no automatic stringification, so
-    a typed output arrives as the Pydantic model instance — and returns one of
+    The `guard` callable receives the output -- no automatic stringification, so
+    a typed output arrives as the Pydantic model instance -- and returns one of
     the outcomes (see the module docstring): `allow` exposes the output,
     `block` raises [`OutputBlocked`][pydantic_ai_harness.guardrails.OutputBlocked],
     `replace` substitutes a sanitized output (redaction), and `retry` sends the
@@ -404,13 +401,13 @@ class OutputGuardrail(AbstractCapability[AgentDepsT]):
     the guard's block/redact spans regardless of user list order.
 
     Streaming caveats. `retry` is supported with
-    [`run()`][pydantic_ai.Agent.run] / `run_sync()` only — pydantic-ai does not
+    [`run()`][pydantic_ai.Agent.run] / `run_sync()` only -- pydantic-ai does not
     support output retries during [`run_stream()`][pydantic_ai.Agent.run_stream],
     where a `retry` verdict surfaces as
     [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior].
     The guard inspects only the final output, not partial chunks, so during a
     streamed run the caller may already have received partial output before a
-    `block` or `replace` verdict is reached — use `run()` when the output must
+    `block` or `replace` verdict is reached -- use `run()` when the output must
     be screened before any of it is exposed.
     """
 
