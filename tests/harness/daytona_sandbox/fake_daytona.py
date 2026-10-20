@@ -73,12 +73,6 @@ class FakeProcess:
             return SimpleNamespace(result='', exit_code=1)
         if command.startswith('find '):
             return SimpleNamespace(result='', exit_code=0)
-        if command.startswith('if [ -e '):
-            source, destination = shlex.split(command)[-2:]
-            if source not in self.owner.files:
-                return SimpleNamespace(result='missing stage', exit_code=1)
-            self.owner.files[destination] = self.owner.files.pop(source)
-            return SimpleNamespace(result='', exit_code=0)
         if command.startswith('for f in '):
             # The output files' sizes, as `wc -c` prints them.
             paths = command.split(';')[0].split()[3:]
@@ -131,24 +125,6 @@ class FakeProcess:
         self.owner.files[f'/tmp/{marker.group()}.err'] = ''.join(self.owner.process_stderr).encode()
         return SimpleNamespace(cmd_id=f'{session_id}-cmd')
 
-    async def get_session_command_logs_async(
-        self,
-        session_id: str,
-        command_id: str,
-        on_stdout: Callable[[str], None],
-        on_stderr: Callable[[str], None],
-    ) -> None:
-        self.owner.process_logs_started.set()
-        if self.owner.process_logs_error is not None:
-            raise self.owner.process_logs_error
-        if self.owner.process_follow_open:
-            # The command's output goes to files; the wrapper prints only the marker on the stream.
-            marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.process_command)
-            assert marker is not None
-            on_stdout(marker.group())
-        if self.owner.process_hangs or self.owner.process_follow_open:
-            await asyncio.Event().wait()
-
     async def get_session_command(
         self,
         session_id: str,
@@ -157,9 +133,10 @@ class FakeProcess:
     ) -> SimpleNamespace:
         if self.owner.process_status_gate is not None:
             await self.owner.process_status_gate.wait()
+        self.owner.process_status_polled.set()
         if self.owner.process_status_error is not None:
             raise self.owner.process_status_error
-        return SimpleNamespace(exit_code=self.owner.process_exit_code)
+        return SimpleNamespace(exit_code=None if self.owner.process_hangs else self.owner.process_exit_code)
 
     async def delete_session(self, session_id: str, request_timeout: float | None = None) -> None:
         # A real HTTP request yields to the loop, where a cancelled caller's cleanup would be cut short.
@@ -288,14 +265,6 @@ class _HostProcess(FakeProcess):
             # `os.path.realpath` leaves a symlink loop unresolved; `Path.resolve` raises on it before 3.13.
             resolved = os.path.realpath(os.path.join(cwd or self.host_root, target))
             return SimpleNamespace(result=f'{resolved}\n', exit_code=0)
-        if command.startswith('if [ -e '):
-            source, destination = shlex.split(command)[-2:]
-            if Path(destination).exists() and not os.access(destination, os.W_OK):
-                return SimpleNamespace(result='Permission denied', exit_code=13)
-            if Path(destination).exists():
-                os.chmod(source, Path(destination).stat().st_mode)
-            os.replace(source, destination)
-            return SimpleNamespace(result='', exit_code=0)
         # `exec` reports stdout and stderr combined as `result`.
         done = await anyio.run_process(
             ['sh', '-c', command], cwd=cwd or self.host_root, check=False, stderr=subprocess.STDOUT
@@ -320,32 +289,6 @@ class _HostProcess(FakeProcess):
         command_id = f'{session_id}-cmd'
         self.commands[command_id] = (process, out, err)
         return SimpleNamespace(cmd_id=command_id)
-
-    async def get_session_command_logs_async(
-        self,
-        session_id: str,
-        command_id: str,
-        on_stdout: Callable[[str], None],
-        on_stderr: Callable[[str], None],
-    ) -> None:
-        process, out, err = self.commands[command_id]
-        offsets = [0, 0]
-        last = [b'\n', b'\n']
-        while True:
-            finished = process.poll() is not None
-            for index, (stream, handler) in enumerate(((out, on_stdout), (err, on_stderr))):
-                chunk = os.pread(stream.fileno(), os.fstat(stream.fileno()).st_size - offsets[index], offsets[index])
-                offsets[index] += len(chunk)
-                if chunk:
-                    last[index] = chunk[-1:]
-                    handler(chunk.decode(errors='replace'))
-            if finished:
-                # Like the real log stream, end a stream that did not end in a newline with one.
-                unterminated = [handler for handler, end in zip((on_stdout, on_stderr), last) if end != b'\n']
-                for handler in unterminated:
-                    handler('\n')
-                return
-            await anyio.sleep(0.01)
 
     async def get_session_command(
         self,
@@ -393,8 +336,9 @@ class _HostFileSystem(FakeFileSystem):
 
     async def upload_file(self, data: bytes, path: str, timeout: int = 1800) -> None:
         self._raise_if_needed()
-        # The toolbox opens the path for writing, which follows a symlink (observed live 2026-09-25).
+        # Like the toolbox (observed live): missing parents are created, and a symlink is written through.
         with _host_errors(path, 'upload files'):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_bytes(data)
 
     async def list_files(
@@ -463,17 +407,15 @@ class FakeSandbox:
         self.process_hangs = False
         # Replaces the output files' sizes the backend asks for, to test a garbled reply.
         self.output_sizes_reply = ''
-        self.process_follow_open = False
         self.process_exit_code: int | None = 0
         # Raised by successive `delete_session` calls; deletion succeeds once it is exhausted.
         self.process_delete_errors: Iterator[Exception] = iter(())
         self.process_delete_calls = 0
         self.process_status_error: Exception | None = None
         self.process_status_gate: asyncio.Event | None = None
-        self.process_logs_error: Exception | None = None
         self.process_create_gate: asyncio.Event | None = None
         self.process_create_ack_gate: asyncio.Event | None = None
-        self.process_logs_started = asyncio.Event()
+        self.process_status_polled = asyncio.Event()
         self.process = FakeProcess(self)
         self.fs = FakeFileSystem(self)
         if host_root is not None:

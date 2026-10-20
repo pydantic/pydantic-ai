@@ -74,7 +74,7 @@ async def run_python(ctx: RunContext, code: str) -> str:
     return result.stdout + result.stderr
 ```
 
-Commands run under `sh -c` as the non-root `daytona` user. File reads refuse FIFOs rather than waiting for a writer. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode: the backend uploads beside the target and renames it into place, so a write cut off by a killed process can leave a temporary file next to it.
+Commands run under `sh -c` as the non-root `daytona` user. File reads refuse FIFOs rather than waiting for a writer. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode.
 
 ### What a timeout stops
 

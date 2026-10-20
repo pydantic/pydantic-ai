@@ -56,8 +56,8 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._RETRY_DELAY', 0)
 
 
-# Every command runs under a `sh` that prints a per-command end marker last on both streams.
-_WRAPPER = 'sh -c \'"$@" </dev/null >/tmp/MARK.out 2>/tmp/MARK.err; status=$?; printf %s MARK; exit "$status"\' sh'
+# Every command runs under a `sh` that sends its stdout and stderr to per-command files.
+_WRAPPER = 'sh -c \'"$@" </dev/null >/tmp/MARK.out 2>/tmp/MARK.err\' sh'
 
 
 def _unmarked(command: str | None) -> str:
@@ -77,16 +77,6 @@ async def started(**settings: Any) -> DaytonaSandboxBackend:
 
 
 class TestConformance:
-    async def test_owned_client_silences_engineio_default_error_log(self, fake_daytona: FakeDaytona) -> None:
-        logger = logging.getLogger('engineio.client')
-        previous = logger.level
-        try:
-            logger.setLevel(logging.NOTSET)
-            await DaytonaSandboxBackend().get_sandbox()
-            assert logger.level == logging.CRITICAL
-        finally:
-            logger.setLevel(previous)
-
     async def test_provider_destroy_does_not_start_sandbox(self, fake_daytona: FakeDaytona) -> None:
         sandbox = fake_daytona.sandbox('sb-cleanup')
         sandbox.state = daytona.SandboxState.STOPPED
@@ -206,13 +196,6 @@ class TestCommands:
         assert _unmarked(sandbox.process_command).endswith("sh env -- 'A=x y' printf 'a b'")
         assert sandbox.process_sessions == set()
 
-    async def test_missing_exit_status_is_provider_error(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        fake_daytona.sandboxes[0].process_stdout = ['']
-        fake_daytona.sandboxes[0].process_exit_code = None
-        with pytest.raises(WorkspaceError, match='before reporting an exit status'):
-            await backend.run(['true'])
-
     async def test_sandbox_env_is_layered_under_the_command_env(self, fake_daytona: FakeDaytona) -> None:
         backend = await started(env={'A': '1', 'B': '2'})
         await backend.run(['true'], env={'B': '3'})
@@ -237,26 +220,6 @@ class TestCommands:
         await DaytonaSandboxBackend().run(['true'])
         assert '"$@" </dev/null' in fake_daytona.sandboxes[-1].process_command
 
-    async def test_output_comes_from_the_files_not_the_log_stream(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # SDK 0.198.0's stream demultiplexer injects prefix bytes and misroutes output above ~4 KB, and
-        # Daytona's stored logs can file output under the wrong stream; the files hold the exact bytes.
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['1\n2\n']
-
-        async def corrupt_stream(session_id: str, command_id: str, on_stdout: Any, on_stderr: Any) -> None:
-            marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', sandbox.process_command)
-            assert marker is not None
-            on_stdout('1\n\x01\x01\x012\n' + marker.group())
-            on_stderr('\x02\x02\x02')
-
-        monkeypatch.setattr(sandbox.process, 'get_session_command_logs_async', corrupt_stream)
-        result = await backend.run(['seq', '1', '2'])
-        assert (result.stdout, result.stderr) == ('1\n2\n', '')
-        assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
-
     async def test_large_output_is_exact_and_a_timeout_keeps_a_bounded_tail(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
@@ -270,27 +233,7 @@ class TestCommands:
             await backend.run(['true'], timeout=0.01)
         assert (exc_info.value.stdout, exc_info.value.stderr) == (('abc' * 20000)[-4096:], ('def' * 20000)[-4096:])
 
-    async def test_split_markers_stop_open_follow_stream(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-
-        async def split_markers(session_id: str, command_id: str, on_stdout: Any, on_stderr: Any) -> None:
-            marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', sandbox.process_command)
-            assert marker is not None
-            on_stdout(marker.group()[:9])
-            on_stdout(marker.group()[9:])
-            await asyncio.Event().wait()
-
-        monkeypatch.setattr(sandbox.process, 'get_session_command_logs_async', split_markers)
-        sandbox.process_stdout = ['before']
-        with anyio.fail_after(1):
-            result = await backend.run(['true'])
-        assert result.stdout == 'before'
-        assert sandbox.process_sessions == set()
-
-    async def test_status_catches_up_after_follow_stream_closes(
+    async def test_status_is_polled_until_the_command_exits(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         backend = await started()
@@ -310,17 +253,6 @@ class TestCommands:
         result = await backend.run(['true'])
         assert result.exit_code == 0
         assert calls >= 2
-
-    async def test_completed_markers_end_a_follow_stream_left_open(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['complete out']
-        sandbox.process_stderr = ['complete err']
-        sandbox.process_follow_open = True
-        with anyio.fail_after(1):
-            result = await backend.run(['true'], timeout=0.5)
-        assert (result.exit_code, result.stdout, result.stderr) == (0, 'complete out', 'complete err')
-        assert sandbox.process_sessions == set()
 
     @pytest.mark.parametrize(
         ('error', 'expected'),
@@ -365,12 +297,6 @@ class TestCommands:
         with pytest.raises(WorkspaceError, match=r"^Could not read the command output sizes: 'wc: oops'$"):
             await backend.run(['true'])
 
-    async def test_log_read_failure_propagates(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        fake_daytona.sandboxes[0].process_logs_error = RuntimeError('logs failed')
-        with pytest.raises(RuntimeError, match='logs failed'):
-            await backend.run(['true'])
-
     @pytest.mark.usefixtures('no_retry_delay')
     async def test_deadline_carries_partial_output_and_kills(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -386,41 +312,15 @@ class TestCommands:
         assert sandbox.process_sessions == set()
         assert not [path for path in sandbox.files if path.startswith('/tmp/pydantic-ai-end-')]
 
-    async def test_end_markers_before_the_exit_status_keep_polling(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The log stream can deliver the wrapper's last marker before the status RPC has the exit code.
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_stdout = ['out']
-        sandbox.process_follow_open = True
-        statuses = iter([None, 0])
-
-        async def lagging_status(*args: object, **kwargs: object) -> SimpleNamespace:
-            return SimpleNamespace(exit_code=next(statuses))
-
-        monkeypatch.setattr(sandbox.process, 'get_session_command', lagging_status)
-        result = await backend.run(['true'])
-        assert (result.exit_code, result.stdout) == (0, 'out')
-
     async def test_deadline_includes_exit_status_rpc(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_stdout = ['complete output']
-        # The follow stream delivers both end markers, so the wait reaches the status RPC, which stalls.
-        sandbox.process_follow_open = True
         sandbox.process_status_gate = asyncio.Event()
         with pytest.raises(WorkspaceTimeoutError) as exc_info:
             await backend.run(['true'], timeout=0.05)
         assert exc_info.value.stdout == 'complete output'
         assert sandbox.process_sessions == set()
-
-    async def test_owned_client_closed_during_run_raises_workspace_error(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_logs_error = DaytonaError('Daytona client is closed')
-        with pytest.raises(WorkspaceError, match='backend was closed'):
-            await backend.run(['true'])
 
     async def test_session_not_found_on_a_live_sandbox_is_a_workspace_error(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
@@ -459,7 +359,7 @@ class TestCommands:
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_hangs = True
         task = asyncio.create_task(backend.run(['sleep', '30'], timeout=5))
-        await sandbox.process_logs_started.wait()
+        await sandbox.process_status_polled.wait()
         await sandbox.delete()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -474,7 +374,7 @@ class TestCommands:
         sandbox.process_hangs = True
         sandbox.process_delete_errors = iter([DaytonaError('bad gateway', status_code=502)])
         task = asyncio.create_task(backend.run(['sleep', '30']))
-        await sandbox.process_logs_started.wait()
+        await sandbox.process_status_polled.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -522,7 +422,6 @@ class TestCommands:
     async def test_aclose_waits_for_overlapping_runs(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         sandbox = fake_daytona.sandboxes[0]
-        sandbox.process_follow_open = True
         sandbox.process_status_gate = gate = asyncio.Event()
         runs = [asyncio.create_task(backend.run(['true'])) for _ in range(2)]
         with anyio.fail_after(5):
@@ -909,21 +808,6 @@ class TestErrorsAndFilesystem:
         with pytest.raises(IsADirectoryError, match=r"^Is a directory in the Daytona sandbox: '/pkg'$"):
             await backend.read_bytes('/pkg')
 
-    async def test_a_failed_replace_keeps_the_target(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.files['/note'] = b'original'
-
-        async def lost_upload(data: bytes, path: str, timeout: int = 1800) -> None:
-            pass  # accepted, but the staged file never lands, so the rename fails
-
-        monkeypatch.setattr(sandbox.fs, 'upload_file', lost_upload)
-        with pytest.raises(WorkspaceError, match=r"^Could not replace '/note': missing stage$"):
-            await backend.write_bytes('/note', b'replacement')
-        assert sandbox.files == {'/note': b'original'}
-
     @pytest.mark.parametrize('find', ['error', 'failure'])
     async def test_symlink_lookup_failures(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, find: str
@@ -968,27 +852,7 @@ class TestErrorsAndFilesystem:
         with pytest.raises(NotADirectoryError, match=r"^Not a directory in the Daytona sandbox: '/pkg'$"):
             await backend.make_dir('/pkg')
 
-    async def test_interrupted_upload_preserves_target_and_cleans_stage(
-        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        backend = await started()
-        sandbox = fake_daytona.sandboxes[0]
-        sandbox.files['/old'] = b'original'
-        original = sandbox.fs.upload_file
-
-        async def interrupted(data: bytes, path: str, timeout: int = 1800) -> None:
-            await original(data[:3], path, timeout=timeout)
-            raise asyncio.CancelledError
-
-        monkeypatch.setattr(sandbox.fs, 'upload_file', interrupted)
-        for path in ('/old', '/new'):
-            with pytest.raises(asyncio.CancelledError):
-                await backend.write_bytes(path, b'replacement')
-        assert sandbox.files == {'/old': b'original'}
-
-    async def test_staged_write_follows_symlink_and_preserves_mode(
-        self, fake_daytona: FakeDaytona, tmp_path: Path
-    ) -> None:
+    async def test_write_follows_symlink_and_preserves_mode(self, fake_daytona: FakeDaytona, tmp_path: Path) -> None:
         fake_daytona.host_root = tmp_path.resolve()
         backend = await started()
         target = tmp_path / 'target'
@@ -1022,12 +886,6 @@ class TestErrorsAndFilesystem:
         with pytest.raises(PermissionError):
             await backend.write_bytes(f'{tmp_path}/locked/pkg/a.py', b'x')
 
-    async def test_other_parent_directory_failures_are_workspace_errors(self, fake_daytona: FakeDaytona) -> None:
-        backend = await started()
-        fake_daytona.sandboxes[0].mkdir_exit_code = 1
-        with pytest.raises(WorkspaceError, match='Could not create'):
-            await backend.write_bytes('/pkg/a.py', b'x')
-
     @pytest.mark.parametrize(
         ('message', 'expected'),
         [
@@ -1053,6 +911,16 @@ class TestErrorsAndFilesystem:
         assert await backend.exists('/loop') is False
         with pytest.raises(OSError) as raised:
             await backend.stat('/loop')
+        assert raised.value.errno == errno.ELOOP
+
+    async def test_reading_a_symlink_loop_is_eloop(self, fake_daytona: FakeDaytona) -> None:
+        # The toolbox answers a download through a loop with a 500, not the 400 a stat gets (observed live).
+        backend = await started()
+        fake_daytona.sandboxes[0].download_error = DaytonaError(
+            'Failed to download file: open /loop: too many levels of symbolic links', status_code=500
+        )
+        with pytest.raises(OSError) as raised:
+            await backend.read_bytes('/loop')
         assert raised.value.errno == errno.ELOOP
         # Any other path error is not an answer.
         fake_daytona.sandboxes[0].fs_error = DaytonaBadRequestError('Permission denied', status_code=400)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -20,6 +21,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+from pydantic_ai_harness.daytona_sandbox._backend import _close_client  # pyright: ignore[reportPrivateUsage]
 
 from .._tool_calls import call_tools
 from .fake_daytona import FakeDaytona
@@ -227,12 +229,26 @@ async def test_cancelled_run_closes_owned_client_mid_command(fake_daytona: FakeD
             await asyncio.sleep(0)
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_hangs = True
-        await sandbox.process_logs_started.wait()
+        await sandbox.process_status_polled.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
+    # Promptly: the run's client close must not wait on the command it is cancelling.
+    with anyio.fail_after(10), pytest.raises(asyncio.CancelledError):
         await task
     assert fake_daytona.closed_clients == 1
     assert sandbox.process_sessions == set()
+
+
+async def test_closing_a_client_waits_for_its_cancelled_event_connection() -> None:
+    connecting = asyncio.create_task(asyncio.Event().wait())
+
+    class Client:
+        _event_dispatcher = SimpleNamespace(_connect_task=connecting)
+
+        async def close(self) -> None:
+            connecting.cancel()  # what `AsyncDaytona.close()` does, without waiting
+
+    await _close_client(Client())  # pyright: ignore[reportArgumentType]
+    assert connecting.cancelled()
 
 
 async def test_run_closes_the_client_it_opened_and_the_result_workspace_reopens(fake_daytona: FakeDaytona) -> None:
