@@ -4,15 +4,18 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
+import gc
 import hashlib
 import io
 import json
 import re
 import wave
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Literal, cast, get_args, get_origin
+from typing import Any, Literal, TypeAlias, cast, get_args, get_origin
 from unittest.mock import patch
 
 import anyio
@@ -38,14 +41,20 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -66,14 +75,18 @@ from pydantic_ai.realtime import (
     RealtimeOutputSpeechStartEvent,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     WebRTCSession,
 )
+from pydantic_ai.realtime._instrumentation import SessionInstrumentation
+from pydantic_ai.realtime._lifecycle import ResponseStarted, UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     realtime_websocket_url,
     replay_items,
+    seed_items,
     server_vad_from_turn_detection,
 )
 from pydantic_ai.realtime.codec import (
@@ -99,9 +112,10 @@ from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
 from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, try_import
+from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -657,8 +671,7 @@ def test_map_conversation_item_lifecycle_events_carry_identifiers(event_type: st
     assert map_conversation_event(
         {'type': event_type, 'item': {'id': 'item-2', 'type': 'function_call', 'call_id': 'call-1'}}
     ) == ConversationItemCreated(item_id='item-2', tool_call_id='call-1', replayed=False)
-    # `replayed=True` is set only by the reconnect handshake's burst capture, and marks the item as
-    # already-seen history rather than a live event.
+    # `replayed=True` marks the item as already-seen history rather than a live event.
     assert map_conversation_event({'type': event_type, 'item': {'id': 'item-3'}}, replayed=True) == (
         ConversationItemCreated(item_id='item-3', tool_call_id=None, replayed=True)
     )
@@ -1915,6 +1928,95 @@ async def test_replay_items_strips_media_and_keeps_tagged_text() -> None:
     ]
 
 
+async def test_replay_items_marks_a_spoken_turn_without_a_transcript() -> None:
+    """A spoken turn with no transcript replays as a marker, so the answer to it isn't left unprompted.
+
+    Each such turn gets its own marker, including one at the very end that was never answered: the
+    model should still know the user spoke. History itself keeps the `SpeechPart`.
+    """
+    audio = BinaryContent(data=b'\x02\x03', media_type='audio/wav')
+    history = [
+        ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Sure, booked for Friday.', audio=audio)]),
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+        ModelRequest(parts=[SpeechPart(speaker='user', transcript='')]),
+        ModelResponse(parts=[TextPart(content='Anything else?')]),
+        ModelRequest(parts=[SpeechPart(speaker='user')]),
+    ]
+
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == snapshot(
+        [
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, booked for Friday.'}],
+            },
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Anything else?'}]},
+            {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': '[The user spoke; no transcript is available.]'}],
+            },
+        ]
+    )
+    assert history[0].parts == [SpeechPart(speaker='user', audio=audio)]
+
+
+async def test_seeding_and_replay_mark_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='Book me a flight.')]),
+        # Cut off where the listener stopped hearing it.
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        # Interrupted with no offset reported: the last speech part is marked.
+        ModelResponse(
+            parts=[
+                SpeechPart(speaker='assistant', transcript='Let me check.'),
+                SpeechPart(speaker='assistant', transcript='It leaves at'),
+            ],
+            state='interrupted',
+        ),
+        # Nothing was transcribed, so there is still nothing to seed.
+        ModelResponse(parts=[SpeechPart(speaker='assistant', interrupted_at_ms=0)], state='interrupted'),
+    ]
+
+    expected = snapshot(
+        [
+            {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Book me a flight.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Sure, the morning flight\n[Interrupted after 640 ms]'}],
+            },
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'Let me check.'}]},
+            {
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'It leaves at\n[Interrupted]'}],
+            },
+        ]
+    )
+    assert await replay_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
+    assert await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai') == expected
+
+
 async def test_replay_items_keeps_failed_multimodal_tool_return_wrapped_once() -> None:
     history = [
         ModelResponse(parts=[ToolCallPart(tool_name='inspect', args={}, tool_call_id='call-image')]),
@@ -2602,6 +2704,74 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
             ),
             response_scoped=False,
         ),
+    ]
+
+
+async def test_idle_timeout_commit_with_failed_transcription_records_no_user_turn() -> None:
+    """A failed transcription of the silent idle-timeout item is no spoken turn either, so history gets none."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {
+            'type': 'conversation.item.input_audio_transcription.failed',
+            'item_id': 'idle',
+            'content_index': 0,
+            'error': {'type': 'server_error', 'code': 'transcription_failed', 'message': 'No speech.'},
+        },
+    ]
+    connection = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        events = await collect_session_events(session)
+
+    assert not any(isinstance(event, RealtimeInputTranscriptionErrorEvent) for event in events)
+    assert session.new_messages() == []
+    assert connection._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() -> None:
+    """With transcription off, no transcript retires the idle-timeout item, so its commit does."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+    ]
+    ws = FakeWebSocket([json.dumps(frame) for frame in frames])
+    conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
+    events = [event async for event in lifecycle_events(conn)]
+
+    assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
+    assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
+    """The silent buffer server VAD commits when `idle_timeout_ms` runs out yields no user turn or transcript.
+
+    Its transcription is still billed, so its usage is reported. The recorded conversation is
+    `test_openai_ws.py::test_idle_timeout_nudge_is_not_a_user_turn`; this pins the transcript deltas it lacks,
+    and that a later spoken turn is still reported.
+    """
+    usage = {'type': 'duration', 'seconds': 5}
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'idle', 'delta': ''},
+        {
+            'type': 'conversation.item.input_audio_transcription.completed',
+            'item_id': 'idle',
+            'transcript': '',
+            'usage': usage,
+        },
+        {'type': 'input_audio_buffer.committed', 'item_id': 'spoken', 'previous_item_id': 'idle'},
+    ]
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame) for frame in frames]))  # type: ignore[arg-type]
+    events = [event async for event in lifecycle_events(conn)]
+
+    assert events[:-1] == [
+        SessionUsage(usage=RequestUsage(details={'input_transcription_seconds': 5}), response_scoped=False),
+        UserTurnStarted(turn_id='spoken'),
+        UserTurnEnded(turn_id='spoken'),
     ]
 
 
@@ -4460,7 +4630,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
                     'type': 'function_call',
                     'name': 'get_weather',
                     'call_id': 'tc_1',
-                    'arguments': '{"city": "Paris"}',
+                    'arguments': '{"city":"Paris"}',
                 },
             },
             {
@@ -4576,6 +4746,58 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
 
+async def test_a_tool_batch_response_request_lost_to_a_drop_is_not_asked_for_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `response.create` a caller's last tool result sends for its batch is taken back too when it fails.
+
+    The caller was told the result failed (and the session expects no reply for that batch), so the
+    reconnect mustn't ask for one.
+    """
+
+    class _DropsOnCreate(_DroppableWebSocket):
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                self.drop()
+            await super().send(data)
+
+    first, second = _DropsOnCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        events = conn.__aiter__()
+        call = {'type': 'function_call', 'id': 'fc1', 'call_id': 'call_1', 'name': 't', 'arguments': '{}'}
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        first.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'A',
+                'item_id': 'fc1',
+                'output_index': 0,
+                'call_id': 'call_1',
+                'name': 't',
+                'arguments': '{}',
+            }
+        )
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': [call]}))
+        while not isinstance(await anext(events), ToolCall):
+            pass
+        while conn._response_active:  # pyright: ignore[reportPrivateUsage]
+            await anext(events)
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(ToolResult(tool_call_id='call_1', output='42'))
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        assert isinstance(await anext(events), RealtimeSessionReconnectEvent)
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
 async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4652,12 +4874,11 @@ async def test_a_stale_response_request_failing_after_the_redial_keeps_the_repla
 
 
 @pytest.mark.anyio
-async def test_requests_merged_into_a_deferred_response_create_are_reported() -> None:
-    """Requests joining one already deferred get no `response.create` of their own, and the session is told.
+async def test_requests_joining_a_deferred_response_create_share_it() -> None:
+    """Requests joining one already deferred get no `response.create` of their own.
 
     The connection keeps a single deferred `response.create`, which answers everything added before it
-    goes out. The session reserves one response per request, so each merged request is reported for
-    it to release.
+    goes out: the response it starts names them all as what it answers.
     """
     done = json.dumps({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': []}})
     created = json.dumps(
@@ -4670,30 +4891,10 @@ async def test_requests_merged_into_a_deferred_response_create_are_reported() ->
     await conn.send('third')  # joins the deferred request
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))  # joins it too
 
-    events = await collect_codec_events(conn)
-    # Reported once the shared response has started, not when the requests joined: a refused
-    # `response.create` takes back every request it carried instead.
-    assert [type(event).__name__ for event in events] == ['ResponseDone']
-    assert conn._take_merged_response_requests() == 2  # pyright: ignore[reportPrivateUsage]
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
+    frames = [frame async for frame in conn.frames()]
+    started = [event for frame in frames for event in frame if isinstance(event, ResponseStarted)]
+    assert started[-1].answers == (1, 2, 3)
     assert [json.loads(frame)['type'] for frame in ws.sent].count('response.create') == 2
-
-
-@pytest.mark.anyio
-async def test_response_started_by_the_server_reports_no_merged_requests() -> None:
-    """Only the start of the response a `response.create` asked for settles the requests it carried."""
-    created = [
-        json.dumps({'type': 'response.created', 'response': {'id': rid, 'status': 'in_progress', 'output': []}})
-        for rid in ('resp-1', 'resp-2')
-    ]
-    conn = OpenAIRealtimeConnection(FakeWebSocket(created))  # type: ignore[arg-type]
-    await conn.send('first')
-    await conn.send('second')  # deferred behind the first
-    await conn.send('third')  # joins the deferred request
-    # A second `response.created` while the first response is still active (a server-started response)
-    # is not the deferred request starting.
-    await collect_codec_events(conn)
-    assert conn._take_merged_response_requests() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 class _QueuedWebSocket(FakeWebSocket):
@@ -4762,7 +4963,6 @@ async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() ->
     ]
 
 
-@pytest.mark.shadow_divergence(reason='SIM-2a: turns sent after the reply started are filed after it, not before')
 @pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
@@ -4788,7 +4988,7 @@ async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for
             ws.push(frame)
         with anyio.fail_after(5):
             await session.wait_for_reply()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     transcripts = [
         part.transcript
@@ -4944,9 +5144,6 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
             await session.wait_for_reply()
 
 
-@pytest.mark.shadow_divergence(
-    reason="SIM-2a: a turn sent after the batch's answer was requested is filed after that answer"
-)
 @pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.
@@ -5010,3 +5207,1000 @@ async def test_tool_batch_response_create_counts_as_one_request() -> None:
             ws.push(frame)
         with anyio.fail_after(5):
             await waiting
+
+
+@pytest.mark.anyio
+async def test_a_reply_waits_for_the_transcript_of_the_turn_before_it_for_a_while(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History holds the reply back until the spoken turn before it is transcribed, but not for longer than that hold."""
+    monkeypatch.setattr('pydantic_ai.realtime._session._TRANSCRIPT_HOLD_SECONDS', 0.05)
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        frames: list[dict[str, Any]] = [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.output_audio_transcript.delta',
+                'response_id': 'resp_1',
+                'item_id': 'item_a1',
+                'delta': 'Hello.',
+            },
+            {
+                'type': 'response.done',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        # The reply is done, but held back behind the turn before it, until the hold runs out.
+        assert session.all_messages() == []
+        with anyio.fail_after(5):
+            while not session.all_messages():
+                await asyncio.sleep(0.01)
+        # The transcript coming after all changes nothing already recorded.
+        ws.push(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'item_id': 'item_u1',
+                'content_index': 0,
+                'transcript': 'Hi.',
+            }
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert [[getattr(part, 'transcript', None) for part in message.parts] for message in session.all_messages()] == [
+        [None],
+        ['Hello.'],
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_server_vad_reply_at_the_request_limit_is_not_counted_twice() -> None:
+    """The core counts the reply as its terminal frame arrives; the limit check it makes then mustn't count it again."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        usage_limits=UsageLimits(request_limit=1),
+    )
+    async with session:
+        frames: list[dict[str, Any]] = [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp_1',
+                    'object': 'realtime.response',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_tokens': 5, 'output_tokens': 0, 'total_tokens': 5},
+                },
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert session.usage.requests == 1
+
+
+@pytest.mark.anyio
+async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The core records a response as its terminal arrives, before the span ends: the span's input must not hold it."""
+    ended: list[tuple[list[ModelMessage], ModelResponse | None]] = []
+    end_chat_span = SessionInstrumentation.end_chat_span
+
+    def record(
+        self: SessionInstrumentation,
+        response_id: str,
+        input_messages: list[ModelMessage],
+        response: ModelResponse | None,
+    ) -> None:
+        ended.append((input_messages, response))
+        end_chat_span(self, response_id, input_messages, response)
+
+    monkeypatch.setattr(SessionInstrumentation, 'end_chat_span', record)
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('Hi.')
+        frames: list[dict[str, Any]] = [
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.output_audio_transcript.delta',
+                'response_id': 'resp_1',
+                'item_id': 'item_a1',
+                'delta': 'Hello.',
+            },
+            {
+                'type': 'response.done',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        for _ in range(20):
+            await asyncio.sleep(0)
+    [(input_messages, response)] = ended
+    assert response is not None
+    assert [type(message).__name__ for message in input_messages] == ['ModelRequest']
+
+
+class _DropAfterFrames(FakeWebSocket):
+    """Yields its frames after the handshake, then drops abnormally."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+
+
+@pytest.mark.parametrize('transcript', ['Weather?', None])
+async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
+    monkeypatch: pytest.MonkeyPatch, transcript: str | None
+) -> None:
+    """History holds the reply back for the spoken turn's transcript, but the new socket must still get both.
+
+    A turn with no transcript at all has no words to replay (replay leaves media behind), so it goes out as the
+    marker that says the user spoke.
+    """
+    frames: list[dict[str, Any]] = [
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+        *(
+            [{'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'item_u1', 'delta': transcript}]
+            if transcript
+            else []
+        ),
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Sunny.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    dropped = _DropAfterFrames([_created(), _updated(), *map(json.dumps, frames)])
+    fresh = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _ConnectSequence([dropped, fresh]))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}},
+    )
+
+    async with Agent().realtime(model).session() as session:
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeSessionReconnectEvent):
+                    break
+
+    replayed = [
+        json.loads(frame)['item'] for frame in fresh.sent if json.loads(frame)['type'] == 'conversation.item.create'
+    ]
+    assert [
+        (item['role'], item['content'][0].get('text') or item['content'][0].get('transcript')) for item in replayed
+    ] == [
+        ('user', transcript or '[The user spoke; no transcript is available.]'),
+        ('assistant', 'Sunny.'),
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_conversation_id_resolved_late_reaches_the_core_history() -> None:
+    """`RealtimeSession.conversation` mints the id late; the replies the session core recorded before carry it too."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    frames: list[dict[str, Any]] = [
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Hello.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    async with session:
+        await session.send('Hi.')
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        conversation = session.conversation
+
+    assert conversation.conversation_id is not None
+    assert [message.conversation_id for message in conversation.messages] == [conversation.conversation_id] * 2
+
+
+@pytest.mark.anyio
+async def test_audio_that_fails_to_go_out_never_reaches_the_core() -> None:
+    class _FailingAudio(_QueuedWebSocket):
+        async def send(self, data: str) -> None:
+            raise OSError('gone')  # (the audio is all this session sends)
+
+    ws = _FailingAudio()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    async with session:
+        with pytest.raises(RealtimeError):
+            await session.send_audio(b'\x01\x00' * 100)
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None
+        assert not core._input_audio  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_a_failed_send_leaves_its_audio_out_while_another_waits_to_go_out() -> None:
+    """Two chunks sent at once go out one after the other: the first failing never adds its audio, and the second's goes in."""
+
+    class _FirstAudioFails(_QueuedWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = asyncio.Event()
+            self.fail = asyncio.Event()
+            self.sends = 0
+
+        async def send(self, data: str) -> None:
+            self.sends += 1
+            if self.sends == 1:
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
+
+    ws = _FirstAudioFails()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    first, second = b'\x01\x00' * 100, b'\x02\x00' * 50
+    async with session:
+        first_send = asyncio.create_task(session.send_audio(first))
+        await ws.sending.wait()
+        second_send = asyncio.create_task(session.send_audio(second))
+        await asyncio.sleep(0)
+        ws.fail.set()
+        with pytest.raises(RealtimeError):
+            await first_send
+        await second_send
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None
+        assert bytes(core._input_audio) == second  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
+    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails.
+
+    The provider committed its buffer before it had the chunk, so the chunk is no part of that turn whether or not
+    its send succeeds: history and the streamed part both hold only the audio that went out ahead of the commit.
+    """
+
+    class _SecondAudioFails(_QueuedWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = asyncio.Event()
+            self.fail = asyncio.Event()
+            self.sends = 0
+
+        async def send(self, data: str) -> None:
+            self.sends += 1
+            if self.sends == 2:  # (the audio is all this session sends)
+                self.sending.set()
+                await self.fail.wait()
+                raise OSError('gone')
+            await super().send(data)
+
+    ws = _SecondAudioFails()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+    sent, unsent = b'\x01\x00' * 100, b'\x02\x00' * 50
+    streamed: list[SpeechPart] = []
+    async with session:
+        await session.send_audio(sent)
+        failing_send = asyncio.create_task(session.send_audio(unsent))
+        await ws.sending.wait()
+        for frame in [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'item_id': 'item_u1',
+                'content_index': 0,
+                'transcript': 'Hi.',
+            },
+        ]:
+            ws.push(frame)
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                streamed.append(event.part)
+                break
+        # The turn is recorded while the chunk is still going out; then its send fails.
+        assert session.all_messages()
+        ws.fail.set()
+        with pytest.raises(RealtimeError):
+            await failing_send
+        history = session.all_messages()
+
+    [request] = history
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.transcript == 'Hi.' and part.audio is not None
+    assert part.audio.data[44:] == sent
+    [streamed_part] = streamed
+    assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
+
+
+@pytest.mark.anyio
+async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
+    """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
+
+    The part streamed as an event keeps its audio too.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+    )
+    frames: list[dict[str, Any]] = [
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': base64.b64encode(b'\x01\x00' * 100).decode('ascii'),
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Hello.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    async with session:
+        await session.send('Hi.')
+        for frame in frames:
+            ws.push(frame)
+        streamed: list[SpeechPart] = []
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                streamed.append(event.part)
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        seen_by_tools = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
+        history = session.all_messages()
+
+    def speech(messages: list[ModelMessage]) -> list[SpeechPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, SpeechPart)]
+
+    assert [part.transcript for part in speech(history)] == ['Hello.']
+    assert all(part.audio is not None for part in speech(history))
+    # The same messages, not copies.
+    assert all(seen is recorded for seen, recorded in zip(seen_by_tools, history, strict=True))
+    assert [part.audio is not None for part in streamed] == [True]
+
+
+def _assistant_item(item_id: str, phase: str, content: list[dict[str, Any]], *, done: bool) -> dict[str, Any]:
+    status = 'completed' if done else 'in_progress'
+    return {'id': item_id, 'type': 'message', 'status': status, 'role': 'assistant', 'phase': phase, 'content': content}
+
+
+def _item_done(item_id: str, output_index: int, phase: str, transcript: str, *, text: bool) -> list[dict[str, Any]]:
+    """The frames that finish an item, in the order https://github.com/pydantic/pydantic-ai/issues/10095 lists them."""
+    common = {'response_id': 'resp_1', 'item_id': item_id, 'output_index': output_index, 'content_index': 0}
+    if text:
+        content: dict[str, Any] = {'type': 'output_text', 'text': transcript}
+        part: dict[str, Any] = {'type': 'text', 'text': transcript}
+        finished = [{'type': 'response.output_text.done', **common, 'text': transcript}]
+    else:
+        content = {'type': 'output_audio', 'transcript': transcript}
+        part = {'type': 'audio', 'transcript': transcript}
+        finished = [
+            {'type': 'response.output_audio.done', **common},
+            {'type': 'response.output_audio_transcript.done', **common, 'transcript': transcript},
+        ]
+    item = _assistant_item(item_id, phase, [content], done=True)
+    return [
+        *finished,
+        {'type': 'response.content_part.done', **common, 'part': part},
+        {'type': 'response.output_item.done', 'response_id': 'resp_1', 'output_index': output_index, 'item': item},
+        {'type': 'conversation.item.done', 'previous_item_id': None, 'item': item},
+    ]
+
+
+def _two_item_response(
+    *steps: tuple[Literal['delta', 'text', 'audio', 'done'], str, str], text: bool = False
+) -> list[dict[str, Any]]:
+    """A response with items `a` (`commentary`) and `b` (`final_answer`), each added before its first step.
+
+    Each step is a transcript delta in the response's output modality, an output-text delta whatever the modality,
+    a base64 audio delta, or the frames that finish the item, with its final transcript.
+    """
+    items = {'a': (0, 'commentary'), 'b': (1, 'final_answer')}
+    frames: list[dict[str, Any]] = [
+        {'type': 'response.created', 'response': {'id': 'resp_1', 'status': 'in_progress', 'output': []}}
+    ]
+    opened: set[str] = set()
+    for kind, item, payload in steps:
+        output_index, phase = items[item]
+        common = {'response_id': 'resp_1', 'item_id': item, 'output_index': output_index}
+        if item not in opened:
+            opened.add(item)
+            added = _assistant_item(item, phase, [], done=False)
+            frames += [
+                {
+                    'type': 'response.output_item.added',
+                    'response_id': 'resp_1',
+                    'output_index': output_index,
+                    'item': added,
+                },
+                {'type': 'conversation.item.added', 'previous_item_id': None, 'item': added},
+                {
+                    'type': 'response.content_part.added',
+                    **common,
+                    'content_index': 0,
+                    'part': {'type': 'text', 'text': ''} if text else {'type': 'audio', 'transcript': ''},
+                },
+            ]
+        if kind == 'done':
+            frames += _item_done(item, output_index, phase, payload, text=text)
+        elif kind == 'audio':
+            frames.append({'type': 'response.output_audio.delta', **common, 'content_index': 0, 'delta': payload})
+        else:
+            delta_type = (
+                'response.output_text.delta' if text or kind == 'text' else 'response.output_audio_transcript.delta'
+            )
+            frames.append({'type': delta_type, **common, 'delta': payload})
+    frames.append({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
+    return frames
+
+
+RecordedPart: TypeAlias = tuple[str, str | None, dict[str, Any] | None]
+"""A recorded part's type name, text, and provider details."""
+
+StreamStep: TypeAlias = tuple[Literal['start', 'delta', 'end'], int, str | None]
+"""A streamed part event's kind, index relative to the first streamed part, and text."""
+
+
+@dataclass(frozen=True)
+class LateTranscriptCase:
+    id: str
+    frames: list[dict[str, Any]]
+    history: list[RecordedPart]
+    stream: list[StreamStep]
+
+
+LATE_TRANSCRIPT_CASES = [
+    LateTranscriptCase(
+        id='in-order',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('done', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # The order https://github.com/pydantic/pydantic-ai/issues/10095 reports: every item's deltas, then every
+        # item's `done` frames.
+        id='late-done',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'a', ' world.'),
+            ('delta', 'b', 'Bonjour'),
+            ('delta', 'b', ' tout le monde.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour tout le monde.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour tout le monde.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour'),
+                ('delta', 1, ' tout le monde.'),
+                ('end', 1, 'Bonjour tout le monde.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        id='late-done-empty',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello world.'),
+            ('delta', 'b', 'Bonjour.'),
+            ('done', 'a', ''),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello world.'),
+                ('end', 0, 'Hello world.'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Text the stream has not shown yet streams the item's part again under its own index, which replaces it,
+        # while the part under way keeps streaming.
+        id='late-delta',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Each late delta streams the item's part again, with the transcript so far.
+        id='late-deltas',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' there'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello there world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello there world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' there'),
+                ('end', 0, 'Hello there'),
+                ('start', 0, 'Hello there'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello there world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        # Text output for an item whose part is speech isn't the same part's text, so it opens a part of its own.
+        id='late-delta-other-modality',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('text', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+        ),
+        history=snapshot(
+            [
+                ('SpeechPart', 'Hello', {'phase': 'commentary'}),
+                ('SpeechPart', 'Bonjour.', {'phase': 'final_answer'}),
+                ('TextPart', ' world.', {'phase': 'commentary'}),
+                ('SpeechPart', 'Hello world.', {'phase': 'commentary'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('end', 1, 'Bonjour.'),
+                ('start', 2, ''),
+                ('delta', 2, ' world.'),
+                ('end', 2, ' world.'),
+                ('start', 3, ''),
+                ('delta', 3, 'Hello world.'),
+                ('end', 3, 'Hello world.'),
+            ]
+        ),
+    ),
+    LateTranscriptCase(
+        id='late-delta-text-output',
+        frames=_two_item_response(
+            ('delta', 'a', 'Hello'),
+            ('delta', 'b', 'Bonjour.'),
+            ('delta', 'a', ' world.'),
+            ('done', 'a', 'Hello world.'),
+            ('done', 'b', 'Bonjour.'),
+            text=True,
+        ),
+        history=snapshot(
+            [
+                ('TextPart', 'Hello world.', {'phase': 'commentary'}),
+                ('TextPart', 'Bonjour.', {'phase': 'final_answer'}),
+            ]
+        ),
+        stream=snapshot(
+            [
+                ('start', 0, ''),
+                ('delta', 0, 'Hello'),
+                ('end', 0, 'Hello'),
+                ('start', 1, ''),
+                ('delta', 1, 'Bonjour.'),
+                ('start', 0, 'Hello'),
+                ('delta', 0, ' world.'),
+                ('end', 0, 'Hello world.'),
+                ('end', 1, 'Bonjour.'),
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in LATE_TRANSCRIPT_CASES])
+async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscriptCase) -> None:
+    """A transcript that arrives for an item after a later item's content keeps that item to one part.
+
+    Both in history and in the event stream: a late transcript that adds nothing streams nothing, and one that
+    adds text streams the item's part again under the index it ended with. A late transcript of the other
+    modality than the item's part opens a part of its own. Scripted frames rather than a recording: the
+    provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    stream: list[PartStartEvent | PartDeltaEvent | PartEndEvent] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in case.frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartDeltaEvent, PartEndEvent)):
+                    stream.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
+
+    def text_of(part: ModelResponsePart) -> str | None:
+        if isinstance(part, TextPart):
+            return part.content
+        assert isinstance(part, SpeechPart)
+        return part.transcript
+
+    def summarize(messages: list[ModelMessage]) -> list[RecordedPart]:
+        (response,) = [message for message in messages if isinstance(message, ModelResponse)]
+        return [(type(part).__name__, text_of(part), part.provider_details) for part in response.parts]
+
+    first_index = stream[0].index
+    streamed: list[StreamStep] = []
+    for event in stream:
+        if isinstance(event, PartDeltaEvent):
+            delta = event.delta
+            if isinstance(delta, TextPartDelta):
+                streamed.append(('delta', event.index - first_index, delta.content_delta))
+            else:
+                assert isinstance(delta, SpeechPartDelta)
+                streamed.append(('delta', event.index - first_index, delta.transcript_delta))
+        else:
+            kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+            streamed.append((kind, event.index - first_index, text_of(event.part)))
+    history = summarize(session.all_messages())
+    assert history == case.history
+    assert [(kind, text) for kind, text, _ in summarize(own)] == [(kind, text) for kind, text, _ in history]
+    assert streamed == case.stream
+
+
+async def test_late_transcript_restarts_a_speech_part_without_its_audio() -> None:
+    """A late transcript streams the item's speech part again with no audio at its start, as the part first did.
+
+    Retained audio arrives with the part's end, both times, and history keeps it on the item's one part. Scripted
+    frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+    )
+    frames = _two_item_response(
+        ('audio', 'a', base64.b64encode(b'\x01\x00' * 240).decode('ascii')),
+        ('delta', 'a', 'Hello'),
+        ('delta', 'b', 'Bonjour.'),
+        ('done', 'a', 'Hello world.'),
+        ('done', 'b', 'Bonjour.'),
+    )
+    streamed: list[tuple[str, str | None, bool]] = []
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in frames:
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, (PartStartEvent, PartEndEvent)) and isinstance(event.part, SpeechPart):
+                    kind = 'start' if isinstance(event, PartStartEvent) else 'end'
+                    streamed.append((kind, event.part.transcript, event.part.audio is not None))
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        recorded = [
+            (part.transcript, part.audio is not None)
+            for message in session.all_messages()
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, SpeechPart)
+        ]
+    assert streamed == snapshot(
+        [
+            ('start', '', False),
+            ('end', 'Hello', True),
+            ('start', '', False),
+            ('start', 'Hello', False),
+            ('end', 'Hello world.', True),
+            ('end', 'Bonjour.', False),
+        ]
+    )
+    assert recorded == snapshot([('Hello world.', True), ('Bonjour.', False)])
+
+
+async def test_transcript_after_its_response_ended_changes_nothing_recorded() -> None:
+    """An item's transcript that arrives after its response ended doesn't fold into what that response recorded.
+
+    Scripted frames rather than a recording: the provider's event order can't be produced on demand.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('Greet me twice.')
+        for frame in _two_item_response(('delta', 'a', 'Hello'), ('delta', 'b', 'Bonjour.')):
+            ws.push(frame)
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    # Frames are handled in order, so the error after the late transcript marks it handled.
+                    for frame in _item_done('a', 0, 'commentary', 'Hello world.', text=False):
+                        ws.push(frame)
+                    ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
+                elif isinstance(event, RealtimeSessionErrorEvent):
+                    break
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
+        recorded = session.all_messages()
+
+    def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:
+        responses = [message for message in messages if isinstance(message, ModelResponse)]
+        return [[part.transcript for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+
+    assert transcripts(recorded) == transcripts(own) == [['Hello', 'Bonjour.']]
+
+
+async def test_evicted_output_audio_is_released() -> None:
+    """Output audio `retain_audio_max_seconds` evicts from history is no longer held anywhere in the session.
+
+    Nothing in the messages shows memory that is still held, so a weak reference to the evicted audio checks it,
+    over scripted frames sized to the budget rather than a recording.
+    """
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]  # a scripted socket stands in for the websocket
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='output_audio',
+        retain_audio_max_seconds=1.5,
+    )
+    one_second = base64.b64encode(b'\x01\x00' * 24000).decode('ascii')
+
+    def reply(response_id: str) -> list[dict[str, Any]]:
+        item = {'response_id': response_id, 'item_id': f'item-{response_id}'}
+        return [
+            {'type': 'response.created', 'response': {'id': response_id, 'status': 'in_progress', 'output': []}},
+            {'type': 'response.output_audio.delta', **item, 'delta': one_second},
+            {'type': 'response.output_audio_transcript.delta', **item, 'delta': 'Hello.'},
+            {'type': 'response.done', 'response': {'id': response_id, 'status': 'completed', 'output': []}},
+        ]
+
+    def retained() -> list[BinaryContent | None]:
+        return [
+            part.audio for message in session.all_messages() for part in message.parts if isinstance(part, SpeechPart)
+        ]
+
+    async with session:
+        await session.send('Hi.')
+        for frame in reply('resp_1'):
+            ws.push(frame)
+        evicted: weakref.ref[BinaryContent] | None = None
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if not isinstance(event, RealtimeTurnCompleteEvent):
+                    continue
+                if evicted is not None:
+                    break
+                (audio,) = retained()
+                assert audio is not None
+                evicted = weakref.ref(audio)
+                del audio
+                await session.send('Again.')
+                await ws.wait_for_creates(2)
+                for frame in reply('resp_2'):
+                    ws.push(frame)
+        assert [audio is not None for audio in retained()] == [False, True]
+        gc.collect()
+        assert evicted is not None and evicted() is None
+
+
+async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
+    """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
+
+    def added(item_type: str, call_id: str, item_id: str, name: str | None = None) -> str:
+        item = {'id': item_id, 'type': item_type, 'call_id': call_id, **({'name': name} if name else {})}
+        return json.dumps({'type': 'conversation.item.added', 'item': item})
+
+    frames = [
+        added('function_call', 'c1', 'item_c1', 'drop_me'),
+        added('function_call_output', 'c1', 'item_o1'),
+        added('function_call', 'c2', 'item_c2', 'keep_me'),
+        added('function_call_output', 'c2', 'item_o2'),
+        added('function_call', 'c3', 'item_c3', 'drop_me'),
+        # The beta protocol's acknowledgement counts too.
+        json.dumps(
+            {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': 'item_o5', 'type': 'function_call_output', 'call_id': 'c5'},
+            }
+        ),
+        # An output of a call this connection didn't see.
+        added('function_call_output', 'c4', 'item_o4'),
+        # Malformed: ignored here.
+        json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
+    ]
+    ws = FakeWebSocket(frames)
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items=True, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(conn)
+    # Content the tool returned besides its output follows it as a user message, which goes with the call too.
+    await conn.send(ToolResult(tool_call_id='c1', output='Taken.', content=['A photo of the table.']))
+    [content_item] = [json.loads(frame)['item'] for frame in ws.sent if '"role":"user"' in frame]
+    calls = [
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
+        ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c5'),
+    ]
+    assert await conn._prune_tool_calls(calls) == ['c1', 'c5']  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
+        {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
+        {'type': 'conversation.item.delete', 'item_id': content_item['id']},
+        {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
+    ]
+    # With pruning off, nothing is deleted: kept tools alone don't turn it on.
+    off_ws = FakeWebSocket(frames)
+    off = OpenAIRealtimeConnection(off_ws, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(off)
+    assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in off_ws.sent if 'item.delete' in frame]

@@ -10,16 +10,16 @@ import textwrap
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
-from typing_extensions import NotRequired, TypedDict
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -78,7 +78,8 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
+from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -197,20 +198,20 @@ async def test_request_simple_success(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -218,20 +219,20 @@ async def test_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -302,19 +303,19 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -386,7 +387,7 @@ async def test_request_structured_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -405,7 +406,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -418,7 +419,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -488,7 +489,7 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
                 timestamp=IsDatetime(),
@@ -514,7 +515,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -527,7 +528,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -554,7 +555,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -567,7 +568,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -583,7 +584,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -706,7 +707,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     provider_url='https://api.openai.com/v1',
                     provider_details={
                         'finish_reason': 'stop',
-                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                        'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                     },
                     provider_response_id='123',
                     finish_reason='stop',
@@ -729,14 +730,14 @@ async def test_stream_text_no_created_timestamp(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.']
         )
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=UTC)
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response == snapshot(
             ModelResponse(
                 parts=[TextPart(content='hello world.')],
                 usage=RequestUsage(input_tokens=6, output_tokens=3),
                 model_name='gpt-4o-123',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1',
                 provider_details={
@@ -763,7 +764,7 @@ async def test_stream_text_ignores_zero_created_timestamp(allow_model_requests: 
     async with Agent(model).run_stream('') as result:
         await result.get_output()
         response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.timestamp == IsNow(tz=UTC)
         assert response.provider_details is None
         assert b'1970-01-01T00:00:00Z' not in result.all_messages_json()
 
@@ -782,7 +783,7 @@ async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_r
         assert await result.get_output() == 'hello world'
         response = cast(ModelResponse, result.all_messages()[-1])
         assert response.provider_details == {
-            'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc),
+            'timestamp': datetime(2024, 1, 1, tzinfo=UTC),
             'finish_reason': 'stop',
         }
 
@@ -790,10 +791,10 @@ async def test_stream_text_uses_created_timestamp_from_usage_chunk(allow_model_r
 @pytest.mark.parametrize(
     ('created_values', 'expected'),
     [
-        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=timezone.utc)),
-        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
-        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=timezone.utc)),
-        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=timezone.utc)),
+        ([1704067200, 1704153600, 1704240000], datetime(2024, 1, 1, tzinfo=UTC)),
+        ([None, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=UTC)),
+        ([0, 1704153600, 1704240000], datetime(2024, 1, 2, tzinfo=UTC)),
+        ([None, 0, 1704153600], datetime(2024, 1, 2, tzinfo=UTC)),
     ],
 )
 async def test_stream_text_uses_created_timestamp_from_later_chunk(
@@ -815,7 +816,7 @@ async def test_stream_text_uses_created_timestamp_from_later_chunk(
             ['hello ', 'hello world', 'hello world.']
         )
         response = cast(ModelResponse, result.all_messages()[-1])
-        assert response.timestamp == IsNow(tz=timezone.utc)
+        assert response.timestamp == IsNow(tz=UTC)
         assert response.provider_details == {
             'timestamp': expected,
             'finish_reason': 'stop',
@@ -1527,7 +1528,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
                 finish_reason='tool_call',
@@ -1570,7 +1571,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
                 finish_reason='stop',
@@ -1857,6 +1858,15 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+    # Parameters (RFC 2045) are ignored: classification happens on the bare type.
+    assert _is_text_like_media_type('text/plain;charset=utf-8') is True
+    assert _is_text_like_media_type('application/json; charset=utf-8') is True
+    assert _is_text_like_media_type('application/xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/yaml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/toml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/ld+json;charset=utf-8') is True
+    assert _is_text_like_media_type('application/soap+xml;charset=utf-8') is True
+    assert _is_text_like_media_type('application/pdf;charset=binary') is False
 
 
 async def test_toml_document_as_binary_content_input(allow_model_requests: None):
@@ -1887,6 +1897,78 @@ async def test_toml_document_as_binary_content_input(allow_model_requests: None)
 [project]
 name = "demo"
 -----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_json_parameterized_media_type_as_binary_content_input(allow_model_requests: None):
+    """JSON `BinaryContent` with a parameterized media type is inlined as text, like bare JSON is.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim (RFC 2397), and before the classifier ignored parameters the mapping raised
+    `Unsupported binary content type` before any request was made, so this pins the request
+    shape the mock client receives.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', json_content])
+    assert result.output == snapshot('A JSON document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_parameterized_structured_suffix_media_type_inlined(allow_model_requests: None):
+    """A parameterized `+json` suffix media type is inlined as text, like its bare form is.
+
+    Unit test, not VCR: classification must look at the bare `application/ld+json` essence,
+    so the structured-suffix branch keeps matching when RFC 2397 parameters are present.
+    """
+    jsonld_content = BinaryContent.from_data_uri('data:application/ld+json;charset=utf-8;base64,eyJhIjogMX0=')
+
+    c = completion_message(ChatCompletionMessage(content='A JSON-LD document.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', jsonld_content])
+    assert result.output == snapshot('A JSON-LD document.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="e4ad4d" type="application/ld+json;charset=utf-8"-----
+{"a": 1}
+-----END FILE id="e4ad4d"-----\
 """,
                         'type': 'text',
                     },
@@ -2302,7 +2384,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
                 finish_reason='stop',
@@ -3741,7 +3823,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
                 finish_reason='stop',
@@ -3800,7 +3882,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
                 finish_reason='tool_call',
@@ -3839,7 +3921,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
                 finish_reason='stop',
@@ -3897,7 +3979,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
@@ -3947,7 +4029,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
                 finish_reason='stop',
@@ -4137,6 +4219,8 @@ async def test_openai_chat_url_citation(allow_model_requests: None):
     assert result.all_messages()[1].parts == [
         TextPart(
             'Answer [1]',
+            provider_name='openai',
+            provider_details={'citations': [annotation.model_dump()]},
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
@@ -4184,7 +4268,10 @@ async def test_openai_chat_invalid_citation_range_is_unanchored(allow_model_requ
 
     assert result.all_messages()[1].parts == [
         TextPart(
-            'Answer', citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+            'Answer',
+            provider_name='openai',
+            provider_details={'citations': [annotation.model_dump()]},
+            citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])],
         )
     ]
 
@@ -4251,7 +4338,7 @@ async def test_openai_chat_stream_annotations_before_referenced_text(allow_model
                 )
             ],
             provider_name='openai',
-            provider_details={'annotations': [annotation.model_dump()]},
+            provider_details={'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]},
         )
     ]
 
@@ -4317,7 +4404,10 @@ async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_reque
         TextPart(
             'Answer [1]',
             provider_name='openai',
-            provider_details={'annotations': [citation.model_dump(), {'type': 'file'}]},
+            provider_details={
+                'annotations': [citation.model_dump(), {'type': 'file'}],
+                'citations': [citation.model_dump()],
+            },
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
@@ -4389,7 +4479,8 @@ async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model
 
     [part] = result.all_messages()[1].parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'annotations': [annotation.model_dump() for annotation in annotations]}
+    raw_annotations = [annotation.model_dump() for annotation in annotations]
+    assert part.provider_details == {'annotations': raw_annotations, 'citations': raw_annotations}
     assert part.citations == [
         Citation(
             sources=[WebCitationSource(url=f'https://example.com/{index}', title=f'Example {index}')],
@@ -4440,7 +4531,7 @@ async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: N
 
     [part] = result.all_messages()[1].parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+    assert part.provider_details == {'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]}
 
 
 async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requests: None):
@@ -4472,7 +4563,7 @@ async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requ
             anchor=MarkerCitationAnchor(start=7, end=10),
         )
     ]
-    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+    assert part.provider_details == {'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]}
 
 
 def test_openai_chat_citation_with_thinking_is_ignored():
@@ -4664,6 +4755,112 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
     assert response.output == snapshot('The current time is Noon.')
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_compatible_api_gemini_3_tool_call_thought_signature(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture, stream: bool
+):
+    """Gemini 3 rejects the request after a tool call unless each call's `extra_content` thought signature comes back.
+
+    Of parallel calls, only the first carries one, so the second goes back without.
+    """
+    provider = OpenAIProvider(
+        base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+        api_key=gemini_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get today's weather for a city."""
+        return 'sunny, 28°C'
+
+    prompt = (
+        "What's the weather in Taipei and Kaohsiung? Call get_weather once for each city in parallel, then summarize."
+    )
+    if stream:
+        async with agent.run_stream(prompt) as streamed_result:
+            output = await streamed_result.get_output()
+        messages = streamed_result.all_messages()
+    else:
+        result = await agent.run(prompt)
+        output, messages = result.output, result.all_messages()
+
+    expected_output = {
+        False: snapshot(
+            'The weather is currently sunny in both Taipei and Kaohsiung, with a temperature of 28°C in both cities.'
+        ),
+        True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
+    }
+    assert output == expected_output[stream]
+    taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
+    assert messages[1].parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='get_weather',
+                args='{"city":"Taipei"}',
+                tool_call_id=taipei_call_id,
+                provider_name='openai',
+                provider_details={'extra_content': {'google': {'thought_signature': signature}}},
+            ),
+            ToolCallPart(tool_name='get_weather', args='{"city":"Kaohsiung"}', tool_call_id=kaohsiung_call_id),
+        ]
+    )
+    assert [
+        message['tool_calls']
+        for message in json_objects(request_capture.body('/chat/completions', index=1)['messages'])
+        if message['role'] == 'assistant'
+    ] == snapshot(
+        [
+            [
+                {
+                    'id': taipei_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'},
+                    'extra_content': {'google': {'thought_signature': signature}},
+                },
+                {
+                    'id': kaohsiung_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Kaohsiung"}'},
+                },
+            ]
+        ]
+    )
+
+
+async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_requests: None):
+    """`extra_content` that another provider returned isn't sent with its tool call, like every replayed signature.
+
+    A unit test rather than a VCR one: no single recording produces another provider's tool call, so the history is
+    hand-built, and the claim is only about the outgoing body.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')))
+    model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Weather in Taipei?'),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'get_weather',
+                    '{"city": "Taipei"}',
+                    tool_call_id='call_1',
+                    provider_name='litellm',
+                    provider_details={'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}}},
+                )
+            ],
+            provider_name='litellm',
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+    ]
+
+    await direct_model_request(model, messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1]['tool_calls'] == snapshot(
+        [{'id': 'call_1', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'}}]
+    )
+
+
 def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
@@ -4678,10 +4875,10 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
 
     result = agent.run_sync('Hello')
     response = cast(ModelResponse, result.all_messages()[-1])
-    assert response.timestamp == IsNow(tz=timezone.utc)
+    assert response.timestamp == IsNow(tz=UTC)
     assert response.provider_name == 'openai'
     assert response.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime(2025, 6, 1, 3, 7, 48, tzinfo=UTC)}
     )
 
 
@@ -4735,7 +4932,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
                 finish_reason='tool_call',
@@ -4782,7 +4979,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
                 finish_reason='tool_call',
@@ -4857,7 +5054,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
                 finish_reason='tool_call',
@@ -4898,7 +5095,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
                 finish_reason='stop',
@@ -4963,7 +5160,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
                 finish_reason='tool_call',
@@ -5004,7 +5201,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
                 finish_reason='stop',
@@ -5083,7 +5280,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
                 finish_reason='tool_call',
@@ -5128,7 +5325,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
                 finish_reason='stop',
@@ -5191,7 +5388,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
                 finish_reason='tool_call',
@@ -5232,7 +5429,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
                 finish_reason='stop',
@@ -5299,7 +5496,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_details={
                     'finish_reason': 'tool_calls',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
                 finish_reason='tool_call',
@@ -5344,7 +5541,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_details={
                     'finish_reason': 'stop',
                     'service_tier': 'default',
-                    'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=UTC),
                 },
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
                 finish_reason='stop',
@@ -5429,8 +5626,8 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5442,7 +5639,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -5469,7 +5666,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 provider_url='https://api.openai.com/v1',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -5527,7 +5724,7 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     result = await agent.run('Hello')
     messages = result.all_messages()
     response_message = message(messages, ModelResponse, index=1)
-    assert response_message.timestamp == IsNow(tz=timezone.utc)
+    assert response_message.timestamp == IsNow(tz=UTC)
 
 
 async def test_process_response_no_finish_reason(allow_model_requests: None):
@@ -5632,6 +5829,23 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         )
         agent = Agent(model, capabilities=[Thinking(effort='low')], model_settings=ModelSettings(temperature=0.5))
         await agent.run('hello')
+
+
+async def test_openai_text_verbosity_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_text_verbosity` goes out as Chat Completions' top-level `verbosity`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5.6-luna', provider=provider))
+
+    result = await agent.run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+    assert result.output == snapshot('4')
+    await agent.run('What is 2+2?')
+
+    assert [
+        {key: value for key, value in body.items() if key == 'verbosity'}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'verbosity': 'low'}, {}]
 
 
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
@@ -5788,8 +6002,8 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
     omits that field while the run is thinking, so it must be sent empty when thinking is active and
     left off otherwise. Parametrized over the three providers that use this mode — DeepSeek and
     MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to pin that the backfill is
-    field-name-agnostic (it reads `openai_chat_thinking_field`). The real-API counterpart is
-    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    field-name-agnostic (it reads `openai_chat_thinking_field`). DeepSeek accepting the empty field is
+    recorded by `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill`.
 
     A deferred capability load used to be the trigger, because the reveal was rendered as a
     fabricated `search_tools` call/return pair. It's a system instruction now and produces no
@@ -5857,6 +6071,231 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
         and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
     )
     assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
+
+
+def _thinking(content: str, id: str = 'reasoning_content') -> ThinkingPart:
+    # `'auto'` sends a part back in its field only when it came from this provider: `OpenAIProvider.name`.
+    return ThinkingPart(content=content, id=id, provider_name='openai')
+
+
+def _weather_call(city: str, tool_call_id: str) -> ToolCallPart:
+    return ToolCallPart('get_weather', {'city': city}, tool_call_id=tool_call_id)
+
+
+def _weather_return(tool_call_id: str) -> ModelRequest:
+    return ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id=tool_call_id)])
+
+
+_WEATHER_PROMPT = ModelRequest(parts=[UserPromptPart('Weather in Paris, then London?')])
+
+
+@dataclass(frozen=True)
+class AutoThinkingBackfillCase:
+    id: str
+    history: list[ModelMessage]
+    assistant_turns: list[dict[str, JsonValue]]
+    thinking_field: str | None = None
+
+
+AUTO_THINKING_BACKFILL_CASES = [
+    AutoThinkingBackfillCase(
+        id='current_turn_tool_call',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_content': ''},
+            ]
+        ),
+    ),
+    # A `FallbackModel` step served by Anthropic within the same user turn: its native tool search is
+    # split into a synthesized `search_tools` turn, and neither that turn nor the call after it thinks.
+    AutoThinkingBackfillCase(
+        id='current_turn_fallback_native_tool_search',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+                    ),
+                    NativeToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='srvtoolu_1',
+                        provider_name='anthropic',
+                    ),
+                    _weather_call('London', 'toolu_2'),
+                ],
+                provider_name='anthropic',
+            ),
+            _weather_return('toolu_2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['search_tools'], 'reasoning_content': ''},
+                {'tool_calls': ['get_weather'], 'reasoning_content': ''},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='profile_thinking_field',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='reasoning_text'), _weather_call('Paris', 'c1')],
+                provider_name='openai',
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_text': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_text': ''},
+            ]
+        ),
+        thinking_field='reasoning_text',
+    ),
+    # The turn without thinking sits before the last user message, so it goes out as it always has.
+    AutoThinkingBackfillCase(
+        id='earlier_turn_tool_call',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+            ModelResponse(parts=[_thinking('Both done.'), TextPart('Sunny, then sunny.')], provider_name='openai'),
+            ModelRequest(parts=[UserPromptPart('Thanks!')]),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
+                {'tool_calls': [], 'reasoning_content': 'Both done.'},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='no_thinking_field_sent',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+        ],
+        assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
+    ),
+    # Thinking from another provider goes back as tags in `content`, so the request carries no field to backfill.
+    AutoThinkingBackfillCase(
+        id='foreign_thinking_only',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[ThinkingPart('Paris first.', provider_name='anthropic'), _weather_call('Paris', 'toolu_1')],
+                provider_name='anthropic',
+            ),
+            _weather_return('toolu_1'),
+        ],
+        assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
+    ),
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    AutoThinkingBackfillCase(
+        id='responses_reasoning_id',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='rs_0123abcd'), _weather_call('Paris', 'c1')],
+                provider_name='openai',
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'rs_0123abcd': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='two_thinking_fields_sent',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='reasoning'), _weather_call('Paris', 'c1')], provider_name='openai'
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_thinking('London next.'), _weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+            ModelResponse(parts=[_weather_call('Rome', 'c3')], provider_name='openai'),
+            _weather_return('c3'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'London next.'},
+                {'tool_calls': ['get_weather']},
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize('case', AUTO_THINKING_BACKFILL_CASES, ids=lambda case: case.id)
+async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: AutoThinkingBackfillCase):
+    """`'auto'` sends the one thinking field the request carries, empty, on current-turn tool calls that lack it.
+
+    DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
+    `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
+    cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
+    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    the request each synthetic history produces, which no provider response affects;
+    `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=OpenAIModelProfile(openai_chat_thinking_field=case.thinking_field) if case.thinking_field else None,
+        )
+        await Agent(model, tools=[get_weather]).run(message_history=case.history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    assistant_turns: list[dict[str, JsonValue]] = []
+    for sent in json_objects(body['messages']):
+        if sent['role'] == 'assistant':
+            tool_names: list[JsonValue] = []
+            for call in json_objects(sent.get('tool_calls', [])):
+                function = call['function']
+                assert isinstance(function, dict)
+                tool_names.append(function['name'])
+            extra = {key: value for key, value in sent.items() if key not in ('role', 'content', 'tool_calls')}
+            assistant_turns.append({'tool_calls': tool_names, **extra})
+    assert assistant_turns == case.assistant_turns
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
@@ -6181,8 +6620,10 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -6212,6 +6653,8 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -7024,7 +7467,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
         message_history=[
             ModelResponse(
                 parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
-                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                timestamp=datetime(2025, 1, 1, tzinfo=UTC),
             ),
             ModelRequest(
                 parts=[
@@ -7062,6 +7505,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
     assert json.loads(assistant_message['tool_calls'][0]['function']['arguments']) == {INVALID_JSON_KEY: bad_args}
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter has imported after model construction')
 def test_model_construction_preloads_lazy_dependencies():
     """Constructing a model resolves the deferred imports that stalled the first request's event loop (#7405).
 
@@ -7093,7 +7537,7 @@ def test_model_construction_preloads_lazy_dependencies():
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'

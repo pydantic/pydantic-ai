@@ -116,7 +116,7 @@ async def test_unpriced_test_model_and_clear() -> None:
     assert line.startswith('Retained history cost unknown:')
     assert 'over 2 requests' in line
     assert 'No price data for no-such-model' in line
-    session.clear()
+    await session.clear()
     assert cost_line(session_usage(session.messages)) == 'No usage yet.'
 
 
@@ -152,7 +152,7 @@ async def test_shell_commands_and_footer(tmp_path: Path, monkeypatch: pytest.Mon
             footers.append(str(self.toolbar()))
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
     output = io.StringIO()
     await chat(
         Agent(TestModel(custom_output_text='hi')),

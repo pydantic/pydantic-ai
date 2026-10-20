@@ -265,9 +265,7 @@ class StepBridge:
 
             def schedule() -> None:
                 try:
-                    # Creating the task inside `step_context` makes it the task's context, which is
-                    # what `create_task(context=...)` does on 3.11+, spelled so it also type-checks
-                    # against the repo's 3.10 target.
+                    # Creating the task inside `step_context` makes it the task's context.
                     task: asyncio.Task[T] = step_context.run(lambda: loop.create_task(run_operation()))
                 except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
                     result.set_exception(exc)

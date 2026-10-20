@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 import pytest
 import websockets
 from pydantic_monty import MountDir
-from typing_extensions import Never
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError

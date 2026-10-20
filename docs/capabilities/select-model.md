@@ -23,7 +23,7 @@ class Deps:
 
 def select_model(ctx: ModelSelectionContext[Deps]) -> str:
     """Use the larger model for complex tasks."""
-    return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+    return '{{ openai:medium }}' if ctx.deps.task_complexity == 'complex' else '{{ openai:small }}'
 
 
 agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])

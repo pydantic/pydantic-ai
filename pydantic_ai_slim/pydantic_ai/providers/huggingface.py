@@ -1,6 +1,9 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
+from functools import partial
+from types import TracebackType
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -31,6 +34,12 @@ from . import Provider
 
 class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     """Provider for Hugging Face."""
+
+    _client_factory: Callable[[], AsyncInferenceClient] | None = None
+    """Builds the `AsyncInferenceClient` again, when this provider built it."""
+
+    _client_closed: bool = False
+    """Whether the `AsyncInferenceClient` this provider built was closed on exit, so the next use needs a new one."""
 
     @property
     def name(self) -> str:
@@ -128,6 +137,39 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
             raise ValueError('Cannot provide both `base_url` and `provider_name`.')
 
         if hf_client is None:
-            self._client = AsyncInferenceClient(api_key=api_key, provider=provider_name, base_url=base_url)  # pyright: ignore[reportArgumentType]
+            self._client_factory = partial(
+                AsyncInferenceClient,
+                api_key=api_key,
+                provider=provider_name,  # pyright: ignore[reportArgumentType]
+                base_url=base_url,
+            )
+            self._client = self._client_factory()
         else:
             self._client = hf_client
+
+    def _refresh_http_client(self) -> None:
+        """Rebuild the `AsyncInferenceClient` this provider built if it's closed or was used on a loop that isn't running.
+
+        The client opens its HTTP client on first use and keeps it, so it can't be used from another event loop,
+        or again once closed.
+        """
+        if self._client_factory is None or self._entered_count:
+            return
+        if self._moved_to_another_event_loop() or self._client_closed:
+            self._client = self._client_factory()
+            self._client_closed = False
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        if self._entered_count == 0:
+            return
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._client_factory is not None:
+                # Close the client this provider built, but never one that was passed in.
+                await self._client.close()
+                self._client_closed = True

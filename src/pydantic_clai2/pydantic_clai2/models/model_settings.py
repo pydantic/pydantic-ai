@@ -1,20 +1,25 @@
 """The per-model settings a user can edit, validated before they reach `ModelSettings`."""
 
 import re
-from typing import Literal
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Literal
 
-from anthropic.types.beta import (
-    BetaThinkingBlockBindingParam,
-    BetaThinkingConfigAdaptiveParam,
-    BetaThinkingConfigEnabledParam,
-    BetaThinkingConfigParam,
-)
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
-from pydantic_ai.models.anthropic import AnthropicModelSettings
-from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import CacheRetention, ModelSettings
 from pydantic_clai2.models.custom_params import expand_params
+
+if TYPE_CHECKING:
+    # Typing only: the provider modules load the Anthropic and OpenAI SDKs, and every turn loads this module.
+    from anthropic.types.beta import (
+        BetaThinkingBlockBindingParam,
+        BetaThinkingConfigAdaptiveParam,
+        BetaThinkingConfigEnabledParam,
+        BetaThinkingConfigParam,
+    )
+
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
+    from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
 
 class ModelSettingsForm(BaseModel):
@@ -44,6 +49,10 @@ class ModelSettingsForm(BaseModel):
     service_tier: Literal['auto', 'default', 'flex', 'priority'] | None = Field(
         default=None, description='Provider service tier (OpenAI).'
     )
+    cache: bool | CacheRetention | None = Field(
+        default=None,
+        description='Prompt caching: off, on, or a retention (where the provider supports configuring it).',
+    )
 
     openai_reasoning_effort: Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] | None = Field(
         default=None, description='OpenAI reasoning effort. Overrides generic thinking.'
@@ -58,7 +67,16 @@ class ModelSettingsForm(BaseModel):
         default=None, description='Responses reasoning summary display.'
     )
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
-        default=None, description='Responses answer verbosity.'
+        default=None, description='OpenAI answer verbosity.'
+    )
+    anthropic_cache: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Claude conversation caching: off, on (5 minutes), or a TTL.'
+    )
+    anthropic_cache_instructions: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Cache static Claude instructions.'
+    )
+    anthropic_cache_tool_definitions: bool | Literal['5m', '1h'] | None = Field(
+        default=None, description='Cache Claude tool descriptions and schemas.'
     )
     anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
         default=None, description='Claude thinking mode. Overrides generic thinking.'
@@ -138,6 +156,8 @@ class ModelSettingsForm(BaseModel):
             settings['thinking'] = self.thinking
         if self.service_tier is not None:
             settings['service_tier'] = self.service_tier
+        if self.cache is not None:
+            settings['cache'] = self.cache
         settings.update(self._openai_settings())
         settings.update(self._anthropic_settings())
         body = self._glm_body()
@@ -147,8 +167,8 @@ class ModelSettingsForm(BaseModel):
             settings['extra_body'] = body
         return settings or None
 
-    def _openai_settings(self) -> OpenAIResponsesModelSettings:
-        openai = OpenAIResponsesModelSettings()
+    def _openai_settings(self) -> 'OpenAIResponsesModelSettings':
+        openai: OpenAIResponsesModelSettings = {}
         if self.openai_reasoning_effort is not None:
             openai['openai_reasoning_effort'] = self.openai_reasoning_effort
         if self.openai_reasoning_context is not None:
@@ -161,8 +181,14 @@ class ModelSettingsForm(BaseModel):
             openai['openai_text_verbosity'] = self.openai_text_verbosity
         return openai
 
-    def _anthropic_settings(self) -> AnthropicModelSettings:
-        anthropic = AnthropicModelSettings()
+    def _anthropic_settings(self) -> 'AnthropicModelSettings':
+        anthropic: AnthropicModelSettings = {}
+        if self.anthropic_cache is not None:
+            anthropic['anthropic_cache'] = self.anthropic_cache
+        if self.anthropic_cache_instructions is not None:
+            anthropic['anthropic_cache_instructions'] = self.anthropic_cache_instructions
+        if self.anthropic_cache_tool_definitions is not None:
+            anthropic['anthropic_cache_tool_definitions'] = self.anthropic_cache_tool_definitions
         if self.anthropic_effort is not None:
             anthropic['anthropic_effort'] = self.anthropic_effort
         thinking = self._anthropic_thinking()
@@ -173,7 +199,7 @@ class ModelSettingsForm(BaseModel):
             anthropic['extra_headers'] = {'anthropic-beta': ','.join(betas)}
         return anthropic
 
-    def _anthropic_thinking(self) -> BetaThinkingConfigParam | None:
+    def _anthropic_thinking(self) -> 'BetaThinkingConfigParam | None':
         """The `thinking` object, carrying Fable 5.1's `display` and `block_binding` keys.
 
         `display` and `block_binding` only exist on the enabled and adaptive shapes, so asking
@@ -195,12 +221,11 @@ class ModelSettingsForm(BaseModel):
         if self.anthropic_thinking_display is not None:
             thinking['display'] = self.anthropic_thinking_display
         if self.anthropic_preserved_thinking is not None:
-            thinking['block_binding'] = BetaThinkingBlockBindingParam(
-                prefix_mismatch_behavior=self.anthropic_preserved_thinking
-            )
+            binding: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': self.anthropic_preserved_thinking}
+            thinking['block_binding'] = binding
         return thinking
 
-    def _anthropic_betas(self, *, thinking: BetaThinkingConfigParam | None) -> list[str]:
+    def _anthropic_betas(self, *, thinking: 'BetaThinkingConfigParam | None') -> list[str]:
         """Betas these controls need. Core attaches the thinking-binding beta itself.
 
         The display beta follows the `display` value that actually reaches the body, so a
@@ -231,7 +256,17 @@ class ModelSettingsForm(BaseModel):
 
 
 def model_defaults(*, model: str) -> dict[str, JsonValue]:
-    """CLAI defaults for GPT-6 and GPT-5.6 families, independent of provider."""
+    """CLAI's prompt caching default for every model, and reasoning defaults for GPT families.
+
+    Caching uses the unified `cache` setting, which providers without configurable caching ignore. A
+    saved `anthropic_cache*` override still applies, since provider-specific cache settings take
+    precedence over it.
+    """
+    return {'cache': True, **gpt_defaults(model=model)}
+
+
+def gpt_defaults(*, model: str) -> dict[str, JsonValue]:
+    """CLAI's reasoning defaults for GPT-6 and GPT-5.6 families, whichever provider serves them."""
     name = model.partition(':')[2] if ':' in model else model
     name = name.rsplit('/', 1)[-1]
     if not re.match(r'^gpt-(?:6(?:\.\d+)?|5\.6)(?:$|[-:])', name):
@@ -247,9 +282,21 @@ def model_defaults(*, model: str) -> dict[str, JsonValue]:
     }
 
 
-def model_settings_from_json(values: dict[str, JsonValue], *, model: str = '') -> ModelSettingsForm:
+def default_model_settings(*, model: str, saved: Mapping[str, JsonValue]) -> ModelSettings | None:
+    """The family defaults for `model` that `saved` leaves unset, as `ModelSettings`.
+
+    Every default fills exactly one `ModelSettings` key, so merging the saved settings over these
+    gives the same settings as `model_settings_from_json(saved, model=model)`.
+    """
+    defaults = {key: value for key, value in model_defaults(model=model).items() if key not in saved}
+    return ModelSettingsForm.model_validate(defaults).to_model_settings()
+
+
+def model_settings_from_json(values: dict[str, JsonValue], *, model: str | None = None) -> ModelSettingsForm:
     """Read shared preferences, ignoring keys from newer versions without changing the store.
 
-    Known fields still validate normally. New edits use the strict form directly.
+    Known fields still validate normally. New edits use the strict form directly. With `model`, its
+    family defaults fill the fields `values` leaves unset; without it, only `values` are read.
     """
-    return ModelSettingsForm.model_validate({**model_defaults(model=model), **values}, extra='ignore')
+    defaults = model_defaults(model=model) if model is not None else {}
+    return ModelSettingsForm.model_validate({**defaults, **values}, extra='ignore')

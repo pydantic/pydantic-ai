@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -84,10 +84,11 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
@@ -102,9 +103,11 @@ from pydantic_ai.workspaces import (
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...realtime_connections import InferredConnection
 from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
+from ...wrapped_retry_toolsets import call_probe_once, snapshot_probe_toolset
 
 try:
     from temporalio import activity, workflow
@@ -327,7 +330,7 @@ class AnyioScopeActivityCancellationWorkflow:
 
         try:
             await asyncio.wait_for(run_in_task_group(), timeout=0.1)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -361,7 +364,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'clean-timeout'
         return f'unexpected-success:{result.output}'  # pragma: no cover
 
@@ -435,7 +438,7 @@ class WaitForAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -457,10 +460,6 @@ async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Clie
     assert result == 'timed out cleanly'
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
-)
 async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
     """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
     global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
@@ -542,6 +541,12 @@ async def test_temporal_agent_rejects_cancellation_token() -> None:
     that cannot cross the durable execution boundary."""
     with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
         await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
+async def test_temporal_agent_rejects_timeout() -> None:
+    """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
+    with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
+        await _legacy_migration_agent.run('hello', timeout=1)
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
@@ -715,6 +720,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -1906,12 +1912,14 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -3385,6 +3393,9 @@ class LegacyFieldsRunContext(TemporalRunContext[Any]):
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
             'discovered_tool_names': ctx.discovered_tool_names,
+            # `FunctionToolset.get_tools` reads these, so a dynamic toolset needs them inside an activity.
+            'retries': ctx.retries,
+            'max_retries': ctx.max_retries,
             'custom': 'from-subclass',
         }
 
@@ -3433,6 +3444,121 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
             getattr(reconstructed, name)
+    # `dataclasses.replace` rebuilds from the fields the payload carried, plus the ones it is given. The dispatch
+    # snapshots join them only when carried, so this subclass's copies keep their own field set.
+    copied = replace(reconstructed, tool_name='tool', retry=0, max_retries=1)
+    assert sorted(field.name for field in fields(copied)) == snapshot(
+        [
+            '_anchored_evidence',
+            '_durable_operations',
+            '_run_capabilities_by_id',
+            '_run_held_toolsets',
+            '_tool_name_path',
+            'agent',
+            'deadline',
+            'deps',
+            'discovered_tool_names',
+            'max_retries',
+            'pending_messages',
+            'realtime_session',
+            'retries',
+            'retry',
+            'root_capability',
+            'run_id',
+            'tool_manager',
+            'tool_name',
+            'usage',
+            'usage_limits',
+            'workspace',
+        ]
+    )
+
+
+def test_replace_keeps_dispatch_snapshots():
+    """`dataclasses.replace` on a reconstructed context keeps the snapshots serialized at dispatch.
+
+    Core copies the context with `replace` inside activities, for a tool's `prepare`, a name-changing wrapper's
+    `call_tool` and the `enqueue()` guard. The snapshots are not `RunContext` fields, so they survive only because
+    the reconstructed context adds them to the field set `replace` rebuilds from. The real-run tests read
+    `available_tool_names` and `active_capability_ids`; this one also covers the on-demand set behind
+    `is_tool_available`, which none of them reach.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), discovered_tool_names={'searched_tool'})
+    reconstructed = TemporalRunContext.deserialize_run_context(TemporalRunContext.serialize_run_context(ctx), deps=None)
+
+    copied = replace(reconstructed, tool_name='tool')
+
+    deferred = ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred')
+    assert (
+        copied.available_tool_names,
+        copied.active_capability_ids,
+        copied.is_tool_available(deferred),
+    ) == snapshot(({'searched_tool'}, set(), False))
+
+
+_custom_context_reads: list[tuple[str, str, str, list[str]]] = []
+
+
+def _record_custom_context_read(site: str, ctx: RunContext[None]) -> None:
+    _custom_context_reads.append(
+        (activity.info().activity_type.rsplit('__', 1)[-1], site, type(ctx).__name__, sorted(ctx.available_tool_names))
+    )
+
+
+_custom_context_agent = Agent(
+    FunctionModel(call_probe_once),
+    name='custom_context_dynamic',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](snapshot_probe_toolset(_record_custom_context_read), id='dynamic').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, run_context_type=LegacyFieldsRunContext)],
+)
+
+
+@workflow.defn
+class CustomContextDynamicToolsetWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _custom_context_agent.run('Probe.')).output
+
+
+async def test_custom_run_context_type_runs_a_dynamic_toolset(client: Client):
+    """A `run_context_type` that leaves out `tool_name` and `retry` still runs a dynamic toolset.
+
+    Every context copy made inside an activity sets fields this subclass's payload doesn't carry, which
+    `dataclasses.replace` accepts and a field-preserving copy would reject.
+    """
+    _custom_context_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CustomContextDynamicToolsetWorkflow],
+        plugins=[AgentPlugin(_custom_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            CustomContextDynamicToolsetWorkflow.run,
+            id=CustomContextDynamicToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _custom_context_reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('get_tools', 'factory', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'prepare', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'instructions', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'factory', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'prepare', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'validator', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'factory', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'prepare', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'body', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'factory', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'prepare', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'instructions', 'LegacyFieldsRunContext', []),
+            ],
+        )
+    )
 
 
 def _run_context_fields_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3945,6 +4071,56 @@ async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> 
         )
 
     assert _enqueue_handler_boundaries == {'model', 'agent'}
+
+
+_snapshot_handler_reads: set[tuple[str, tuple[str, ...], int]] = set()
+
+
+async def _snapshot_reading_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
+        _snapshot_handler_reads.add((boundary, tuple(sorted(ctx.available_tool_names)), len(ctx.active_capability_ids)))
+
+
+_snapshot_handler_agent = Agent(
+    TestModel(),
+    name='temporal_handler_snapshots',
+    tools=[_durability_handler_tool],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_snapshot_reading_handler)
+    ],
+)
+
+
+@workflow.defn
+class SnapshotReadingHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _snapshot_handler_agent.run('run')).output
+
+
+async def test_temporal_event_stream_handler_reads_dispatch_snapshots(client: Client) -> None:
+    """An event stream handler inside an activity answers from the snapshots serialized at dispatch.
+
+    The model and event-stream-handler activities hand the handler a copy of the context with `enqueue()` guarded,
+    so that copy has to keep `available_tool_names` and `active_capability_ids`.
+    """
+    _snapshot_handler_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SnapshotReadingHandlerWorkflow],
+        plugins=[AgentPlugin(_snapshot_handler_agent)],
+    ):
+        await client.execute_workflow(
+            SnapshotReadingHandlerWorkflow.run,
+            id=SnapshotReadingHandlerWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert sorted(_snapshot_handler_reads) == snapshot(
+        [('agent', ('_durability_handler_tool',), 3), ('model', ('_durability_handler_tool',), 3)]
+    )
 
 
 async def test_temporal_tool_rejects_enqueue(client: Client) -> None:

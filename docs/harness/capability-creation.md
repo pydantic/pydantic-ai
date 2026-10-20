@@ -39,7 +39,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 ```
 
 The agent can now call `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`. `CapabilityCreation` also contributes static, cache-stable system-prompt guidance explaining these tools. Leave `guidance=None` for the default text, or pass your own string; set `guidance=''` to omit it entirely.
@@ -63,7 +63,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import CapabilityCreation
 
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.'), creation])
 
 history = None
 done = False
@@ -84,6 +84,17 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 `manifest.json` records each capability's name, module file, class name, status (`active` or `disabled`), and last validation error. That is the surface a UI can read to show what the agent has authored. The manifest is written atomically (temp file plus `os.replace`), so a crash mid-write never leaves a partial file that reads back as "no capabilities".
 
 Capability names must be lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name. A code that imports but fails validation is still written to disk (so it can be inspected) and recorded with its `last_error` set; `load_active()` skips it.
+
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md), each authoring, listing, and disabling
+call to the store is recorded, so a recovered run reuses the result instead of
+writing the authored module and manifest again. Temporal and Prefect record
+each tool call in its own activity or task. DBOS runs function tools in
+workflow code, so there the store call runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`capability_creation`, so durable execution needs no configuration.
 
 ## Trust boundary
 

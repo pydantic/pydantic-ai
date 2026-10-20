@@ -31,7 +31,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import Pylon
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Pylon()])
+agent = Agent('{{ openai:medium }}', capabilities=[Pylon()])
 result = agent.run_sync('Summarize my open Pylon issues')
 print(result.output)
 ```
@@ -69,7 +69,7 @@ def pylon_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.pylon_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
@@ -91,7 +91,7 @@ from pydantic_ai_harness import Pylon
 
 capability = Pylon()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -119,7 +119,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Pylon: {}
 ```

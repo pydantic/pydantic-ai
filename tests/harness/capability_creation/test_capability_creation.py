@@ -491,6 +491,12 @@ class TestCapabilityCreationCapability:
     def test_get_toolset_type(self, tmp_path: Path) -> None:
         assert isinstance(CapabilityCreation[object](directory=tmp_path).get_toolset(), CapabilityCreationToolset)
 
+    async def test_invalid_name_model_retry_through_the_capability(self, tmp_path: Path) -> None:
+        toolset = CapabilityCreation[object](directory=tmp_path).get_toolset()
+        assert isinstance(toolset, CapabilityCreationToolset)
+        with pytest.raises(ModelRetry, match='invalid capability name'):
+            await toolset.author_capability('Bad', VALID_CODE)
+
     def test_serialization_name_none(self) -> None:
         assert CapabilityCreation.get_serialization_name() is None
 

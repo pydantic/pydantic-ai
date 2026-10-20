@@ -8,8 +8,9 @@ class DecisionModelProfile(ModelProfile, total=False):
 
     These are facts about the model behind the URL, not the class that talks to it, so they are set by the provider
     for the model name, or by `profile=`. A key left out falls back to the class's
-    [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and
-    [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels].
+    [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options],
+    [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] and
+    [`requires_instructions`][pydantic_ai.models.decision.DecisionModel.requires_instructions].
 
     ALL FIELDS MUST BE `decision_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -28,15 +29,23 @@ class DecisionModelProfile(ModelProfile, total=False):
     instead, and counts against `decision_max_choice_options`.
     """
 
+    decision_requires_instructions: bool
+    """Whether the model refuses a question without `instructions`.
+
+    A pick-one, a rubric, or a yes/no with described answers with nothing else to ask is then sent with a generic
+    question, `'Which of these applies?'`, instead of no `instructions` at all.
+    """
+
 
 def decision_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a [decision model][pydantic_ai.models.decision.DecisionModel].
 
-    A decision model answers typed questions about a state; it does not generate text, call tools, or read anything
-    but text. Tool-mode structured output is how a decision model fills an `output_type`, and it rides on
-    `supports_tools`, so that stays on. A system prompt anywhere in the history is part of what the model judges, so
-    it needs no wrapping. Every other capability flag is off, and what no flag covers, such as a file in a prompt,
-    the model refuses itself.
+    A decision model answers typed questions about a state; it does not generate text or tool calls.
+    Tool-mode structured output is how a decision model fills an `output_type`, and it rides on `supports_tools`,
+    so that stays on. A system prompt anywhere in the history is part of what the model judges, so it needs no
+    wrapping. Image input is declared by the adapter's
+    [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], rather than by this
+    profile. The model refuses unsupported input itself.
     """
     return ModelProfile(
         supports_tools=True,

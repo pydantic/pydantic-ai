@@ -9,7 +9,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
@@ -18,8 +18,11 @@ import pytest
 from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
+    AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
+    ConnectError as HTTPX2ConnectError,
     MockTransport as HTTPX2MockTransport,
+    ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
     Response as HTTPX2Response,
 )
@@ -78,7 +81,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     InstructionPart,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
     WebFetchTool,
@@ -136,11 +139,12 @@ with try_import() as imports_successful:
         GoogleModel,
         GoogleModelSettings,
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
-        _map_grounding_citations,  # pyright: ignore[reportPrivateUsage]
-        _map_grounding_source,  # pyright: ignore[reportPrivateUsage]
+        _map_citation_source,  # pyright: ignore[reportPrivateUsage]
+        _map_citations,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -203,7 +207,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     ),
                 ],
                 instructions='You are a chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -277,7 +281,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -312,7 +316,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -351,7 +355,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -416,7 +420,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
                     UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime()),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -457,7 +461,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -498,7 +502,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -930,7 +934,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1011,8 +1015,10 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'usage': {
                     'input_tokens': 14,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -1073,6 +1079,8 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -1126,7 +1134,7 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1144,6 +1152,107 @@ As the evening approaches, the skies are expected to remain partly cloudy, with 
 
 Overall, today's weather in San Francisco is pleasant, with a mix of sun and clouds and comfortable temperatures.\
 """,
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 55,
+                                        'end_index': 216,
+                                        'text': '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 217,
+                                        'end_index': 271,
+                                        'text': 'There is a very low chance of rain throughout the day.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [1],
+                                    'segment': {
+                                        'start_index': 273,
+                                        'end_index': 434,
+                                        'text': 'According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'weather.gov',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [2],
+                                    'segment': {
+                                        'start_index': 435,
+                                        'end_index': 493,
+                                        'text': 'Winds are predicted to come from the west at 10 to 15 mph.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFywixFZicmDjijfhfLNw8ya7XdqWR31aJp8CHyULLelG8bujH1TuqeP9RAhK6Pcm1qz11ujm2yM7gM5bJXDFsZwbsubub4cnUp5ixRaloJcjVrHkyd5RHblhkDDxHGiREV9BcuqeJovdr8qhtrCKMcvJk=',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [1],
+                                    'segment': {
+                                        'start_index': 495,
+                                        'end_index': 614,
+                                        'text': 'As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'weather.gov',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF_uqo2G5Goeww8iF1L_dYa2sqWGhzu_UnxEZd1gQ7ZNuXEVVVYEEYcx_La3kuODFm0dPUhHeF4qGP1c6kJ86i4SKfvRqFitMCvNiDx07eC5iM7axwepoTv3FeUdIRC-ou1P-6DDykZ4QzcxcrKISa_1Q==',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 615,
+                                        'end_index': 701,
+                                        'text': 'There is a slight increase in the chance of rain overnight, but it remains low at 20%.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
@@ -1191,7 +1300,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
                     web_searches=1,
-                    cost=Decimal('0.00431'),
+                    cost=Decimal('0.03931'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1217,7 +1326,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1233,6 +1342,61 @@ There is a significant chance of rain, with forecasts indicating a 60% to 100% p
 
 Tonight, the skies will remain cloudy with a continued chance of showers, and the temperature will drop to a low of around 57°F (about 14°C).\
 """,
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0, 1, 2],
+                                    'segment': {
+                                        'start_index': 386,
+                                        'end_index': 542,
+                                        'text': 'There is a significant chance of rain, with forecasts indicating a 60% to 100% probability of precipitation, especially from mid-afternoon into the evening.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'theweathernetwork.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEvigSUuLwtMoqPNq2bvqCduH6yYQLKmhzoj0-SQbxBb2rs_ow380KClss6yfKqxmQ-3HIrmzasviLVdO2FhQ_uEIGfpv6-_r4XOSSLu57LKZgAFYTsswd5Q--VkuO2eEr4Vh8b0aK4KFi3Rt3k_r99frmOa-8mCHzWrXI_HeS58IvIpda0XNtWVEjg',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
+                                            }
+                                        },
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [1, 2],
+                                    'segment': {
+                                        'start_index': 543,
+                                        'end_index': 618,
+                                        'text': 'Winds are generally light, coming from the north-northeast at 10 to 15 mph.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFEXnJiWubQ1I2xMumZnSwxzZzhO_s2AdGg1yFakgO7GqJXU25aq3-Zl5xFEsUk9KpDtKUsS0NrBQxRNYCTkbKMknHSD5n8Yps9aAYvLOvyKgKPDFt4SkBkt1RO1nyPOweAzOzjPmnnd8AqBqOq',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDXOJgWay-hTPi0eqxph51YPv_mX15kug_vYdV3Ybx19gm4XsIFdbDN3OhP8tHbKJDheVySvDaxmXZK2lsEJlHITYidz_uKAiY38_peXIPv0Kw4LvBYLWUh4SPwHBLgHAR3CsLQo3293ZbIXZ_3A==',
+                                            }
+                                        },
+                                    ],
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
@@ -1280,7 +1444,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
                     web_searches=1,
-                    cost=Decimal('0.00398875'),
+                    cost=Decimal('0.03898875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1362,7 +1526,7 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1380,6 +1544,145 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """,
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 235,
+                                        'end_index': 375,
+                                        'text': 'As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [1],
+                                    'segment': {
+                                        'start_index': 376,
+                                        'end_index': 444,
+                                        'text': 'Another report indicates a temperature of 68°F with passing clouds.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'timeanddate.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 445,
+                                        'end_index': 499,
+                                        'text': 'There is a very low chance of rain throughout the day.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [2],
+                                    'segment': {
+                                        'start_index': 501,
+                                        'end_index': 617,
+                                        'text': 'The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'weather.gov',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [3],
+                                    'segment': {
+                                        'start_index': 618,
+                                        'end_index': 672,
+                                        'text': 'Some sources suggest the high could reach up to 85°F.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [2],
+                                    'segment': {
+                                        'start_index': 673,
+                                        'end_index': 753,
+                                        'text': 'Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'weather.gov',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [4, 1],
+                                    'segment': {
+                                        'start_index': 755,
+                                        'end_index': 881,
+                                        'text': 'Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'accuweather.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'timeanddate.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                            }
+                                        },
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 882,
+                                        'end_index': 932,
+                                        'text': 'The chance of rain remains low throughout the day.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'Weather information for San Francisco, CA, US',
+                                                'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                            }
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
@@ -1437,7 +1740,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
                     web_searches=1,
-                    cost=Decimal('0.00667875'),
+                    cost=Decimal('0.04167875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1533,6 +1836,145 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 index=0,
                 delta=TextPartDelta(
                     content_delta='',
+                    provider_name='google',
+                    provider_details={
+                        'citations': [
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 235,
+                                    'end_index': 375,
+                                    'text': 'As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [1],
+                                'segment': {
+                                    'start_index': 376,
+                                    'end_index': 444,
+                                    'text': 'Another report indicates a temperature of 68°F with passing clouds.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'timeanddate.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 445,
+                                    'end_index': 499,
+                                    'text': 'There is a very low chance of rain throughout the day.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [2],
+                                'segment': {
+                                    'start_index': 501,
+                                    'end_index': 617,
+                                    'text': 'The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'weather.gov',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [3],
+                                'segment': {
+                                    'start_index': 618,
+                                    'end_index': 672,
+                                    'text': 'Some sources suggest the high could reach up to 85°F.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'wunderground.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [2],
+                                'segment': {
+                                    'start_index': 673,
+                                    'end_index': 753,
+                                    'text': 'Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'weather.gov',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [4, 1],
+                                'segment': {
+                                    'start_index': 755,
+                                    'end_index': 881,
+                                    'text': 'Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'accuweather.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                                        }
+                                    },
+                                    {
+                                        'web': {
+                                            'title': 'timeanddate.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                        }
+                                    },
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 882,
+                                    'end_index': 932,
+                                    'text': 'The chance of rain remains low throughout the day.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                        ]
+                    },
                     citations_delta=IsCitationList(),
                 ),
             ),
@@ -1550,6 +1992,145 @@ The forecast for the remainder of the day predicts sunny skies with highs rangin
 
 Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening. The chance of rain remains low throughout the day.\
 """,
+                    provider_name='google',
+                    provider_details={
+                        'citations': [
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 235,
+                                    'end_index': 375,
+                                    'text': 'As of Tuesday afternoon, the temperature is around 69°F (21°C), with a real feel of about 76°F (24°C) and humidity at approximately 68%.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [1],
+                                'segment': {
+                                    'start_index': 376,
+                                    'end_index': 444,
+                                    'text': 'Another report indicates a temperature of 68°F with passing clouds.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'timeanddate.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 445,
+                                    'end_index': 499,
+                                    'text': 'There is a very low chance of rain throughout the day.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [2],
+                                'segment': {
+                                    'start_index': 501,
+                                    'end_index': 617,
+                                    'text': 'The forecast for the remainder of the day predicts sunny skies with highs ranging from the mid-60s to the lower 80s.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'weather.gov',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [3],
+                                'segment': {
+                                    'start_index': 618,
+                                    'end_index': 672,
+                                    'text': 'Some sources suggest the high could reach up to 85°F.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'wunderground.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHG2VJsv-qDQ3dAw0xQxSzqVRJTmGVBl1ynrfvi4JmEOy2i4rL0D6VmM2qU_T-igTHlYqBwhiyKfV4FVZ8p0ZkvFr12ocM9X3w5zMhemDW8sojJxbbUmL2WpJhN6-MHEMbBo0icOn8flgtJkd3oFwGd1vA=',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [2],
+                                'segment': {
+                                    'start_index': 673,
+                                    'end_index': 753,
+                                    'text': 'Tonight, the weather is expected to be partly cloudy with lows in the upper 50s.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'weather.gov',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF9gHiIEZB4cp94jXmMqDgEn5mdhQWix9Oco3m2_yhtcyDU0_2m2APS1umgwbjJB2m_jvk5YrtlCJEptzyxHBTuUSoQZyeA2wPI-2DwOt702e6hk4W40qPv3f3NwT_F62ja9E1cOswIuoUqRo7MaPCsGw==',
+                                        }
+                                    }
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [4, 1],
+                                'segment': {
+                                    'start_index': 755,
+                                    'end_index': 881,
+                                    'text': 'Hourly forecasts show temperatures remaining in the low 70s during the afternoon before gradually cooling down in the evening.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'accuweather.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG5DFKTufdLoq-EDj4BMwA8R-Kt4WMdHALFS5lq7bW1XPikPjRETgxED9Y_1QDm_7oA2nnRRT1XONMc9iJeBTJksRrIytiqV46Cl8VitiRX3rKZsExm4SP_usZzXnTE5wudf6FQAMTVI8rqqS6GPU3KJ5lGYRc3ZPJ1ZJa_eTl-EhqLZgWBd4E=',
+                                        }
+                                    },
+                                    {
+                                        'web': {
+                                            'title': 'timeanddate.com',
+                                            'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE9XF-Y6nU0j1wObrFC2SexrS5DFq99jug8F3RhftMwfKdkLkcSVMWq_H3qgRJRC02Lp0nIyyB7EtTA9TkUIOV4vzEh0VmWYIkoeQRmbB3K6IaR4luRiN1n0lni5mP4x4JjiXd7y8V__w50hGwbk3k=',
+                                        }
+                                    },
+                                ],
+                            },
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {
+                                    'start_index': 882,
+                                    'end_index': 932,
+                                    'text': 'The chance of rain remains low throughout the day.',
+                                },
+                                'grounding_chunks': [
+                                    {
+                                        'web': {
+                                            'title': 'Weather information for San Francisco, CA, US',
+                                            'uri': 'https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
+                                        }
+                                    }
+                                ],
+                            },
+                        ]
+                    },
                     citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
@@ -1625,7 +2206,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1641,6 +2222,165 @@ Currently, the temperature is approximately 78°F (26°C), but it feels like 77�
 
 There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation. Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening. Winds are coming from the north-northeast at 10 to 15 mph.\
 """,
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 72,
+                                        'end_index': 229,
+                                        'text': '**Mexico City, Mexico** - The weather in Mexico City today is generally cloudy with scattered thunderstorms expected to develop, particularly this afternoon.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [1],
+                                    'segment': {
+                                        'start_index': 324,
+                                        'end_index': 415,
+                                        'text': 'Currently, the temperature is approximately 78°F (26°C), but it feels like 77°F (25°C).',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0, 1, 2],
+                                    'segment': {
+                                        'start_index': 416,
+                                        'end_index': 512,
+                                        'text': 'The forecast for the rest of the day indicates a high of around 73°F to 75°F (23°C to 24°C).',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'yahoo.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFTqbIT6r826Xu2U3cET_KtlwQe82Sf_LNSKFQKayYaymtY3qAbz6iIkbQxccEiSnFv-HmDVkk_ie97DIp9d3iw-PapYXUKqV3OA720KCi6KmqZ98zJkAxg-egXxD-PyHIkyaK5eBlCo5JLKDff_EhJchxZ',
+                                            }
+                                        },
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0, 1, 2],
+                                    'segment': {
+                                        'start_index': 513,
+                                        'end_index': 590,
+                                        'text': 'Tonight, the temperature is expected to drop to a low of about 57°F (14°C).',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'yahoo.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFTqbIT6r826Xu2U3cET_KtlwQe82Sf_LNSKFQKayYaymtY3qAbz6iIkbQxccEiSnFv-HmDVkk_ie97DIp9d3iw-PapYXUKqV3OA720KCi6KmqZ98zJkAxg-egXxD-PyHIkyaK5eBlCo5JLKDff_EhJchxZ',
+                                            }
+                                        },
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0, 1, 2],
+                                    'segment': {
+                                        'start_index': 592,
+                                        'end_index': 711,
+                                        'text': 'There is a high chance of rain throughout the day, with some reports stating a 60% to 85% probability of precipitation.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'yahoo.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFTqbIT6r826Xu2U3cET_KtlwQe82Sf_LNSKFQKayYaymtY3qAbz6iIkbQxccEiSnFv-HmDVkk_ie97DIp9d3iw-PapYXUKqV3OA720KCi6KmqZ98zJkAxg-egXxD-PyHIkyaK5eBlCo5JLKDff_EhJchxZ',
+                                            }
+                                        },
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [3],
+                                    'segment': {
+                                        'start_index': 712,
+                                        'end_index': 824,
+                                        'text': 'Hourly forecasts indicate that the likelihood of rain increases significantly in the late afternoon and evening.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'theweathernetwork.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGfewQ5Ayt0L90iNqoh_TfbKWfmLEfxHK2StObAJayvxDyyZnZN9RQce45e_lWWThsK4AqsqSRcHabKkQK8YMa1owQR8Bn6-ma7jiWhx8NN2d7Cu5diJcujVwyEbvTLS3ZlavVz8J6lXmUvDTVVDrVA4pKBYkz96YMy76lT1IJJzo4quSaVFhXjk1Y=',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0, 1],
+                                    'segment': {
+                                        'start_index': 825,
+                                        'end_index': 883,
+                                        'text': 'Winds are coming from the north-northeast at 10 to 15 mph.',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQC0SXLaLGgcMFH_tEWkajsUbbqi5e41d5DCbU7UYn-07hCucenSJSG81JCNJHvCmvBBNLToqgi9ekV5gIRMRxWyuGtmwk6_mm9PkCXkma14WNA77Mop53-RlMrNGA0Pv1cWWsfjT2eO0TzYw=',
+                                            }
+                                        },
+                                        {
+                                            'web': {
+                                                'title': 'wunderground.com',
+                                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHvVca9OLivHL55Skj5zYB3_Tz-N5Fqhjbq3NA61blVTqN54YtDSleJ9UIx6wsIAcCih6MGTG2GGnqXbcinemBrd66vI4a93SqCUUenrG2M9mzjdVShhGaW3hLtx8jGnNGiGVbg3i6EiHJWExkG',
+                                            }
+                                        },
+                                    ],
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                     NativeToolCallPart(
@@ -1693,7 +2433,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
                     web_searches=1,
-                    cost=Decimal('0.00612'),
+                    cost=Decimal('0.04112'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1733,7 +2473,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1759,6 +2499,21 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     ),
                     TextPart(
                         content='Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'end_index': 131,
+                                        'text': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',
+                                    },
+                                    'grounding_chunks': [
+                                        {'web': {'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev'}}
+                                    ],
+                                }
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                 ],
@@ -1821,7 +2576,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     )
                 ],
                 instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1847,6 +2602,18 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     ),
                     TextPart(
                         content=IsStr(),
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {'end_index': 37, 'text': 'Pydantic AI Gateway is now available!'},
+                                    'grounding_chunks': [
+                                        {'web': {'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev'}}
+                                    ],
+                                }
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                 ],
@@ -1927,6 +2694,18 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 index=2,
                 delta=TextPartDelta(
                     content_delta='',
+                    provider_name='google',
+                    provider_details={
+                        'citations': [
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {'end_index': 37, 'text': 'Pydantic AI Gateway is now available!'},
+                                'grounding_chunks': [
+                                    {'web': {'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev'}}
+                                ],
+                            }
+                        ]
+                    },
                     citations_delta=IsCitationList(),
                 ),
             ),
@@ -1934,6 +2713,18 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 index=2,
                 part=TextPart(
                     content='Pydantic AI Gateway is now available!',
+                    provider_name='google',
+                    provider_details={
+                        'citations': [
+                            {
+                                'grounding_chunk_indices': [0],
+                                'segment': {'end_index': 37, 'text': 'Pydantic AI Gateway is now available!'},
+                                'grounding_chunks': [
+                                    {'web': {'title': 'Pydantic AI', 'uri': 'https://ai.pydantic.dev'}}
+                                ],
+                            }
+                        ]
+                    },
                     citations=IsCitationList(),
                 ),
             ),
@@ -2128,7 +2919,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2176,7 +2967,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2234,7 +3025,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2285,7 +3076,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -2315,7 +3106,7 @@ async def test_google_model_thinking_part_from_other_model(
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2378,7 +3169,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     )
                 ],
                 instructions='You are a helpful assistant.',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2586,10 +3377,10 @@ async def test_google_url_input(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2632,10 +3423,10 @@ async def test_google_url_input_force_download(
                 parts=[
                     UserPromptPart(
                         content=['What is the main content of this URL?', Is(video_url)],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=datetime.UTC),
                     ),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2689,7 +3480,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2722,7 +3513,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2755,7 +3546,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2949,7 +3740,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2982,7 +3773,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3021,7 +3812,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3055,7 +3846,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3098,7 +3889,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3157,7 +3948,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3219,7 +4010,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3282,7 +4073,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3337,7 +4128,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3380,7 +4171,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3441,7 +4232,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3801,7 +4592,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     output_tokens=706,
                     output_reasoning_tokens=456,
                     web_searches=1,
-                    cost=Decimal('0.0021805'),
+                    cost=Decimal('0.0161805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4695,7 +5486,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4703,6 +5494,39 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     parts=[
                         TextPart(
                             content='The capital of France is Paris. Paris is also known for its famous landmarks, such as the Eiffel Tower.',
+                            provider_name='google',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'grounding_chunk_indices': [0],
+                                        'segment': {'end_index': 31, 'text': 'The capital of France is Paris.'},
+                                        'grounding_chunks': [
+                                            {
+                                                'retrieved_context': {
+                                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
+                                                }
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        'grounding_chunk_indices': [0],
+                                        'segment': {
+                                            'start_index': 32,
+                                            'end_index': 103,
+                                            'text': 'Paris is also known for its famous landmarks, such as the Eiffel Tower.',
+                                        },
+                                        'grounding_chunks': [
+                                            {
+                                                'retrieved_context': {
+                                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
+                                                }
+                                            }
+                                        ],
+                                    },
+                                ]
+                            },
                             citations=IsCitationList(),
                         ),
                         NativeToolCallPart(
@@ -4762,7 +5586,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                             timestamp=IsDatetime(),
                         )
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4778,6 +5602,26 @@ Here are some key facts about the Eiffel Tower:
 *   **Height:** The tower is 330 meters (1,083 feet) tall, which is about the same height as an 81-story building. It was the tallest man-made structure in the world for 41 years until the Chrysler Building in New York City was completed in 1930.
 *   **Tourism:** It is one of the most visited paid monuments in the world, attracting millions of visitors each year. The tower has three levels for visitors, with restaurants on the first and second levels. The top level's upper platform is 276 meters (906 feet) above the ground, making it the highest observation deck accessible to the public in the European Union.\
 """,
+                            provider_name='google',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'grounding_chunk_indices': [1],
+                                        'segment': {
+                                            'end_index': 85,
+                                            'text': 'The Eiffel Tower is a world-renowned landmark located in Paris, the capital of France',
+                                        },
+                                        'grounding_chunks': [
+                                            {
+                                                'retrieved_context': {
+                                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                    'file_search_store': 'fileSearchStores/testfilesearchstore-q7prdj5dqu8p',
+                                                }
+                                            }
+                                        ],
+                                    }
+                                ]
+                            },
                             citations=IsCitationList(),
                         ),
                         NativeToolCallPart(
@@ -4875,7 +5719,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                             timestamp=IsDatetime(),
                         ),
                     ],
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsNow(tz=datetime.UTC),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
@@ -4889,6 +5733,39 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         ),
                         TextPart(
                             content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.',
+                            provider_name='google',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'grounding_chunk_indices': [0],
+                                        'segment': {'end_index': 30, 'text': 'The capital of France is Paris'},
+                                        'grounding_chunks': [
+                                            {
+                                                'retrieved_context': {
+                                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                    'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                                }
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        'grounding_chunk_indices': [0],
+                                        'segment': {
+                                            'start_index': 32,
+                                            'end_index': 107,
+                                            'text': 'The city is well-known for its famous landmarks, including the Eiffel Tower',
+                                        },
+                                        'grounding_chunks': [
+                                            {
+                                                'retrieved_context': {
+                                                    'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                    'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                                }
+                                            }
+                                        ],
+                                    },
+                                ]
+                            },
                             citations=IsCitationList(),
                         ),
                         NativeToolReturnPart(
@@ -4971,6 +5848,39 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     index=1,
                     delta=TextPartDelta(
                         content_delta='',
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {'end_index': 30, 'text': 'The capital of France is Paris'},
+                                    'grounding_chunks': [
+                                        {
+                                            'retrieved_context': {
+                                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 32,
+                                        'end_index': 107,
+                                        'text': 'The city is well-known for its famous landmarks, including the Eiffel Tower',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'retrieved_context': {
+                                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                            }
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
                         citations_delta=IsCitationList(),
                     ),
                 ),
@@ -4978,6 +5888,39 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     index=1,
                     part=TextPart(
                         content='The capital of France is Paris. The city is well-known for its famous landmarks, including the Eiffel Tower.',
+                        provider_name='google',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {'end_index': 30, 'text': 'The capital of France is Paris'},
+                                    'grounding_chunks': [
+                                        {
+                                            'retrieved_context': {
+                                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                            }
+                                        }
+                                    ],
+                                },
+                                {
+                                    'grounding_chunk_indices': [0],
+                                    'segment': {
+                                        'start_index': 32,
+                                        'end_index': 107,
+                                        'text': 'The city is well-known for its famous landmarks, including the Eiffel Tower',
+                                    },
+                                    'grounding_chunks': [
+                                        {
+                                            'retrieved_context': {
+                                                'text': 'Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.',
+                                                'file_search_store': 'fileSearchStores/testfilesearchstream-lsy34id7fwk0',
+                                            }
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
@@ -5022,10 +5965,10 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
     source = citation.sources[0]
     assert isinstance(source, DocumentCitationSource)
     assert source.excerpts == ['Paris is the capital of France. The Eiffel Tower is a famous landmark in Paris.\n']
-    assert source.provider_details == {
-        'file_search_store': IsStr(regex=r'fileSearchStores/.+'),
-        'custom_metadata': [{'key': 'source_url', 'string_value': source_url}],
-    }
+    assert cited_text.provider_details is not None
+    retrieved_context = cited_text.provider_details['citations'][0]['grounding_chunks'][0]['retrieved_context']
+    assert retrieved_context['file_search_store'] == IsStr(regex=r'fileSearchStores/.+')
+    assert retrieved_context['custom_metadata'] == [{'key': 'source_url', 'string_value': source_url}]
     assert len(calls) == 1 and len(returns) == 1
     assert returns[0].content == [
         {
@@ -5057,7 +6000,8 @@ def test_google_unusable_grounding_offsets_are_unanchored(text: str, start: int,
         ],
     )
 
-    assert _map_grounding_citations([Part(text=text)], metadata) == {0: [Citation(sources=[source])]}
+    citations, _ = _map_citations([Part(text=text)], metadata)[0]
+    assert citations == [Citation(sources=[source])]
 
 
 @pytest.mark.parametrize(
@@ -5073,13 +6017,13 @@ def test_google_retrieved_context_excerpt(context_kind: str, expected_excerpt: s
         if context_kind == 'retrieved-context'
         else GroundingChunkRetrievedContext(rag_chunk=RagChunk(text=expected_excerpt))
     )
-    assert _map_grounding_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
+    assert _map_citation_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
         excerpts=[expected_excerpt]
     )
 
 
 def test_google_maps_grounding_source() -> None:
-    assert _map_grounding_source(
+    assert _map_citation_source(
         GroundingChunk(
             maps=GroundingChunkMaps(
                 uri='https://maps.google.com/?cid=123',
@@ -5092,12 +6036,11 @@ def test_google_maps_grounding_source() -> None:
         url='https://maps.google.com/?cid=123',
         title='Example Place',
         excerpts=['A place description.'],
-        provider_details={'place_id': 'places/example'},
     )
 
 
 def test_google_image_grounding_source() -> None:
-    assert _map_grounding_source(
+    assert _map_citation_source(
         GroundingChunk(
             image=GroundingChunkImage(
                 source_uri='https://example.com/page',
@@ -5109,7 +6052,6 @@ def test_google_image_grounding_source() -> None:
     ) == WebCitationSource(
         url='https://example.com/page',
         title='Example image',
-        provider_details={'image_uri': 'https://example.com/image.jpg', 'domain': 'example.com'},
     )
 
 
@@ -5118,16 +6060,8 @@ def test_google_retrieved_context_preserves_distinct_excerpts():
         text='retrieved context excerpt', rag_chunk=RagChunk(text='RAG chunk excerpt')
     )
 
-    assert _map_grounding_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
+    assert _map_citation_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
         excerpts=['retrieved context excerpt', 'RAG chunk excerpt']
-    )
-
-
-def test_google_retrieved_context_preserves_rag_chunk_identity():
-    context = GroundingChunkRetrievedContext(rag_chunk=RagChunk(text='excerpt', chunk_id='chunk-1'))
-
-    assert _map_grounding_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
-        excerpts=['excerpt'], provider_details={'rag_chunk': {'chunk_id': 'chunk-1'}}
     )
 
 
@@ -5143,9 +6077,27 @@ def test_google_grounding_uses_unique_segment_text_to_find_part():
         ],
     )
 
-    assert _map_grounding_citations([Part(text='first'), Part(text='unique second')], metadata) == {
-        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=6))]
-    }
+    assert _map_citations([Part(text='first'), Part(text='unique second')], metadata) == snapshot(
+        {
+            1: (
+                [
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=ContentCitationAnchor(start=0, end=6),
+                    )
+                ],
+                {
+                    'citations': [
+                        {
+                            'grounding_chunk_indices': [0],
+                            'segment': {'start_index': 0, 'end_index': 6, 'part_index': 0, 'text': 'unique'},
+                            'grounding_chunks': [{'web': {'uri': 'https://example.com'}}],
+                        }
+                    ]
+                },
+            )
+        }
+    )
 
 
 def test_google_grounding_uses_part_index_when_segment_text_repeats():
@@ -5160,12 +6112,30 @@ def test_google_grounding_uses_part_index_when_segment_text_repeats():
         ],
     )
 
-    assert _map_grounding_citations([Part(text='same'), Part(text='same')], metadata) == {
-        1: [Citation(sources=[source], anchor=ContentCitationAnchor(start=0, end=4))]
-    }
+    assert _map_citations([Part(text='same'), Part(text='same')], metadata) == snapshot(
+        {
+            1: (
+                [
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=ContentCitationAnchor(start=0, end=4),
+                    )
+                ],
+                {
+                    'citations': [
+                        {
+                            'grounding_chunk_indices': [0],
+                            'segment': {'start_index': 0, 'end_index': 4, 'part_index': 1, 'text': 'same'},
+                            'grounding_chunks': [{'web': {'uri': 'https://example.com'}}],
+                        }
+                    ]
+                },
+            )
+        }
+    )
 
 
-def test_google_grounding_filters_sources_and_corresponding_confidence_scores():
+def test_google_grounding_filters_sources_and_keeps_raw_confidence_scores():
     first_source = WebCitationSource(url='https://first.example.com')
     second_source = WebCitationSource(url='https://second.example.com')
     metadata = GroundingMetadata(
@@ -5183,15 +6153,36 @@ def test_google_grounding_filters_sources_and_corresponding_confidence_scores():
         ],
     )
 
-    assert _map_grounding_citations([Part(text='answer')], metadata) == {
-        0: [
-            Citation(
-                sources=[first_source, second_source],
-                anchor=ContentCitationAnchor(start=0, end=6),
-                provider_details={'confidence_scores': [0.9, 0.0]},
+    assert _map_citations([Part(text='answer')], metadata) == snapshot(
+        {
+            0: (
+                [
+                    Citation(
+                        sources=[
+                            WebCitationSource(url='https://first.example.com'),
+                            WebCitationSource(url='https://second.example.com'),
+                        ],
+                        anchor=ContentCitationAnchor(start=0, end=6),
+                    )
+                ],
+                {
+                    'citations': [
+                        {
+                            'confidence_scores': [0.9, 0.1, 0.2, 0.0],
+                            'grounding_chunk_indices': [0, 1, 99, 2],
+                            'segment': {'start_index': 0, 'end_index': 6, 'text': 'answer'},
+                            'grounding_chunks': [
+                                {'web': {'uri': 'https://first.example.com'}},
+                                {},
+                                None,
+                                {'web': {'uri': 'https://second.example.com'}},
+                            ],
+                        }
+                    ]
+                },
             )
-        ]
-    }
+        }
+    )
 
 
 @pytest.mark.parametrize(
@@ -5214,7 +6205,7 @@ def test_google_grounding_skips_unlocatable_segment(case: str) -> None:
         grounding_supports=[support],
     )
 
-    assert _map_grounding_citations([Part(text='first'), Part(text='third')], metadata) == {}
+    assert _map_citations([Part(text='first'), Part(text='third')], metadata) == {}
 
 
 @pytest.mark.parametrize(
@@ -5240,7 +6231,7 @@ def test_google_grounding_skips_unrenderable_source(case: str) -> None:
         grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],
     )
 
-    assert _map_grounding_citations([Part(text='answer')], metadata) == {}
+    assert _map_citations([Part(text='answer')], metadata) == {}
 
 
 async def test_google_stream_keeps_text_parts_separate_across_non_text_parts():
@@ -5388,7 +6379,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5417,7 +6408,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5434,7 +6425,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5461,7 +6452,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=datetime.UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
@@ -5515,7 +6506,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -5733,6 +6724,69 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert len(requests) == 1
 
 
+class _HTTPX2StreamBreakingOff(HTTPX2AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_connect_error_is_wrapped(allow_model_requests: None, stream: bool):
+    """`google.genai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        raise HTTPX2ConnectError('connection refused', request=request)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with Agent(model).run_stream('test'):
+                    pass  # pragma: no cover
+            else:
+                await Agent(model).run('test')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'connection refused'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
+
+
+async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_requests: None):
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error."""
+    chunk = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hello'}]}, 'index': 0}]}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(
+            200,
+            headers={'content-type': 'text/event-stream'},
+            stream=_HTTPX2StreamBreakingOff(
+                f'data: {json.dumps(chunk)}\r\n\r\n'.encode(), HTTPX2ReadError('connection reset')
+            ),
+        )
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with Agent(model).run_stream('test') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
+
+
 async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
     """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
     error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
@@ -5779,7 +6833,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6015,7 +7069,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6056,7 +7110,7 @@ async def test_google_streaming_tool_call_thought_signature(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=datetime.UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -6269,17 +7323,33 @@ async def test_google_stream_safety_filter(
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
 
 
-def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvider):
-    """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
+@pytest.mark.parametrize('route', ['gemini-api', 'google-cloud', 'gateway'])
+def test_google_provider_sets_http_options_timeout(route: str, gemini_api_key: str):
+    """Test that the Google providers set HttpOptions.timeout to prevent requests hanging indefinitely.
 
     The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
     explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
     client. This would cause requests to hang indefinitely.
 
+    The client a Google provider creates, directly or on the Gateway's Google route, waits 20 minutes rather
+    than `DEFAULT_HTTP_TIMEOUT`, as Google recommends for long decode, and so does a client recreated after it
+    is closed.
+
     See https://github.com/pydantic/pydantic-ai/issues/4031
     """
-    http_options = google_provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
-    assert http_options.timeout == DEFAULT_HTTP_TIMEOUT * 1000
+    if route == 'gemini-api':
+        provider = GoogleProvider(api_key=gemini_api_key)
+    elif route == 'google-cloud':
+        provider = GoogleCloudProvider(project='test-project')
+    else:
+        provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    http_options = provider.client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == 20 * 60 * 1000
+    factory = provider._http_client_factory  # pyright: ignore[reportPrivateUsage]
+    assert factory is not None
+    recreated = factory()
+    assert recreated.timeout.read == 20 * 60
+    assert recreated.timeout.connect == 5
 
 
 def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str):
@@ -6882,7 +7952,7 @@ async def test_google_service_tier_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     response.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'PRIORITY'})
 
@@ -6921,7 +7991,7 @@ async def test_google_service_tier_streamed_response_extraction(
         ),
         response_id='resp_123',
         model_version=model_name,
-        create_time=datetime.datetime.now(tz=datetime.timezone.utc),
+        create_time=datetime.datetime.now(tz=datetime.UTC),
     )
     chunk.sdk_http_response = HttpResponse(headers={'x-gemini-service-tier': 'FLEX'})
 
@@ -7378,7 +8448,7 @@ async def test_google_model_armor_config_is_sent_in_request(
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'

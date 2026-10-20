@@ -1,9 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal, overload
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError

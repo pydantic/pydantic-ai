@@ -95,8 +95,11 @@ class FakeGeminiSession:
         if fault == 'lost':
             self.break_connection()
             raise ConnectionClosed(None, Close(1006, 'simulated send failure'))
+        truth = self.server.truth
+        received = len(truth.inputs)
         receive(self.server.session_for(self))
         if fault == 'ambiguous':
+            truth.ambiguous_inputs.update(input_.key for input_ in truth.inputs[received:])
             self.break_connection()
             raise ConnectionClosed(None, Close(1006, 'simulated send failure'))
 
@@ -683,10 +686,6 @@ class GeminiSimulation(Simulation):
         if self.options.latency:
             self.server.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
         self._provider = GoogleProvider(api_key='simulated')
-
-    @property
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        return self.server.failed_sends
 
     @property
     def truth(self) -> GroundTruth:

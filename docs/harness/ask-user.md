@@ -40,7 +40,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
     return AskUserResponse(answers=tuple(answers))
 
 
-agent = Agent('anthropic:claude-fable-5', capabilities=[AskUser(answerer=pick_first)])
+agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=pick_first)])
 ```
 
 `pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
@@ -100,7 +100,7 @@ from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserRequest, AskUserResponse, ask_user_result
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    '{{ anthropic:xlarge }}',
     output_type=[str, DeferredToolRequests],
     capabilities=[AskUser(answerer=None)],
 )

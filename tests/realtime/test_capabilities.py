@@ -62,18 +62,20 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
+from ..realtime_connections import InferredConnection
 
-class _Connection(RealtimeConnection):
+
+class _Connection(InferredConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
 
     def __init__(self, events: Sequence[RealtimeCodecEvent] = (ResponseDone(),)) -> None:
         self._events = events
         self.sent: list[RealtimeInput] = []
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
 
@@ -877,6 +879,27 @@ async def test_before_run_can_cancel_realtime_session() -> None:
     assert model.instructions is None
 
 
+async def test_after_run_uncancel_cannot_complete_realtime_session() -> None:
+    """A first-party cancellation remains terminal after a hook clears the owning task's cancellation count."""
+    task = asyncio.current_task()
+    assert task is not None
+
+    class UncancelAfterRun(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task.uncancel()
+            return result
+
+    agent = Agent(capabilities=[UncancelAfterRun()], deps_type=type(None))
+    with pytest.raises(RunCancelled):
+        async with agent.realtime(_RecordingModel()).session() as session:
+            async for _ in session:
+                pass
+
+
 async def test_cancel_on_finished_realtime_context_is_noop() -> None:
     """A retained context cannot cancel the task that happened to own an already-finished session."""
     contexts: list[RunContext[None]] = []
@@ -962,7 +985,7 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     mid_reply = asyncio.Event()
 
     class _ParkedMidReply(_Connection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='cut off mid-', is_final=False)
             mid_reply.set()
             await asyncio.Event().wait()

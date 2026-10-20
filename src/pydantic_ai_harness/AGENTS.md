@@ -93,7 +93,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Coding standards
 
-- Python 3.10+ (target version for pyright and ruff)
+- Python 3.11+ (Pyright and Ruff targets)
 - **pyright strict** mode -- no `Any` types, full type annotations
 - **ruff**: line-length=120, single quotes, max-complexity=15
 - CI enforces 100% branch coverage from combined matrix data.
@@ -141,6 +141,15 @@ uv run --no-sync pytest -p no:cacheprovider tests/harness/<capability>
 CI runs the repository-wide typecheck, test, and combined coverage gates.
 Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
+
+### Workspace and Python versions
+
+```bash
+uv sync --locked --all-packages --all-extras --group lint
+```
+
+Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
+configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure
 

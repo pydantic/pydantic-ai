@@ -8,6 +8,11 @@ on:
     # Weekly, offset from the Monday stale-issues finder.
     - cron: '40 9 * * 3'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai') }}
 permissions:
   contents: read
@@ -21,6 +26,13 @@ network:
     - defaults
     - python
     - api.z.ai
+    # Logfire ingestion endpoints used by shared/otel-logfire.md.
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 tools:
   bash: []
   cli-proxy: false
@@ -32,9 +44,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
-  missing-tool: false
-  missing-data: false
-  report-incomplete: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   jobs:
     record-community-verdict:
       description: "Record one demand verdict for deterministic host-side label application."
@@ -125,6 +140,7 @@ pre-agent-steps:
       retention-days: 1
       overwrite: true
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md

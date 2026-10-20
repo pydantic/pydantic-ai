@@ -116,8 +116,8 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     return {
         'supports_manual_turn_control': True,
         'supports_interruption': True,
-        # Grok Voice always speaks: the API has no response-modality control, so an
-        # `output_modality='text'` session would silently come back as audio.
+        # Grok Voice always speaks: the API accepts a response-modality setting but ignores it (checked
+        # live), so an `output_modality='text'` session would silently come back as audio.
         'supports_text_output': False,
         'supports_session_seeding': True,
         'supports_seeding_images': False,

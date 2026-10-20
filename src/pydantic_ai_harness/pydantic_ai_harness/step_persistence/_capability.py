@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -288,7 +288,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                 run_id=run_id,
                 kind=kind,
                 step_index=step_index,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 conversation_id=conversation_id,
                 parent_run_id=parent_run_id,
                 agent_name=agent_name,
@@ -348,7 +348,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                 conversation_id=conversation_id,
                 parent_run_id=parent_run_id,
                 agent_name=agent_name,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 state=state,
                 # The store scopes keys by run id. Within that scope the sequence distinguishes
                 # separate save calls, step_index identifies the graph position, and state keeps
@@ -404,7 +404,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         error: str | None = None,
     ) -> None:
         prior = await self.store.get_tool_effect(run_id=run_id, tool_call_id=tool_call_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await self.store.record_tool_effect(
             ToolEffectRecord(
                 tool_call_id=tool_call_id,

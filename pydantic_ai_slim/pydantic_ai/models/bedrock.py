@@ -7,15 +7,15 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from itertools import count
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, assert_never, cast, overload
 from urllib.parse import parse_qs, urlparse
 
 import anyio.to_thread
 from pydantic_core import to_json
-from typing_extensions import ParamSpec, TypedDict, assert_never
+from typing_extensions import ParamSpec, TypedDict
 
 try:
     from botocore.client import BaseClient
@@ -27,6 +27,7 @@ try:
         HTTPClientError,
     )
     from botocore.model import StructureShape
+    from urllib3.exceptions import HTTPError as Urllib3HTTPError
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use the Bedrock model, '
@@ -71,6 +72,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
@@ -80,11 +82,19 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
+)
+from pydantic_ai.models._prompt_cache import (
+    excess_cache_points,
+    previous_tail_needing_breakpoint,
+    raise_earlier_cache_ttls,
+    split_cache_setting,
 )
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
@@ -92,9 +102,10 @@ from pydantic_ai.models._tool_choice import (
     support_tool_forcing,
     tool_forcing_unavailable_reason,
 )
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.output import StructuredOutputMode
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
@@ -103,7 +114,14 @@ from pydantic_ai.profiles.anthropic import (
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
-from pydantic_ai.settings import ModelSettings, ThinkingLevel, merge_model_settings
+from pydantic_ai.settings import (
+    CacheConfig,
+    CacheRetention,
+    CacheSetting,
+    ModelSettings,
+    ThinkingLevel,
+    merge_model_settings,
+)
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -151,6 +169,12 @@ if TYPE_CHECKING:
 # botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
 # instead of raising.
 _MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+_DATA_RETENTION_HINT = (
+    "Bedrock rejected this model under the account's data retention mode for this Region. Models that require human "
+    "review, such as Claude Fable 5 and 5.1, need the account's data retention mode set to `aws_review` (or the legacy "
+    "`provider_data_share`) with the Bedrock control plane's `PutAccountDataRetention` API, as it can't be set per "
+    'request. See https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html'
+)
 
 
 @contextmanager
@@ -163,19 +187,30 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         if isinstance(status_code, int):
             suggested_model_id = None
             error = e.response.get('Error')
-            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
+            error_message = error.get('Message') if _utils.is_str_dict(error) else None
+            if error_message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+            hint = (
+                _DATA_RETENTION_HINT
+                if isinstance(error_message, str) and 'data retention mode' in error_message.lower()
+                else None
+            )
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                hint=hint,
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except Urllib3HTTPError as e:
+        # botocore reads an event stream straight from the urllib3 response, so a connection that breaks off or
+        # times out mid-stream raises the raw urllib3 error rather than a botocore one.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
     except EventStreamParserError as e:
         # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
         # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.
@@ -341,6 +376,12 @@ LatestBedrockModelNames = Literal[
     'anthropic.claude-haiku-4-5-20251001-v1:0',
     'us.anthropic.claude-haiku-4-5-20251001-v1:0',
     'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+    'anthropic.claude-haiku-5-5',
+    'us.anthropic.claude-haiku-5-5',
+    'eu.anthropic.claude-haiku-5-5',
+    'au.anthropic.claude-haiku-5-5',
+    'jp.anthropic.claude-haiku-5-5',
+    'global.anthropic.claude-haiku-5-5',
     'cohere.command-text-v14',
     'cohere.command-r-v1:0',
     'cohere.command-r-plus-v1:0',
@@ -467,47 +508,50 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
 ) -> WebCitationSource | DocumentCitationSource | None:
-    details = dict(citation)
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
-    details.pop('title', None)
-    details.pop('sourceContent', None)
     if url := citation.get('location', {}).get('web', {}).get('url'):
-        details.pop('location', None)
-        return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
-    if not (title or excerpts or details):
+        return WebCitationSource(url=url, title=title, excerpts=excerpts)
+    if not (title or excerpts):
         return None
-    return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
+    # The location in the document stays in the raw citation data.
+    return DocumentCitationSource(title=title, excerpts=excerpts)
 
 
 def _map_citations(
-    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], anchor: ContentCitationAnchor | None
+    citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], text: str
 ) -> list[Citation] | None:
     sources = [source for citation in citations if (source := _map_citation_source(citation))]
-    return [Citation(sources=sources, anchor=anchor)] if sources else None
+    if not sources:
+        return None
+    # Bedrock cites whole blocks of text, so the citation covers the whole part.
+    return [Citation(sources=sources, anchor=ContentCitationAnchor(start=0, end=len(text)) if text else None)]
+
+
+def _citations_provider_details(citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef]) -> dict[str, Any]:
+    return {'citations': [dict(citation) for citation in citations]}
 
 
 def _map_citations_for_replay(
-    citations: list[Citation], text: str, document_texts: list[str | None]
+    citations: list[Any], text: str, document_texts: list[str | None]
 ) -> ContentBlockOutputTypeDef | None:
-    """Rebuild the `citationsContent` block Bedrock returned for this text, or return `None` to send plain text.
+    """Rebuild the `citationsContent` block Bedrock returned from its raw data on the text part, or return `None`.
 
-    Only the shape Pydantic AI builds from a Bedrock cited block is rebuilt: one citation covering the whole text
-    part. Every source must be a character range that still selects its excerpt from a plain-text document in the
+    Every citation must be a character range that still selects its cited text from a plain-text document in the
     request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
     """
-    if len(citations) != 1:
+    if not text:
         return None
-    anchor = citations[0].anchor
-    if not isinstance(anchor, ContentCitationAnchor) or (anchor.start, anchor.end) != (0, len(text)):
-        return None
-    mapped_sources: list[CitationOutputTypeDef] = []
-    for source in citations[0].sources:
-        location = (source.provider_details or {}).get('location')
+    mapped_citations: list[CitationOutputTypeDef] = []
+    for citation in citations:
+        location = citation.get('location') if _utils.is_str_dict(citation) else None
         char_location = location.get('documentChar') if _utils.is_str_dict(location) else None
         if not _utils.is_str_dict(char_location):
             return None
         index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
+        source_content = [
+            content.get('text') for content in citation.get('sourceContent', []) if _utils.is_str_dict(content)
+        ]
         if (
             not isinstance(index, int)
             or not isinstance(start, int)
@@ -515,17 +559,19 @@ def _map_citations_for_replay(
             or not 0 <= index < len(document_texts)
             or (document_text := document_texts[index]) is None
             or not 0 <= start < end
-            or source.excerpts != [document_text[start:end]]
+            or source_content != [document_text[start:end]]
         ):
             return None
-        mapped_source: CitationOutputTypeDef = {
+        mapped_citation: CitationOutputTypeDef = {
             'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
             'sourceContent': [{'text': document_text[start:end]}],
         }
-        if source.title is not None:
-            mapped_source['title'] = source.title
-        mapped_sources.append(mapped_source)
-    return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}
+        if isinstance(title := citation.get('title'), str):
+            mapped_citation['title'] = title
+        mapped_citations.append(mapped_citation)
+    if not mapped_citations:
+        return None
+    return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_citations}}
 
 
 def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
@@ -714,9 +760,29 @@ class BedrockModelSettings(ModelSettings, total=False):
     """
 
 
+_CACHE_SETTINGS_KEYS = (
+    'bedrock_cache_instructions',
+    'bedrock_cache_tool_definitions',
+    'bedrock_cache_messages',
+)
+
+
 @dataclass(init=False)
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
+
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'timeout',
+        }
+    )
 
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
@@ -789,20 +855,24 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by supported Bedrock cache settings."""
-        settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_cache_retention(
-            settings.get('bedrock_cache_instructions')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_messages')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_tool_definitions')
-            if self.profile.get('bedrock_supports_tool_caching', False)
-            else None,
-        )
+    def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
+        return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
+
+    def _effective_cache_settings(self, merged_settings: ModelSettings) -> tuple[CacheSetting | None, ...]:
+        # Mirrors `prepare_request` precedence: when any explicit `bedrock_cache_*` setting is present, the
+        # unified value contributes nothing, since it also adds nothing to the request. Each setting only takes
+        # effect where the profile supports it.
+        if self._has_provider_cache_settings(merged_settings):
+            settings = cast(BedrockModelSettings, merged_settings)
+            supports_prompt_caching = self.profile.get('bedrock_supports_prompt_caching', False)
+            return (
+                settings.get('bedrock_cache_instructions') if supports_prompt_caching else None,
+                settings.get('bedrock_cache_messages') if supports_prompt_caching else None,
+                settings.get('bedrock_cache_tool_definitions')
+                if self.profile.get('bedrock_supports_tool_caching', False)
+                else None,
+            )
+        return super()._effective_cache_settings(merged_settings)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -874,6 +944,11 @@ class BedrockConverseModel(Model[BaseClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
+        # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
+        if (cache := model_request_parameters.cache) and not any(
+            key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
+        ):
+            prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
@@ -895,6 +970,28 @@ class BedrockConverseModel(Model[BaseClient]):
                 UserWarning,
                 stacklevel=2,
             )
+
+    def _translate_cache(
+        self, model_settings: BedrockModelSettings, cache: Literal[True] | CacheRetention | CacheConfig
+    ) -> BedrockModelSettings:
+        """Map the unified `cache` setting onto Bedrock cache settings.
+
+        Only called when no explicit `bedrock_cache_*` setting is present (those take precedence
+        in `prepare_request`). The Converse API has no automatic caching mode, so the library
+        places breakpoints at the end of the tool definitions, the static instructions and the
+        conversation (unless only the stable prefix is cached, with `messages=False`); the per-boundary
+        profile gates still apply when the settings are consumed.
+        """
+        retention, messages = split_cache_setting(cache)
+        # `True` stays `True` so no explicit `ttl` reaches the wire, matching what
+        # `bedrock_cache_instructions=True` sends; only a requested retention is forwarded.
+        value: Literal[True, '5m', '1h'] = retention if retention in ('5m', '1h') else True
+        translated = model_settings.copy()
+        translated['bedrock_cache_instructions'] = value
+        translated['bedrock_cache_tool_definitions'] = value
+        if messages:
+            translated['bedrock_cache_messages'] = value
+        return translated
 
     @property
     def _botocore_supports_strict_tool_param(self) -> bool:
@@ -987,13 +1084,14 @@ class BedrockConverseModel(Model[BaseClient]):
         # No native-tool strip is needed here (unlike Anthropic's count_tokens, which must drop server tools):
         # count-tokens-capable models (Claude) don't support native tools, and native-tool-capable models
         # (Nova-2) don't support count_tokens, so a `systemTool` can never reach this request.
-        tool_config = self._map_tool_config(model_request_parameters, settings)
+        tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
         if tool_config:
             converse['toolConfig'] = tool_config
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
         if additional_model_requests_fields := self._build_additional_model_request_fields(
-            settings, model_request_parameters
+            settings, model_request_parameters, bedrock_messages
         ):
             converse['additionalModelRequestFields'] = additional_model_requests_fields
         params: CountTokensRequestTypeDef = {
@@ -1061,9 +1159,18 @@ class BedrockConverseModel(Model[BaseClient]):
                     items.append(TextPart(content=text))
                 elif citations_content := item.get('citationsContent'):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
-                    anchor = ContentCitationAnchor(start=0, end=len(text)) if text else None
-                    citations = _map_citations(citations_content.get('citations', []), anchor)
-                    items.append(TextPart(content=text, citations=citations))
+                    block_citations = citations_content.get('citations', [])
+                    if citations := _map_citations(block_citations, text):
+                        items.append(
+                            TextPart(
+                                content=text,
+                                provider_name=self.system,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=citations,
+                            )
+                        )
+                    else:
+                        items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
                     if tool_use.get('type') == 'server_tool_use':
                         if tool_use['name'] == 'nova_code_interpreter':  # pragma: no branch
@@ -1085,6 +1192,12 @@ class BedrockConverseModel(Model[BaseClient]):
                         )
                 elif tool_result := item.get('toolResult'):
                     if tool_result.get('type') == 'nova_code_interpreter_result':  # pragma: no branch
+                        # Nova's code interpreter returns one `json` block holding its standard schema
+                        # (https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-tools.html), code errors
+                        # included, so `content` is normalized to that object, as decided in
+                        # https://github.com/pydantic/pydantic-ai/pull/3892#discussion_r2688437212.
+                        # A sandbox timeout returns `status: 'error'` with empty `content`, parsed as `None`; sending
+                        # it back as `[{'json': None}]` is deliberate, as Bedrock rejects an empty `content` list.
                         items.append(
                             NativeToolReturnPart(
                                 provider_name=self.system,
@@ -1118,8 +1231,9 @@ class BedrockConverseModel(Model[BaseClient]):
         self,
         model_settings: BedrockModelSettings,
         model_request_parameters: ModelRequestParameters,
+        bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> dict[str, Any] | None:
-        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k` and `thinking`."""
+        """Build `additionalModelRequestFields` from user-supplied fields plus unified `top_k`, `thinking` and `'none'`."""
         existing = dict(model_settings.get('bedrock_additional_model_requests_fields') or {})
         profile = self.profile
 
@@ -1135,6 +1249,17 @@ class BedrockConverseModel(Model[BaseClient]):
                 inference_config: Mapping[str, Any] = existing.get('inferenceConfig') or {}
                 if isinstance(inference_config, dict) and 'topK' not in inference_config:
                     existing['inferenceConfig'] = {**inference_config, 'topK': top_k}
+
+        if (
+            profile.get('bedrock_tool_choice_none_variant') == 'anthropic'
+            and 'tool_choice' not in existing
+            and model_request_parameters.declared_tool_defs
+            and resolve_tool_choice(model_settings, model_request_parameters) == 'none'
+            and _has_tool_blocks(bedrock_messages)
+        ):
+            # Converse has no `toolChoice.none`, and `_map_tool_config` has to keep the tools once history has tool
+            # blocks; Claude honors its native field when the Converse one is omitted.
+            existing['tool_choice'] = {'type': 'none'}
 
         thinking = model_request_parameters.thinking
         if thinking is None:
@@ -1200,12 +1325,13 @@ class BedrockConverseModel(Model[BaseClient]):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters, settings)
+        tool_config = self._map_tool_config(model_request_parameters, settings, bedrock_messages)
         if tool_config:
             params['toolConfig'] = tool_config
 
         tools: list[ToolTypeDef] = list(tool_config['tools']) if tool_config else []
         self._limit_cache_points(system_prompt, bedrock_messages, tools)
+        _raise_earlier_cache_ttls(system_prompt, bedrock_messages, tools)
 
         if output_config := self._native_output_format(model_request_parameters):
             params['outputConfig'] = output_config
@@ -1230,7 +1356,7 @@ class BedrockConverseModel(Model[BaseClient]):
                 params['serviceTier'] = {'type': unified_tier}
 
         if additional_model_requests_fields := self._build_additional_model_request_fields(
-            settings, model_request_parameters
+            settings, model_request_parameters, bedrock_messages
         ):
             params['additionalModelRequestFields'] = additional_model_requests_fields
 
@@ -1271,6 +1397,7 @@ class BedrockConverseModel(Model[BaseClient]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: BedrockModelSettings | None,
+        bedrock_messages: Sequence[MessageUnionTypeDef],
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
@@ -1278,15 +1405,21 @@ class BedrockConverseModel(Model[BaseClient]):
         profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
 
-        tool_choice: ToolChoiceTypeDef
+        tool_choice: ToolChoiceTypeDef | None
         if resolved_tool_choice == 'auto':
             tool_choice = {'auto': {}}
         elif resolved_tool_choice == 'required':
             tool_choice = {'any': {}} if supports else {'auto': {}}
         elif resolved_tool_choice == 'none':
-            # Bedrock doesn't support a native 'none' mode, so we don't send tools
-            # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html
-            return None
+            # Converse's `toolChoice` has no 'none' mode
+            # (https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolChoice.html), so the tools are
+            # dropped. Converse rejects `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once history has
+            # a tool call the tools stay: Anthropic models then get a native `none` via `additionalModelRequestFields`
+            # (see `_build_additional_model_request_fields`), while other models aren't prevented from calling them.
+            if not _has_tool_blocks(bedrock_messages):
+                return None
+            # TODO(#10435): enforce `'none'` in core for models without a native `none`, which can still call these.
+            tool_choice = None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
@@ -1376,7 +1509,8 @@ class BedrockConverseModel(Model[BaseClient]):
                             await self._map_user_prompt(
                                 part,
                                 document_count,
-                                include_citations=settings.get('include_citations', False),
+                                include_citations=settings.get('include_citations', False)
+                                and profile.get('bedrock_supports_citations', False),
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                                 prior_messages=bedrock_messages,
                             )
@@ -1506,17 +1640,20 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
+                carried_thinking: list[ContentBlockUnionTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
+                        raw_citations = (item.provider_details or {}).get('citations')
                         citation_block = (
                             _map_citations_for_replay(
-                                item.citations, item.content, _citation_document_texts(bedrock_messages)
+                                cast(list[Any], raw_citations), item.content, _citation_document_texts(bedrock_messages)
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
                             if settings.get('include_citations', False)
-                            and item.citations
-                            and (item.provider_name or message.provider_name) == self.system
+                            and profile.get('bedrock_supports_citations', False)
+                            and item.provider_name == self.system
+                            and isinstance(raw_citations, list)
                             else None
                         )
                         content.append(citation_block or {'text': item.content})
@@ -1540,8 +1677,14 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile, message)
+                            if not carry_in_user_turn:
+                                content.append({'text': thinking_text})
+                            elif item.content:
+                                # A redacted block arrives with its reasoning stripped (`content=''`), and
+                                # an empty wrapper in the user turn tells the model the assistant thought
+                                # nothing. Dropping it matches `AnthropicModel`, which guards the same arm.
+                                carried_thinking.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
@@ -1572,6 +1715,33 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
+                if carried_thinking:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write `<thinking>` tags into its visible
+                    # answers. Appended as a plain user turn rather than merged here, so the pass below
+                    # applies `bedrock_tool_result_colocatable_content` to it like any other user
+                    # content — for Claude that set contains `text`, so it does end up sharing the turn
+                    # with preceding tool results.
+                    #
+                    # The exception that pass can't handle is a `CachePoint` the user put at the end of
+                    # that turn. Merged behind the marker, the carried text becomes the turn's last
+                    # block, and `bedrock_cache_messages` then appends an automatic cache point that
+                    # `_get_last_user_message_content` had been suppressing. The extra point costs the
+                    # user their *oldest* explicit one, since `_limit_cache_points` keeps the newest
+                    # four. Slotting the carried text in ahead of the marker leaves both the point
+                    # count and the marker's position exactly as authored.
+                    previous_content: Sequence[ContentBlockUnionTypeDef] = (
+                        bedrock_messages[-1]['content']
+                        if bedrock_messages and bedrock_messages[-1]['role'] == 'user'
+                        else []
+                    )
+                    if previous_content and 'cachePoint' in previous_content[-1]:
+                        bedrock_messages[-1] = {
+                            'role': 'user',
+                            'content': [*previous_content[:-1], *carried_thinking, previous_content[-1]],
+                        }
+                    else:
+                        bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:
@@ -1645,10 +1815,30 @@ class BedrockConverseModel(Model[BaseClient]):
             if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
-                    # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
-                    _insert_cache_point_before_trailing_documents(
-                        last_user_content, self._get_cache_point(cache_messages)
+                    # Bedrock's lookback for the previous request's cache entry spans only about 20 content
+                    # blocks, so after a wide turn the end of the previous request gets a breakpoint too.
+                    previous_tail = previous_tail_needing_breakpoint(
+                        [message['role'] for message in processed_messages],
+                        [len(message['content']) for message in processed_messages],
                     )
+                    if previous_tail is not None:
+                        previous_content = cast(list[Any], processed_messages[previous_tail]['content'])
+                        if 'cachePoint' not in previous_content[-1]:
+                            _insert_cache_point_before_trailing_documents(
+                                previous_content, self._get_cache_point(cache_messages)
+                            )
+                    # A request-scoped prompt ends the request when it's rendered as text (see
+                    # `_request_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
+                    # before it. One with nothing ahead of it in the message gets no breakpoint.
+                    end, _ = _request_scoped_suffix_start(
+                        last_user_content, _request_scoped_tail_texts(messages), lambda block: block.get('text')
+                    )
+                    lasting_content = last_user_content[:end]
+                    if lasting_content and 'cachePoint' not in lasting_content[-1]:
+                        _insert_cache_point_before_trailing_documents(
+                            lasting_content, self._get_cache_point(cache_messages)
+                        )
+                        last_user_content[:end] = lasting_content
 
         # Bedrock's Converse API requires at least one message, so an empty conversation (only a
         # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
@@ -1879,63 +2069,32 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Limit the number of cache points in the request to Bedrock's maximum.
 
-        Bedrock enforces a maximum of 4 cache points per request. This method ensures
-        compliance by counting existing cache points and removing excess ones from messages.
-
-        Strategy:
-        1. Count cache points in system_prompt
-        2. Count cache points in tools
-        3. Raise UserError if system + tools already exceed MAX_CACHE_POINTS
-        4. Calculate remaining budget for message cache points
-        5. Traverse messages from newest to oldest, keeping the most recent cache points
-           within the remaining budget
-        6. Remove excess cache points from older messages to stay within limit
-
-        Cache point priority (always preserved):
-        - System prompt cache points
-        - Tool definition cache points
-        - Message cache points (newest first, oldest removed if needed)
+        System prompt and tool definition cache points always take priority; excess message
+        cache points are removed oldest-first. A Bedrock cache point is a standalone
+        `cachePoint` content block, so excess blocks are dropped from their content lists.
 
         Raises:
-            UserError: If system_prompt and tools combined already exceed MAX_CACHE_POINTS (4).
+            UserError: If system_prompt and tools combined already exceed the budget.
                       This indicates a configuration error that cannot be auto-fixed.
         """
-        MAX_CACHE_POINTS = 4
+        reserved = sum(1 for block in system_prompt if 'cachePoint' in block)
+        reserved += sum(1 for tool in tools if 'cachePoint' in tool)
 
-        # Count existing cache points in system prompt
-        used_cache_points = sum(1 for block in system_prompt if 'cachePoint' in block)
-
-        # Count existing cache points in tools
-        for tool in tools:
-            if 'cachePoint' in tool:
-                used_cache_points += 1
-
-        # Calculate remaining cache points budget for messages
-        remaining_budget = MAX_CACHE_POINTS - used_cache_points
-        if remaining_budget < 0:  # pragma: no cover
-            raise UserError(
-                f'Too many cache points for Bedrock request. '
-                f'System prompt and tool definitions already use {used_cache_points} cache points, '
-                f'which exceeds the maximum of {MAX_CACHE_POINTS}.'
-            )
-
-        # Remove excess cache points from messages (newest to oldest)
-        for message in reversed(bedrock_messages):
-            content = message.get('content')
-            if not content or not isinstance(content, list):  # pragma: no cover
-                continue
-
-            # Build a new content list, keeping only cache points within budget
-            new_content: list[Any] = []
-            for block in reversed(content):  # Process newest first
-                is_cache_point = isinstance(block, dict) and 'cachePoint' in block
-                if is_cache_point:
-                    if remaining_budget > 0:
-                        remaining_budget -= 1
-                        new_content.append(block)
-                else:
-                    new_content.append(block)
-            message['content'] = list(reversed(new_content))  # Restore original order
+        message_contents = [
+            content for message in reversed(bedrock_messages) if isinstance(content := message.get('content'), list)
+        ]
+        excess = excess_cache_points(
+            (block for content in message_contents for block in reversed(content)),
+            # Bedrock enforces a maximum of 4 cache points per request.
+            max_points=4,
+            reserved=reserved,
+            is_cache_point=lambda block: isinstance(block, dict) and 'cachePoint' in block,
+            description='Bedrock request',
+        )
+        if excess:
+            excess_ids = {id(block) for block in excess}
+            for content in message_contents:
+                content[:] = [block for block in cast('list[Any]', content) if id(block) not in excess_ids]
 
 
 @dataclass
@@ -1952,7 +2111,9 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        return (BotoCoreError, ClientError)
+        # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
+        # raw urllib3 error too.
+        return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
         await anyio.to_thread.run_sync(self._event_stream.close)
@@ -2077,25 +2238,26 @@ class BedrockStreamedResponse(StreamedResponse):
                                 # For now, only process `contentBlockDelta.toolResult` for Code Exe tool.
 
                                 if tr_content := delta['toolResult']:  # pragma: no branch
-                                    # Goal here is to convert to object form.
-                                    # This assumes the first item is the relevant one.
+                                    # Same contract as in `BedrockConverseModel._process_response`. On a sandbox
+                                    # timeout this delta holds a `text` item instead, which is the first token of
+                                    # the model's reply leaked by Bedrock rather than tool output, so `content`
+                                    # stays `None` and the token is missing from the reply's text part.
                                     return_part.content = tr_content[0].get('json')
 
                                 # Don't yield anything yet - we wait for content block end
 
                     case {'contentBlockStop': content_block_stop}:
                         index = content_block_stop['contentBlockIndex']
-                        if block_citations := citations.pop(index, None):
-                            part = self._parts_manager.get_part_by_vendor_id(index)
-                            anchor = (
-                                ContentCitationAnchor(start=0, end=len(part.content))
-                                if isinstance(part, TextPart) and part.content
-                                else None
-                            )
+                        block_citations = citations.pop(index, [])
+                        part = self._parts_manager.get_part_by_vendor_id(index)
+                        text = part.content if isinstance(part, TextPart) else ''
+                        if block_citations and (block_text_citations := _map_citations(block_citations, text)):
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=index,
                                 content='',
-                                citations=_map_citations(block_citations, anchor),
+                                provider_name=self.provider_name,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=block_text_citations,
                             ):
                                 yield event
                         if return_part := builtin_tool_returns.get(index):
@@ -2261,3 +2423,30 @@ def _support_tool_forcing(
         unavailable_reason,
         disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
     )
+
+
+def _has_tool_blocks(bedrock_messages: Sequence[MessageUnionTypeDef]) -> bool:
+    """Whether any message has a `toolUse` or `toolResult` block, which Converse only accepts with a `toolConfig`."""
+    return any(
+        'toolUse' in block or 'toolResult' in block for message in bedrock_messages for block in message['content']
+    )
+
+
+def _raise_earlier_cache_ttls(
+    system_prompt: list[SystemContentBlockTypeDef],
+    bedrock_messages: list[MessageUnionTypeDef],
+    tools: list[ToolTypeDef],
+) -> None:
+    """Raise each cache point's TTL to the longest TTL of a cache point after it, as Bedrock requires.
+
+    Bedrock processes cache points in `tools`, then `system`, then `messages` order: "Cache entries with longer TTL must
+    appear before shorter TTLs" (https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+    """
+    blocks: list[object] = [*tools, *system_prompt]
+    for message in bedrock_messages:
+        blocks.extend(message.get('content', []))
+    carriers = [block for block in blocks if _utils.is_str_dict(block) and 'cachePoint' in block]
+    ttls: list[Literal['5m', '1h']] = [carrier['cachePoint'].get('ttl', '5m') for carrier in carriers]
+    for carrier, ttl, raised_ttl in zip(carriers, ttls, raise_earlier_cache_ttls(ttls), strict=True):
+        if raised_ttl != ttl:
+            carrier['cachePoint'] = {**carrier['cachePoint'], 'ttl': raised_ttl}

@@ -4,7 +4,14 @@ name: "Pydantic AI Stale Issues Finder"
 description: "Find open issues that are likely already resolved, obsolete, or tied to deprecated features, and file a report issue. Runs on the Pydantic AI gh-aw shim; the task prompt is iterable from a Logfire managed variable."
 # Weekly on Monday: gh-aw scatters the run and auto-adds workflow_dispatch.
 # Adjust to 'daily' or another weekly schedule to change frequency.
-on: weekly on monday
+on:
+  schedule: weekly on monday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -68,6 +75,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[stale-finder] "

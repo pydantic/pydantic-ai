@@ -21,13 +21,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
@@ -236,6 +236,26 @@ async def test_notices_wait_while_busy(tmp_path: Path) -> None:
     text = output.getvalue()
     assert 'fork #2 failed after' in text
     assert 'fork #1 cancelled after' in text
+
+
+async def test_quiet_waits_for_every_turn_and_command(tmp_path: Path) -> None:
+    shell = shell_for(tmp_path, Model(), io.StringIO())
+    forks = shell.forks
+    entered: list[str] = []
+
+    async def notice() -> None:
+        async with forks.quiet():
+            entered.append('notice')
+
+    async with anyio.create_task_group() as tasks:
+        async with forks.busy():
+            tasks.start_soon(notice)
+            await anyio.wait_all_tasks_blocked()
+        # The notice wakes as the first command ends, but another has claimed the terminal by then.
+        async with forks.busy():
+            await anyio.wait_all_tasks_blocked()
+            assert entered == []
+    assert entered == ['notice']
 
 
 async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
@@ -459,7 +479,7 @@ class Script:
                 step = steps.pop(0)
                 return step if isinstance(step, str) else await step()
 
-        monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 async def test_cancelled_turn_takes_forks_down(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -489,15 +509,16 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         await model.started.wait()
         return '!make test'
 
-    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> None:
+    async def run_shell_command(command: str, *, console: Console, interrupts: object, cwd: Path) -> str:
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
             await asyncio.sleep(0.01)
         assert 'FORK #1' not in output.getvalue()
         console.print(f'ran {command}')
+        return f'ran {command}'
 
-    monkeypatch.setattr('pydantic_clai2._app.run_shell_command', run_shell_command)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.run_shell_command', run_shell_command)
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.

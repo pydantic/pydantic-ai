@@ -67,9 +67,10 @@ def get_unwrapped_function_name(func: Callable[..., Any]) -> str:
 
     def _unwrap(f: Callable[..., Any]) -> Callable[..., Any]:
         """Unwraps f, also unwrapping partials, for the sake of getting f's name."""
+        f = inspect.unwrap(f)
         if isinstance(f, partial):
             return _unwrap(f.func)
-        return inspect.unwrap(f)
+        return f
 
     try:
         return _unwrap(func).__name__

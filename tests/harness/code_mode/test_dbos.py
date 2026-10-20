@@ -10,12 +10,13 @@ called inside an explicit `@DBOS.workflow()` rather than the wrapper starting
 one. The agent and workflow are defined at module scope so DBOS registers the
 capability's steps and the workflow before `DBOS.launch()`.
 
-DBOS defaults to `parallel_ordered_events` execution mode, which triggers
-the sequential FutureSnapshot resolution path in the execution loop.
+DBOS defaults to `parallel_ordered_events` execution mode, under which
+gathered sandbox calls still run concurrently.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Generator
@@ -33,7 +34,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
@@ -111,6 +112,45 @@ def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     return {'output': str(result.output), 'messages': result.all_messages_json().decode()}
 
 
+_GATHERED_CALLS = 3
+_gather_started = 0
+_all_gathered_started = asyncio.Event()
+
+
+async def fetch(label: str) -> str:
+    """Return `label` once every gathered call has started."""
+    global _gather_started
+    _gather_started += 1
+    if _gather_started == _GATHERED_CALLS:
+        _all_gathered_started.set()
+    # Bounded so a regression to serialized dispatch fails the test instead of hanging the workflow.
+    await asyncio.wait_for(_all_gathered_started.wait(), timeout=10)
+    return label
+
+
+def _gather_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    last = messages[-1]
+    assert isinstance(last, ModelRequest)
+    for part in last.parts:
+        if isinstance(part, ToolReturnPart | RetryPromptPart):
+            return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
+    code = "import asyncio\nawait asyncio.gather(fetch(label='a'), fetch(label='b'), fetch(label='c'))"
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='gather')])
+
+
+gather_agent = Agent(
+    FunctionModel(_gather_model),
+    name='code_mode_dbos_gather_agent',
+    toolsets=[FunctionToolset(tools=[fetch], id='fetch')],
+    capabilities=[CodeMode(), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+def run_gather_agent(prompt: str) -> str:
+    return gather_agent.run_sync(prompt).output
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -118,8 +158,7 @@ def run_code_mode_agent(prompt: str) -> dict[str, Any]:
 
 def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     """CodeMode's snapshot-based execution loop works inside a DBOS durable
-    workflow. DBOS defaults to `parallel_ordered_events` mode, which triggers
-    the sequential FutureSnapshot resolution path.
+    workflow under DBOS's default `parallel_ordered_events` mode.
 
     The step-log assertion at the end proves the capability actually routed the
     model requests through DBOS steps: `DBOSDurability` is transparent outside
@@ -197,3 +236,14 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     steps = dbos_instance.list_workflow_steps(workflow_id)
     step_names = [step['function_name'] for step in steps]
     assert step_names.count('code_mode_dbos_agent__model.request') == 2
+
+
+def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """`DBOSDurability`'s default `parallel_ordered_events` mode keeps gathered sandbox calls concurrent.
+
+    Each call waits until all three are in flight, so serialized dispatch times out (issue #9248).
+    """
+    with SetWorkflowID(str(uuid.uuid4())):
+        output = run_gather_agent('Gather three fetches.')
+
+    assert output == "done: ['a', 'b', 'c']"
