@@ -989,6 +989,8 @@ A later <context> element with the same id replaces the earlier one and stays in
         first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
         second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
         assert first.parts[0].id == InstructionId(ToolsetInstructionSource('mcp.example.com'))
+        # An IPv6 literal can't be an id segment, so its instructions stay unkeyed rather than failing the run.
+        assert make_contribution(MCPToolset('http://[::1]:8000/mcp'), part).parts[0].id is None
         with pytest.raises(
             UserError,
             match=re.escape("instructions keyed 'toolset:mcp.example.com', at least one of them without an `id`"),

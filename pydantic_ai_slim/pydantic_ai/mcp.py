@@ -1343,7 +1343,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.id is not None:
             return self.id
         url = getattr(getattr(self.client, 'transport', None), 'url', None)
-        return urlparse(url).hostname if isinstance(url, str) else None
+        host = urlparse(url).hostname if isinstance(url, str) else None
+        # An IPv6 literal can't be an id segment, which `:` delimits, so it leaves the block unkeyed.
+        return host if host is not None and ':' not in host else None
 
     def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
         if self.include_instructions and (source := self._instruction_source()) is not None:
