@@ -23,15 +23,20 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 
+import httpcore2
 import httpx2
 import pytest
 import yaml
 from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
+from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
@@ -53,7 +58,7 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -72,6 +77,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model as _Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -2432,6 +2438,137 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
     asyncio.run(_request())
     assert len(calls) == 2
+
+
+def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.MonkeyPatch):
+    """`logfire.instrument_httpx()` patches `httpx2.AsyncHTTPTransport`, which every retry attempt goes through."""
+    transport = shim.rate_limit_retry_transport()
+    transport.config['wait'] = wait_none()
+    assert isinstance(transport.wrapped, httpx2.AsyncHTTPTransport)
+    statuses = iter([429, 429, 200])
+
+    class _Pool:
+        async def handle_async_request(self, _request: httpcore2.Request) -> httpcore2.Response:
+            status = next(statuses)
+            body = _RATE_LIMITED_RESPONSE if status == 429 else _MESSAGE_RESPONSE
+            return httpcore2.Response(status, content=json.dumps(body).encode())
+
+    monkeypatch.setattr(transport.wrapped, '_pool', _Pool())
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = HTTPX2ClientInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)
+    try:
+        response = asyncio.run(httpx2.AsyncClient(transport=transport).post('https://api.z.ai/api/anthropic'))
+    finally:
+        instrumentor.uninstrument()
+    assert response.status_code == 200
+    assert [(span.attributes or {}).get('http.status_code') for span in exporter.get_finished_spans()] == [
+        429,
+        429,
+        200,
+    ]
+
+
+@pytest.fixture
+def agent_spans() -> Iterator[InMemorySpanExporter]:
+    """Every agent's spans, instrumented as `configure_observability` instruments a gh-aw run."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    yield exporter
+    Agent.instrument_all(False)
+
+
+def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[str, str, object]]:
+    return sorted(
+        (span.name, span.status.status_code.name, (span.attributes or {}).get('error.type'))
+        for span in exporter.get_finished_spans()
+    )
+
+
+class _ClockSkippingLoop(asyncio.SelectorEventLoop):
+    """An event loop whose clock a test moves forward, so a wall-clock cap fires without waiting."""
+
+    skipped = 0.0
+
+    def time(self) -> float:
+        return super().time() + self.skipped
+
+
+async def _skip_clock_and_hang(seconds: float) -> None:
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, _ClockSkippingLoop)
+    loop.skipped += seconds
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize('chunks_before_cutoff', [0, 1])
+def test_subagent_timeout_marks_the_spans_it_cuts_off(
+    chunks_before_cutoff: int, agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            for _ in range(chunks_before_cutoff):
+                yield 'partial'
+            await _skip_clock_and_hang(shim.SUBAGENT_TIMEOUT_SECS)
+        elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-timeout',
+            )
+        )
+    assert rc == 0
+    assert _span_outcomes(agent_spans) == [
+        ('chat function::_stream', 'ERROR', 'cancelled'),
+        ('chat function::_stream', 'UNSET', None),
+        ('chat function::_stream', 'UNSET', None),
+        ('execute_tool Task', 'ERROR', 'timeout'),
+        ('invoke_agent agent', 'ERROR', 'cancelled'),
+        ('invoke_agent agent', 'UNSET', None),
+    ]
+    [cut_off_chat] = [
+        span
+        for span in agent_spans.get_finished_spans()
+        if span.name.startswith('chat') and span.status.status_code.name == 'ERROR'
+    ]
+    # Usage the stream had already reported stays on the span.
+    assert ('gen_ai.usage.input_tokens' in (cut_off_chat.attributes or {})) == bool(chunks_before_cutoff)
+
+
+def test_run_timeout_marks_the_spans_it_cuts_off(agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch):
+    async def hang() -> None:
+        await _skip_clock_and_hang(60)
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        yield {0: DeltaToolCall(name='hang', json_args='{}')}
+
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 60)
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', FunctionModel(stream_function=_stream), 'lbl', FunctionToolset[object]([hang]), [], 'sess-test'
+            )
+        )
+    assert rc == 1
+    assert _span_outcomes(agent_spans) == [
+        ('chat function::_stream', 'UNSET', None),
+        ('execute_tool hang', 'ERROR', 'cancelled'),
+        ('invoke_agent agent', 'ERROR', 'cancelled'),
+    ]
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):

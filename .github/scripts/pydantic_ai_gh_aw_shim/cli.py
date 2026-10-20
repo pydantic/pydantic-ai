@@ -52,12 +52,22 @@ import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai import Agent, AgentRunResult, ModelRequestContext, ModelRetry, RunContext, UsageLimitExceeded
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    ProcessEventStream,
+    ProcessHistory,
+    ValidatedToolArgs,
+    WrapModelRequestHandler,
+    WrapRunHandler,
+    WrapToolExecuteHandler,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
@@ -161,6 +171,54 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
             raise error
         logger.warning('MCP tool %r failed — returned to model as a recoverable error: %s', call.tool_name, message)
         return f'error: {message}'
+
+
+def _mark_failed(span: Span, error_type: str) -> None:
+    span.set_attribute('error.type', error_type)
+    span.set_status(Status(StatusCode.ERROR, error_type))
+
+
+@dataclass
+class _MarkCancelledSpans(AbstractCapability[object]):
+    """Mark the agent-run, model-request and tool spans a cancellation cuts off.
+
+    OpenTelemetry does not treat `asyncio.CancelledError` as an error, so work cancelled by
+    `task`'s or `_run_with_timeout`'s wall-clock cap ends its span with status `UNSET` and no
+    exception, like work that finished. A cut-off request also has no finish reason, and no usage
+    when the provider reports it only at the end of the stream. Each hook runs inside the span
+    pydantic-ai opens for it.
+    """
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        try:
+            return await handler()
+        except asyncio.CancelledError:
+            _mark_failed(get_current_span(), 'cancelled')
+            raise
+
+    async def wrap_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        except asyncio.CancelledError:
+            _mark_failed(get_current_span(), 'cancelled')
+            raise
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> object:
+        try:
+            return await handler(args)
+        except asyncio.CancelledError:
+            _mark_failed(get_current_span(), 'cancelled')
+            raise
 
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
@@ -870,7 +928,10 @@ def configure_observability() -> None:
             token=write_token or None,
         )
         logfire.instrument_pydantic_ai(include_content=True, include_binary_content=True)
-        logfire.instrument_httpx(capture_all=True)
+        # Also instruments `httpx2`, the model client's library, by patching its
+        # `AsyncHTTPTransport`: every attempt `rate_limit_retry_transport` makes gets its own
+        # span. Request bodies would repeat each `chat` span's `gen_ai.input.messages`.
+        logfire.instrument_httpx(capture_headers=True, capture_response_body=True)
         logfire.instrument_mcp()
         logger.info('Logfire/OTLP instrumentation enabled (pydantic_ai + httpx + mcp)')
     except Exception as exc:
@@ -1176,6 +1237,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
+            _MarkCancelledSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1193,6 +1255,8 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
+        # The `execute_tool Task` span, which otherwise looks like a successful call.
+        _mark_failed(get_current_span(), 'timeout')
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
         return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
@@ -1276,6 +1340,7 @@ async def run(
         capabilities=[
             # The Claude tools act on `ctx.workspace`: the checkout at `$GITHUB_WORKSPACE`.
             local_workspace(),
+            _MarkCancelledSpans(),
             _RecoverMCPToolErrors(),
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
