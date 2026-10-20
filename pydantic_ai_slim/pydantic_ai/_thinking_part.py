@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
-import html
 import re
 
-from pydantic_ai import ModelResponse, TextPart, ThinkingPart
+from pydantic_ai import TextPart, ThinkingPart
 
 from .profiles import DEFAULT_THINKING_TAGS, ModelProfile
 
@@ -41,7 +40,7 @@ _ASSISTANT_THINKING_CLOSE_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_ASSISTANT_THIN
 """Matches only the `<` of a closing `assistant_thinking` tag, in every spelling a model might reach for."""
 
 
-def render_replayed_thinking(content: str, profile: ModelProfile, response: ModelResponse) -> tuple[str, bool]:
+def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, bool]:
     """Render reasoning that can't be replayed through a model's native channel, as tagged text.
 
     The inverse of [`split_content_into_text_and_thinking`][pydantic_ai._thinking_part.split_content_into_text_and_thinking]:
@@ -53,11 +52,15 @@ def render_replayed_thinking(content: str, profile: ModelProfile, response: Mode
     [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]
     decides. Reasoning that stays in its own turn keeps the model's own thinking tags, which is how it
     would have written the reasoning itself. Reasoning carried into a user message can't: attributed to
-    the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper naming
-    the model and provider that produced it instead.
+    the user, it reads as something the user thought, so it gets an `assistant_thinking` wrapper instead.
 
-    The tags are rendered here, for the model the request goes to, and never stored: the history keeps
-    only the `ThinkingPart` and the `ModelResponse` facts the attribution is read from.
+    The wrapper carries no attributes. Naming the producing model would need `ModelResponse.model_name`,
+    which UI adapters deliberately don't send to the client (it can hold an account id or org name, see
+    https://github.com/pydantic/pydantic-ai/issues/5174), so a history that went through a UI would render
+    differently from the server's copy and miss the prompt cache. And a `provider` attribute on its own makes
+    `claude-opus-4-5` copy the wrapper into its answers (8/8 live, against 0/8 bare), which is the leak
+    this placement exists to stop. The tag is rendered here, for the model the request goes to, and never
+    stored.
 
     Both answers come from the profile, so the tag names and the meaning of that flag live in one place
     across every adapter that replays reasoning as text; where the carried text ends up is the caller's,
@@ -66,20 +69,11 @@ def render_replayed_thinking(content: str, profile: ModelProfile, response: Mode
     """
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
-        # Read from the enclosing `ModelResponse` rather than the `ThinkingPart`, which carries no provider
-        # of its own once it arrives unsigned. Each attribute is left off when the response can't name it,
-        # so the tag never claims an author it doesn't have. The values can come from client-supplied
-        # history, so they are escaped like any other attribute the framework renders.
-        attributes = ''.join(
-            f' {name}="{html.escape(value)}"'
-            for name, value in (('model', response.model_name), ('provider', response.provider_name))
-            if value
-        )
         # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
         # the message as if the user had written it. Only the `<` of a closing tag is escaped, so the
         # rest of the reasoning goes in exactly as written.
         content = _ASSISTANT_THINKING_CLOSE_TAG_OPENER.sub('&lt;', content)
-        start_tag, end_tag = f'<{_ASSISTANT_THINKING_TAG}{attributes}>', f'</{_ASSISTANT_THINKING_TAG}>'
+        start_tag, end_tag = f'<{_ASSISTANT_THINKING_TAG}>', f'</{_ASSISTANT_THINKING_TAG}>'
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     return '\n'.join([start_tag, content, end_tag]), carry_in_user_turn
