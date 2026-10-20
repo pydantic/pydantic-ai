@@ -475,6 +475,7 @@ anchor rather than regenerating it from scratch. This changes the summary-call p
 releases; set `incremental=False` to retain the prior regeneration behavior. `preserve_first_user_message=True` keeps the original task turn even
 when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
 instead of using `keep_messages`.
+`keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder and no other replacement field), and `instructions` sets the internal agent's static instructions,
