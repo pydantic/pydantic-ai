@@ -83,8 +83,8 @@ def _from_checkpoint(stored: object) -> object:
 
 def _heartbeat_interval(task_ctx: AsyncTaskContext) -> float:
     # The SDK has no public accessor for the worker's claim timeout. Read it directly: a fallback
-    # would skip heartbeats for a shorter `claim_timeout` without any error, and the claim tests fail
-    # if the SDK renames it. Half of it is the interval the SDK's own long waits heartbeat at.
+    # would skip heartbeats for a shorter `claim_timeout` without any error, while a rename in the SDK
+    # fails every step with `AttributeError`. Half of it is the interval the SDK's own long waits use.
     return max(0.5, task_ctx._claim_timeout / 2)  # pyright: ignore[reportPrivateUsage]
 
 
