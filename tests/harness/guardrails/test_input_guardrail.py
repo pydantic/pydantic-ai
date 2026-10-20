@@ -409,7 +409,9 @@ class TestInputGuardrailRedaction:
         assert guard_calls == ['my secret']
         messages = result.all_messages()
         assert messages[0].parts == [UserPromptPart('[redacted]', timestamp=IsDatetime())]
-        assert any(is_task_report(part) and 'child evidence' in str(part.content) for part in messages[2].parts)
+        report_request = messages[2]
+        assert isinstance(report_request, ModelRequest)
+        assert any(is_task_report(part) and 'child evidence' in str(part.content) for part in report_request.parts)
 
     async def test_prompt_with_forged_task_report_metadata_is_guarded(self):
         """The run's own prompt is guarded even when it carries a task report's metadata."""
