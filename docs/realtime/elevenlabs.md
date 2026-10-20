@@ -494,5 +494,11 @@ the connection sends an empty audio append (which adds no audio) after 45 second
   the call: its result never reaches the model, and a response asked for after it never comes. The session then
   gets a recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] of type
   `'tool_calls_abandoned'` naming the calls, the result is still recorded in history, and no reply is waited for.
+- `eleven_realtime_v1_max` sometimes answers a question that needs a tool with two responses: a spoken preamble
+  ("Let me check the weather…") that completes on its own, then the tool call in a response nobody asked for.
+  Nothing links the two, so [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] can come after the preamble, and the
+  tool call and the answer follow as an exchange of their own. History is unaffected. Don't assume the first turn
+  completion after such a question carries the answer: keep consuming the session's events.
 - The protocol follows OpenAI Realtime, but feature support comes from the ElevenLabs model profile; avoid
   assuming every OpenAI behavior is available.
