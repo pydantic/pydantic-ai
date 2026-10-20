@@ -35,6 +35,9 @@ These return at once in a healthy workspace; the deadline keeps a wedged one fro
 _KILL_GRACE_PERIOD = 2.0
 """Seconds a job gets to exit after `SIGTERM` before its process group is sent `SIGKILL`."""
 
+LOG_CHECK_INTERVAL = 1.0
+"""Seconds between a job's log size checks against `max_log_bytes`; `sleep 1` stands in where `sleep` takes only whole seconds."""
+
 POLL_MIN = 0.05
 POLL_MAX = 1.0
 """Bounds of the backoff between polls of a job's status, so a remote workspace is not asked every 50 ms."""
@@ -45,7 +48,7 @@ publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
 watch_logs() {{
-  while sleep 1 2> /dev/null; do
+  while sleep "$2" 2> /dev/null || sleep 1; do
     for log in "$out" "$err"; do
       if [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
         : > "$log"
@@ -66,7 +69,7 @@ if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
 fi
 watcher=
-if [ -n "$6" ]; then watch_logs "$6" & watcher=$!; fi
+if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 (
   [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
   exec sh -c "$3"
@@ -75,9 +78,10 @@ code=$?
 [ -z "$watcher" ] || kill "$watcher" 2> /dev/null
 publish $code
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID, and the log limit.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID, the log limit, and
+the seconds between log checks.
 
-With a log limit, a watcher checks each log once a second and empties one that has grown past it, leaving a
+With a log limit, a watcher checks each log every `LOG_CHECK_INTERVAL` seconds and empties one that has grown past it, leaving a
 notice. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the
 end of it and stops, instead of copying the log into itself until the disk is full.
 
@@ -118,10 +122,10 @@ else
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
@@ -186,6 +190,7 @@ class Job:
                 ('cmd', command),
                 ('limit', '' if file_limit is None else str(file_limit)),
                 ('log_limit', '' if log_limit is None else str(log_limit)),
+                ('log_interval', f'{LOG_CHECK_INTERVAL:g}'),
                 ('wrapper', _WRAPPER),
             )
         )

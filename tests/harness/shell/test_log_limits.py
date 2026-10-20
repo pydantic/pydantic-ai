@@ -14,7 +14,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.shell import Shell
+from pydantic_ai_harness.shell import Shell, _jobs
 
 from .._tool_calls import call_tool
 
@@ -23,6 +23,15 @@ pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands a
 NOTICE = '[Log exceeded max_log_bytes=2000; earlier output was cleared.]'
 CHATTY = "while :; do printf '%01000d\\n' 0{redirect}; sleep 0.01; done"
 """Writes about 100 KB a second until stopped."""
+
+
+@pytest.fixture(autouse=True)
+def fast_log_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_jobs, 'LOG_CHECK_INTERVAL', 0.05)
+
+
+def _handle(output: str, label: str) -> Path:
+    return Path(output.split(f'{label}: ', 1)[1].split('\n', 1)[0])
 
 
 def _ctx(working_dir: Path) -> RunContext[None]:
@@ -62,16 +71,19 @@ class TestShellLogLimits:
         )
         output = await _shell(tmp_path, {'command': command, 'timeout': 60})
         assert '"exit_code": 0' in output
-        log = Path(output.split('Output: ', 1)[1].split('\n', 1)[0])
+        log = _handle(output, 'Output')
         assert NOTICE in log.read_text(encoding='utf-8')
         assert log.stat().st_size < 1_000_000
 
     async def test_chatty_shell_command_keeps_running(self, tmp_path: Path) -> None:
         output = await _shell(tmp_path, {'command': CHATTY.format(redirect=''), 'mode': 'background'})
-        log = Path(output.split('Output: ', 1)[1].split('\n', 1)[0])
-        await _wait_for_notice(log)
-        assert '"exit_code": null' in Path(output.split('Status: ', 1)[1].split('\n', 1)[0]).read_text(encoding='utf-8')
-        os.killpg(int(output.split('kill -- -', 1)[1].split('`', 1)[0]), signal.SIGTERM)
+        group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
+        try:
+            await _wait_for_notice(_handle(output, 'Output'))
+            assert '"exit_code": null' in _handle(output, 'Status').read_text(encoding='utf-8')
+        finally:
+            # Even when an assertion fails, so a failure does not leave the loop writing behind.
+            os.killpg(group, signal.SIGTERM)
 
     @pytest.mark.parametrize(('redirect', 'log_name'), [('', 'stdout.log'), (' >&2', 'stderr.log')])
     async def test_background_logs_are_bounded(self, tmp_path: Path, redirect: str, log_name: str) -> None:
@@ -79,6 +91,9 @@ class TestShellLogLimits:
         async with toolset:
             started = await toolset.start_command(_ctx(tmp_path), CHATTY.format(redirect=redirect))
             command_id = started.rsplit('ID: ', 1)[1]
-            await _wait_for_notice(tmp_path / '.pydantic-ai-harness' / 'shell' / command_id / log_name)
-            assert 'exit code' not in await toolset.check_command(_ctx(tmp_path), command_id)
-            assert '[exit code: 143]' in await toolset.stop_command(_ctx(tmp_path), command_id)
+            try:
+                await _wait_for_notice(tmp_path / '.pydantic-ai-harness' / 'shell' / command_id / log_name)
+                assert 'exit code' not in await toolset.check_command(_ctx(tmp_path), command_id)
+            finally:
+                stopped = await toolset.stop_command(_ctx(tmp_path), command_id)
+            assert '[exit code: 143]' in stopped

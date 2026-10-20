@@ -204,10 +204,14 @@ Tool arguments: `run_command(command, timeout_seconds=None)`, `start_command(com
 Parameters: `denied_commands` (default `rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`,
 `halt`, `poweroff`, `init`), `denied_operators`, `default_timeout=30.0`, `max_output_chars=50_000`
 (keeps the **tail**; `shell` already returns at most the last 16,000 bytes), `max_file_bytes=None`
-(per-file `ulimit -f`), `persist_cwd=False` (sticky `cd`), `allow_interactive=False`, `env`,
+(per-file `ulimit -f`), `max_log_bytes=100_000_000` (see below), `persist_cwd=False` (sticky `cd`), `allow_interactive=False`, `env`,
 `denied_env_patterns`.
 
-- `ValueError` for: both `allowed_commands` and non-empty `denied_commands`; `max_file_bytes` with
+- `max_log_bytes` bounds `start_command` and `shell` logs, including with `tools=['shell']`: a log past
+  it is emptied and gets a `[Log exceeded max_log_bytes=...]` notice while the command keeps running.
+  `None` turns it off.
+- `ValueError` for: non-positive `max_file_bytes` or `max_log_bytes`; both `allowed_commands` and
+  non-empty `denied_commands`; `max_file_bytes` with
   `persist_cwd=True` or `tools=['shell']`; `tools=['shell']` with `default_timeout` outside (0, 270].
 - Only the first token is checked: `python`, `git`, `make`, `uv` can spawn anything.
 - `denied_env_patterns` does **not** filter `LocalWorkspace(env=)`.
