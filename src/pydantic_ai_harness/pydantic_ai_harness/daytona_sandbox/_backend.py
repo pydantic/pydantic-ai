@@ -401,16 +401,12 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     `daytona.AsyncSandbox` is available through `get_sandbox()`. The backend does not stop or
     delete the sandbox; that is the application's job.
 
-    Commands run in Daytona process sessions, with complete output returned after they finish. A
-    shell string runs under `/bin/sh -c`; an argv sequence is shell-quoted into the session command.
-    The deadline is enforced client-side: on timeout or cancellation the session is deleted, which
-    kills its command.
+    A command's complete output is returned once it exits. A shell string runs under `/bin/sh -c`;
+    a timeout or cancellation stops the command.
 
-    A deleted sandbox raises `WorkspaceUnavailableError`, as does one Daytona stopped while idle
-    (attaching again starts it), rejected credentials, and a sandbox Daytona refuses to create (an
-    unknown snapshot, say). Path failures raise the built-in errors (`FileNotFoundError`,
-    `PermissionError`, ...); any other request Daytona refuses raises `WorkspaceError`; connection
-    failures, rate limits, and other SDK errors propagate unchanged.
+    A deleted sandbox, one Daytona stopped while idle (attaching again starts it), rejected
+    credentials, and an unknown snapshot raise `WorkspaceUnavailableError`. Path failures raise the
+    built-in errors, such as `FileNotFoundError`.
 
     Args:
         sandbox: A live `daytona.AsyncSandbox` you already have. Whoever created it owns deleting it.
@@ -481,8 +477,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         """Return the typed `daytona.AsyncSandbox`, creating or attaching to it on first use.
 
         Attaching by `ref` to a sandbox that no longer exists raises `WorkspaceUnavailableError`; it
-        does not create a replacement. A sandbox Daytona created is recorded in `ref` even if the
-        caller is cancelled meanwhile.
+        does not create a replacement.
         """
         _require_asyncio()
         async with self._lock:

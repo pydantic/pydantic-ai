@@ -49,11 +49,8 @@ class DaytonaSandbox(AbstractCapability[AgentDepsT]):
     """
 
     client: AsyncDaytona | None = None
-    """A caller-owned `daytona.AsyncDaytona`, which is never closed for you. When omitted, each
-    run's backend creates one on first use from `DAYTONA_API_KEY` and closes it when the run ends;
-    a backend this capability supplies outside a run (under Temporal, one per activity) closes its
-    client after each operation. A backend from `backend(ref)` needs `aclose()`. Supply one to
-    share its connections across runs, on one event loop."""
+    """A `daytona.AsyncDaytona` to share across runs on one event loop; you close it. When `None`,
+    each run opens one from `DAYTONA_API_KEY` and closes it when the run ends."""
 
     snapshot: str | None = None
     """Daytona snapshot a newly created sandbox starts from; Daytona's default when `None`.
