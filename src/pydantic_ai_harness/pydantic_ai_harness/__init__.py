@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
+    from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
@@ -81,6 +82,8 @@ __all__ = [
     'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
+    'BoxLiteSandbox',
+    'BoxLiteSandboxBackend',
     'BrowserUse',
     'BubblewrapSandbox',
     'BubblewrapWorkspace',
@@ -163,6 +166,7 @@ _CAPABILITY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
+    'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
@@ -220,6 +224,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'E2BSandboxBackend': 'e2b_sandbox',

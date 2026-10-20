@@ -48,7 +48,13 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import absolute_path, check_timeout, command_argv, running_on_asyncio
+from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
+    check_env,
+    check_timeout,
+    command_argv,
+    running_on_asyncio,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -118,16 +124,6 @@ ASYNCIO_ONLY = '`SmolSandbox` needs the asyncio event loop: the smol SDK runs it
 def local_target() -> smol.ConnectOptions:
     # Pinned, so a `SMOL_CLOUD_TOKEN` in the environment can't move the workspace to Smol Cloud.
     return smol.ConnectOptions(target='local')
-
-
-def _check_env(env: Mapping[str, str] | None) -> None:
-    if env is None:
-        return
-    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
-        raise TypeError('env keys and values must be strings')
-    # The engine passes them on as C strings, which would cut a value short at a NUL.
-    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
-        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
 
 
 def check_ref(ref: WorkspaceRef) -> None:
@@ -260,7 +256,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
     ) -> None:
         if ref is not None:
             check_ref(ref)
-        _check_env(env)
+        check_env(env)
         self._ref = ref
         self._image = image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
@@ -368,7 +364,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """Run a command in the VM, killing it and the processes it started on timeout or cancellation."""
         argv = command_argv(command, shell)
         check_timeout(timeout)
-        _check_env(env)
+        check_env(env)
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
         machine = await self._vm()
         return await self._exec(
