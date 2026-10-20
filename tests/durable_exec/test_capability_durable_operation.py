@@ -22,10 +22,12 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     WrapperCapability,
     WrapRunHandler,
     durable_operation,
 )
+from pydantic_ai.capabilities.abstract import AgentModel
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
@@ -461,6 +463,38 @@ async def test_model_fallback_supplies_the_model_of_a_durable_agent_without_one(
     assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
         ['model_less_durable__model.request.primary', 'model_less_durable__model.request.secondary']
     )
+
+
+@dataclass
+class _SuppliesRegisteredModel(AbstractCapability[Any]):
+    """A capability of the user's own that supplies the agent's model."""
+
+    def get_model(self) -> AgentModel[Any] | None:
+        return 'registered'
+
+
+@pytest.mark.parametrize(
+    'supplier',
+    [
+        pytest.param(lambda: SelectModel(lambda ctx: 'registered'), id='select_model'),
+        pytest.param(_SuppliesRegisteredModel, id='custom_get_model'),
+    ],
+)
+async def test_a_capability_supplies_the_model_of_a_durable_agent_without_one(
+    supplier: Callable[[], AbstractCapability[Any]],
+) -> None:
+    durability = RecordingDurability(models={'registered': TestModel(custom_output_text='from-registered')})
+    agent = Agent(name='capability_model_durable', capabilities=[supplier(), durability])
+
+    assert (await agent.run('test')).output == 'from-registered'
+    assert [name for name, _ in durability.calls if '__model.' in name] == [
+        'capability_model_durable__model.request.registered'
+    ]
+
+
+def test_a_durable_agent_without_a_model_or_a_capability_that_supplies_one_is_rejected() -> None:
+    with pytest.raises(UserError, match='needs to have a `model` in order to be used with recording'):
+        Agent(name='model_less', capabilities=[RecordingDurability()])
 
 
 async def test_resolved_request_model_records_are_released_with_their_models() -> None:

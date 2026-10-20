@@ -369,6 +369,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
     @property
+    def _can_supply_model(self) -> bool:
+        """Whether this capability can supply the agent's model: whether it overrides `get_model`.
+
+        Read before every capability has bound to the agent, when `get_model()` itself may not have its final
+        answer yet: `ModelFallback` only learns in `for_agent` that it supplies the model.
+        """
+        return type(self).get_model is not AbstractCapability.get_model
+
+    @property
     def _has_prepare_model_request(self) -> bool:
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
 

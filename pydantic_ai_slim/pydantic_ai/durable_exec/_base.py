@@ -1946,20 +1946,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         Instead no `'default'` is registered; every request for the default carries the raw string
         and re-resolves through the capability chain (or `infer_model`) on the worker.
 
-        An agent without a model of its own can still be bound when
-        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] supplies its first candidate.
+        An agent without a model of its own can still be bound when a capability can supply one, such as
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+        [`SelectModel`][pydantic_ai.capabilities.SelectModel]. Its requests then carry the model the agent
+        resolves from that capability at run time, like a request a capability moves to another model does,
+        so no `'default'` is registered.
         """
-        agent_model: Model | str | None = agent.model
-        if agent_model is None:
-            agent_model = _model_fallback_default(agent)
-        if agent_model is None:
+        agent_model = agent.model
+        # Which model a capability supplies may only be known once every capability has bound, or at run
+        # time, so only whether one can supply it is asked here.
+        if agent_model is None and not agent.root_capability._can_supply_model:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
         self._default_model_id = agent_model if isinstance(agent_model, str) else None
         default_model: Model | None
-        if isinstance(agent_model, str):
+        if agent_model is None:
+            default_model = None
+        elif isinstance(agent_model, str):
             # Only a `models=` mapping resolves the string to a concrete default here; any other
             # string defers to run-time resolution (a sibling `ResolveModelId`, this capability's
             # registry, or `infer_model`) so it's built worker-side with the run's deps.
@@ -2128,19 +2133,3 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             '(or pass the registered instance), or pass a model-name string and build the instance '
             'from it with a `ResolveModelId` capability.'
         )
-
-
-def _model_fallback_default(agent: AbstractAgent[Any, Any]) -> Model | str | None:
-    """The first candidate of the agent's `ModelFallback`, which it uses as the model when the agent has none.
-
-    Read from the capability rather than its `get_model()`: `ModelFallback` and durability bind in the same
-    ordering tier, so it may not have learned yet that it supplies the model.
-    """
-    candidates: list[Model | str] = []
-
-    def collect(capability: AbstractCapability[Any]) -> None:
-        if isinstance(capability, ModelFallback):
-            candidates.append(capability.models[0])
-
-    agent.root_capability.apply(collect)
-    return candidates[0] if candidates else None
