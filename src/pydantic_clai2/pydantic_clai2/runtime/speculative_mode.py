@@ -337,7 +337,7 @@ class WorkspaceCodeMode(CodeMode[AgentDepsT]):
 
 
 def _sandboxed(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
-    """Every tool but `NATIVE_TOOLS`, and but the delegate tool in a run that prompts a task, whose script calls it."""
+    """Every tool except `NATIVE_TOOLS` and, in a run that prompts a task, the delegate tool its script calls."""
     if tool_def.name in NATIVE_TOOLS:
         return False
     return not (is_task_prompt(ctx) and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents))

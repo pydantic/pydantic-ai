@@ -487,6 +487,7 @@ class Tasks:
                 await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
             finally:
                 started.cancel()
+                await asyncio.gather(started, return_exceptions=True)
         finally:
             del self._starting[record.id]
         if starting.is_set():
