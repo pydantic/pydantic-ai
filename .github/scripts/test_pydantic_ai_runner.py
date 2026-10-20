@@ -2576,9 +2576,14 @@ def test_a_subagents_own_timeout_error_is_not_marked_as_timed_out(
             )
         )
     assert rc == 0
-    assert [error_type for *_, error_type in _span_outcomes(agent_spans)] == [None] * len(
-        agent_spans.get_finished_spans()
-    )
+    assert _span_outcomes(agent_spans) == [
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'UNSET', None),
+        ('invoke_agent', 'ERROR', None),
+        ('invoke_agent', 'UNSET', None),
+    ]
 
 
 @pytest.mark.parametrize(
