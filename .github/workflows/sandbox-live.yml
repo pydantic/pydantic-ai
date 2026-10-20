@@ -100,6 +100,8 @@ jobs:
           uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
+          PYTHONPATH: ${{ github.workspace }}/.github/leakprobe
+          PYTEST_ADDOPTS: -p leakprobe
           # Scoped to this step so checkout and setup never see the secrets.
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
