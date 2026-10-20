@@ -584,7 +584,12 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: first result')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: shared result')
 
-    async def test_instances_with_distinct_ids_schedule_a_call_once(self) -> None:
+    @pytest.mark.parametrize(
+        ('background', 'args'),
+        [(True, '{}'), ('optional', '{"run_in_background": true}')],
+        ids=['always', 'optional-flag-set'],
+    )
+    async def test_instances_with_distinct_ids_schedule_a_call_once(self, background: bool | str, args: str) -> None:
         """When two instances select the same tool, the outer one runs it and the inner one stays out of the way."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -592,18 +597,26 @@ class TestBackgroundTools:
                 return ModelResponse(parts=[TextPart(content='done')])
             if _ack_seen(messages):
                 return ModelResponse(parts=[TextPart(content='waiting')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow', args=args, tool_call_id='call-slow')])
 
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(id='a'), BackgroundTools(id='b')])
 
-        @agent.tool_plain(metadata={'background': True})
+        @agent.tool_plain(metadata={'background': background})
         async def slow() -> str:
             return 'slow result'
 
         result = await agent.run('go')
 
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow result')
-        assert not _follow_up_seen(result.all_messages(), 'Result: Tool')
+        follow_ups = [
+            item.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent)
+        ]
+        assert follow_ups == ["Background tool 'slow' (task call-slow) completed.\nResult: slow result"]
 
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
