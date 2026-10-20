@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import uuid
 from collections.abc import Mapping
 from types import ModuleType
 from typing import TYPE_CHECKING, TypeGuard
@@ -61,8 +62,8 @@ def _module_name(path: Path) -> str:
     return f'_authored_capability_{path.stem}_{digest}'
 
 
-def _load_module(source: Path, file: Path) -> ModuleType:
-    """Execute the source at `source` as a fresh module saved at `file`.
+def _load_module(source: Path, file: Path, *, name: str) -> ModuleType:
+    """Execute the source at `source` as a fresh module named `name`, saved at `file`.
 
     The source is compiled directly instead of through the import system, so no
     bytecode cache is read or written: re-authoring under the same name always
@@ -72,11 +73,8 @@ def _load_module(source: Path, file: Path) -> ModuleType:
 
     The module is registered in `sys.modules` because `dataclasses` and Pydantic look
     up a class's module there to resolve string annotations (as under
-    `from __future__ import annotations`), during the class body and later. The key
-    is derived from `source`, so reloading a file replaces its entry instead of
-    adding one.
+    `from __future__ import annotations`), during the class body and later.
     """
-    name = _module_name(source)
     module = ModuleType(name)
     module.__file__ = str(file.resolve())
     code = compile(source.read_bytes(), str(file), 'exec', dont_inherit=True)
@@ -107,10 +105,10 @@ def _find_capability_class(module: ModuleType) -> type[AbstractCapability[object
     return found[0]
 
 
-def _construct(source: Path, file: Path) -> AbstractCapability[object]:
+def _construct(source: Path, file: Path, *, module_name: str) -> AbstractCapability[object]:
     """Load `source` as the module saved at `file` and run the checks of `load_capability_instance`."""
     try:
-        module = _load_module(source, file)
+        module = _load_module(source, file, name=module_name)
         cls = _find_capability_class(module)
         instance = cls()
         normalize_instructions(instance.get_instructions())
@@ -137,8 +135,11 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
+
+    The module's `sys.modules` key is derived from `path`, so reloading a file
+    replaces its entry instead of adding one.
     """
-    return _construct(path, path)
+    return _construct(path, path, module_name=_module_name(path))
 
 
 def validate_capability_file(path: Path) -> str:
@@ -153,9 +154,12 @@ def validate_capability_source(source: Path, *, file: Path) -> str:
     """Validate the source at `source` as if it were saved at `file`, returning the class name.
 
     The store validates a staged copy before it replaces `file`; the authored code
-    sees `file` as its `__file__`, as it will once loaded.
+    sees `file` as its `__file__`, as it will once loaded. The module gets a
+    `sys.modules` key of its own, so validating a file leaves alone the entry of an
+    instance already loaded from it, which its classes resolve names through.
     """
+    module_name = f'_authored_capability_validation_{uuid.uuid4().hex}'
     try:
-        return type(_construct(source, file)).__name__
+        return type(_construct(source, file, module_name=module_name)).__name__
     finally:
-        sys.modules.pop(_module_name(source), None)
+        sys.modules.pop(module_name, None)

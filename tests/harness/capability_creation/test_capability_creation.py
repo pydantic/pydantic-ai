@@ -15,7 +15,7 @@ import pytest
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
@@ -239,6 +239,34 @@ class UsesModels(AbstractCapability):
         return str(A(b=B(x=1)).b)
 """
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'UsesModels'
+
+    def test_validating_a_loaded_file_keeps_its_module(self, tmp_path: Path) -> None:
+        # A loaded instance's Pydantic models resolve their forward references through its module in
+        # `sys.modules` when first used, so validating the same file must leave that entry alone.
+        code = """from __future__ import annotations
+
+from pydantic import BaseModel
+
+from pydantic_ai.capabilities import AbstractCapability
+
+class A(BaseModel):
+    b: B | None = None
+
+class B(BaseModel):
+    x: int = 0
+
+class UsesModels(AbstractCapability):
+    def get_instructions(self):
+        # Called per run, so `A` is first used once the agent runs.
+        return lambda: str(A(b=B(x=1)).b)
+"""
+        path = _write(tmp_path, 'm', code)
+        instance = load_capability_instance(path)
+        assert validate_capability_file(path) == 'UsesModels'
+        result = Agent(TestModel(), capabilities=[instance]).run_sync('hi')
+        request = result.all_messages()[0]
+        assert isinstance(request, ModelRequest)
+        assert request.instructions == 'x=1'
 
     def test_reload_replaces_module_registration(self, tmp_path: Path) -> None:
         path = _write(tmp_path, 'm', VALID_CODE)
