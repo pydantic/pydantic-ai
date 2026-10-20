@@ -109,8 +109,8 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
     Every collected tool counts, including deferred ones not yet revealed, so revealing a tool doesn't
     change the answer mid-run. A tool is only left out in favor of a tool that stays, so in a chain
     (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
-    favor of each other form a cycle; there the first undecided tool in toolset order stays, and the
-    rest follows from that.
+    favor of each other form a cycle; there the first tool in toolset order that is on the cycle stays,
+    and the rest follows from that.
     """
     names_by_kind: dict[str, list[str]] = {}
     for name, tool in tools.items():
@@ -137,9 +137,30 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
                 stays[name] = True
                 progressed = True
         if not progressed:
-            stays[undecided[0]] = True
+            stays[_first_on_a_cycle(undecided, suppliers)] = True
         undecided = [name for name in undecided if name not in stays]
     return {name: tool for name, tool in tools.items() if stays[name]}
+
+
+def _first_on_a_cycle(undecided: list[str], suppliers: Mapping[str, list[str]]) -> str:
+    """The first tool in `undecided` that can reach itself through undecided suppliers.
+
+    The loop stalls only when every undecided tool has an undecided supplier, so following them always ends
+    in a cycle. Pinning a tool that merely leads into one would keep it beside the cycle member that stays,
+    whose kind it names.
+    """
+    pending = set(undecided)
+    for name in undecided:
+        seen: set[str] = set()
+        stack = [other for other in suppliers[name] if other in pending]
+        while stack:
+            other = stack.pop()
+            if other == name:
+                return name
+            if other not in seen:
+                seen.add(other)
+                stack.extend(supplier for supplier in suppliers[other] if supplier in pending)
+    raise AssertionError('a stalled resolution always contains a cycle')  # pragma: no cover
 
 
 @lru_cache(maxsize=256)

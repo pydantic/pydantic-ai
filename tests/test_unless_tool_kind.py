@@ -119,6 +119,19 @@ def test_tools_naming_each_others_kind_keep_the_first():
     assert _offered_tools(Agent(tools=[file, notes])) == [['read_file']]
 
 
+def test_a_tool_leading_into_a_cycle_steps_aside_for_the_cycle_member_that_stays():
+    # `read_file` only leads into the `read_notes`/`read_index` cycle, so the tie-break keeps `read_notes`,
+    # the first tool on the cycle, and both tools that name its kind step aside.
+    agent = Agent(
+        tools=[
+            Tool(read_file, prepare=_with(tool_kind=FILE_READ, unless_tool_kind=NOTES_READ)),
+            Tool(read_notes, prepare=_with(tool_kind=NOTES_READ, unless_tool_kind=INDEX_READ)),
+            Tool(read_index, prepare=_with(tool_kind=INDEX_READ, unless_tool_kind=NOTES_READ)),
+        ]
+    )
+    assert _offered_tools(agent) == [['read_notes']]
+
+
 def test_only_a_tool_that_stays_supersedes():
     # `read_index` drops `read_notes`, so `read_file`, which would only have stepped aside for `read_notes`, stays.
     agent = Agent(
