@@ -23,15 +23,20 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
 
+import httpcore2
 import httpx2
 import pytest
 import yaml
 from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
+from opentelemetry.instrumentation.httpx import HTTPX2ClientInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
@@ -53,7 +58,7 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -73,6 +78,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model as _Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -1583,8 +1589,9 @@ def _cut_delegate(
 
     Each turn is `('read', path)`, a `Read` call, or `('cut', partial_text)`, which streams
     `partial_text` and then times out. A read of `cut.py` times out while the tool runs. Raising
-    `TimeoutError` where the cut lands stands in for `asyncio.wait_for` cancelling the delegate: the
-    run records its partial state the same way for both.
+    `TimeoutError` where the cut lands takes `task`'s timeout path without expiring its wall-clock cap;
+    the run records its partial state as it does for the cap's cancellation, which
+    `test_subagent_is_resumed_after_its_cap_cuts_it_off` covers.
     """
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     tools: FunctionToolset[object] = FunctionToolset()
@@ -2629,6 +2636,266 @@ def test_rate_limit_retry_transport_retries_transient_unknown_and_malformed_429s
 
     asyncio.run(_request())
     assert len(calls) == 2
+
+
+def test_rate_limit_retry_attempts_each_get_an_http_span(monkeypatch: pytest.MonkeyPatch):
+    """Every retry attempt goes through `httpx2.AsyncHTTPTransport`, which `logfire.instrument_httpx()` patches."""
+    transport = shim.rate_limit_retry_transport()
+    transport.config['wait'] = wait_none()
+    assert isinstance(transport.wrapped, httpx2.AsyncHTTPTransport)
+    statuses = iter([429, 429, 200])
+
+    class _Pool:
+        async def handle_async_request(self, _request: httpcore2.Request) -> httpcore2.Response:
+            status = next(statuses)
+            body = _RATE_LIMITED_RESPONSE if status == 429 else _MESSAGE_RESPONSE
+            return httpcore2.Response(status, content=json.dumps(body).encode())
+
+    monkeypatch.setattr(transport.wrapped, '_pool', _Pool())
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    instrumentor = HTTPX2ClientInstrumentor()
+    instrumentor.instrument(tracer_provider=provider)
+    try:
+        response = asyncio.run(httpx2.AsyncClient(transport=transport).post('https://api.z.ai/api/anthropic'))
+    finally:
+        instrumentor.uninstrument()
+    assert response.status_code == 200
+    span_statuses = [(span.attributes or {}).get('http.status_code') for span in exporter.get_finished_spans()]
+    assert span_statuses == [429, 429, 200]
+
+
+@pytest.fixture
+def agent_spans() -> Iterator[InMemorySpanExporter]:
+    """Every agent's spans, instrumented as `configure_observability` instruments a gh-aw run."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    yield exporter
+    Agent.instrument_all(False)
+
+
+def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[object, str, object]]:
+    """Each span's GenAI operation, status and `error.type`, independent of agent and model names."""
+    outcomes = [
+        (
+            (span.attributes or {}).get('gen_ai.operation.name'),
+            span.status.status_code.name,
+            (span.attributes or {}).get('error.type'),
+        )
+        for span in exporter.get_finished_spans()
+    ]
+    return sorted(outcomes, key=repr)
+
+
+class _ClockSkippingLoop(asyncio.SelectorEventLoop):
+    """An event loop whose clock a test moves forward, so a wall-clock cap fires without waiting."""
+
+    skipped = 0.0
+
+    def time(self) -> float:
+        return super().time() + self.skipped
+
+
+async def _skip_clock_and_hang(seconds: float) -> None:
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, _ClockSkippingLoop)
+    loop.skipped += seconds
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize('chunks_before_cutoff', [0, 1])
+def test_subagent_timeout_marks_the_spans_it_cuts_off(
+    chunks_before_cutoff: int, agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            for _ in range(chunks_before_cutoff):
+                yield 'partial'
+            await _skip_clock_and_hang(shim.SUBAGENT_TIMEOUT_SECS)
+        elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-timeout',
+            )
+        )
+    assert rc == 0
+    assert _span_outcomes(agent_spans) == [
+        ('chat', 'ERROR', 'timeout'),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'ERROR', 'timeout'),
+        ('invoke_agent', 'ERROR', 'timeout'),
+        ('invoke_agent', 'UNSET', None),
+    ]
+    [cut_off_chat] = [
+        span
+        for span in agent_spans.get_finished_spans()
+        if span.name.startswith('chat') and span.status.status_code.name == 'ERROR'
+    ]
+    # Usage the stream had already reported stays on the span.
+    assert ('gen_ai.usage.input_tokens' in (cut_off_chat.attributes or {})) == bool(chunks_before_cutoff)
+
+
+def test_subagent_is_resumed_after_its_cap_cuts_it_off(
+    agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    task_returns: list[str] = []
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        if not info.function_tools:
+            # The resume request, the only one offered no tools.
+            yield 'Reviewed files: none'
+        elif shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            if not returns:
+                yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+            else:
+                yield 'partial'
+                await _skip_clock_and_hang(shim.SUBAGENT_TIMEOUT_SECS)
+        elif returns:
+            task_returns.extend(str(part.content) for part in returns if part.tool_name == 'Task')
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-resume',
+            )
+        )
+    assert rc == 0
+    assert task_returns == [_resumed_report('Reviewed files: none')]
+    # The cap still marks the delegate and its `Task` call as timed out; the resume's own spans succeed.
+    assert _span_outcomes(agent_spans) == [
+        ('chat', 'ERROR', 'timeout'),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'ERROR', 'timeout'),
+        ('execute_tool', 'UNSET', None),
+        ('invoke_agent', 'ERROR', 'timeout'),
+        ('invoke_agent', 'UNSET', None),
+        ('invoke_agent', 'UNSET', None),
+    ]
+    assert 'invoke_agent delegate-resume' in {span.name for span in agent_spans.get_finished_spans()}
+
+
+def test_a_subagents_own_timeout_error_is_not_marked_as_timed_out(
+    agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            raise TimeoutError('provider read timeout')
+        elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-timeout-error',
+            )
+        )
+    assert rc == 0
+    assert _span_outcomes(agent_spans) == [
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'UNSET', None),
+        ('invoke_agent', 'ERROR', None),
+        ('invoke_agent', 'UNSET', None),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('stream_chunks', 'expected'),
+    [
+        # pydantic-ai records the cancelled tool span as an error itself.
+        pytest.param(
+            None,
+            [('chat', 'UNSET', None), ('execute_tool', 'ERROR', None), ('invoke_agent', 'ERROR', 'timeout')],
+            id='in-tool',
+        ),
+        pytest.param(0, [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')], id='before-first-chunk'),
+        pytest.param(1, [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')], id='after-first-chunk'),
+    ],
+)
+def test_run_timeout_marks_the_spans_it_cuts_off(
+    stream_chunks: int | None,
+    expected: list[tuple[str, str, str | None]],
+    agent_spans: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A 6-minute run budget, so the run starts outside the parent's time reserve with all its tools.
+    budget_secs = 360
+
+    async def hang() -> None:
+        await _skip_clock_and_hang(budget_secs)
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        if stream_chunks is None:
+            yield {0: DeltaToolCall(name='hang', json_args='{}')}
+        else:
+            for _ in range(stream_chunks):
+                yield 'partial'
+            await _skip_clock_and_hang(budget_secs)
+
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '8')
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', FunctionModel(stream_function=_stream), 'lbl', FunctionToolset[object]([hang]), [], 'sess-test'
+            )
+        )
+    assert rc == 1
+    assert _span_outcomes(agent_spans) == expected
+
+
+def test_a_failed_stream_is_not_marked_as_timed_out(agent_spans: InMemorySpanExporter):
+    """pydantic-ai cancels a request whose stream failed, under a run cap that has not expired."""
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        yield 'partial'
+        raise ModelHTTPError(529, 'glm-5.3-flash')
+
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', FunctionModel(stream_function=_stream), 'lbl', FunctionToolset[object](), [], 'stream-failure'
+            )
+        )
+    assert rc == 1
+    assert _span_outcomes(agent_spans) == [('chat', 'UNSET', None), ('invoke_agent', 'ERROR', None)]
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
