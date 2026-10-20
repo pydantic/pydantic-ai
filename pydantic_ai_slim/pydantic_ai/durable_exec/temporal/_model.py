@@ -106,6 +106,7 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 params.telemetry_mcp_url_ids,
                 params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
                 self._agent,
             )
             run_context = deserialize_run_context(
@@ -135,6 +136,7 @@ class TemporalModel(WrapperModel):
                 params.model_request_parameters,
                 params.telemetry_mcp_url_ids,
                 params.telemetry_mcp_url_toolset_ids,
+                params.telemetry_mcp_url_tool_names,
                 self._agent,
             )
             run_context = deserialize_run_context(
@@ -238,6 +240,7 @@ class TemporalModel(WrapperModel):
                         model_request_parameters=model_request_parameters,
                         telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
                         telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),
@@ -286,6 +289,7 @@ class TemporalModel(WrapperModel):
                         model_request_parameters=model_request_parameters,
                         telemetry_mcp_url_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
                         telemetry_mcp_url_toolset_ids=model_request_parameters._telemetry_mcp_url_toolset_ids,  # pyright: ignore[reportPrivateUsage]
+                        telemetry_mcp_url_tool_names=model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                         serialized_run_context=serialized_run_context,
                         model_id=model_id,
                     ),

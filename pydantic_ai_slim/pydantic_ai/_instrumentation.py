@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pydantic_ai.native_tools import AbstractNativeTool
     from pydantic_ai.settings import ModelSettings
     from pydantic_ai.tools import AgentDepsT, ToolDefinition
-    from pydantic_ai.toolsets.abstract import AbstractToolset
+    from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -514,6 +514,42 @@ def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[s
     return identities
 
 
+def mcp_telemetry_url_tool_names(tools: Mapping[str, ToolsetTool[AgentDepsT]] | None) -> set[str]:
+    """Identify resolved tools owned by a URL-derived local MCP toolset."""
+    names: set[str] = set()
+    if tools is not None and 'pydantic_ai.mcp' in sys.modules:
+        from pydantic_ai.mcp import MCPToolset
+        from pydantic_ai.toolsets.combined import _CombinedToolsetTool  # pyright: ignore[reportPrivateUsage]
+
+        if isinstance(MCPToolset, type):
+            for name, tool in tools.items():
+                while isinstance(tool, _CombinedToolsetTool):
+                    tool = tool.source_tool
+
+                def collect_mcp_toolset(child: AbstractToolset[AgentDepsT]) -> None:
+                    if isinstance(child, MCPToolset) and child._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
+                        names.add(name)
+
+                tool.toolset.apply(collect_mcp_toolset)
+    return names
+
+
+def model_request_telemetry_url_ids(parameters: ModelRequestParameters) -> set[str]:
+    """Resolve URL-derived MCP IDs when a direct request has no agent provenance."""
+    from pydantic_ai.capabilities.mcp import MCP
+    from pydantic_ai.native_tools import MCPServerTool
+
+    if parameters._telemetry_mcp_url_ids is not None:  # pyright: ignore[reportPrivateUsage]
+        return parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+    # A raw request cannot distinguish a generated ID from an identical caller-chosen ID.
+    # Keep the URL-derived spelling out of traces when provenance is unknown.
+    return {
+        tool.id
+        for tool in parameters.native_tools
+        if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id
+    }
+
+
 def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
@@ -553,8 +589,9 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
     from pydantic_ai.messages import CapabilityInstructionSource, ToolsetInstructionSource
     from pydantic_ai.native_tools import MCPServerTool
 
-    url_ids = model_request_parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+    url_ids = model_request_telemetry_url_ids(model_request_parameters)
     toolset_ids = model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+    tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
     if not (url_ids or toolset_ids) and not any(
         isinstance(tool, MCPServerTool) for tool in model_request_parameters.native_tools
     ):
@@ -585,14 +622,18 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
             # A separate toolset may have a caller-chosen id equal to an MCP URL-derived id.
             # Its tool definitions are not MCP-owned merely because the strings collide.
             if (
-                tool.toolset_id in toolset_ids
-                or tool.capability_id in url_ids
+                tool.capability_id in url_ids
                 or tool.unless_native in native_names
                 or tool.with_native in native_names
+                or (tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names))
             ):
                 tool = replace(
                     tool,
-                    toolset_id='[REDACTED]' if tool.toolset_id in toolset_ids else tool.toolset_id,
+                    toolset_id=(
+                        '[REDACTED]'
+                        if tool.toolset_id in toolset_ids and (tool_names is None or tool.name in tool_names)
+                        else tool.toolset_id
+                    ),
                     capability_id='[REDACTED]' if tool.capability_id in url_ids else tool.capability_id,
                     unless_native='mcp_server:[REDACTED]' if tool.unless_native in native_names else tool.unless_native,
                     with_native='mcp_server:[REDACTED]' if tool.with_native in native_names else tool.with_native,
@@ -627,6 +668,7 @@ def _serialize_model_request_parameters(model_request_parameters: ModelRequestPa
         },
         _telemetry_mcp_url_ids=set(),
         _telemetry_mcp_url_toolset_ids=set(),
+        _telemetry_mcp_url_tool_names=set(),
     )
     try:
         return _model_request_parameters_adapter().dump_python(safe_parameters, mode='json')

@@ -40,6 +40,7 @@ from typing_extensions import TypeForm, TypeIs, TypeVar
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
     mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._spec import load_from_registry
@@ -4027,6 +4028,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 function_tools=tool_defs,
                 native_tools=native_tools,
                 _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), tool_manager.toolset),
+                _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(tool_manager.tools),
                 _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(tool_manager.toolset),
             )
             # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas

@@ -23,6 +23,7 @@ from pydantic_ai._instrumentation import (
     MessageJsonCache,
     get_instructions,
     message_json_fragment,
+    model_request_telemetry_url_ids,
     open_model_request_span,
     response_cost,
     safe_to_json,
@@ -280,9 +281,7 @@ class InstrumentationSettings:
         message_json_cache: MessageJsonCache | None = None,
     ):
         mcp_url_ids: frozenset[str] = (
-            frozenset(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
-            if parameters is not None
-            else frozenset[str]()
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
         )
         output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1

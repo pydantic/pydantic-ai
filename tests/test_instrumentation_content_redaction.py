@@ -48,6 +48,7 @@ from pydantic_ai._instrumentation import (
 from pydantic_ai.capabilities import Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
+from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, UploadedFile
 from pydantic_ai.models import ModelRequestParameters
@@ -472,6 +473,80 @@ async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     assert exported['function_tools'] == []
     assert '[REDACTED]' in json.dumps(exported['instruction_parts'])
     assert capability.id not in json.dumps(exported['instruction_parts'])
+
+
+@pytest.mark.parametrize('explicit_id', [None, 'chosen'])
+async def test_direct_model_request_masks_only_url_derived_native_mcp_id(explicit_id: str | None) -> None:
+    class SupportsMCP(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
+            return frozenset({MCPServerTool})
+
+    url = 'https://mcp.example.test/private/SENTINEL-path'
+    capability = MCP(url, native=True, local=False)
+    assert capability.id is not None
+    tool = (
+        MCPServerTool(id=explicit_id, url=url) if explicit_id is not None else next(iter(capability.get_native_tools()))
+    )
+    assert isinstance(tool, MCPServerTool)
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{tool.id}', tool_call_id='call-1')])
+
+    settings, exporter = redacted_setup()
+    await model_request(
+        SupportsMCP(respond),
+        [ModelRequest.user_text_prompt('go')],
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        instrument=settings,
+    )
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'][0]['id'] == (explicit_id or '[REDACTED]')
+    assert f'mcp_server:{explicit_id or "[REDACTED]"}' in str(chat.attributes['gen_ai.output.messages'])
+    assert 'SENTINEL-path' not in str(chat.attributes)
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+async def test_unrelated_toolset_id_matching_local_mcp_id_is_retained() -> None:
+    server = FastMCP('test', instructions='server guidance')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=server)
+    assert capability.id is not None
+    unrelated = FunctionToolset(id=capability.id)
+
+    @unrelated.tool_plain
+    def lookup() -> str:
+        return 'ok'
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup()
+    await Agent(
+        FunctionModel(respond), toolsets=[unrelated], capabilities=[capability, Instrumentation(settings=settings)]
+    ).run('go')
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    by_name = {tool['name']: tool for tool in json.loads(serialized)['function_tools']}
+    assert by_name['ping']['toolset_id'] == '[REDACTED]'
+    assert by_name['lookup']['toolset_id'] == capability.id
 
 
 class Output(BaseModel):

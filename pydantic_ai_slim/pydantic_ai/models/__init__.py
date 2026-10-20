@@ -199,14 +199,18 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    _telemetry_mcp_url_ids: Annotated[set[str], Field(exclude=True)] = field(
-        default_factory=set[str], repr=False, compare=False
+    _telemetry_mcp_url_ids: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
     )
-    """URL-derived MCP identities to mask in telemetry, without changing provider requests."""
+    """URL-derived MCP identities to mask in telemetry; `None` means provenance is unknown."""
     _telemetry_mcp_url_toolset_ids: Annotated[set[str], Field(exclude=True)] = field(
         default_factory=set[str], repr=False, compare=False
     )
     """URL-derived local MCP toolset identities to mask in telemetry."""
+    _telemetry_mcp_url_tool_names: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -936,18 +940,27 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
         customized_params = self.customize_request_parameters(model_request_parameters)
+        from pydantic_ai._instrumentation import model_request_telemetry_url_ids
+
+        custom_tool_names = customized_params._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        original_tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        tool_names = (
+            custom_tool_names | (original_tool_names or set()) if custom_tool_names is not None else original_tool_names
+        )
+
         # A model may rebuild the request parameters in this hook. Retain trace-only provenance
         # without mutating its return value, which a custom model may reuse across requests.
         params = replace(
             customized_params,
             _telemetry_mcp_url_ids=(
-                customized_params._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
-                | model_request_parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+                model_request_telemetry_url_ids(customized_params)
+                | model_request_telemetry_url_ids(model_request_parameters)
             ),
             _telemetry_mcp_url_toolset_ids=(
                 customized_params._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
                 | model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
             ),
+            _telemetry_mcp_url_tool_names=tool_names,
         )
         params = prepare_return_schemas(
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)

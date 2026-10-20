@@ -1877,6 +1877,7 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
 
     def check_parameters(info: AgentInfo) -> None:
         parameters = info.model_request_parameters
+        assert parameters._telemetry_mcp_url_ids is not None  # pyright: ignore[reportPrivateUsage]
         observed_ids.append(parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
         attributes = model_request_parameters_attributes(parameters)
         serialized = attributes['model_request_parameters']
@@ -1945,6 +1946,36 @@ async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: 
     assert observed_ids == [{identity}]
 
 
+async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        serialized = model_request_parameters_attributes(info.model_request_parameters)['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__direct_request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    deps = object()
+    ctx = RunContext[object](deps=deps, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[tool]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    await ActivityEnvironment().run(temporal_model.request_activity, payload, deps)
+
+
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('compact', [True, False])
 def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
@@ -1971,6 +2002,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
             **common,
             telemetry_mcp_url_ids={identity},
             telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
             streaming=False,
             instructions=None,
         )
@@ -1978,15 +2010,22 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
         if legacy_payload:
             wire.pop('telemetry_mcp_url_ids')
             wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
         decoded = TypeAdapter(_CompactMessagesParams).validate_python(wire)
         loaded = _CompactMessagesTransport(bound_durability).load((decoded, None), runtime=object())
         restored = loaded.request_context.model_request_parameters
     else:
-        payload = _RequestParams(**common, telemetry_mcp_url_ids={identity}, telemetry_mcp_url_toolset_ids={identity})
+        payload = _RequestParams(
+            **common,
+            telemetry_mcp_url_ids={identity},
+            telemetry_mcp_url_toolset_ids={identity},
+            telemetry_mcp_url_tool_names={'ping'},
+        )
         wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
         if legacy_payload:
             wire.pop('telemetry_mcp_url_ids')
             wire.pop('telemetry_mcp_url_toolset_ids')
+            wire.pop('telemetry_mcp_url_tool_names')
         decoded = TypeAdapter(_RequestParams).validate_python(wire)
         loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load(
             (decoded, None), runtime=object()
@@ -1995,6 +2034,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
 
     assert restored._telemetry_mcp_url_ids == {identity}  # pyright: ignore[reportPrivateUsage]
     assert restored._telemetry_mcp_url_toolset_ids == (set() if legacy_payload else {identity})  # pyright: ignore[reportPrivateUsage]
+    assert restored._telemetry_mcp_url_tool_names == (None if legacy_payload else {'ping'})  # pyright: ignore[reportPrivateUsage]
     assert identity not in str(model_request_parameters_attributes(restored))
 
 

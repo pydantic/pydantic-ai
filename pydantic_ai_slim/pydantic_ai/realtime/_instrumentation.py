@@ -24,6 +24,7 @@ from .._instrumentation import (
     build_tool_definitions,
     model_metric_attributes,
     model_request_parameters_attributes,
+    model_request_telemetry_url_ids,
     provider_attributes,
     record_exception,
     redact_binary_content,
@@ -209,7 +210,7 @@ class SessionInstrumentation:
         # deserializes and renders it as a conversation rather than as a string.
         if messages:
             mcp_url_ids = (
-                frozenset(self.model_request_parameters._telemetry_mcp_url_ids)  # pyright: ignore[reportPrivateUsage]
+                frozenset(model_request_telemetry_url_ids(self.model_request_parameters))
                 if self.model_request_parameters is not None
                 else frozenset[str]()
             )
