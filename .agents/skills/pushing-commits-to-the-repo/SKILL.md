@@ -268,7 +268,7 @@ drift arbitrarily far from anything a reviewer read, each hop defensible on its 
 | Missing coverage, test-harness repairs, or fixture/snapshot corrections to established intended behavior | inspect the full diff: test code/data only; cite the established expectation and run affected tests; a snapshot must not bless a newly observed regression |
 | Output of the repo's own tooling (`make format`, lint autofix) | run that tooling on the reviewed SHA in a scratch checkout; its tree equals HEAD's |
 | Comments or docstrings only, no `docs/**` page | no non-comment line appears in `git diff <reviewed>..HEAD` |
-| Target-branch merge with no conflict resolution | `git diff <old-base>..<reviewed-head>` equals `git diff <new-base>..HEAD` |
+| Target-branch merge with no conflict resolution | `git diff <old-base>...<reviewed-head>` equals `git diff <new-base>...HEAD` |
 | Commit or revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
 | Lockfile-only dependency bump | only lock and manifest paths changed |
 

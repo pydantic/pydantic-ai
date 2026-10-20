@@ -92,13 +92,28 @@ For approved deltas, edit `.claude/skills/branch-context/issue-brief.md`:
 
 If any delta changed scope/criteria/constraints, append one line to `pr-decisions.md`:
 
+Bind contributor-derived fields with quoted heredocs, as in [adopt-pr](../adopt-pr/SKILL.md#step-5--backfill-pr-decisionsmd-from-resolved-threads).
+Never paste contributor text into double-quoted command arguments.
+
 ```bash
+title=$(cat <<'EOF'
+brief refresh: <short title>
+EOF
+)
+decision=$(cat <<'EOF'
+<what changed in the brief>
+EOF
+)
+why=$(cat <<'EOF'
+<which comment/event triggered it>
+EOF
+)
+source=$(cat <<'EOF'
+<link to the comment or issue event>
+EOF
+)
 .agents/skills/branch-context/append-pr-decision.sh \
-  "brief refresh: <short title>" \
-  "<what changed in the brief>" \
-  "<which comment/event triggered it>" \
-  "<link to the comment or issue event>" \
-  "-"
+  --title "$title" --decision "$decision" --why "$why" --source "$source"
 ```
 
 Use iter `-`: a refresh is a one-shot re-sync, not an iteration of a review loop.

@@ -52,13 +52,29 @@ If a gate fails, do the alternative and **stop** — don't file:
    Add `--label <name>` only for labels you've confirmed exist (`gh label list`); a missing label fails the command.
 
 4. **Log the deferral** in `pr-decisions.md` so the current PR's reviewers see *why* this was parked rather than fixed:
+   Bind contributor-derived fields with quoted heredocs, as in [adopt-pr](../adopt-pr/SKILL.md#step-5--backfill-pr-decisionsmd-from-resolved-threads).
+   This also applies when deduplication skipped issue creation and Step 3 has no bound title.
+   Never paste contributor text into double-quoted command arguments.
+
    ```bash
+   title=$(cat <<'EOF'
+   defer: <short title of discovery>
+   EOF
+   )
+   decision=$(cat <<'EOF'
+   Filed as #<N> instead of fixing here
+   EOF
+   )
+   why=$(cat <<'EOF'
+   Out of scope for this PR — <decisions / uncertainty / blast-radius, pick one>
+   EOF
+   )
+   source=$(cat <<'EOF'
+   <new issue URL>
+   EOF
+   )
    .agents/skills/branch-context/append-pr-decision.sh \
-     "defer: <short title of discovery>" \
-     "Filed as #<N> instead of fixing here" \
-     "Out of scope for this PR — <decisions / uncertainty / blast-radius, pick one>" \
-     "<new issue URL>" \
-     "-"
+     --title "$title" --decision "$decision" --why "$why" --source "$source"
    ```
 
 5. **Report** the issue URL. **Do not expand the current PR** — that's the whole point.
