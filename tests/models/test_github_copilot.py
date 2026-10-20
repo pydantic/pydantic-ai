@@ -508,8 +508,9 @@ async def test_github_copilot_gemini_thinking(
     """Copilot's Gemini ids return reasoning in the same `reasoning_text` field the Claude ids use.
 
     The second family on that field, and the reason the profile keys it on two prefixes rather than
-    on `claude-`. Easy to miss: `GET /models` only lists the Gemini ids when the request carries the
-    `copilot-integration-id` header the provider sends, so a bare listing suggests they aren't served.
+    on `claude-`. Easy to miss: `GET /models` only lists the Gemini ids when the request carries
+    `copilot-integration-id: vscode-chat`, the provider's default, so a bare listing suggests they
+    aren't served.
 
     The reasoning text itself is matched loosely: Gemini's is several paragraphs and would churn the
     snapshot on every re-record, while what this test is about is the part existing at all with the

@@ -128,7 +128,7 @@ Copilot's catalog varies by subscription and changes often, so Pydantic AI ships
 
 ```bash
 curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
-     -H "Copilot-Integration-Id: vscode-chat" \
+     -H "Copilot-Integration-Id: ${GITHUB_COPILOT_INTEGRATION_ID:-vscode-chat}" \
      https://api.githubcopilot.com/models
 ```
 
@@ -188,7 +188,7 @@ agent = Agent(model)
 
 ## Integration id
 
-Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it, and the ids the `/models` listing returns depend on it. The provider sends `vscode-chat` unless you pass `integration_id`, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI reads. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI reads; the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
 
 ```python
 from pydantic_ai import Agent
