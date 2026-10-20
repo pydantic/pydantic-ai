@@ -66,19 +66,22 @@ class MongoMediaStore:
     Layout, for the default `collection='media'`:
 
     - `media` -- one manifest document per blob, `_id = <sha256-hex>`, with
-      fields `media_type`, `size_bytes`, `chunk_count`, and `metadata`
-      (canonical JSON of `context.metadata`). The manifest is not chunked, so
+      fields `media_type`, `size_bytes`, `chunk_count`, `chunk_size`, and
+      `metadata` (JSON of `context.metadata`). The manifest is not chunked, so
       unbounded `metadata` could itself approach the 16MB cap -- keep per-blob
       metadata small.
-    - `media_chunks` -- one document per chunk, `_id = '<digest>:<n>'`, with
-      `files_id = <digest>`, `n` (0-based order), and `data` (`Binary`).
+    - `media_chunks` -- one document per chunk, `_id =
+      '<digest>:<chunk_size>:<n>'`, with `files_id = <digest>`, `chunk_size`,
+      `n` (0-based order), and `data` (`Binary`).
 
     Writes are idempotent: once the manifest exists, re-`put`-ing the same
-    bytes is a no-op. Chunks are written before the manifest and overwrite
-    any chunk a crashed earlier write left behind, and `get` reads only the
-    manifest's `chunk_count` chunks and checks the sha256 of the result, so
-    a retry with a different `chunk_size_bytes` still reads back intact.
-    `chunk_size_bytes` (default 8MB) bounds each chunk
+    bytes is a no-op. Chunks are written before the manifest and keyed by
+    their chunk size, so writers with different `chunk_size_bytes` (a retry
+    after a crash, or two processes at once) never share a chunk, and `get`
+    reads only the chunks of the manifest's size and count. `get` checks the
+    sha256 of the result, so a missing or corrupt chunk raises. Manifests
+    written before chunks were keyed by size carry no `chunk_size` and read
+    the unkeyed chunks. `chunk_size_bytes` (default 8MB) bounds each chunk
     document below the 16MB cap; it is rejected outside `1..~16MB`. Lower it
     in tests to exercise the multi-chunk split cheaply.
     """
@@ -140,12 +143,19 @@ class MongoMediaStore:
         if await files.find_one({'_id': digest}, {'_id': 1}) is not None:
             return uri
         chunks = self._db[self._chunks_name]
+        size = self._chunk_size
         chunk_count = 0
-        for n, start in enumerate(range(0, len(data), self._chunk_size)):
-            piece = data[start : start + self._chunk_size]
+        for n, start in enumerate(range(0, len(data), size)):
             await chunks.update_one(
-                {'_id': f'{digest}:{n}'},
-                {'$set': {'files_id': digest, 'n': n, 'data': Binary(piece)}},
+                {'_id': f'{digest}:{size}:{n}'},
+                {
+                    '$setOnInsert': {
+                        'files_id': digest,
+                        'chunk_size': size,
+                        'n': n,
+                        'data': Binary(data[start : start + size]),
+                    }
+                },
                 upsert=True,
             )
             chunk_count = n + 1
@@ -156,6 +166,7 @@ class MongoMediaStore:
                     'media_type': context.media_type,
                     'size_bytes': len(data),
                     'chunk_count': chunk_count,
+                    'chunk_size': size,
                     'metadata': json.dumps(dict(context.metadata)),
                 }
             },
@@ -166,14 +177,22 @@ class MongoMediaStore:
     async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
         await self._ensure_indexes()
         digest = parse_media_uri(uri)
-        files_doc = await self._db[self._files_name].find_one({'_id': digest}, {'size_bytes': 1, 'chunk_count': 1})
+        files_doc = await self._db[self._files_name].find_one(
+            {'_id': digest}, {'size_bytes': 1, 'chunk_count': 1, 'chunk_size': 1}
+        )
         if files_doc is None:
             raise FileNotFoundError(f'media not found: {uri}')
         chunk_count = files_doc.get('chunk_count')
         if not isinstance(chunk_count, int):
             raise ValueError(f'media manifest for {uri} has no integer chunk_count: {chunk_count!r}')
+        chunk_size = files_doc.get('chunk_size')
+        query: _MongoDocument = {
+            'files_id': digest,
+            # A manifest from before chunks were keyed by size reads the unkeyed chunks.
+            'chunk_size': chunk_size if isinstance(chunk_size, int) else {'$exists': False},
+            'n': {'$lt': chunk_count},
+        }
         buffer = bytearray()
-        query = {'files_id': digest, 'n': {'$lt': chunk_count}}
         async for doc in self._db[self._chunks_name].find(query).sort('n', 1):
             piece = doc['data']
             if not isinstance(piece, bytes):

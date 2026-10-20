@@ -629,11 +629,12 @@ for persisted snapshots that contain escaped markers.
 
 Two later additions follow the same upgrade-only rule. A dict the walker leaves
 inline but which carries `__harness_external_media__` or
-`__harness_external_literal__` (a tool return, say) is written wrapped as
-`{"__harness_external_literal__": {...}}`, so it is never read back as a marker.
-An older reader leaves the wrapper in the restored payload, and still misreads a
-wrapped dict whose `__harness_external_media__` is `true`. A binary marker whose
-source used URL-safe base64, which is how pydantic serializes `bytes`, carries
+`__harness_external_literal__` (a tool return, say) is written wrapped under
+`__harness_external_literal__` with a `__harness_external_marker_format__`
+stamp, so it is never read back as a marker. An older reader leaves the wrapper
+in the restored payload, and still misreads a wrapped dict whose
+`__harness_external_media__` is `true`. A binary marker whose source used
+URL-safe base64, which is how pydantic serializes `bytes`, carries
 `__harness_external_urlsafe__` so the restored `data` uses the same alphabet; an
 older reader keeps that key in the restored part, which validation ignores.
 

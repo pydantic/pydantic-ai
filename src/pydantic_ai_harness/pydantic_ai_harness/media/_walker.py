@@ -31,8 +31,9 @@ nothing in it would match the shapes above.
 
 A dict the walker does not externalize but which carries a reserved key
 (`_EXTERNAL_MARKER` or `_LITERAL_KEY`) is written wrapped as
-`{_LITERAL_KEY: <dict>}` and unwrapped on restore, so caller data such as a
-tool return can never be read back as a marker.
+`{_LITERAL_KEY: <dict>, _MARKER_FORMAT: _LITERAL_FORMAT}` and unwrapped on
+restore, so caller data such as a tool return can never be read back as a
+marker.
 """
 
 from __future__ import annotations
@@ -57,13 +58,19 @@ _URI_KEY = '__harness_external_uri__'
 # the metadata, and the reader puts them back after rehydrating the payload.
 _ESCAPED_KEYS = '__harness_external_escaped_keys__'
 _MARKER_FORMAT = '__harness_external_marker_format__'
-# Set on a binary marker whose source `data` used the URL-safe base64 alphabet
-# (which is what pydantic serializes `bytes` as), so restore writes the same
-# alphabet back. Markers without it restore with the standard alphabet.
+# Set to `_URLSAFE_STAMP` on a binary marker whose source `data` used the
+# URL-safe base64 alphabet (which is what pydantic serializes `bytes` as), so
+# restore writes the same alphabet back. Markers without the stamp restore with
+# the standard alphabet; a marker written before the stamp existed can carry
+# the key as caller data, so only the stamp value is read as ours.
 _URLSAFE_KEY = '__harness_external_urlsafe__'
+_URLSAFE_STAMP = 'base64-urlsafe-v1'
 # Wraps a dict that is not a marker but carries `_EXTERNAL_MARKER` or this key
-# itself, so restore never mistakes caller data for a marker.
+# itself, so restore never mistakes caller data for a marker. The wrapper is
+# stamped under `_MARKER_FORMAT` so a dict a snapshot from before the wrapper
+# stored under `_LITERAL_KEY` alone is not unwrapped.
 _LITERAL_KEY = '__harness_external_literal__'
+_LITERAL_FORMAT = 'literal-v1'
 # Version stamps this format issues. The prefix is what tells a stamp we wrote
 # apart from a caller-owned `_MARKER_FORMAT` value, so only a stamp inside the
 # namespace makes the version check apply at all.
@@ -161,10 +168,10 @@ def _is_external_marker(node: dict[str, object]) -> bool:
 
 
 def _literal_payload(node: dict[str, object]) -> dict[str, object] | None:
-    """The caller dict inside a `{_LITERAL_KEY: <dict>}` wrapper, or `None` if `node` is not one."""
-    if len(node) != 1:
+    """The caller dict inside a literal wrapper, or `None` if `node` is not one."""
+    if node.keys() != {_LITERAL_KEY, _MARKER_FORMAT} or node[_MARKER_FORMAT] != _LITERAL_FORMAT:
         return None
-    payload = node.get(_LITERAL_KEY)
+    payload = node[_LITERAL_KEY]
     return payload if _is_json_dict(payload) else None
 
 
@@ -202,7 +209,7 @@ async def externalize_media(node: object, *, media_store: MediaStore, threshold_
         for key, value in node.items():
             out_dict[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
         if any(key in node for key in _LITERAL_TRIGGER_KEYS):
-            return {_LITERAL_KEY: out_dict}
+            return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
         return out_dict
     if _is_json_scalar(node):
         return node
@@ -238,7 +245,7 @@ async def _maybe_externalize_binary(
     _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
     if altchars is not None:
-        marker[_URLSAFE_KEY] = True
+        marker[_URLSAFE_KEY] = _URLSAFE_STAMP
     _write_reference(marker, node, uri)
     return marker
 
@@ -359,7 +366,10 @@ async def restore_media(node: object, *, media_store: MediaStore) -> object:
 
 
 async def _restore_external(node: dict[str, object], media_store: MediaStore) -> dict[str, object]:
-    dropped = {_EXTERNAL_MARKER, _TEXT_MARKER, _URLSAFE_KEY}
+    dropped = {_EXTERNAL_MARKER, _TEXT_MARKER}
+    urlsafe = node.get(_URLSAFE_KEY) == _URLSAFE_STAMP
+    if urlsafe:
+        dropped.add(_URLSAFE_KEY)
     escaped: dict[str, object] | None = None
     escaped_value = node.get(_ESCAPED_KEYS)
     marker_format = node.get(_MARKER_FORMAT)
@@ -417,6 +427,6 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
     if is_text:
         restored['content'] = raw.decode('utf-8', errors='surrogatepass')
     else:
-        altchars = b'-_' if node.get(_URLSAFE_KEY) is True else None
+        altchars = b'-_' if urlsafe else None
         restored['data'] = base64.b64encode(raw, altchars=altchars).decode('ascii')
     return restored

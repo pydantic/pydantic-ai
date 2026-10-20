@@ -1065,7 +1065,7 @@ class TestExternalizeRestoreWalker:
         }
         externalized = await externalize_media(node, media_store=store, threshold_bytes=64)
         assert _is_marker_dict(externalized)
-        assert list(externalized) == ['__harness_external_literal__']
+        assert externalized.keys() == {'__harness_external_literal__', '__harness_external_marker_format__'}
         assert len(list(tmp_path.glob('*.bin'))) == 1
         assert await restore_media(externalized, media_store=store) == node
 
@@ -1099,7 +1099,7 @@ class TestExternalizeRestoreWalker:
         urlsafe_marker = await externalize_media(urlsafe, media_store=store, threshold_bytes=64)
         standard_marker = await externalize_media(standard, media_store=store, threshold_bytes=64)
         assert _is_marker_dict(urlsafe_marker) and _is_marker_dict(standard_marker)
-        assert urlsafe_marker['__harness_external_urlsafe__'] is True
+        assert urlsafe_marker['__harness_external_urlsafe__'] == 'base64-urlsafe-v1'
         assert '__harness_external_urlsafe__' not in standard_marker
 
         assert await restore_media(urlsafe_marker, media_store=store) == urlsafe
@@ -1116,6 +1116,34 @@ class TestExternalizeRestoreWalker:
         externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64)
         assert '__harness_external_urlsafe__' in _json.dumps(externalized)
         assert await restore_media(externalized, media_store=store) == dumped
+
+    async def test_pre_wrapper_data_under_the_literal_key_is_not_unwrapped(self, tmp_path: Path) -> None:
+        """Only a stamped wrapper is unwrapped, so a snapshot from before the wrapper keeps its shape."""
+        store = DiskMediaStore(tmp_path)
+        legacy = {'__harness_external_literal__': {'caller': 'data'}}
+        assert await restore_media(legacy, media_store=store) == legacy
+        stamped_by_caller = {
+            '__harness_external_literal__': {'caller': 'data'},
+            '__harness_external_marker_format__': 'v0',
+        }
+        assert await restore_media(stamped_by_caller, media_store=store) == stamped_by_caller
+
+    async def test_pre_stamp_marker_keeps_a_caller_urlsafe_field(self, tmp_path: Path) -> None:
+        """A marker written before the URL-safe stamp keeps a caller field of that name and the standard alphabet."""
+        store = DiskMediaStore(tmp_path)
+        raw = bytes([0xFB, 0xFF, 0xBF]) * 8
+        uri = await store.put(raw)
+        marker = {
+            '__harness_external_media__': True,
+            '__harness_external_uri__': uri,
+            'kind': 'binary',
+            '__harness_external_urlsafe__': True,
+        }
+        assert await restore_media(marker, media_store=store) == {
+            'kind': 'binary',
+            '__harness_external_urlsafe__': True,
+            'data': base64.b64encode(raw).decode('ascii'),
+        }
 
     async def test_caller_owned_urlsafe_key_is_escaped(self, tmp_path: Path) -> None:
         store = DiskMediaStore(tmp_path)

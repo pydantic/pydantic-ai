@@ -131,9 +131,9 @@ class TestMongoMediaStoreRoundTrip:
         assert manifest is not None
         assert manifest['chunk_count'] == expected_chunks
 
-        first_chunk = await chunks.find_one({'_id': f'{digest}:0'})
+        first_chunk = await chunks.find_one({'files_id': digest, 'n': 0})
         assert first_chunk is not None
-        await chunks.delete_one({'_id': f'{digest}:0'})
+        await chunks.delete_one({'_id': first_chunk['_id']})
         await chunks.insert_one(first_chunk)
 
         assert await store.get(uri) == data
@@ -152,7 +152,7 @@ class TestMongoMediaStoreRoundTrip:
         digest = parse_media_uri(first)
         expected_chunks = (len(data) + 3) // 4
         assert await client['t']['media_chunks'].count_documents({}) == expected_chunks
-        await client['t']['media_chunks'].delete_one({'_id': f'{digest}:0'})
+        await client['t']['media_chunks'].delete_one({'files_id': digest, 'n': 0})
 
         second = await store.put(data)
         assert first == second
@@ -202,7 +202,7 @@ class TestMongoMediaStoreRoundTrip:
         uri = await store.put(b'twelve chars')
         digest = parse_media_uri(uri)
         await client['t']['media_chunks'].update_one(
-            {'_id': f'{digest}:0'}, {'$set': {'data': Binary(b'tweLve chars')}}
+            {'files_id': digest, 'n': 0}, {'$set': {'data': Binary(b'tweLve chars')}}
         )
         with pytest.raises(ValueError, match='reassembly mismatch'):
             await store.get(uri)
@@ -233,6 +233,41 @@ class TestMongoMediaStoreRoundTrip:
         uri = await store.put(data)
         assert await store.get(uri) == data
 
+    async def test_concurrent_writer_at_another_chunk_size_cannot_corrupt_a_published_blob(self) -> None:
+        """A writer that passed the manifest check before another published writes chunks of its own.
+
+        Chunks are keyed by size, so the late writer's chunks never replace the
+        ones the published manifest points at.
+        """
+        client = _mock_client()
+        data = bytes(range(64))
+        first = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
+        uri = await first.put(data)
+        files = client['t']['media']
+        published = await files.find_one({'_id': parse_media_uri(uri)})
+        assert published is not None
+        # Replay the late writer: it saw no manifest, so it writes all its chunks.
+        await files.delete_one({'_id': parse_media_uri(uri)})
+        await MongoMediaStore(client=client, database='t', chunk_size_bytes=8).put(data)
+        await files.replace_one({'_id': parse_media_uri(uri)}, published)
+
+        assert await first.get(uri) == data
+        assert await client['t']['media_chunks'].count_documents({'files_id': parse_media_uri(uri)}) == 16 + 8
+
+    async def test_manifest_from_before_size_keyed_chunks_reads_back(self) -> None:
+        client = _mock_client()
+        data = b'legacy layout'
+        digest = parse_media_uri(media_uri_for(data))
+        await client['t']['media'].insert_one(
+            {'_id': digest, 'media_type': None, 'size_bytes': len(data), 'chunk_count': 2, 'metadata': '{}'}
+        )
+        for n, piece in enumerate([data[:7], data[7:]]):
+            await client['t']['media_chunks'].insert_one(
+                {'_id': f'{digest}:{n}', 'files_id': digest, 'n': n, 'data': Binary(piece)}
+            )
+        store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
+        assert await store.get(media_uri_for(data)) == data
+
     async def test_manifest_without_integer_chunk_count_raises(self) -> None:
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t')
@@ -245,7 +280,9 @@ class TestMongoMediaStoreRoundTrip:
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t')
         uri = await store.put(b'chunked')
-        await client['t']['media_chunks'].update_one({'_id': f'{parse_media_uri(uri)}:0'}, {'$set': {'data': 'text'}})
+        await client['t']['media_chunks'].update_one(
+            {'files_id': parse_media_uri(uri), 'n': 0}, {'$set': {'data': 'text'}}
+        )
         with pytest.raises(ValueError, match='holds str, not bytes'):
             await store.get(uri)
 

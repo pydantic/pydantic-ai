@@ -74,7 +74,7 @@ pip/uv-add "pydantic-ai-harness[mongodb]"
 
 - Pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client; call `await store.aclose()`). `database=` is required.
 - Each blob is a manifest document in `media` (`_id` is the digest, `collection=` renames it) plus chunks in `media_chunks`. `chunk_size_bytes` (default 8 MiB, at most 16 MiB minus 64 KiB) keeps each chunk under MongoDB's 16 MiB document cap. The manifest holds `MediaContext.metadata` unchunked, so keep metadata small.
-- `get` reads the manifest's chunks and checks their sha256 against the URI, so a missing or corrupt chunk raises `ValueError`.
+- Chunks are keyed by chunk size, so writers with different `chunk_size_bytes` (a retry after a crash, or two processes at once) never overwrite each other's chunks. `get` reads the chunks the manifest names and checks their sha256 against the URI, so a missing or corrupt chunk raises `ValueError`.
 - The first `put` or `get` creates a `(files_id, n)` index on the chunk collection, so the user needs the privilege to create indexes.
 - GridFS is not used because it keys files by `ObjectId` and cannot deduplicate by content.
 
