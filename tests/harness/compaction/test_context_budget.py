@@ -11,7 +11,6 @@ from uuid import uuid4
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
-import pydantic_ai.messages as messages_module
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
@@ -1577,9 +1576,8 @@ class TestManualCompactionSemantics:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates')
 class TestInstructionDeltaCounting:
-    def test_superseded_updates_do_not_count(self) -> None:  # pragma: lax no cover
+    def test_superseded_updates_do_not_count(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
@@ -1589,8 +1587,10 @@ class TestInstructionDeltaCounting:
                 {'kind': 'response', 'parts': [{'part_kind': 'text', 'content': 'done'}]},
                 {
                     'kind': 'request',
-                    'parts': [{'part_kind': 'user-prompt', 'content': 'Continue.'}],
-                    'instruction_baseline': {},
+                    'parts': [
+                        {'part_kind': 'user-prompt', 'content': 'Continue.'},
+                        {'part_kind': 'instruction-baseline', 'instructions': []},
+                    ],
                     'instructions': 'C',
                 },
             ]
@@ -1600,11 +1600,11 @@ class TestInstructionDeltaCounting:
     @pytest.mark.parametrize(
         ('content', 'rendered'),
         [
-            ('New state', "Instruction block 'agent:state' is replaced from this point onward by:\n\nNew state"),
-            (None, "Instruction block 'agent:state' is withdrawn. Its previous instructions no longer apply."),
+            ('New state', '<context id="agent:state">\nNew state\n</context>'),
+            (None, '<context id="agent:state">\nThis context has been withdrawn.\n</context>'),
         ],
     )
-    def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:  # pragma: lax no cover
+    def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
