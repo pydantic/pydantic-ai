@@ -78,6 +78,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -509,7 +510,9 @@ class SessionCore:
         self._unanswered_responses: set[str] = set()
         """Responses whose tool results get no reply: one of their calls settled without its result going out."""
         self._settled_calls: set[str] = set()
-        """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
+        """Calls that settled: their result is recorded (sent or not), or the provider cancelled or abandoned them."""
+        self._abandoned_calls: set[str] = set()
+        """Calls the provider abandoned: they run on, but no response answers their results (see `ToolCallsAbandoned`)."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -617,6 +620,8 @@ class SessionCore:
             # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
             for call_id in item.tool_call_ids:
                 self._call_unanswered(call_id)
+        elif isinstance(item, ToolCallsAbandoned):
+            self._abandon_calls(item.tool_call_ids)
         elif isinstance(
             item,
             (
@@ -945,7 +950,17 @@ class SessionCore:
         self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
 
     def _result_unanswered(self, call_id: str) -> bool:
-        return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        return call_id in self._abandoned_calls or (
+            (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        )
+
+    def _abandon_calls(self, call_ids: Sequence[str]) -> None:
+        """The provider answers none of these calls' results: they run on, and nothing waits for them any more."""
+        self._abandoned_calls.update(call_ids)
+        self._settled_calls.update(call_ids)
+        for call_id in call_ids:
+            self._call_unanswered(call_id)
+        self._settle([self._result_input[call_id] for call_id in call_ids if call_id in self._result_input], 'void')
 
     def _native_part(self, event: PartStartEvent | PartEndEvent) -> None:
         """A native tool part (grounding, code execution) the connection streamed, numbered by its own counter.
@@ -1698,10 +1713,10 @@ class SessionCore:
 
     def result_asks_reply(self, call_id: str) -> bool:
         """Whether sending this call's result asks for a reply `requests_ahead()` doesn't count yet."""
+        if self._result_unanswered(call_id):
+            return False
         if not self._answers_per_response or (response := self._call_response.get(call_id)) is None:
             return True
-        if response.id in self._unanswered_responses:
-            return False
         return not any(
             outcome == 'pending' and self._reply_for(input_id) == response.id
             for input_id, outcome in self._obligations.items()
