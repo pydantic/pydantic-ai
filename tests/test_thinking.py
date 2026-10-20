@@ -2254,7 +2254,9 @@ async def _send(probe: Probe, settings: ModelSettings) -> tuple[dict[str, Any], 
         warnings.simplefilter('always')
         result = await probe(settings)
     assert result.payload is not None
-    return json.loads(result.payload), [m for m in result.observed.messages if 'takes precedence over `thinking' in m]
+    return json.loads(result.payload), [
+        m for m in result.observed.warning_messages if 'takes precedence over `thinking' in m
+    ]
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _CROSS_SCOPE_CASES])
@@ -2335,13 +2337,11 @@ class TestCrossScopeThinkingOverrideWarning:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter('always')
             await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
-        message = (
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
             "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
             "from the request's `model_settings`. Set `openai_reasoning_effort` in the request's `model_settings` "
             "instead of `thinking`, or remove it from the model's `settings`."
-        )
-        # `FallbackModel` prepares the child once for its span attributes and again in the child's `request`.
-        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [message, message]
+        ]
         assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
 
     async def test_fallback_agent_setting_overriding_run_thinking(self, allow_model_requests: None):

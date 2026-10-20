@@ -297,8 +297,12 @@ class Observed:
     """The settings the model declares it ignores."""
     warned: frozenset[str]
     """The settings an `UnsupportedSettingWarning` named while the request was made."""
-    messages: tuple[str, ...]
-    """Every warning message recorded while the request was made."""
+    warning_messages: tuple[str, ...]
+    """Every warning message recorded while the request was made.
+
+    Warnings other than `UnsupportedSettingWarning` are recorded only when the caller's filters let them through: the
+    suite's `error` filter makes one abort the request instead.
+    """
 
 
 @dataclass(frozen=True)
@@ -312,10 +316,10 @@ _WARNED_SETTING = re.compile(r'^The `(\w+)` setting is not supported')
 
 
 async def _observe(model: Model, request: Awaitable[object]) -> Observed:
-    """Await `request`, swallowing its inevitable failure, and record the `UnsupportedSettingWarning`s it emits.
+    """Await `request`, swallowing its inevitable failure, and record the warnings it emits.
 
-    Recording them instead of letting the suite's `filterwarnings = error` raise them lets the request still
-    reach the wire, so a probe sees both what the model sends and what it warns about.
+    Recording `UnsupportedSettingWarning`s instead of letting the suite's `filterwarnings = error` raise them lets the
+    request still reach the wire, so a probe sees both what the model sends and what it warns about.
     """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always', UnsupportedSettingWarning)
@@ -332,7 +336,7 @@ async def _observe(model: Model, request: Awaitable[object]) -> Observed:
     return Observed(
         unsupported=model._unsupported_settings(),  # pyright: ignore[reportPrivateUsage]
         warned=frozenset(warned),
-        messages=tuple(str(warning.message) for warning in caught),
+        warning_messages=tuple(str(warning.message) for warning in caught),
     )
 
 

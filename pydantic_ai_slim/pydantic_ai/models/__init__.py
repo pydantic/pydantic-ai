@@ -933,7 +933,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return mode
 
     def _thinking_applies(self, thinking: ThinkingLevel) -> bool:
-        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile."""
+        """Whether `prepare_request` passes this unified `thinking` value on to the adapter, judged from the profile.
+
+        GPT-Live resolves it the same way for its delegated backend (`realtime.openai_live._backend_reasoning_effort`):
+        keep the two in step.
+        """
         thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
         supports_thinking = self.profile.get('supports_thinking', False) or thinking_always_enabled
         return supports_thinking and not (thinking is False and thinking_always_enabled)
@@ -988,9 +992,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         # An agent run passes settings that already include this model's own, so this warns only where they arrive
         # separately: a direct request, or a `FallbackModel` child with settings of its own.
-        self._warn_if_thinking_overridden(
-            [("the model's `settings`", self.settings), ("the request's `model_settings`", model_settings)]
-        )
+        if 'thinking' not in SUPPRESSED_WARNINGS.get():
+            self._warn_if_thinking_overridden(
+                [("the model's `settings`", self.settings), ("the request's `model_settings`", model_settings)]
+            )
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
@@ -1024,8 +1029,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
-        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
+        # Resolve unified thinking setting and strip from model_settings.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
             if self._thinking_applies(thinking_value):

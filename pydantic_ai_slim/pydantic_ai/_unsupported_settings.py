@@ -25,11 +25,16 @@ tuning knobs that a model ignores silently, so the same settings work across mod
 SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
     'unsupported_setting_warnings_suppressed', default=frozenset()
 )
-"""The settings `Model.prepare_request` doesn't warn about ignoring, set by `suppress_warnings`."""
+"""The settings `Model.prepare_request` doesn't warn about ignoring, set by `suppress_warnings`.
+
+`thinking` covers the warning that a provider-specific setting from the model's `settings` takes precedence over it.
+"""
 
 
 @contextmanager
-def suppress_warnings(settings: Iterable[ModelSettingName] = GUARANTEE_SETTINGS) -> Generator[None]:
+def suppress_warnings(
+    settings: Iterable[ModelSettingName] = (*GUARANTEE_SETTINGS, 'thinking'),
+) -> Generator[None]:
     """Don't warn about ignoring `settings` (by default, all of them) in `Model.prepare_request` calls inside this block.
 
     For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
