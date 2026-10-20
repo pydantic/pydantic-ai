@@ -749,14 +749,15 @@ async def test_concurrent_first_calls_initialize_login_paths_once(
         timeout: float | None = None,
     ) -> CommandResult:
         nonlocal setup_calls
-        if not isinstance(command, str) and command[:2] == ['/bin/sh', '-c']:
-            # Keep the probes in-process so both callers deterministically reach setup or its lock.
-            if len(command) == 3:
-                return CommandResult(exit_code=0, stdout=home + '\n' if '$HOME' in command[2] else '', stderr='')
-            if 'set -C' in command[2]:
-                setup_calls += 1
-                setup_started.set()
-                await release_setup.wait()
+        assert not isinstance(command, str)
+        assert command[:2] == ['/bin/sh', '-c']
+        # Keep the probes in-process so both callers deterministically reach setup or its lock.
+        if len(command) == 3:
+            return CommandResult(exit_code=0, stdout=home + '\n' if '$HOME' in command[2] else '', stderr='')
+        if 'set -C' in command[2]:
+            setup_calls += 1
+            setup_started.set()
+            await release_setup.wait()
         return await original_run(command, shell=shell, env=env, timeout=timeout)
 
     monkeypatch.setattr(backend, 'working_dir', working_dir)
