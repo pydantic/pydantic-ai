@@ -178,9 +178,10 @@ class OpenAIServer:
         # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame, by the
         # connection it comes back on.
         self._clears_unread: dict[int, list[str | None]] = {}
-        # xAI: the `speech_started` that re-opened a turn, by item id -> the reply it dropped, which ends as the client
-        # reads it (no `response.done` ever comes for it).
-        self._dropped_replies: dict[str, TruthResponse] = {}
+        # Each turn's `speech_started` frames not read yet, by item id, with the reply each dropped (only an xAI turn
+        # re-opened after its stop drops one): that reply ends as the client reads the frame, as no `response.done`
+        # ever comes for it.
+        self._reopens_unread: dict[str, list[TruthResponse | None]] = {}
         self._next_item = 1
         # Server event id of an `error` frame -> the inputs it refused, resolved when the client reads it.
         self._refusals: dict[str, list[str]] = {}
@@ -261,9 +262,10 @@ class OpenAIServer:
             if (cleared := clears.pop(0)) is not None:
                 self.truth.speech_cleared_read.add(cleared)
         if frame_type == 'input_audio_buffer.speech_started' and (
-            dropped := self._dropped_replies.pop(frame['item_id'], None)
+            reopens := self._reopens_unread.get(frame['item_id'])
         ):
-            dropped.terminal_read = now
+            if (dropped := reopens.pop(0)) is not None:
+                dropped.terminal_read = now
         if frame_type == 'conversation.item.input_audio_transcription.completed':
             self.truth.transcripts_read.setdefault(str(frame.get('transcript')), now)
         if frame_type == 'response.function_call_arguments.done' and (
@@ -929,15 +931,18 @@ class OpenAIServer:
                 session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
             )
             reply, session.stopped_reply = session.stopped_reply, None
+            dropped = None
             if reply is not None and session.active is reply:
                 # The reply it started at the stop is dropped, with no frame to say so.
                 session.active = None
                 self._end_truth(reply.truth, 'cancelled')
-                self._dropped_replies[f'item_{key}'] = reply.truth
+                dropped = reply.truth
+            self._reopens_unread.setdefault(f'item_{key}', []).append(dropped)
             return key
         key = self.truth.new_user_turn()
         session.speaking = key
         self.truth.speech_started[key] = self.truth.tick()
+        self._reopens_unread[f'item_{key}'] = [None]
         self._emit(
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )

@@ -948,18 +948,21 @@ def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect,
 
 
 @pytest.mark.parametrize('transcription', [False, True])
-def test_xai_reopening_a_turn_after_its_own_stop(transcription: bool) -> None:
+@pytest.mark.parametrize('reopens', [1, 2])
+def test_xai_reopening_a_turn_after_its_own_stop(transcription: bool, reopens: int) -> None:
     """SIM-41, recorded live (October 2026): xAI hears the user stop and starts its reply, they speak again before it
     commits the turn, and it reports `speech_started` for the same item and drops that reply without a
     `response.done`. It then stops, starts another reply, and commits the turn once. The turn is recorded once,
-    the dropped reply ends cancelled, and the reply that follows is recorded."""
+    each dropped reply ends cancelled, and the reply that follows is recorded (also with the frames of two re-opens
+    read together)."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.speech_start()
-        sim.speech_stop(commit=False)
-        sim.send_audio()
-        sim.speech_start()
+        for _ in range(reopens):
+            sim.speech_stop(commit=False, deliver=reopens == 1)
+            sim.send_audio()
+            sim.speech_start(deliver=reopens == 1)
         sim.speech_stop(commit=False)
         sim.settle()
 
