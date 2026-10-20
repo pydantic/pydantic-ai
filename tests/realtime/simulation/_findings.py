@@ -438,6 +438,46 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
+def _unacknowledged_commit_under_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    """Under server VAD, every turn missing is one `commit_audio()` committed whose acknowledgement the client never
+    read, the session having ended or the connection dropped first."""
+    options = getattr(sim, 'openai', None)
+    truth = sim.truth
+    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
+    return (
+        ended
+        and options is not None
+        and options.turn_detection != 'manual'
+        and any(
+            input_.kind == 'speech'
+            and input_.committed_by_client
+            and input_.committed_read is None
+            and input_.key in violation.context.get('inputs', ())
+            for input_ in truth.inputs
+        )
+    )
+
+
+UNACKNOWLEDGED_COMMIT_UNDER_VAD = Finding(
+    id='SIM-42',
+    title=(
+        'under server VAD, a `commit_audio()` whose acknowledgement never arrives (the session ends or the connection '
+        'drops first) makes a turn only if the client heard the speech it commits start: OpenAI and Azure commit only '
+        'speech their VAD heard and refuse anything else as empty, so a commit of speech whose `speech_started` the '
+        "client hadn't read yet can't be told from a commit of silence, which would be a phantom turn"
+    ),
+    tracked_by=(
+        "the OpenAI-protocol lifecycle's documented choice for an unacknowledged commit under server VAD; found by "
+        'this simulator on #10722'
+    ),
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=frozenset({'openai', 'azure'}),
+    matches=_unacknowledged_commit_under_vad,
+    accepted=True,
+)
+
+
 def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
     from pydantic_ai.realtime import RealtimeError
 
@@ -617,6 +657,7 @@ KNOWN_FINDINGS.extend(
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
+        UNACKNOWLEDGED_COMMIT_UNDER_VAD,
     ]
 )
 

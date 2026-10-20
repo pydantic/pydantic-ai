@@ -840,6 +840,25 @@ def test_unacknowledged_hand_commit_of_silence_under_vad_is_no_turn(dialect: Dia
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_scenario_unacknowledged_commit_of_speech_not_yet_heard_starting_is_accepted(ending: str) -> None:
+    """SIM-42: a commit of speech whose start the client hadn't read yet, unacknowledged when the session ends, can't
+    be told from a commit of silence, so it makes no turn (shrunk from exploration)."""
+
+    with OpenAISimulation(
+        openai=OpenAIOptions(dialect='azure', vad_interrupts=False, vad_responds=False), strict=False
+    ) as sim:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+        assert ('SIM-42', 'history.turn_missing') in sim.checker.known_hits
+
+
 @pytest.mark.parametrize('dialect', ['openai', 'azure'])
 def test_hand_commit_mid_speech_after_an_empty_one_keeps_its_turn(dialect: Dialect) -> None:
     """A hand commit sent as VAD stopped is refused as empty, the user goes on, and a second hand commit mid-speech
