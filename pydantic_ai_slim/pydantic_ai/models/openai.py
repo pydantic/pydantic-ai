@@ -427,7 +427,7 @@ class _AzureContentFilterResult(BaseModel):
 
 class _AzureInnerError(BaseModel):
     code: str
-    content_filter_result: _AzureContentFilterResult
+    content_filter_result: _AzureContentFilterResult | None = None
 
 
 class _AzureError(BaseModel):
@@ -505,7 +505,7 @@ def _check_azure_content_filter(
             if error_data.code == 'content_filter':
                 provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.innererror:
+                if error_data.innererror and error_data.innererror.content_filter_result:
                     provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
                         exclude_none=True
                     )

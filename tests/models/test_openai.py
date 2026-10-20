@@ -6397,6 +6397,33 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
         agent.run_sync('bad prompt')
 
 
+def test_responses_azure_prompt_filter_error_without_filter_result(allow_model_requests: None) -> None:
+    """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body={
+                'error': {
+                    'code': 'content_filter',
+                    'message': 'The response was filtered due to the prompt triggering the content management policy.',
+                    'innererror': {'code': 'ContentFiltered'},
+                }
+            },
+        )
+    )
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        Agent(m).run_sync('bad prompt')
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == {'finish_reason': 'content_filter'}
+
+
 async def test_openai_response_filter_error(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content=None, role='assistant'),
