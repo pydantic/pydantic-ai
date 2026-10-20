@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import io
 import json
 import os
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -1872,12 +1872,14 @@ async def test_bedrock_partial_citation_block(
 def _bedrock_history_with_citations(
     provider_name: str,
     location: dict[str, Any] = {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
-    anchor: ContentCitationAnchor | None = ContentCitationAnchor(start=0, end=len('Thirty days.')),
     text: str = 'Thirty days.',
-    citation_count: int = 1,
     title: str | None = 'Document 1',
+    other_citations: Sequence[Any] = (),
 ) -> list[ModelMessage]:
     """Message history as it comes back from JSON storage, with a text document and a cited answer."""
+    citation: dict[str, Any] = {'location': location, 'sourceContent': [{'text': 'thirty days'}]}
+    if title is not None:
+        citation['title'] = title
     return ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
             [
@@ -1897,19 +1899,11 @@ def _bedrock_history_with_citations(
                     parts=[
                         TextPart(
                             text,
+                            provider_name=provider_name,
+                            provider_details={'citations': [citation, *other_citations]},
                             citations=[
-                                Citation(
-                                    sources=[
-                                        DocumentCitationSource(
-                                            title=title,
-                                            excerpts=['thirty days'],
-                                            provider_details={'location': location},
-                                        )
-                                    ],
-                                    anchor=anchor,
-                                )
-                            ]
-                            * citation_count,
+                                Citation(sources=[DocumentCitationSource(title=title, excerpts=['thirty days'])])
+                            ],
                         ),
                         TextPart('Uncited note.'),
                     ],
@@ -2024,10 +2018,20 @@ async def test_bedrock_replays_own_citations_without_title(
             id='tool-return-document',
         ),
         pytest.param(
-            _bedrock_history_with_citations('bedrock', anchor=ContentCitationAnchor(start=0, end=6)),
-            id='citation-covers-part-of-text',
+            _bedrock_history_with_citations(
+                'bedrock',
+                other_citations=[
+                    {
+                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}},
+                        'sourceContent': [{'text': 'thirty days'}],
+                    }
+                ],
+            ),
+            id='one-of-two-citations-does-not-select-excerpt',
         ),
-        pytest.param(_bedrock_history_with_citations('bedrock', citation_count=2), id='two-citations'),
+        pytest.param(
+            _bedrock_history_with_citations('bedrock', other_citations=['not a citation']), id='not-a-citation'
+        ),
     ],
 )
 async def test_bedrock_sends_unverifiable_citations_as_text(
@@ -2045,7 +2049,7 @@ async def test_bedrock_sends_unverifiable_citations_as_text(
 async def test_bedrock_sends_citations_on_empty_text_as_text(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    history = _bedrock_history_with_citations('bedrock', anchor=None, text='')
+    history = _bedrock_history_with_citations('bedrock', text='')
 
     assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
         'role': 'assistant',

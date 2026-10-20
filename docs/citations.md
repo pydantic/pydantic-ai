@@ -135,11 +135,12 @@ provider's and can change with the provider's API.
 ## Citations in message history
 
 [Stored message history](message-history.md#storing-and-loading-messages-to-json) keeps
-[`TextPart.citations`][pydantic_ai.messages.TextPart.citations]. When you send that history to the provider that
-produced the citations, these citations are sent back with the text:
+[`TextPart.citations`][pydantic_ai.messages.TextPart.citations] and the provider data in `provider_details['citations']`.
+When you send that history to the provider that produced the citations, its own citation data is sent back with the
+text:
 
 - **Anthropic**: web search citations, and citations of plain-text documents with `include_citations=True`.
-- **Amazon Bedrock**: citations of plain-text documents, with `include_citations=True`.
+- **Amazon Bedrock**: citations of plain-text documents, with `include_citations=True` on Anthropic models.
 - **OpenAI Responses**: URL and file citations, when item IDs are sent (see
   [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids]).
 

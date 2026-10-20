@@ -232,31 +232,39 @@ def _responses_history_with_citations(provider_name: str) -> list[ModelMessage]:
                             'The source supports this claim.',
                             id='msg-historical',
                             provider_name=provider_name,
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'type': 'url_citation',
+                                        'url': 'https://example.com/source',
+                                        'title': 'Source',
+                                        'start_index': 0,
+                                        'end_index': 10,
+                                    },
+                                    {
+                                        'type': 'file_citation',
+                                        'file_id': 'file-123',
+                                        'filename': 'report.pdf',
+                                        'index': 3,
+                                    },
+                                    # Not replayed: the range is past the end of the text, the file citation has no
+                                    # filename, the annotation type has no replay, or the entry isn't an annotation.
+                                    {
+                                        'type': 'url_citation',
+                                        'url': 'https://example.com/other',
+                                        'title': 'Other',
+                                        'start_index': 20,
+                                        'end_index': 40,
+                                    },
+                                    {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
+                                    {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
+                                    'not an annotation',
+                                ]
+                            },
                             citations=[
                                 Citation(
                                     sources=[WebCitationSource(url='https://example.com/source', title='Source')],
                                     anchor=MarkerCitationAnchor(start=0, end=10),
-                                ),
-                                Citation(
-                                    sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')],
-                                    provider_details={'index': 3},
-                                ),
-                                # Not replayed: the anchor is past the end of the text, the citation has several
-                                # sources, or the file citation has no filename or index.
-                                Citation(
-                                    sources=[WebCitationSource(url='https://example.com/other', title='Other')],
-                                    anchor=MarkerCitationAnchor(start=20, end=40),
-                                ),
-                                Citation(
-                                    sources=[
-                                        WebCitationSource(url='https://example.com/one', title='One'),
-                                        WebCitationSource(url='https://example.com/two', title='Two'),
-                                    ],
-                                    anchor=MarkerCitationAnchor(start=0, end=10),
-                                ),
-                                Citation(
-                                    sources=[DocumentCitationSource(document_id='file-123')],
-                                    provider_details={'index': 3},
                                 ),
                                 Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')]),
                             ],

@@ -2422,32 +2422,37 @@ def _map_responses_citations(
 
 
 def _map_responses_citations_for_replay(
-    citations: list[Citation] | None, text: str
+    citations: object, text: str
 ) -> list[responses.response_output_text_param.Annotation]:
-    """Rebuild the URL and file citation annotations OpenAI returned for this text, skipping any that can't be rebuilt."""
+    """Rebuild the URL and file citation annotations OpenAI returned from their raw data on the text part.
+
+    Annotations that can't be rebuilt are left out.
+    """
     annotations: list[responses.response_output_text_param.Annotation] = []
-    for citation in citations or []:
-        if len(citation.sources) != 1:
+    for citation in cast(list[Any], citations) if isinstance(citations, list) else []:
+        if not _utils.is_str_dict(citation):
             continue
-        source = citation.sources[0]
-        anchor = citation.anchor
-        if isinstance(source, WebCitationSource):
-            if isinstance(anchor, MarkerCitationAnchor) and source.title is not None and anchor.end <= len(text):
+        if citation.get('type') == 'url_citation':
+            url, title = citation.get('url'), citation.get('title')
+            start, end = citation.get('start_index'), citation.get('end_index')
+            if (
+                isinstance(url, str)
+                and isinstance(title, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+                and 0 <= start <= end <= len(text)
+            ):
                 annotations.append(
                     responses.response_output_text_param.AnnotationURLCitation(
-                        type='url_citation',
-                        url=source.url,
-                        title=source.title,
-                        start_index=anchor.start,
-                        end_index=anchor.end,
+                        type='url_citation', url=url, title=title, start_index=start, end_index=end
                     )
                 )
-        elif anchor is None and source.document_id is not None and source.title is not None:
-            index = (citation.provider_details or {}).get('index')
-            if isinstance(index, int):
+        elif citation.get('type') == 'file_citation':
+            file_id, filename, index = citation.get('file_id'), citation.get('filename'), citation.get('index')
+            if isinstance(file_id, str) and isinstance(filename, str) and isinstance(index, int):
                 annotations.append(
                     responses.response_output_text_param.AnnotationFileCitation(
-                        type='file_citation', file_id=source.document_id, filename=source.title, index=index
+                        type='file_citation', file_id=file_id, filename=filename, index=index
                     )
                 )
     return annotations
@@ -4315,7 +4320,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     text=item.content,
                                     type='output_text',
                                     # Citations are only replayed with the message ID of the output they came from.
-                                    annotations=_map_responses_citations_for_replay(item.citations, item.content),
+                                    annotations=_map_responses_citations_for_replay(
+                                        (item.provider_details or {}).get('citations'), item.content
+                                    ),
                                 ),
                             ]
                             if send_phase:

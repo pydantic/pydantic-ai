@@ -325,24 +325,21 @@ def test_anthropic_empty_cited_text_is_not_an_excerpt() -> None:
     ]
 
 
-def _document_citation(excerpt: str, start: int, end: int, citation_type: str = 'char_location') -> Citation:
-    return Citation(
-        sources=[
-            DocumentCitationSource(
-                title='Policy',
-                excerpts=[excerpt],
-                provider_details={
-                    'type': citation_type,
-                    'document_index': 0,
-                    'start_char_index': start,
-                    'end_char_index': end,
-                },
-            )
-        ]
-    )
+def _document_citation(
+    cited_text: str, start: int, end: int, citation_type: str = 'char_location', document_index: int = 0
+) -> dict[str, Any]:
+    """An Anthropic document citation as it's kept in `TextPart.provider_details['citations']`."""
+    return {
+        'type': citation_type,
+        'cited_text': cited_text,
+        'document_index': document_index,
+        'document_title': 'Policy',
+        'start_char_index': start,
+        'end_char_index': end,
+    }
 
 
-def _history_with_citations(provider_name: str, citations: list[Citation]) -> list[ModelMessage]:
+def _history_with_citations(provider_name: str, citations: list[Any]) -> list[ModelMessage]:
     """Message history as it comes back from JSON storage, with a text document and a cited answer."""
     return ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
@@ -359,7 +356,17 @@ def _history_with_citations(provider_name: str, citations: list[Citation]) -> li
                         )
                     ]
                 ),
-                ModelResponse(parts=[TextPart('Thirty days.', citations=citations)], provider_name=provider_name),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            'Thirty days.',
+                            provider_name=provider_name,
+                            provider_details={'citations': citations},
+                            citations=[Citation(sources=[DocumentCitationSource(title='Policy')])],
+                        )
+                    ],
+                    provider_name=provider_name,
+                ),
                 ModelRequest(parts=[UserPromptPart('Continue.')]),
             ]
         )
@@ -374,25 +381,28 @@ async def test_anthropic_replays_own_citations(allow_model_requests: None):
     history = _history_with_citations(
         'anthropic',
         [
-            Citation(
-                sources=[WebCitationSource(url='https://example.com', title='Example', excerpts=['web excerpt'])],
-                provider_details={'encrypted_index': 'opaque-index'},
-            ),
-            Citation(
-                sources=[WebCitationSource(url='https://example.com/empty')],
-                provider_details={'encrypted_index': 'opaque-index-2'},
-            ),
+            {
+                'type': 'web_search_result_location',
+                'url': 'https://example.com',
+                'title': 'Example',
+                'cited_text': 'web excerpt',
+                'encrypted_index': 'opaque-index',
+            },
+            {
+                'type': 'web_search_result_location',
+                'url': 'https://example.com/empty',
+                'title': None,
+                'cited_text': '',
+                'encrypted_index': 'opaque-index-2',
+            },
             _document_citation('thirty days', 21, 32),
-            # Not replayed: the range no longer selects the excerpt, the location kind has no recorded replay, the
-            # document citation has no excerpt, the web citation has no `encrypted_index`, or the citation is anchored
-            # to the generated text.
+            # Not replayed: the range no longer selects the cited text, the location kind has no recorded replay, the
+            # citation has no cited text, the web citation has no `encrypted_index`, or the entry isn't a citation.
             _document_citation('thirty days', 0, 11),
             _document_citation('thirty days', 21, 32, citation_type='page_location'),
-            Citation(sources=[DocumentCitationSource(title='Policy')]),
-            Citation(sources=[WebCitationSource(url='https://example.com', excerpts=['web excerpt'])]),
-            Citation(
-                sources=[WebCitationSource(url='https://example.com')], anchor=ContentCitationAnchor(start=0, end=6)
-            ),
+            {'type': 'char_location', 'document_index': 0, 'start_char_index': 21, 'end_char_index': 32},
+            {'type': 'web_search_result_location', 'url': 'https://example.com', 'cited_text': 'web excerpt'},
+            'not a citation',
         ],
     )
 
@@ -467,21 +477,9 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
             parts=[
                 TextPart(
                     'Thirty days.',
-                    citations=[
-                        Citation(
-                            sources=[
-                                DocumentCitationSource(
-                                    excerpts=['thirty days'],
-                                    provider_details={
-                                        'type': 'char_location',
-                                        'document_index': 1,
-                                        'start_char_index': 21,
-                                        'end_char_index': 32,
-                                    },
-                                )
-                            ]
-                        )
-                    ],
+                    provider_name='anthropic',
+                    provider_details={'citations': [_document_citation('thirty days', 21, 32, document_index=1)]},
+                    citations=[Citation(sources=[DocumentCitationSource(excerpts=['thirty days'])])],
                 )
             ],
             provider_name='anthropic',
@@ -501,7 +499,7 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
             'type': 'char_location',
             'cited_text': 'thirty days',
             'document_index': 1,
-            'document_title': None,
+            'document_title': 'Policy',
             'start_char_index': 21,
             'end_char_index': 32,
         }

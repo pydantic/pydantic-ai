@@ -921,7 +921,7 @@ async def test_native_citation_replay_after_persisted_history(
     else:
         agent = Agent(
             OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
-            capabilities=[NativeTool(WebSearchTool(max_uses=1))],
+            capabilities=[NativeTool(WebSearchTool())],
             model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
         )
         first_prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."

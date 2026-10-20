@@ -181,39 +181,36 @@ def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[s
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
 
 
-def _map_citation_for_replay(citation: Citation, document_texts: list[str | None]) -> BetaTextCitationParam | None:
-    """Rebuild an Anthropic citation for message history, or return `None` to send the text without it.
+def _map_citation_for_replay(
+    citation: dict[str, Any], document_texts: list[str | None]
+) -> BetaTextCitationParam | None:
+    """Rebuild a citation Anthropic returned from its raw data on the text part, or return `None` to leave it out.
 
     `document_texts` holds the text of each document block in the request, in Anthropic's document index order, or
     `None` for documents that aren't plain text. A character citation is only rebuilt if its range still selects its
-    excerpt from that document.
+    cited text from that document.
     """
-    if citation.anchor is not None or len(citation.sources) != 1:
+    cited_text = citation.get('cited_text')
+    if not isinstance(cited_text, str):
         return None
-    source = citation.sources[0]
 
-    if isinstance(source, WebCitationSource):
-        encrypted_index = (citation.provider_details or {}).get('encrypted_index')
-        if not isinstance(encrypted_index, str) or len(source.excerpts) > 1:
+    if citation.get('type') == 'web_search_result_location':
+        url, title, encrypted_index = citation.get('url'), citation.get('title'), citation.get('encrypted_index')
+        if not isinstance(url, str) or not isinstance(title, str | None) or not isinstance(encrypted_index, str):
             return None
         return BetaCitationWebSearchResultLocationParam(
             type='web_search_result_location',
-            url=source.url,
-            title=source.title,
-            # Anthropic can return an empty `cited_text`, which is kept as no excerpt.
-            cited_text=source.excerpts[0] if source.excerpts else '',
+            url=url,
+            title=title,
+            cited_text=cited_text,
             encrypted_index=encrypted_index,
         )
 
-    if len(source.excerpts) != 1:
-        return None
-    cited_text = source.excerpts[0]
-    details = source.provider_details or {}
-    document_index = details.get('document_index')
-    start = details.get('start_char_index')
-    end = details.get('end_char_index')
+    document_index, title = citation.get('document_index'), citation.get('document_title')
+    start, end = citation.get('start_char_index'), citation.get('end_char_index')
     if (
-        details.get('type') != 'char_location'
+        citation.get('type') != 'char_location'
+        or not isinstance(title, str | None)
         or not isinstance(document_index, int)
         or not isinstance(start, int)
         or not isinstance(end, int)
@@ -227,7 +224,7 @@ def _map_citation_for_replay(citation: Citation, document_texts: list[str | None
         type='char_location',
         cited_text=cited_text,
         document_index=document_index,
-        document_title=source.title,
+        document_title=title,
         start_char_index=start,
         end_char_index=end,
     )
@@ -2750,15 +2747,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     if isinstance(response_part, TextPart):
                         if response_part.content:
                             citations: list[BetaTextCitationParam] = []
-                            if (
-                                response_part.citations
-                                and (response_part.provider_name or m.provider_name) == self.system
-                            ):
+                            raw_citations = (response_part.provider_details or {}).get('citations')
+                            if response_part.provider_name == self.system and isinstance(raw_citations, list):
                                 document_texts = _citation_document_texts(anthropic_messages)
                                 citations = [
                                     param
-                                    for citation in response_part.citations
-                                    if (param := _map_citation_for_replay(citation, document_texts))
+                                    for citation in cast(list[Any], raw_citations)
+                                    if _utils.is_str_dict(citation)
+                                    and (param := _map_citation_for_replay(citation, document_texts))
                                 ]
                             text_block = BetaTextBlockParam(text=response_part.content, type='text')
                             if citations:
