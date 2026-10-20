@@ -87,6 +87,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
 
+    def _derived_id_source(self) -> str | None:
+        # A wrapper that adopted the wrapped capability's `id` is that capability under the same
+        # name, so it derived the id from the same source. One with an `id` of its own chose it.
+        return self.wrapped._derived_id_source() if self.id == self.wrapped.id else None
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
         # Collected once and replayed rather than walking the subtree twice: two walks per level
