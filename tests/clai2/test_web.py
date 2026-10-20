@@ -6,9 +6,9 @@ import html
 import io
 import re
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
@@ -425,6 +425,8 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.
         {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
     )
     assert list(web_.shell.images.pending) == [waiting]
+    with pytest.raises(ValueError, match='send fewer at a time'):
+        web_.shell.send_input('look', images=[blue, blue, blue])
 
 
 def png(color: str) -> bytes:
@@ -472,6 +474,43 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
     red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
     assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
     assert web_.shell.images.pending == {}, 'sent images are let go'
+
+
+def test_a_prompt_keeps_its_images_while_it_waits_for_the_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Images are read as the prompt leaves the queue, so the terminal moving here meanwhile cannot let them go."""
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    waiting, announced = anyio.Event(), anyio.Event()
+    busy = web_.shell.forks.busy
+
+    @asynccontextmanager
+    async def after_an_announcement() -> AsyncGenerator[None]:
+        # As when a fork's announcement holds the terminal.
+        if not announced.is_set():
+            waiting.set()
+            await announced.wait()
+        async with busy():
+            yield
+
+    monkeypatch.setattr(web_.shell.forks, 'busy', after_an_announcement)
+    running = web_.run()
+    web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+    web_.portal.call(waiting.wait)
+    # As the terminal showing this session now does, with nothing left in its queue.
+    web_.portal.call(web_.shell.images.retain, list[str]())
+    web_.post('/api/input', {'text': '/exit'})
+    web_.portal.call(announced.set)
+    running.result(timeout=10)
+    assert prompts == [['what is this?', *decode_images([encoded(png('red'))])]]
 
 
 def test_completion_and_models(make_web: 'MakeWeb') -> None:

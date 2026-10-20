@@ -61,6 +61,7 @@ from pydantic_clai2.plugins import (
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
+from pydantic_clai2.runtime import image_codec
 from pydantic_clai2.runtime._session import (
     Session,
     StockAgent,
@@ -881,6 +882,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if images:
             if is_command_input(text) or shell_command(text) is not None:
                 raise ValueError('Images go with a prompt, not with a /command or ! line.')
+            if sum(len(image.data) for image in images) > image_codec.MAX_PENDING_BYTES:
+                raise ValueError('These images exceed the 32 MiB limit; send fewer at a time.')
             try:
                 markers = self.images.attach(images)
             except ValueError as exc:
@@ -1188,8 +1191,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
             return False
         try:
+            # Before waiting for the terminal: once the prompt left the queue, only this holds its images.
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return False
+        try:
             async with self.forks.busy():
-                return await self._turn(text)
+                return await self._turn(text, images)
         finally:
             if self.editor is not None:
                 await self.editor.output.drain()
@@ -1246,14 +1255,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
         return completed
 
-    async def _turn(self, text: str | None) -> bool:
+    async def _turn(self, text: str | None, images: Sequence[BinaryContent] = ()) -> bool:
+        """Run a turn on `text` and its resolved `images`, or an automated one, as a task's report, on `None`."""
         automated = text is None
-        try:
-            text, images = self.images.resolve(text) if text is not None else ('', [])
-        except ValueError as exc:
-            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-            return False
-        start = TurnStart(text=text)
+        start = TurnStart(text=text or '')
         ended: TurnEnd | None = None
 
         async def run_turn() -> None:
