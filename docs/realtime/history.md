@@ -230,7 +230,8 @@ History follows the order of the provider's own conversation:
   that finishes after later messages were recorded has its return inserted ahead of them.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation), and a speech part whose
+  interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
+  heard), and a speech part whose
   [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
   the latest snapshot rather than appending only the messages past the ones you stored.
 
