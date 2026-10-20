@@ -161,6 +161,7 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             result = await tool('https://example.com')
 
+        assert isinstance(result, dict)
         assert result['title'] == 'Fallback'
         assert 'Content' in result['content']
 
