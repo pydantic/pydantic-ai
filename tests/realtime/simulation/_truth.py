@@ -217,6 +217,13 @@ class GroundTruth:
                 input_.answered_by = response.key
         return response
 
+    def answer(self, response: TruthResponse, keys: list[str]) -> None:
+        """`response`, already under way, answers the inputs `keys` too."""
+        response.answers.extend(keys)
+        for input_ in self.inputs:
+            if input_.key in keys and input_.answered_by is None:
+                input_.answered_by = response.key
+
     def new_call_id(self) -> str:
         call_id = f'call_{self.next_call_number}'
         self.next_call_number += 1

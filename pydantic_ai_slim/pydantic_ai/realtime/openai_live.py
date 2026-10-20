@@ -58,6 +58,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -105,7 +106,7 @@ from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame
+from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -150,6 +151,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CommentaryAppendedEvent,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -253,6 +255,7 @@ _ActedOnEvent = Annotated[
     OutputAudioDeltaEvent
     | OutputTranscriptDeltaEvent
     | InputTranscriptDeltaEvent
+    | CommentaryAppendedEvent
     | DelegationCreatedEvent
     | ResponseEvent
     | SessionUsageUpdatedEvent
@@ -267,6 +270,7 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'session.output_audio.delta',
         'session.output_transcript.delta',
         'session.input_transcript.delta',
+        'session.commentary.appended',
         'session.delegation.created',
         'response.event',
         'session.usage.updated',
@@ -630,6 +634,10 @@ class _LiveLifecycle(InferredLifecycle):
     Live transcribes the user as they speak, so words over a reply are reported while it goes on, and its output is
     a continuous audio track, silent between replies: the connection says where the model takes the turn instead
     (`turn_taken`).
+
+    Text reaches Live as commentary, which it places on its timeline (`session.commentary.appended`) and answers in
+    the speech under way, if any, rather than in a reply of its own: text placed while a reply goes on is answered by
+    that reply once it says anything more (`AnswersRevised.claimed`), and by the next reply otherwise.
     """
 
     transcripts_lag_replies = False
@@ -639,10 +647,37 @@ class _LiveLifecycle(InferredLifecycle):
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
+        self._placed_text: list[InputId] = []
+        """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
 
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
+
+    def text_placed(self, input_id: InputId) -> None:
+        """Live acknowledged a text input, placing it on its timeline where the conversation now is."""
+        if self._open is not None and input_id in self._unanswered:
+            self._placed_text.append(input_id)
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        super()._output(event, before, after)
+        if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
+            # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
+            self._placed_text.clear()
+            self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+            before.append(AnswersRevised(response_id=response_id, claimed=claimed))
+
+    def _end(
+        self,
+        events: list[LifecycleEvent],
+        *,
+        status: ResponseStatus,
+        finish_reason: FinishReason | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> None:
+        # Text the reply never spoke past is the next reply's to answer.
+        self._placed_text.clear()
+        super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -744,6 +779,8 @@ class OpenAILiveConnection(RealtimeConnection):
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
         self._lifecycle = _LiveLifecycle()
+        # The text inputs sent as commentary that Live hasn't acknowledged yet, by the `event_id` they went out under.
+        self._unacknowledged_text: dict[str, InputId] = {}
 
     @property
     def model_name(self) -> str | None:
@@ -780,7 +817,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
         with self._lifecycle.sending(content) as input_index:
-            delivered = await self._send_input(content)
+            delivered = await self._send_input(content, input_index)
         if not delivered:
             # A tool result whose backend gave up on the call: nothing will reply to it.
             self._lifecycle.input_unanswerable(input_index)
@@ -788,13 +825,27 @@ class OpenAILiveConnection(RealtimeConnection):
         # known now.
         return self._lifecycle.take_pending()
 
-    async def _send_input(self, content: RealtimeInput) -> bool:
+    async def _send_input(self, content: RealtimeInput, input_index: InputId) -> bool:
         """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
-            await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
+            # Live acknowledges it under this id once it places it on the timeline (`session.commentary.appended`).
+            event_id = f'pydantic_ai.commentary.{input_index}'
+            self._unacknowledged_text[event_id] = input_index
+            try:
+                await self._send_event(
+                    {
+                        'type': 'session.commentary.append',
+                        'event_id': event_id,
+                        'delegation_id': None,
+                        'content': content,
+                    }
+                )
+            except BaseException:
+                del self._unacknowledged_text[event_id]
+                raise
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1143,6 +1194,8 @@ class OpenAILiveConnection(RealtimeConnection):
         self._last_input_end_ms = None
         self._abandoned_calls.update(self._open_calls)
         self._open_calls.clear()
+        # (The connection's own drop handling settles the replies they asked for.)
+        self._unacknowledged_text.clear()
         self._delegations.clear()
         self._call_delegations.clear()
         self._continuations_due.clear()
@@ -1301,6 +1354,13 @@ class OpenAILiveConnection(RealtimeConnection):
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(self._fragment('input', event.delta))]
+        if isinstance(event, CommentaryAppendedEvent):
+            if (
+                event.client_event_id is not None
+                and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
+            ):
+                self._lifecycle.text_placed(input_index)
+            return []
         if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):

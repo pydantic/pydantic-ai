@@ -189,6 +189,8 @@ class Simulation(ABC):
         self.operations: list[Operation] = []
         self.waiters: list[Waiter] = []
         self.events: list[RealtimeEvent] = []
+        self.turn_completes: list[Waiter] = []
+        """Each `RealtimeTurnCompleteEvent` the session streamed, as a wait that returned as it was queued."""
         self.consumer_errors: list[BaseException] = []
         """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
         self.failures_parked_at: list[int] = []

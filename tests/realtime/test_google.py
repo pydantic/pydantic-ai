@@ -79,6 +79,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     merge_realtime_profile,
 )
+from pydantic_ai.realtime.lifecycle import AnswersRevised
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -975,6 +976,21 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
 def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
     # Verified live: a typed question right after `send(image)` doesn't see the image on these models.
     assert GoogleRealtimeModel(model_name).profile.get('google_text_turns_see_video_frames') is sees_video_frames
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'cuts_off'),
+    [
+        ('gemini-2.5-flash-native-audio-preview-09-2025', False),
+        ('gemini-3.1-flash-live-preview', True),
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live-extended-thinking', False),  # not probed
+        ('gemini-live-2.5-flash', False),  # cuts a reply off, but doesn't say when speech did
+    ],
+)
+def test_profile_input_cuts_off_reply(model_name: str, cuts_off: bool) -> None:
+    # Verified live 2026-10-19/20: text sent mid-reply cuts the reply off, and speech that does is reported first.
+    assert GoogleRealtimeModel(model_name).profile.get('google_input_cuts_off_reply') is cuts_off
 
 
 # --- config ------------------------------------------------------------------
@@ -4701,3 +4717,84 @@ def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: boo
     """A blocking tool-call frame is answered once; a non-blocking call's result may get its own answer."""
     conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), async_tool_calls=async_tool_calls)
     assert conn._answers_tool_calls_per_response is not async_tool_calls  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('start', 'offset', 'released'),
+    [
+        # The user started speaking before the second text went out: that text cut the reply off.
+        (True, '0.5s', True),
+        (True, '0s', True),
+        # ...or after both went out, over the reply: the speech did.
+        (True, '2.5s', False),
+        # With no offset to place it, the speech may have come after them.
+        (True, None, False),
+        (False, '2.5s', True),
+    ],
+)
+async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
+    start: bool, offset: str | None, released: bool
+) -> None:
+    """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off.
+
+    Driven through the connection rather than a recording: Gemini can't be made to place the speech before, between,
+    or after particular sends, or to leave the offset out, on demand.
+    """
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START
+        if start
+        else genai_types.VoiceActivityType.ACTIVITY_END,
+        audio_offset=offset,
+    )
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('Tell me a story.')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(event, AnswersRevised) for event in frame) is released
+
+
+async def test_only_inputs_sent_after_the_user_spoke_are_released() -> None:
+    """Speech that started between two texts: the one sent before it stays answered by the cut-off reply.
+
+    (Driven through the connection for the reason above: the speech can't be placed between two sends on demand.)
+    """
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send('Tell me a story.')  # input 0, at 0 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('And another.')  # input 2, at 1 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')  # input 4, at 2 s
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='1.5s'
+    )
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert [event for event in frame if isinstance(event, AnswersRevised)] == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(4,))
+    ]
