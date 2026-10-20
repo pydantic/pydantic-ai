@@ -133,11 +133,14 @@ def run(*, splash: Splash | None = None) -> None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
         project = load_project_settings(Path.cwd())
         model = args.model or os.getenv('CLAI_MODEL')
-        settings_for = _settings_for(store, model=model, request_limit=args.request_limit)
-        settings = settings_for(project)
-        if agent is not None and agent.model is not None and not model:
+        settings_for = _settings_for(
+            store,
+            model=model,
+            request_limit=args.request_limit,
             # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
-            settings = settings.model_copy(update={'model': None})
+            agent_model=agent is not None and agent.model is not None and not model,
+        )
+        settings = settings_for(project)
         if args.prompt is not None:
             from pydantic_clai2.cli.headless import run_headless
 
@@ -198,6 +201,7 @@ def run(*, splash: Splash | None = None) -> None:
                     fork_session=args.fork_session,
                     worktree=worktree,
                     web=served,
+                    settings_for=settings_for,
                 )
             )
             offer_worktree_cleanup(worktree=launched)
@@ -235,9 +239,12 @@ def _desktop_window(args: argparse.Namespace) -> 'Callable[[str], Awaitable[int]
 
 
 def _settings_for(
-    store: 'SettingsStore', *, model: str | None, request_limit: int | None
+    store: 'SettingsStore', *, model: str | None, request_limit: int | None, agent_model: bool = False
 ) -> 'Callable[[ProjectSettings], Settings]':
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags."""
+    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
+
+    With `agent_model`, no model: the `--agent` agent's own one is used.
+    """
     from pydantic_clai2.config import resolve_settings
 
     def settings_for(project: 'ProjectSettings') -> 'Settings':
@@ -246,7 +253,8 @@ def _settings_for(
             overrides['model'] = model
         if request_limit is not None:
             overrides['run.request_limit'] = request_limit
-        return resolve_settings(overrides)
+        settings = resolve_settings(overrides)
+        return settings.model_copy(update={'model': None}) if agent_model else settings
 
     return settings_for
 

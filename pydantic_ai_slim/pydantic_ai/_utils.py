@@ -411,9 +411,12 @@ async def _cleanup_temporal_group(
 ) -> None:
     """Clean up pending task and async iterator after group_by_temporal exits."""
     if task:
-        task.cancel('Cancelling group_by_temporal pending task')
+        # A plain `await task` would forward each re-cancel of an outer `anyio` scope into the pull natively,
+        # interrupting the source's shielded cleanup. The drain discards the pull's outcome, so read it back to
+        # keep propagating a source failure.
+        await cancel_and_drain(task, msg='Cancelling group_by_temporal pending task')
         with suppress(asyncio.CancelledError, StopAsyncIteration):
-            await task
+            task.result()
     aclose = getattr(aiterator, 'aclose', None)
     if aclose is not None:  # pragma: no branch
         await aclose()
@@ -707,9 +710,12 @@ class PeekableAsyncStream(Generic[T, SourceT]):
             scope.cancel()
         value = self._source_iter if self._source_iter is not None else self.source
         # Wait for the cancelled pull to release the source before closing it, so we don't close a
-        # generator that's still running.
-        async with self._source_lock:
-            await aclose_if_supported(value)
+        # generator that's still running. Shielded, as this is teardown: it often runs inside an anyio scope that
+        # was cancelled, e.g. at a `request_timeout` deadline, where waiting for the lock would raise again and
+        # leave the source open.
+        with anyio.CancelScope(shield=True):
+            async with self._source_lock:
+                await aclose_if_supported(value)
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun[Any, Any, Any]) -> str:
@@ -760,21 +766,48 @@ def own_annotations(cls: type) -> dict[str, Any]:
     return dict(inspect.get_annotations(cls))
 
 
+def prepend_class_annotations(cls: type, extra: dict[str, Any]) -> None:
+    """Declare `extra` on `cls` ahead of the annotations written on it, for a later `@dataclass` to pick up.
+
+    On Python 3.14+ this wraps the class's lazy (PEP 649) `__annotate__` function rather than
+    materializing `__annotations__`, so annotations referencing names defined later in the module
+    stay unevaluated until `@dataclass` (or Pydantic) asks for them.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
+        if original_annotate is not None:
+
+            def annotate(format: int, /) -> dict[str, Any]:
+                return {
+                    **extra,
+                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
+                }
+
+            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
+            return
+        # No lazy annotate function: the class body had no annotations, or stored them eagerly
+        # (e.g. under `from __future__ import annotations`); merge with whatever it has.
+    cls.__annotations__ = {**extra, **cls.__dict__.get('__annotations__', {})}
+
+
 def declares_dataclass_fields(cls: type) -> bool:
     """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
 
     Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
     that can't be resolved yet is still recognized from the way it was written.
     """
-    for annotation in own_annotations(cls).values():
-        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
-            continue
-        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
-        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
-        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
-            continue
+    return any(not is_classvar_annotation(annotation) for annotation in own_annotations(cls).values())
+
+
+def is_classvar_annotation(annotation: Any) -> bool:
+    """Whether an annotation from [`own_annotations`][] declares a `ClassVar`, evaluated or not."""
+    if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
         return True
-    return False
+    # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+    text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+    return text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()) is not None
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:
@@ -928,32 +961,27 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties and patternProperties
-    for keyword in ['properties', 'patternProperties']:
+    # Handle keywords whose values map names to schemas.
+    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
             for prop in props.values():
                 if isinstance(prop, dict):
                     _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
-    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+    # Handle single-subschema keywords, including conditionals and array containment.
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
         subschema = s.get(keyword)
         if isinstance(subschema, dict):
             _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
 
-    # Handle prefixItems
-    if 'prefixItems' in s:
-        prefix_items: list[dict[str, Any]] = s['prefixItems']
-        for item in prefix_items:
-            _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle unions and composition keywords
-    for keyword in ['anyOf', 'oneOf', 'allOf']:
-        if keyword in s:
-            keyword_items: list[dict[str, Any]] = s[keyword]
+    # Handle schema arrays, including the legacy tuple form of items.
+    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
+        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
+        if isinstance(keyword_items, list):
             for item in keyword_items:
-                _update_mapped_json_schema_refs(item, name_mapping)
+                if isinstance(item, dict):
+                    _update_mapped_json_schema_refs(item, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:

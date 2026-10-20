@@ -11,12 +11,13 @@ from pydantic import BaseModel
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.pager import Pager
 from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.ui.menus import dialogs
-from pydantic_clai2.ui.menus.dialogs import TerminalDialogs, run_settings_menu
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs, build_pager, run_settings_menu, wrap
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
@@ -113,6 +114,32 @@ async def test_text_returns_none_when_backed_out(result: TextInputResult) -> Non
     assert await TerminalDialogs(Runners(run_text=run_text)).text(title='Name') is None
     [widget] = widgets
     assert (widget._title, widget._prompt, widget._mask, widget._validator) == ('Name', 'Value: ', None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_multiline_text_opens_the_editor_until_check_accepts_it() -> None:
+    opened: list[tuple[str, str]] = []
+    replies = ['  bad\n', ' Two\nlines \n', None]
+
+    def edit(text: str, /, *, title: str) -> str | None:
+        opened.append((title, text))
+        return replies.pop(0)
+
+    def check(text: str) -> str | None:
+        return 'Not that.' if text == 'bad' else None
+
+    terminal = TerminalDialogs(Runners(edit=edit))
+    assert await terminal.text(title='Notes', initial='Old', check=check, multiline=True) == 'Two\nlines'
+    assert opened == [('Notes', 'Old'), ('Notes: Not that.', 'bad')], 'reopened on what was typed, saying why'
+    assert await terminal.text(title='Notes', multiline=True) is None, 'cancelled'
+
+
+async def test_view_pages_the_text_wrapped_and_disarmed() -> None:
+    pagers: list[Pager] = []
+    await TerminalDialogs(Runners(run_pager=pagers.append)).view(title='Prompt', text='short\n\n' + 'word ' * 100)
+    [pager] = pagers
+    assert pager.line_count > 3
+    assert build_pager('Prompt', 'x').line_count >= 1
+    assert wrap('a\x1b]52;c;x\x07\n\nb', 80) == ['a\\x1b]52;c;x\\x07', '', 'b']
 
 
 @pytest.mark.parametrize(('result', 'answer'), [(pick(True), True), (pick(False), False), (CLOSED, False)])

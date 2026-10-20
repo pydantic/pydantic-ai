@@ -247,7 +247,7 @@ agent = Agent(
 )
 ```
 
-On Anthropic, `cache=True` (or a retention like `cache='1h'`) places cache breakpoints at the end of the tool definitions and the static instructions, like `anthropic_cache_tool_definitions` and `anthropic_cache_instructions` below, so a new conversation reads back the prefix it shares with earlier ones. It caches the conversation with automatic caching, like `anthropic_cache`, or on the Bedrock and Vertex AI SDK clients, which don't support automatic caching, with a breakpoint at the end of the conversation. Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) places cache breakpoints at the end of the tool definitions and the static instructions, like `anthropic_cache_tool_definitions` and `anthropic_cache_instructions` below, so a new conversation reads back the prefix it shares with earlier ones. It caches the conversation with automatic caching, like `anthropic_cache`, or, on the legacy `AsyncAnthropicBedrock` client with models that don't support automatic caching, with a breakpoint at the end of the conversation (see [Automatic Caching](#automatic-caching)). Cache writes cost 1.25x the input price for the 5-minute cache and 2x for the 1-hour cache, and cache reads 0.1x; see [Caching](../capabilities/caching.md) for the trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency. The provider-specific `anthropic_cache*` settings below take precedence when any is set, and offer finer control.
 
 ### Automatic Caching
 
@@ -277,8 +277,25 @@ print(f'Cache hit ratio: {result2.response.usage.cache_hit_ratio}')
 
 This is ideal for multi-turn conversations where the cache breakpoint should move forward as the conversation grows. You can also specify a custom TTL with `anthropic_cache='1h'`.
 
-!!! note "Bedrock and Vertex"
-    Bedrock and Vertex [do not yet support automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching). On these platforms, `anthropic_cache` falls back to per-block caching on the last user message, providing the same benefit for multi-turn conversations.
+The `AsyncAnthropicBedrockMantle`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients support automatic caching. The legacy `AsyncAnthropicBedrock` client uses it on the models Anthropic [documents](https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy#api-model-ids) as served from the Messages API infrastructure. On other models, `anthropic_cache` falls back to per-block caching on the last user message, which gives multi-turn conversations the same benefit.
+
+Whether a model uses automatic caching comes from its [profile](overview.md#models-and-providers)'s `supports_auto_cache`, for both `anthropic_cache` and the unified `cache` setting. If Pydantic AI doesn't yet know that a model or platform supports it, set the flag yourself:
+
+```python {test="skip" typecheck="skip - anthropic's __all__ omits this client, so pyright reports it as not exported"}
+from anthropic import AsyncAnthropicBedrock
+
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+from pydantic_ai.providers.anthropic import AnthropicProvider
+
+model = AnthropicModel(
+    'us.anthropic.claude-sonnet-4-6',
+    provider=AnthropicProvider(anthropic_client=AsyncAnthropicBedrock()),
+    profile=AnthropicModelProfile(supports_auto_cache=True),
+)
+```
+
+Setting it to `False` makes `anthropic_cache` use the per-block fallback, which can help with Anthropic-compatible gateways that don't take the top-level parameter.
 
 ### Per-block Message Caching
 
@@ -430,7 +447,7 @@ print(f'Cache write tokens: {usage.cache_write_tokens}')
 print(f'Cache read tokens: {usage.cache_read_tokens}')
 ```
 
-`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, their count is also in `usage.details['ephemeral_1h_input_tokens']`, or in `usage.details['compaction_ephemeral_1h_input_tokens']` for writes made during [message compaction](#message-compaction), and the cost is calculated at the one-hour rate for those tokens.
+`cache_write_tokens` counts all cache writes. When some of them used a one-hour TTL, which Anthropic bills at a higher rate than five-minute writes, `cache_write_1h_tokens` counts those, and the cost is calculated at the one-hour rate for them. Anthropic's own counts are also in `usage.details`: `'ephemeral_1h_input_tokens'`, and `'compaction_ephemeral_1h_input_tokens'` for writes made during [message compaction](#message-compaction).
 
 ### Cache Diagnostics
 
@@ -584,6 +601,24 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
+
+### Turn-scoped system messages
+
+A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemPromptPart` (`scope='request'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
+
+That matters most on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1: they tie each thinking block to the exact conversation it was produced in, so deleting an earlier reminder from a later request invalidates every thinking block after it, while a cleared one left in place doesn't. A cleared entry costs no input tokens and is never part of a cache key, so `anthropic_cache_messages` and `anthropic_cache` put their breakpoints on the content before it.
+
+Support follows mid-conversation system messages, on the same models and transports. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
+
+```python {title="request_scoped_opt_out.py"}
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
+
+model = AnthropicModel(
+    '{{ anthropic:large.name }}',
+    profile=AnthropicModelProfile(supports_request_scoped_system_prompts=False),
+)
+```
 
 ## Fast mode
 

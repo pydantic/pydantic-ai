@@ -78,6 +78,8 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
@@ -663,6 +665,19 @@ _CACHE_SETTINGS_KEYS = (
 @dataclass(init=False)
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
+
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'timeout',
+        }
+    )
 
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
@@ -1669,10 +1684,18 @@ class BedrockConverseModel(Model[BaseClient]):
                             _insert_cache_point_before_trailing_documents(
                                 previous_content, self._get_cache_point(cache_messages)
                             )
-                    # Note: `_get_last_user_message_content` ensures content doesn't already end with a `cachePoint`.
-                    _insert_cache_point_before_trailing_documents(
-                        last_user_content, self._get_cache_point(cache_messages)
+                    # A request-scoped prompt ends the request when it's rendered as text (see
+                    # `_request_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
+                    # before it. One with nothing ahead of it in the message gets no breakpoint.
+                    end, _ = _request_scoped_suffix_start(
+                        last_user_content, _request_scoped_tail_texts(messages), lambda block: block.get('text')
                     )
+                    lasting_content = last_user_content[:end]
+                    if lasting_content and 'cachePoint' not in lasting_content[-1]:
+                        _insert_cache_point_before_trailing_documents(
+                            lasting_content, self._get_cache_point(cache_messages)
+                        )
+                        last_user_content[:end] = lasting_content
 
         # Bedrock's Converse API requires at least one message, so an empty conversation (only a
         # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model

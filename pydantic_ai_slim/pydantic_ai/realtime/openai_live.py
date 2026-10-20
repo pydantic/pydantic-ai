@@ -61,6 +61,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ModelResponsePart,
     MultiModalContent,
     PartEndEvent,
@@ -79,6 +80,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
+from ..models._speech import assistant_speech_text
 from ..models.openai import (
     OpenAIResponsesModel,
     _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
@@ -351,6 +353,15 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     Takes precedence over the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]
     setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
     that model."""
+    reasoning_summary: Literal['detailed', 'concise', 'auto']
+    """A summary of the backend model's reasoning, as
+    [`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+    requests on a direct Responses request.
+
+    The reasoning recorded ahead of a web search the backend runs then carries the summary, where the
+    backend wrote one, as its [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] content. Check the
+    [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
+    for more details."""
     verbosity: Literal['low', 'medium', 'high']
     """How much detail the backend generates. Does not affect the Live model's spoken delivery."""
     service_tier: Literal['auto', 'default', 'flex', 'priority']
@@ -470,15 +481,17 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     return None
 
 
-def _seed_response_part(part: ModelResponsePart) -> tuple[_SeedRole, str] | None:
-    """The role and text a response part seeds as, or `None` when it carries nothing replayable.
+def _seed_response_part(message: ModelResponse, index: int) -> tuple[_SeedRole, str] | None:
+    """The role and text the part at `index` of `message` seeds as, or `None` when it carries nothing replayable.
 
-    Thinking is bound to the session that produced it: its text is replayable, its signature is not.
+    Thinking is bound to the session that produced it: its text is replayable, its signature is not. Speech is
+    its transcript, marked where a barge-in cut it off.
     """
+    part = message.parts[index]
     if isinstance(part, TextPart):
         return 'assistant', part.content
     if isinstance(part, SpeechPart):
-        return 'assistant', part.transcript or ''
+        return 'assistant', assistant_speech_text(message, index) if part.transcript else ''
     if isinstance(part, ThinkingPart):
         return 'assistant', part.content
     if isinstance(part, ToolCallPart):
@@ -500,7 +513,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:
-            seeded_parts = [_seed_response_part(part) for part in message.parts]
+            seeded_parts = [_seed_response_part(message, index) for index in range(len(message.parts))]
         for seeded in seeded_parts:
             if seeded is not None and (item := _seed_item(*seeded)) is not None:
                 items.append(item)
@@ -534,6 +547,9 @@ async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name:
     """
     replayable = [replayable for message in messages if (replayable := without_media(message)) is not None]
     items = seed_input_items(replayable, provider_name=provider_name)
+    if not items:
+        # Nothing to cut to the caps: the redial needn't wait for the tokenizer to load (seconds, on first use).
+        return []
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     kept: list[dict[str, Any]] = []
     tokens = 0
@@ -1020,8 +1036,15 @@ class OpenAILiveConnection(RealtimeConnection):
                     # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
                     lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
-                        yield lost
-                        raise dropped
+                        # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
+                        # error and end the stream, as the other providers do, rather than raising the
+                        # `websockets` exception. The read started above is on the dead socket.
+                        self._cancel_read()
+                        error = RealtimeSessionErrorEvent(
+                            message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
+                        )
+                        yield [*lost, error]
+                        return
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     reconnected = await self._try_reconnect()
@@ -1841,6 +1864,11 @@ class OpenAILiveModel(RealtimeModel):
         """Web search, which the delegated backend runs: the only native tool Live lets it have."""
         return frozenset({WebSearchTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        # `WebSearchTool` is the only native tool Live supports.
+        return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
+
     @property
     def client(self) -> AsyncOpenAI:
         """The underlying [`AsyncOpenAI`](https://github.com/openai/openai-python) client from the provider."""
@@ -1928,8 +1956,13 @@ class OpenAILiveModel(RealtimeModel):
         parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
         if parallel_tool_calls is not None:
             responses['parallel_tool_calls'] = parallel_tool_calls
+        reasoning: dict[str, str] = {}
         if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
-            responses['reasoning'] = {'effort': effort}
+            reasoning['effort'] = effort
+        if (summary := delegation_settings.get('reasoning_summary')) is not None:
+            reasoning['summary'] = summary
+        if reasoning:
+            responses['reasoning'] = reasoning
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 

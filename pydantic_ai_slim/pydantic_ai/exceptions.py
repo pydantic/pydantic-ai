@@ -38,9 +38,11 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
+    'UnsupportedSettingWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -528,6 +530,26 @@ class ModelAPIError(AgentRunError):
         return self.__class__, (self.model_name, self.message)
 
 
+class ModelRequestTimeout(ModelAPIError):
+    """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
+
+    The deadline is enforced by Pydantic AI around one request to one model, so it covers every attempt the
+    provider SDK and HTTP transport make, and reading a streamed response through its last chunk. Under a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each model gets a deadline of its own, and its
+    default `fallback_on` falls back on this error.
+    """
+
+    timeout: float
+    """The `request_timeout` that ran out, in seconds."""
+
+    def __init__(self, model_name: str, timeout: float):
+        self.timeout = timeout
+        super().__init__(model_name, f'Request to model {model_name!r} timed out after {timeout:g} seconds')
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.timeout)
+
+
 class ModelHTTPError(ModelAPIError):
     """Raised when a model provider response has a status code of 4xx or 5xx."""
 
@@ -712,4 +734,27 @@ class MessageHistoryMutatedWarning(Warning):
     run, which covers messages still present in the final history. Errored runs aren't checked —
     with warnings configured as errors, the warning would displace the run's own exception. Its
     absence does not guarantee that no stale span was recorded.
+    """
+
+
+class UnsupportedSettingWarning(UserWarning):
+    """Warning emitted when a model ignores a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field that a request relies on.
+
+    Most settings a model doesn't support, like `temperature` or `seed`, are tuning knobs that are silently
+    ignored, so the same settings work across models. This warning covers the ones whose absence changes what
+    the request guarantees: `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False` (when the
+    request has function tools), `extra_headers` and `extra_body`. Each field's `Supported by:` list names the
+    models that honor it.
+
+    It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
+    `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import UnsupportedSettingWarning
+
+    warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
     """

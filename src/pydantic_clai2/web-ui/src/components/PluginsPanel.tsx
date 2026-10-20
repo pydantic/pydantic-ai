@@ -3,7 +3,7 @@ import { api } from '../api'
 import type { PluginAction, PluginRow } from '../protocol'
 import { MenuForm } from './MenuForm'
 import { SettingsForm } from './SettingsForm'
-import { CloseIcon, PuzzleIcon, SearchIcon, TerminalIcon } from './icons'
+import { SearchIcon, TerminalIcon } from './icons'
 
 const STATUS: Record<PluginRow['status'], string> = {
   on: 'On',
@@ -20,12 +20,12 @@ function message(error: unknown): string {
 /** Whether the plugin's declaration is on, whatever happened when it loaded. */
 const enabled = (row: PluginRow) => row.status === 'on' || row.status === 'idle' || row.status === 'failed'
 
-/** `/plugins` in the browser: every plugin with an on/off switch, and a form for the settings of the one picked. */
+/** `/plugins` in the browser, the Settings window's Plugins section: every plugin with an on/off switch, and a form
+for the settings of the one picked. */
 export function PluginsPanel({
   version,
   running,
   initial = null,
-  onClose,
   onError,
   onNotice,
 }: {
@@ -33,7 +33,6 @@ export function PluginsPanel({
   running: boolean
   /** The plugin to show first, such as the one a side panel asks to set up. */
   initial?: string | null
-  onClose: () => void
   onError: (message: string) => void
   onNotice: (message: string) => void
 }) {
@@ -42,7 +41,6 @@ export function PluginsPanel({
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const request = useRef(0)
-  const panel = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     const id = ++request.current
@@ -58,22 +56,6 @@ export function PluginsPanel({
   useEffect(() => {
     void load()
   }, [load, version])
-
-  useEffect(() => {
-    panel.current?.focus()
-    const close = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      // An open dialog takes Esc to back out of itself.
-      if (document.querySelector('.dialog-overlay')) return
-      // A text field takes the first Esc to undo its edit.
-      if ((event.target as HTMLElement).closest('input, textarea, select')) return
-      // Capture phase, before the page's own Esc handler can interrupt a turn.
-      event.preventDefault()
-      onClose()
-    }
-    window.addEventListener('keydown', close, true)
-    return () => window.removeEventListener('keydown', close, true)
-  }, [onClose])
 
   const act = async (row: PluginRow, action: PluginAction) => {
     setPending(row.name)
@@ -102,82 +84,72 @@ export function PluginsPanel({
   const current = shown.find((row) => row.name === selected) ?? shown[0] ?? null
 
   return (
-    <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="plugins-panel" role="dialog" aria-modal="true" aria-label="Plugins" tabIndex={-1} ref={panel}>
-        <header className="plugins-header">
-          <PuzzleIcon size={18} />
-          <h2>Plugins</h2>
-          <span className="plugins-hint">Changes apply now and are saved, as /plugins does in the terminal.</span>
-          <button className="icon-button" onClick={onClose} title="Close (Esc)" aria-label="Close">
-            <CloseIcon size={16} />
-          </button>
-        </header>
-        <div className="plugins-body">
-          <aside className="plugin-list">
-            <label className="search">
-              <SearchIcon size={14} />
-              <input value={query} placeholder="Search plugins" onChange={(event) => setQuery(event.target.value)} />
-            </label>
-            <nav>
-              {rows === null && <div className="empty-list">Loading plugins…</div>}
-              {rows !== null && shown.length === 0 && <div className="empty-list">No matching plugins</div>}
-              {shown.map((row) => {
-                const on = enabled(row)
-                const locked = row.serving || row.status === 'included' || pending !== null
-                return (
-                  <div key={row.name} className={`plugin-item ${current?.name === row.name ? 'selected' : ''}`}>
-                    <button className="plugin-pick" onClick={() => setSelected(row.name)}>
-                      <span className={`plugin-dot ${row.status}`} />
-                      <span className="plugin-name">{row.name}</span>
-                      <span className="plugin-origin">{row.origin}</span>
-                    </button>
-                    <button
-                      className={`toggle small ${on ? 'on' : ''} ${pending === row.name ? 'busy' : ''}`}
-                      role="switch"
-                      aria-checked={on}
-                      aria-label={`${on ? 'Turn off' : 'Turn on'} ${row.name}`}
-                      disabled={locked}
-                      title={
-                        row.serving
-                          ? 'Serves this page: turn it off from the terminal'
-                          : row.status === 'included'
-                            ? `Included in ${row.included_in ?? 'another plugin'}`
-                            : on
-                              ? 'Turn off'
-                              : 'Turn on'
-                      }
-                      onClick={() => void act(row, on ? 'disable' : 'enable')}
-                    >
-                      <span />
-                    </button>
-                  </div>
-                )
-              })}
-            </nav>
-          </aside>
-          <section className="plugin-detail">
-            {current ? (
-              <Detail
-                key={current.name}
-                row={current}
-                pending={pending === current.name}
-                version={version}
-                onReload={() => void act(current, 'reload')}
-                onMenu={() => void openMenu(current)}
-                onError={onError}
-                onNotice={onNotice}
-              />
-            ) : (
-              rows !== null && <p className="plugin-empty">No plugins.</p>
-            )}
-          </section>
-        </div>
-        {running && (
-          <footer className="plugins-footer">
-            The running turn keeps the plugins it started with; changes apply from the next prompt.
-          </footer>
-        )}
+    <div className="plugins-panel">
+      <div className="plugins-body">
+        <aside className="plugin-list">
+          <label className="search">
+            <SearchIcon size={14} />
+            <input value={query} placeholder="Search plugins" onChange={(event) => setQuery(event.target.value)} />
+          </label>
+          <nav>
+            {rows === null && <div className="empty-list">Loading plugins…</div>}
+            {rows !== null && shown.length === 0 && <div className="empty-list">No matching plugins</div>}
+            {shown.map((row) => {
+              const on = enabled(row)
+              const locked = row.serving || row.status === 'included' || pending !== null
+              return (
+                <div key={row.name} className={`plugin-item ${current?.name === row.name ? 'selected' : ''}`}>
+                  <button className="plugin-pick" onClick={() => setSelected(row.name)}>
+                    <span className={`plugin-dot ${row.status}`} />
+                    <span className="plugin-name">{row.name}</span>
+                    <span className="plugin-origin">{row.origin}</span>
+                  </button>
+                  <button
+                    className={`toggle small ${on ? 'on' : ''} ${pending === row.name ? 'busy' : ''}`}
+                    role="switch"
+                    aria-checked={on}
+                    aria-label={`${on ? 'Turn off' : 'Turn on'} ${row.name}`}
+                    disabled={locked}
+                    title={
+                      row.serving
+                        ? 'Serves this page: turn it off from the terminal'
+                        : row.status === 'included'
+                          ? `Included in ${row.included_in ?? 'another plugin'}`
+                          : on
+                            ? 'Turn off'
+                            : 'Turn on'
+                    }
+                    onClick={() => void act(row, on ? 'disable' : 'enable')}
+                  >
+                    <span />
+                  </button>
+                </div>
+              )
+            })}
+          </nav>
+        </aside>
+        <section className="plugin-detail">
+          {current ? (
+            <Detail
+              key={current.name}
+              row={current}
+              pending={pending === current.name}
+              version={version}
+              onReload={() => void act(current, 'reload')}
+              onMenu={() => void openMenu(current)}
+              onError={onError}
+              onNotice={onNotice}
+            />
+          ) : (
+            rows !== null && <p className="plugin-empty">No plugins.</p>
+          )}
+        </section>
       </div>
+      {running && (
+        <footer className="plugins-footer">
+          The running turn keeps the plugins it started with; changes apply from the next prompt.
+        </footer>
+      )}
     </div>
   )
 }
@@ -243,7 +215,12 @@ function Detail({
       )}
       <h4 className="plugin-section">Settings</h4>
       {on && row.settings_menu ? (
-        <MenuForm plugin={row.name} version={version} onError={onError} onNotice={onNotice} />
+        <MenuForm
+          target={{ kind: 'plugins', name: row.name }}
+          version={version}
+          onError={onError}
+          onNotice={onNotice}
+        />
       ) : row.form ? (
         <>
           {row.serving && (

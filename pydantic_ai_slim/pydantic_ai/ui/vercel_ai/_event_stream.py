@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic_core import to_json
 
-from ...exceptions import RunCancelled
+from ...exceptions import RunCancelled, RunTimedOut
 from ...messages import (
     CompactionPart,
     CustomEvent,
@@ -200,7 +200,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         yield ErrorChunk(error_text=str(error))
 
     async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseChunk]:
-        yield AbortChunk(reason='The agent run was cancelled.')
+        if isinstance(cancelled, RunTimedOut):
+            yield AbortChunk(reason='The agent run timed out.')
+        else:
+            yield AbortChunk(reason='The agent run was cancelled.')
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(

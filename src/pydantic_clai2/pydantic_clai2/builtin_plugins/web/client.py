@@ -24,7 +24,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.typing import Origin
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2.builtin_plugins.web.app import HEADER, Answer, Answers, DialogAnswer, Input, Interrupted
+from pydantic_clai2.builtin_plugins.web.app import HEADER, Answer, Answers, DialogAnswer, Entered, Input, Interrupted
 from pydantic_clai2.builtin_plugins.web.protocol import (
     Dialog,
     DialogClosed,
@@ -112,8 +112,13 @@ class WebClient:
         return _SNAPSHOT.validate_json(await self._call('GET', '/api/state'))
 
     async def send(self, text: str) -> None:
-        """Enter a prompt or `/command`, as typed in the page; it queues behind a running turn."""
-        await self._call('POST', '/api/input', Input(text=text))
+        """Enter a prompt or `/command`, as typed in the page; it queues behind a running turn.
+
+        A bare command whose menu the page would show, such as `/set`, raises `ValueError`: it runs nothing.
+        """
+        entered = Entered.model_validate_json(await self._call('POST', '/api/input', Input(text=text)))
+        if entered.menu is not None:
+            raise ValueError(f'/{entered.menu} opens a menu in the page; send it with arguments instead.')
 
     async def interrupt(self) -> bool:
         """Cancel the running turn, as Esc does; whether something was running."""

@@ -298,7 +298,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine, which command events Temporal delivers live, and how long a command can run in a Temporal activity.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts) to raise it.
 
 ## Further reading
 

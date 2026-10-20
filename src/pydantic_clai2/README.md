@@ -106,7 +106,9 @@ in the reference.
 ## Updating
 
 Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open.
+conversation open. While other live sessions run turns, as ones the browser opened can,
+`/update` and `/reload` ask you to try again when they finish. They restart CLAI in the folder it started in,
+so a session from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.
@@ -264,6 +266,10 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
+With `/web` running, the browser can open other sessions while this one runs. `/resume`
+of one of them shows it here, even mid-turn, instead of copying it; the session you
+left keeps running in the browser.
+
 ### Work in the background: `/fork`
 
 `/fork PROMPT` runs a copy of the conversation in the background while you keep working.
@@ -271,6 +277,15 @@ Add `@MODEL` to use a different model for it. When it finishes, CLAI prints its 
 and the session to resume if you want to continue it.
 
 ![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/fork.png)
+
+### Several sessions at once: `clai2 --web`
+
+`clai2 --web` drives CLAI from your browser. Click any session in the sidebar and it
+opens live, even while others run: each works in its own folder, with its own queued
+prompts and running turn, and a dot shows which ones are running or waiting for you.
+Esc stops only the session you are looking at. A session left idle for an hour
+closes; it stays saved, so click it to pick it up again. See
+[Several sessions in the web UI](docs/reference.md#several-sessions-in-the-web-ui).
 
 ### Usage, cost, and `/compact`
 

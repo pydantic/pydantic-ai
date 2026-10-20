@@ -1,7 +1,8 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api, interrupt } from '../api'
+import { forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { SessionContext, api, interrupt } from '../api'
+import { type Attachment, base64, imageFiles, readImages } from '../attachments'
 import type { CompletionInfo } from '../protocol'
-import { ArrowUpIcon, ChevronIcon, CheckIcon, StopIcon } from './icons'
+import { ArrowUpIcon, ChevronIcon, CheckIcon, CloseIcon, StopIcon } from './icons'
 
 export interface ComposerHandle {
   focus: () => void
@@ -18,10 +19,15 @@ interface Props {
   placeholder: string
   /** Commands the page handles itself instead of the terminal, such as `/plugins`, which opens its panel. */
   local?: Readonly<Record<string, () => void>>
+  /** A bare command the server answered by naming its menu, such as `/set`, which the page shows instead. */
+  onMenu?: (command: string) => void
   /** The draft, held by the page so it survives the composer moving between the new-session hero and the bottom bar. */
   draft: string
   onDraft: (draft: string) => void
-  /** Where a message goes, and what stops the running turn: the session's by default. */
+  /** Images pasted or dropped for the next prompt, held by the page as the draft is; without them, only text pastes. */
+  attachments?: readonly Attachment[]
+  onAttachments?: (update: (current: readonly Attachment[]) => Attachment[]) => void
+  /** Where a message goes, and what stops the running turn: the shown session's by default. */
   chat?: { send: (text: string) => Promise<void>; interrupt: () => Promise<unknown> }
   /** Whether `/` completes commands and the model picker changes the model; the orchestrator chat has neither. */
   commands?: boolean
@@ -29,7 +35,7 @@ interface Props {
   onError: (message: string) => void
 }
 
-/** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry. */
+/** The prompt box: Enter sends, Shift+Enter adds a line, `/` completes commands from CLAI's own registry, and pasted or dropped images go with the prompt. */
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   {
     running,
@@ -39,8 +45,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     disabled,
     placeholder,
     local,
+    onMenu,
     draft: text,
     onDraft: setText,
+    attachments = [],
+    onAttachments,
     chat,
     commands = true,
     label = 'Message CLAI',
@@ -53,6 +62,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const [models, setModels] = useState<string[] | null>(null)
   const area = useRef<HTMLTextAreaElement>(null)
   const request = useRef(0)
+  const session = useContext(SessionContext)
+
+  // Another session shown: the last one's completions and model list are not this one's.
+  useEffect(() => {
+    request.current++
+    setSuggestions([])
+    setModels(null)
+  }, [session])
 
   useImperativeHandle(ref, () => ({ focus: () => area.current?.focus() }), [])
 
@@ -73,7 +90,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       return
     }
     try {
-      const found = await api.complete(value)
+      const found = await session.complete(value)
       if (id === request.current) {
         setSuggestions(found.slice(0, 50))
         setSelected(0)
@@ -81,7 +98,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     } catch {
       if (id === request.current) setSuggestions([])
     }
-  }, [commands])
+  }, [commands, session])
 
   useEffect(() => {
     if (!models) return
@@ -107,23 +124,67 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
     area.current?.focus()
   }
 
+  const empty = !text.trim() && attachments.length === 0
+
   const send = async () => {
     const value = text.trim()
-    if (!value || disabled) return
+    if (empty || disabled) return
+    const images = attachments
     setText('')
+    onAttachments?.(() => [])
     setSuggestions([])
     // Own keys only: `constructor` or `toString` typed alone is a prompt, not a local command.
-    const handle = local && Object.hasOwn(local, value) ? local[value] : undefined
+    const handle = images.length === 0 && local && Object.hasOwn(local, value) ? local[value] : undefined
     if (handle) {
       handle()
       return
     }
     try {
-      await (chat ? chat.send(value) : api.send(value))
+      if (chat) await chat.send(value)
+      else {
+        const entered = await session.send(value, images.map(base64))
+        if (entered.menu !== null) onMenu?.(entered.menu)
+      }
     } catch (error) {
       setText(value)
+      onAttachments?.((current) => [...images, ...current])
       onError(error instanceof Error ? error.message : String(error))
     }
+  }
+
+  const attach = async (files: File[]) => {
+    if (!onAttachments) return
+    try {
+      const read = await readImages(files, attachments)
+      onAttachments((current) => [...current, ...read])
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    }
+    area.current?.focus()
+  }
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onAttachments) return
+    const files = imageFiles(event.clipboardData.files)
+    if (files.length === 0) return
+    // Text copied with a picture of itself, as from a spreadsheet, pastes as text; a copied file's name does not.
+    const pasted = event.clipboardData.getData('text/plain').trim()
+    if (pasted && !files.some((file) => file.name && pasted.endsWith(file.name))) return
+    event.preventDefault()
+    void attach(files)
+  }
+
+  const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (onAttachments && event.dataTransfer.types.includes('Files')) event.preventDefault()
+  }
+
+  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!onAttachments || event.dataTransfer.files.length === 0) return
+    // Never let the browser leave the page to open a dropped file.
+    event.preventDefault()
+    const files = imageFiles(event.dataTransfer.files)
+    if (files.length === 0) onError('Only images can be attached.')
+    else void attach(files)
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -169,7 +230,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const pickModel = async (name: string) => {
     setModels(null)
     try {
-      await api.selectModel(name)
+      await session.selectModel(name)
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
@@ -198,7 +259,24 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           ))}
         </div>
       )}
-      <div className={`composer ${disabled ? 'disabled' : ''}`}>
+      <div className={`composer ${disabled ? 'disabled' : ''}`} onDragOver={onDragOver} onDrop={onDrop}>
+        {attachments.length > 0 && (
+          <div className="attachments">
+            {attachments.map((attachment) => (
+              <div className="attachment" key={attachment.id}>
+                <img src={attachment.url} alt={attachment.name} title={attachment.name} />
+                <button
+                  className="attachment-remove"
+                  onClick={() => onAttachments?.((current) => current.filter((other) => other.id !== attachment.id))}
+                  title="Remove"
+                  aria-label={`Remove ${attachment.name}`}
+                >
+                  <CloseIcon size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           ref={area}
           rows={1}
@@ -210,6 +288,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
             void complete(event.target.value)
           }}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           onBlur={() => window.setTimeout(() => setSuggestions([]), 120)}
           aria-label={label}
           role="combobox"
@@ -244,23 +323,23 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
               )}
             </div>
           ) : (
-            <span className="pill static" title="The orchestrator uses this session's model">
+            <span className="pill static" title="The orchestrator runs on the saved default model, as a new session starts with">
               <span className="model-name">{model}</span>
             </span>
           )}
           {controls}
           {running ? meter : <span className="hint">{commands ? '/ for commands' : 'Enter to send'}</span>}
-          {running && !text.trim() ? (
+          {running && empty ? (
             <button
               className="send stop"
-              onClick={() => void interrupt(onError, chat?.interrupt)}
+              onClick={() => void interrupt(onError, chat?.interrupt ?? session.interrupt)}
               title="Interrupt (Esc)"
               aria-label="Interrupt"
             >
               <StopIcon size={14} />
             </button>
           ) : (
-            <button className="send" onClick={() => void send()} disabled={!text.trim() || disabled} title="Send (Enter)">
+            <button className="send" onClick={() => void send()} disabled={empty || disabled} title="Send (Enter)">
               <ArrowUpIcon size={16} />
             </button>
           )}

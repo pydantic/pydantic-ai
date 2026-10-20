@@ -12,17 +12,19 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from anyio import to_thread
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, JsonValue, ValidationError
+from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
+from pydantic_clai2.builtin_plugins.web.channel import SessionChannel, Switch
 from pydantic_clai2.builtin_plugins.web.framing import FRAME_SOURCES
 from pydantic_clai2.builtin_plugins.web.live import RESYNC
 from pydantic_clai2.builtin_plugins.web.orchestrator import Orchestrator
@@ -37,12 +39,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Project,
     TaskTranscript,
     Transcript,
+    Watch,
     WorkspaceOpened,
     WorkspacesInfo,
     dump,
 )
-from pydantic_clai2.builtin_plugins.web.remote import PluginAction, Remote, Switch, TaskAction
+from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -54,6 +58,8 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 ResultT = TypeVar('ResultT')
+MenuPath = Annotated[tuple[str, ...], Query(alias='menu')]
+"""`?menu=KEY`, once per row chosen from a declared settings menu to reach the menu that row opens."""
 
 
 class Guard:
@@ -106,6 +112,13 @@ class Input(BaseModel):
     text: str = Field(max_length=200_000)
 
 
+class PromptInput(Input):
+    """Input for a session's prompt, with the images pasted for it, base64-encoded."""
+
+    # Strings, decoded off the loop once their length is checked; see `send`.
+    images: list[str] = []
+
+
 class Answer(BaseModel):
     """The answer to one question: picked labels, or a typed answer instead."""
 
@@ -145,6 +158,12 @@ class SwitchChoice(BaseModel):
     on: bool
 
 
+class Entered(BaseModel):
+    """What entering input did: `menu` names the bare command whose menu the page shows instead of running it."""
+
+    menu: str | None = None
+
+
 class Interrupted(BaseModel):
     """Whether something was running to interrupt."""
 
@@ -171,9 +190,15 @@ class DialogAnswer(BaseModel):
 
 
 class NewSession(BaseModel):
-    """Where a new session runs: an absolute directory, or `None` for the current session's."""
+    """Where a new session runs: an absolute directory, or `None` for the default session's."""
 
     workspace: str | None = Field(default=None, max_length=4096)
+
+
+class Opened(BaseModel):
+    """The conversation of the live session that opening or starting a session gave."""
+
+    id: str
 
 
 class Forked(BaseModel):
@@ -188,21 +213,23 @@ class Steered(BaseModel):
     steered: bool
 
 
-def create_app(*, remote: Remote, token: str, hosts: frozenset[str], static: Path = STATIC) -> ASGIApp:
-    """The web UI for `remote`, accepting requests only for `hosts` (`HOST:PORT`) with `token`.
+def create_app(*, service: WebService, token: str, hosts: frozenset[str], static: Path = STATIC) -> ASGIApp:
+    """The web UI for `service`, accepting requests only for `hosts` (`HOST:PORT`) with `token`.
 
     Every handler is `async`, so it runs on the shell's event loop, never in a worker thread.
     """
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     _page(app, token=token, static=static)
-    _prompt(app, remote)
-    _sessions(app, remote)
-    _plugins(app, remote)
-    _tasks(app, remote)
-    _panels(app, remote)
-    _workspaces(app, remote)
-    _orchestrator(app, remote.orchestrator)
-    _events(app, remote)
+    _prompt(app, service)
+    _images(app, service)
+    _sessions(app, service)
+    _plugins(app, service)
+    _commands(app, service)
+    _tasks(app, service)
+    _panels(app, service)
+    _workspaces(app, service)
+    _orchestrator(app, service.orchestrator)
+    _events(app, service)
     if (static / 'assets').is_dir():
         app.mount('/assets', StaticFiles(directory=static / 'assets'), name='assets')
     return Guard(app, token=token, hosts=hosts)
@@ -238,45 +265,87 @@ def _page(app: FastAPI, *, token: str, static: Path) -> None:
         )
 
 
-def _prompt(app: FastAPI, remote: Remote) -> None:
-    """What the composer does: enter input, interrupt, complete, pick a model, answer questions."""
+def _prompt(app: FastAPI, service: WebService) -> None:
+    """What the composer does: enter input, interrupt, complete, pick a model, answer questions.
 
-    @app.get('/api/state')
-    async def state() -> Response:
-        return Response(dump(remote.snapshot()), media_type='application/json')
+    Each route is there twice: under `/api/sessions/ID/` for the live session holding conversation ID,
+    and unprefixed for the default session, as before CLAI ran several.
+    """
 
-    @app.post('/api/input', status_code=204)
-    async def send(body: Input) -> None:
-        _run(lambda: remote.send(body.text))
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
 
-    @app.post('/api/interrupt')
-    async def interrupt() -> Interrupted:
-        return Interrupted(interrupted=remote.host.interrupt())
+    async def state(conversation_id: str | None = None) -> Response:
+        return Response(dump(session(conversation_id).snapshot()), media_type='application/json')
 
-    @app.get('/api/complete')
-    async def complete(text: str) -> list[CompletionInfo]:
-        return await remote.complete(text)
+    async def send(body: PromptInput, conversation_id: str | None = None) -> Entered:
+        channel = session(conversation_id)
+        # Off the loop: decoding large images would stall every stream meanwhile.
+        images = await _wait(to_thread.run_sync(decode_images, body.images)) if body.images else []
+        return Entered(menu=_run(lambda: channel.send(body.text, images=images)))
+
+    async def interrupt(conversation_id: str | None = None) -> Interrupted:
+        return Interrupted(interrupted=session(conversation_id).session.interrupt())
+
+    async def complete(text: str, conversation_id: str | None = None) -> list[CompletionInfo]:
+        return await session(conversation_id).complete(text)
+
+    async def model(body: ModelChoice, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.send(f'/model {body.name}'))
+
+    async def switch(body: SwitchChoice, conversation_id: str | None = None) -> None:
+        channel = session(conversation_id)
+        _run(lambda: channel.switch(body.key, body.on))
+
+    async def answer(request_id: str, body: Answers, conversation_id: str | None = None) -> None:
+        answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
+        if conversation_id is None:
+            _run(lambda: service.answerer.reply(request_id, answers))
+        else:
+            channel = session(conversation_id)
+            _run(lambda: channel.answer(request_id, answers))
+
+    async def answer_dialog(dialog_id: str, body: DialogAnswer, conversation_id: str | None = None) -> None:
+        if conversation_id is not None:
+            session(conversation_id)
+        _run(lambda: service.answer_dialog(dialog_id, body.value))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/state')(state)
+        app.post(f'{prefix}/input')(send)
+        app.post(f'{prefix}/interrupt')(interrupt)
+        app.get(f'{prefix}/complete')(complete)
+        app.post(f'{prefix}/model', status_code=204)(model)
+        app.post(f'{prefix}/switch', status_code=204)(switch)
+        app.post(f'{prefix}/questions/{{request_id}}', status_code=204)(answer)
+        app.post(f'{prefix}/dialogs/{{dialog_id}}', status_code=204)(answer_dialog)
 
     @app.get('/api/models')
     async def models() -> list[str]:
-        return await remote.models()
+        return await service.models()
 
-    @app.post('/api/model', status_code=204)
-    async def model(body: ModelChoice) -> None:
-        _run(lambda: remote.send(f'/model {body.name}'))
 
-    @app.post('/api/switch', status_code=204)
-    async def switch(body: SwitchChoice) -> None:
-        _run(lambda: remote.switch(body.key, body.on))
+def _images(app: FastAPI, service: WebService) -> None:
+    """The images of a session's prompts, by the IDs its transcript items list, for the page to show.
 
-    @app.post('/api/questions/{request_id}', status_code=204)
-    async def answer(request_id: str, body: Answers) -> None:
-        answers = None if body.answers is None else [_answer(answer) for answer in body.answers]
-        _run(lambda: remote.answer(request_id, answers))
+    Each route is there twice, as the composer's are. The page fetches them with the token header and
+    shows them as `data:` URLs, which its content policy allows.
+    """
 
-    @app.post('/api/dialogs/{dialog_id}', status_code=204)
-    async def answer_dialog(dialog_id: str, body: DialogAnswer) -> None:
-        _run(lambda: remote.answer_dialog(dialog_id, body.value))
+    async def image(image_id: str, conversation_id: str | None = None) -> Response:
+        channel = _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+        # On the loop: the session hashed each image once already, when its transcript listed it.
+        found = channel.image(image_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail='No such image in this session.')
+        # An ID is the digest of the bytes, so they never change.
+        return Response(
+            found.data, media_type=found.media_type, headers={'Cache-Control': 'private, max-age=31536000, immutable'}
+        )
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/images/{{image_id}}')(image)
 
 
 def _answer(answer: Answer) -> AskUserAnswer:
@@ -285,115 +354,142 @@ def _answer(answer: Answer) -> AskUserAnswer:
     return AskUserAnswer(header=answer.header, selected=tuple(answer.selected))
 
 
-def _sessions(app: FastAPI, remote: Remote) -> None:
+def _sessions(app: FastAPI, service: WebService) -> None:
     """The sidebar: list, read, open, start, rename, fork, archive, and delete saved sessions."""
 
     @app.get('/api/sessions')
     async def sessions(q: str = '', include_archived: bool = False) -> list[Project]:
-        return await _wait(remote.projects(q, include_archived=include_archived))
+        return await _wait(service.projects(q, include_archived=include_archived))
 
-    @app.post('/api/sessions/new', status_code=204)
-    async def new(body: NewSession | None = None) -> None:
-        _run(lambda: remote.new(None if body is None else body.workspace))
+    @app.post('/api/sessions/new')
+    async def new(body: NewSession | None = None) -> Opened:
+        return Opened(id=await _wait(service.new(None if body is None else body.workspace)))
 
     @app.get('/api/sessions/{conversation_id}')
     async def transcript(conversation_id: str) -> Transcript:
-        return await _wait(remote.transcript(conversation_id))
+        return await _wait(service.transcript(conversation_id))
 
-    @app.post('/api/sessions/{conversation_id}/open', status_code=204)
-    async def open_session(conversation_id: str) -> None:
-        _run(lambda: remote.open(conversation_id))
+    @app.post('/api/sessions/{conversation_id}/open')
+    async def open_session(conversation_id: str) -> Opened:
+        return Opened(id=await _wait(service.open(conversation_id)))
 
     @app.post('/api/sessions/{conversation_id}/rename', status_code=204)
     async def rename(conversation_id: str, body: Rename) -> None:
-        await _wait(remote.rename(conversation_id, body.title))
+        await _wait(service.rename(conversation_id, body.title))
 
     @app.post('/api/sessions/{conversation_id}/fork')
     async def fork(conversation_id: str) -> Forked:
-        return Forked(id=await _wait(remote.fork(conversation_id)))
+        return Forked(id=await _wait(service.fork(conversation_id)))
 
     @app.post('/api/sessions/{conversation_id}/archive', status_code=204)
     async def archive(conversation_id: str) -> None:
-        await _wait(remote.archive(conversation_id, archived=True))
+        await _wait(service.archive(conversation_id, archived=True))
 
     @app.post('/api/sessions/{conversation_id}/unarchive', status_code=204)
     async def unarchive(conversation_id: str) -> None:
-        await _wait(remote.archive(conversation_id, archived=False))
+        await _wait(service.archive(conversation_id, archived=False))
 
     @app.delete('/api/sessions/{conversation_id}', status_code=204)
     async def delete(conversation_id: str) -> None:
-        await _wait(remote.delete(conversation_id))
+        await _wait(service.delete(conversation_id))
 
 
-def _plugins(app: FastAPI, remote: Remote) -> None:
+def _plugins(app: FastAPI, service: WebService) -> None:
     """The plugins panel: list plugins, turn them on and off, reload them, and edit their settings."""
 
     @app.get('/api/plugins')
     async def plugins() -> list[PluginRow]:
-        return _run(remote.plugins)
+        return _run(service.plugins)
 
     # Before the action route, which would otherwise take `settings` and `menu` for actions.
     @app.post('/api/plugins/{name}/settings', status_code=204)
     async def settings(name: str, body: PluginChanges) -> None:
-        await _wait(remote.configure_plugin(name, body.changes, body.reset))
+        await _wait(service.configure_plugin(name, body.changes, body.reset))
 
     @app.post('/api/plugins/{name}/menu', status_code=204)
     async def menu(name: str) -> None:
-        _run(lambda: remote.open_plugin_menu(name))
+        _run(lambda: service.open_plugin_menu(name))
 
     @app.get('/api/plugins/{name}/fields')
-    async def fields(name: str) -> MenuInfo:
-        return await _wait(remote.plugin_menu(name))
+    async def fields(name: str, path: MenuPath = ()) -> MenuInfo:
+        return await _wait(service.plugin_menu(name, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}')
-    async def set_field(name: str, key: str, body: FieldValue) -> MenuEdited:
-        return await _wait(remote.edit_menu(name, key, body.value))
+    async def set_field(name: str, key: str, body: FieldValue, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.edit_menu(name, key, body.value, path=path))
 
     @app.post('/api/plugins/{name}/fields/{key}/action')
-    async def run_action(name: str, key: str) -> MenuEdited:
-        return await _wait(remote.run_menu_action(name, key))
+    async def run_action(name: str, key: str, path: MenuPath = ()) -> MenuEdited:
+        return await _wait(service.run_menu_action(name, key, path=path))
 
     @app.post('/api/plugins/{name}/{action}', status_code=204)
     async def act(name: str, action: PluginAction) -> None:
-        await _wait(remote.plugin_action(name, action))
+        await _wait(service.plugin_action(name, action))
 
 
-def _tasks(app: FastAPI, remote: Remote) -> None:
+def _commands(app: FastAPI, service: WebService) -> None:
+    """Commands' own menus, such as `/set`'s, shown in the page instead of the terminal.
+
+    Each route is there twice, as the composer's are: under `/api/sessions/ID/` for the live session
+    holding conversation ID, whose commands build the menu, and unprefixed for the default session.
+    """
+
+    def session(conversation_id: str | None) -> SessionChannel:
+        return _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+
+    async def fields(name: str, path: MenuPath = (), conversation_id: str | None = None) -> MenuInfo:
+        return await _wait(service.command_menu(session(conversation_id), name, path=path))
+
+    async def set_field(
+        name: str, key: str, body: FieldValue, path: MenuPath = (), conversation_id: str | None = None
+    ) -> MenuEdited:
+        return await _wait(service.edit_command_menu(session(conversation_id), name, key, body.value, path=path))
+
+    async def run_action(name: str, key: str, path: MenuPath = (), conversation_id: str | None = None) -> MenuEdited:
+        return await _wait(service.run_command_menu_action(session(conversation_id), name, key, path=path))
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/commands/{{name}}/fields')(fields)
+        app.post(f'{prefix}/commands/{{name}}/fields/{{key}}')(set_field)
+        app.post(f'{prefix}/commands/{{name}}/fields/{{key}}/action')(run_action)
+
+
+def _tasks(app: FastAPI, service: WebService) -> None:
     """The Workers tree: read a delegated task's history, steer it, and stop, background, or resume it."""
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:
-        return _run(lambda: remote.task_transcript(task_id))
+        return _run(lambda: service.task_transcript(task_id))
 
     # Before the action route, which would otherwise take `steer` for an action.
     @app.post('/api/tasks/{task_id}/steer')
     async def steer(task_id: str, body: Input) -> Steered:
-        return Steered(steered=_run(lambda: remote.steer(task_id, body.text)))
+        return Steered(steered=_run(lambda: service.steer(task_id, body.text)))
 
     @app.post('/api/tasks/{task_id}/{action}', status_code=204)
     async def act(task_id: str, action: TaskAction) -> None:
-        await _wait(remote.task_action(task_id, action))
+        await _wait(service.task_action(task_id, action))
 
 
-def _panels(app: FastAPI, remote: Remote) -> None:
+def _panels(app: FastAPI, service: WebService) -> None:
     """Plugins' side panels, as they are now; the page asks again when a turn starts or ends."""
 
     @app.get('/api/panels')
     async def panels(request: Request) -> list[PanelInfo]:
         # `Guard` admitted only the server's own addresses, so `Host` names the origin this page came from.
-        return await remote.panels(origin=f'http://{request.headers["host"]}')
+        return await service.panels(origin=f'http://{request.headers["host"]}')
 
 
-def _workspaces(app: FastAPI, remote: Remote) -> None:
+def _workspaces(app: FastAPI, service: WebService) -> None:
     """The sidebar's Workspaces section: list them, and open one's own page."""
 
     @app.get('/api/workspaces')
     async def workspaces() -> WorkspacesInfo:
-        return await listing(remote.host.plugins)
+        return await listing(service.host.plugins)
 
     @app.post('/api/workspaces/{workspace_id}/open')
     async def open_one(workspace_id: str) -> WorkspaceOpened:
-        return await _wait(open_workspace(remote.host.plugins, workspace_id))
+        return await _wait(open_workspace(service.host.plugins, workspace_id))
 
 
 def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
@@ -421,36 +517,60 @@ def _orchestrator(app: FastAPI, orchestrator: Orchestrator) -> None:
         await _wait(orchestrator.clear())
 
 
-def _events(app: FastAPI, remote: Remote) -> None:
-    """The WebSocket: a snapshot on connect, then every message the session publishes."""
+def _events(app: FastAPI, service: WebService) -> None:
+    """The WebSocket: the default session's snapshot, the orchestrator, and `live` on connect, then what is published.
+
+    The browser may send `watch` to choose the live sessions it gets the messages of; until then it gets
+    the default session's.
+    """
 
     @app.websocket('/ws')
     async def events(socket: WebSocket) -> None:
         await socket.accept()
         # Subscribe first, so nothing published between the snapshot and the subscription is lost.
-        with remote.hub.subscribe() as queue:
-            await socket.send_text(dump(remote.snapshot()))
-            await socket.send_text(dump(OrchestratorMessage(message=await remote.orchestrator.state())))
-            async with anyio.create_task_group() as connection:
-
-                async def forward() -> None:
-                    try:
-                        while (text := await queue.get()) != RESYNC:
-                            await socket.send_text(text)
-                        # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
-                        await socket.close(code=1013)
-                    except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop below.
-                        # The browser left mid-send.
-                        pass
-                    connection.cancel_scope.cancel()
-
-                connection.start_soon(forward)
+        with service.hub.subscribe() as client:
+            try:
                 try:
-                    # The browser sends nothing; this only notices it leave.
-                    while True:
-                        await socket.receive_text()
-                except WebSocketDisconnect:
-                    connection.cancel_scope.cancel()
+                    snapshot = dump(service.default().snapshot())
+                except LookupError:
+                    snapshot = None  # No session is live, as while CLAI exits; `live` says so.
+                # Before the first `await`, so the default it follows is the one in the snapshot, and every
+                # `live` already queued, or queued from here on, is no older than this one.
+                service.follow(client, snapshots=False)
+                live = dump(service.live_message())
+                if snapshot is not None:
+                    await socket.send_text(snapshot)
+                await socket.send_text(dump(OrchestratorMessage(message=await service.orchestrator.state())))
+                await socket.send_text(live)
+                async with anyio.create_task_group() as connection:
+
+                    async def forward() -> None:
+                        try:
+                            while (text := await client.queue.get()) != RESYNC:
+                                await socket.send_text(text)
+                            # The browser fell too far behind; it reconnects and starts from a fresh snapshot.
+                            await socket.close(code=1013)
+                        except (WebSocketDisconnect, RuntimeError):  # pragma: no cover -- races the receive loop.
+                            # The browser left mid-send.
+                            pass
+                        connection.cancel_scope.cancel()
+
+                    connection.start_soon(forward)
+                    try:
+                        while True:
+                            text = await socket.receive_text()
+                            try:
+                                watch = _WATCH.validate_json(text)
+                            except ValidationError:
+                                continue  # Nothing else is sent; an older or newer page's message is ignored.
+                            service.watch(client, watch.sessions)
+                    except WebSocketDisconnect:
+                        connection.cancel_scope.cancel()
+            finally:
+                service.unwatch(client)
+
+
+_WATCH = TypeAdapter(Watch)
 
 
 Failure = Literal[400, 404, 409]

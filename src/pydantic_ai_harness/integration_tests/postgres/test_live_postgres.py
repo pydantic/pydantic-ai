@@ -177,6 +177,7 @@ def _derived_tables(prefix: str) -> list[str]:
         f'{prefix}_events',
         f'{prefix}_snapshots',
         f'{prefix}_snapshot_keys',
+        f'{prefix}_messages',
         f'{prefix}_tool_effects',
         f'{prefix}_media',
     ]
@@ -896,6 +897,26 @@ async def test_concurrent_keyed_snapshot_is_written_once() -> None:
         assert await first.list_events(run_id='r1') == [event]
 
 
+async def test_concurrent_saves_sharing_messages_store_each_once() -> None:
+    """Saves racing over overlapping histories store each message once and all restore."""
+    async with _live_tables() as (pool, prefix):
+        stores = [PostgresStepStore(pool, table=prefix, media_store=None) for _ in range(4)]
+        shared: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'shared {i}')]) for i in range(50)]
+        histories: list[list[ModelMessage]] = [
+            [*shared, ModelResponse(parts=[TextPart(content=f'only in r{n}')])] for n in range(len(stores))
+        ]
+
+        async with anyio.create_task_group() as tg:
+            for n, (store, history) in enumerate(zip(stores, histories)):
+                tg.start_soon(store.save_snapshot, ContinuableSnapshot(run_id=f'r{n}', step_index=0, messages=history))
+
+        assert await _count_rows(pool, f'{prefix}_messages') == len(shared) + len(stores)
+        for n, history in enumerate(histories):
+            restored = await stores[0].latest_snapshot(run_id=f'r{n}')
+            assert restored is not None
+            assert restored.messages == history
+
+
 # ---------------------------------------------------------------------------
 # PostgresStepStore: list_snapshots
 # ---------------------------------------------------------------------------
@@ -1050,8 +1071,12 @@ def _assert_media_restored(snapshot: ContinuableSnapshot | None, big_binary: byt
 
 
 async def _stored_messages_length(pool: PostgresPool, prefix: str) -> int:
+    """The bytes a snapshot's history takes: its row plus the messages it stores once."""
     async with pool.acquire() as connection:
-        length = await connection.fetchval(f'SELECT octet_length(messages::text) FROM {prefix}_snapshots')
+        length = await connection.fetchval(
+            f'SELECT (SELECT octet_length(messages::text) FROM {prefix}_snapshots) '
+            f'+ (SELECT coalesce(sum(octet_length(message)), 0) FROM {prefix}_messages)'
+        )
     assert isinstance(length, int)
     return length
 
