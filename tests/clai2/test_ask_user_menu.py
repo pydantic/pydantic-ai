@@ -218,7 +218,7 @@ async def test_escape_declines_the_whole_request() -> None:
     assert screen.events == ['taken', 'released']
 
 
-def test_render_answer_lists_picks_or_the_decline() -> None:
+def test_render_answer_lists_picks_decline_or_failure() -> None:
     answered = AskUserAnsweredEvent(
         request_id='r1',
         response=AskUserResponse(

@@ -35,4 +35,4 @@ class AskUserAnsweredEvent(CapabilityEvent, namespace=ASK_USER_EVENTS, name='ans
     timed_out: bool = False
     """The answerer ran past `AskUser.timeout` and was cancelled; `response` is then a cancelled one."""
     failed: bool = False
-    """The answerer raised; `response` is then a cancelled one, and the run fails with that error."""
+    """The answerer raised; `response` is then a cancelled one, and the error propagates from the tool call."""

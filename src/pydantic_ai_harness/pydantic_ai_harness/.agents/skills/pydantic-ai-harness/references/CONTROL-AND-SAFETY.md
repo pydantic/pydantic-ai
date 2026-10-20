@@ -461,7 +461,7 @@ print(agent.run_sync('Set up storage').output)
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
-  emits the answered event, with `failed=True`, before the run fails. Two `AskUser` on one agent
+  emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 

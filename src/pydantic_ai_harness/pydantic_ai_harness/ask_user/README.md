@@ -133,7 +133,7 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
 start and end in step with the run. When the answerer raises, the answered event carries
-`failed=True` and a cancelled response, and the run then fails with the answerer's error. A run
+`failed=True` and a cancelled response, then the error propagates and fails the run. A run
 cancelled while the answerer waits emits no answered event, so also clear waiting state when the
 run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
