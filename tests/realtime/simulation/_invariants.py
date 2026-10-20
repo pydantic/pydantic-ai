@@ -44,7 +44,8 @@ Checked at rest (`settle()`):
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
-- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
+- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read
+  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement);
 - `history.not_restored`: a re-dialed provider conversation started a response without something history
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
@@ -718,6 +719,8 @@ class Checker:
             if input_.kind == 'speech'
             and (input_.committed_read is not None or input_.committed_by_client)
             and not input_.rejected
+            # A commit whose send raised, though the provider had it, is one the client was told failed.
+            and input_.key not in self.sim.truth.ambiguous_inputs
         ]
         recorded = sum(1 for message in messages if is_user_speech_request(message))
         self.report(

@@ -960,32 +960,27 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    # Recursively update refs in properties and patternProperties
-    for keyword in ['properties', 'patternProperties']:
+    # Handle keywords whose values map names to schemas.
+    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
             for prop in props.values():
                 if isinstance(prop, dict):
                     _update_mapped_json_schema_refs(prop, name_mapping)
 
-    # Handle single-subschema keywords: arrays, additionalProperties, propertyNames and negation
-    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not']:
+    # Handle single-subschema keywords, including conditionals and array containment.
+    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
         subschema = s.get(keyword)
         if isinstance(subschema, dict):
             _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
 
-    # Handle prefixItems
-    if 'prefixItems' in s:
-        prefix_items: list[dict[str, Any]] = s['prefixItems']
-        for item in prefix_items:
-            _update_mapped_json_schema_refs(item, name_mapping)
-
-    # Handle unions and composition keywords
-    for keyword in ['anyOf', 'oneOf', 'allOf']:
-        if keyword in s:
-            keyword_items: list[dict[str, Any]] = s[keyword]
+    # Handle schema arrays, including the legacy tuple form of items.
+    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
+        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
+        if isinstance(keyword_items, list):
             for item in keyword_items:
-                _update_mapped_json_schema_refs(item, name_mapping)
+                if isinstance(item, dict):
+                    _update_mapped_json_schema_refs(item, name_mapping)
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:

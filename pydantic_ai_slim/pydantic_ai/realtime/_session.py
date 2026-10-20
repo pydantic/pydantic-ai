@@ -921,6 +921,8 @@ class RealtimeSession:
             # interrupted. What that streams is discarded: the stream is closing and has no consumer left.
             self._server_cancelled_the_response_on_speech = False
             self._stop_tool_calls(list(self._pending_tool_calls))
+            for event in self._connection._stop_reading():  # pyright: ignore[reportPrivateUsage]
+                self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
             self._teardown = asyncio.create_task(self._finish_teardown())

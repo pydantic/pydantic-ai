@@ -878,13 +878,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         if event['type'] != INPUT_AUDIO_BUFFER_COMMIT_EVENT:
             await self._ws.send(to_json(event).decode())
+            if event['type'] == INPUT_AUDIO_BUFFER_APPEND_EVENT:
+                self._lifecycle.audio_appended()
+            elif event['type'] == INPUT_AUDIO_BUFFER_CLEAR_EVENT:
+                self._lifecycle.audio_clear_sent()
             return
         # Noted before it goes out, so nothing sent while it does is taken for ahead of it.
-        sent_before = self._lifecycle.audio_commit_sent()
+        commit = self._lifecycle.audio_commit_sent()
         try:
             await self._ws.send(to_json(event).decode())
         except BaseException:
-            self._lifecycle.audio_commit_failed(sent_before)
+            self._lifecycle.audio_commit_failed(commit)
             raise
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -959,6 +963,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             yield [*settled, error]
             return
+
+    def _stop_reading(self) -> Sequence[LifecycleEvent]:
+        # A commit whose acknowledgement goes unread is still a turn.
+        return self._lifecycle.unacknowledged_commits()
 
     def _unanswered_inputs(self) -> list[InputId]:
         """The inputs whose request for a response is still to be answered: sent, deferred, or not yet made."""
