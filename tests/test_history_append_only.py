@@ -17,7 +17,7 @@ import re
 import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -44,6 +44,7 @@ from pydantic_ai.capabilities import (
     Thinking,
     Toolset,
     UseThreadExecutor,
+    WrapModelRequestHandler,
     WrapperCapability,
     XSearch,
 )
@@ -53,9 +54,11 @@ from pydantic_ai.messages import (
     InstructionPart,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
+    ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.tools import ToolDefinition
@@ -224,6 +227,35 @@ def _chat_tool(name: str) -> dict[str, Any]:
     return {'type': 'function', 'function': {'name': name, 'parameters': {'type': 'object', 'properties': {}}}}
 
 
+@dataclass
+class _RedactLatestToolResult(AbstractCapability[Any]):
+    """Rewrite the latest real tool result for one request only: a tail change that is not a framework record."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        parts = [
+            replace(part, content='[redacted]') if isinstance(part, ToolReturnPart) else part for part in last.parts
+        ]
+        request_context.messages[-1] = replace(last, parts=parts)
+        return await handler(request_context)
+
+
+@dataclass
+class _RepeatFirstPrompt(AbstractCapability[Any]):
+    """Repeat the first, persisted user prompt at the end of each request: a dropped tail that is real history."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        first, last = request_context.messages[0], request_context.messages[-1]
+        assert isinstance(first, ModelRequest) and isinstance(last, ModelRequest)
+        request_context.messages[-1] = replace(last, parts=[*last.parts, first.parts[0]])
+        return await handler(request_context)
+
+
 def _clock_instructions(ctx: RunContext[Any]) -> str:
     return f'The time is {CLOCK.now:%H:%M}.'
 
@@ -354,6 +386,32 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
             'fail',
             'may only replace the last message of each request',
             id='deep-tail',
+        ),
+        pytest.param(
+            _RedactLatestToolResult(),
+            (),
+            Allowed(
+                'example',
+                (('messages', 'tool-return'),),
+                tail=True,
+                records=('request-only user prompt',),
+            ),
+            'fail',
+            'request 2 rewrote the last message of request 1',
+            id='tail-is-only-framework-records',
+        ),
+        pytest.param(
+            _RepeatFirstPrompt(),
+            (),
+            Allowed(
+                'example',
+                (('messages', 'tool-return'), ('messages', 'user-prompt')),
+                tail=True,
+                records=('request-only user prompt',),
+            ),
+            'fail',
+            'dropped UserPromptPart (persisted history) from the last message of request 0',
+            id='tail-is-not-persisted-history',
         ),
     ],
 )

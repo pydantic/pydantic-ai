@@ -336,12 +336,14 @@ ALLOWED: dict[str, Allowed] = {
         # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
         (('messages', 'tool-return'), ('messages', 'user-prompt')),
         tail=True,
+        records=('request-only user prompt',),
     ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
         (('messages', 'system-prompt'),),
         tail=True,
+        records=('request-scoped system prompt',),
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
@@ -349,6 +351,7 @@ ALLOWED: dict[str, Allowed] = {
         f'request-scoped system prompts in {_PULLS}9712',
         (('messages', 'user-prompt'), ('messages', 'tool-return')),
         tail=True,
+        records=('request-only user prompt',),
     ),
 }
 """Documented prefix movers, checked exactly."""

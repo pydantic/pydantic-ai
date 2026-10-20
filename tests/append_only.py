@@ -22,6 +22,7 @@ scripted provider responses. `ConversationResult` then answers three questions:
 from __future__ import annotations
 
 import ast
+import copy
 import importlib
 import importlib.util
 import inspect
@@ -41,7 +42,15 @@ from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    SystemPromptPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -314,11 +323,12 @@ class _ScriptedTransport:
 
 
 class _RecordsParameters(Model):
-    """Records the `ModelRequestParameters` each request is built from, after every capability hook ran."""
+    """Records the messages and `ModelRequestParameters` each request is built from, after every hook ran."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.recorded_parameters: list[ModelRequestParameters] = []
+        self.recorded_messages: list[list[ModelMessage]] = []
 
     async def request(
         self,
@@ -327,6 +337,7 @@ class _RecordsParameters(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         self.recorded_parameters.append(model_request_parameters)
+        self.recorded_messages.append(copy.deepcopy(messages))
         # Only ever mixed in ahead of a provider model, whose `request` this calls.
         return await super().request(messages, model_settings, model_request_parameters)  # pyright: ignore[reportAbstractUsage]
 
@@ -339,6 +350,7 @@ class _RecordsParameters(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         self.recorded_parameters.append(model_request_parameters)
+        self.recorded_messages.append(copy.deepcopy(messages))
         async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
             yield stream
 
@@ -417,6 +429,43 @@ class ConversationResult:
     replays: tuple[bytes, bytes]
     """The same continuation request built twice from the final history at the same instant."""
     parameters: list[ModelRequestParameters]
+    sent: list[list[ModelMessage]] = field(default_factory=list[list[ModelMessage]])
+    """The messages each request was built from, after every capability hook ran."""
+    history: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The conversation's persisted history after the second run."""
+
+    def dropped_parts(self, index: int) -> list[ModelRequestPart] | None:
+        """The parts of request `index - 1`'s last message that request `index` no longer sends.
+
+        `None` when request `index` changed that message any other way: rewrote, reordered or added parts.
+        """
+        earlier, later = self.sent[index - 1], self.sent[index]
+        # A request always ends with a request message, and the next one keeps every earlier message.
+        last, same = earlier[-1], later[len(earlier) - 1]
+        assert isinstance(last, ModelRequest) and isinstance(same, ModelRequest)
+        remaining, dropped = list(same.parts), list[ModelRequestPart]()
+        for part in last.parts:
+            if remaining and remaining[0] == part:
+                remaining.pop(0)
+            else:
+                dropped.append(part)
+        return None if remaining else dropped
+
+    def record_kind(self, part: ModelRequestPart) -> RecordKind | None:
+        """What framework record a dropped part is, from its structure, or `None` for real history.
+
+        A request-scoped `SystemPromptPart` (#9711) is sent for one request by design. A `UserPromptPart` that
+        the persisted history doesn't have was added to that one request only. Anything else is history the
+        model saw, so dropping or changing it is a rewrite.
+        """
+        if isinstance(part, SystemPromptPart) and part.scope == 'request':
+            return 'request-scoped system prompt'
+        persisted = (p for message in self.history if isinstance(message, ModelRequest) for p in message.parts)
+        if isinstance(part, UserPromptPart) and part not in persisted:
+            # TODO: request-only user prompts carry no provenance of their own, so this can't tell which
+            # capability added one; core history-part provenance will let an allowance pin its origin.
+            return 'request-only user prompt'
+        return None
 
     def changes(self) -> list[Change]:
         """Every block of a request that the next request doesn't repeat at the same position.
@@ -495,7 +544,8 @@ async def run_conversation(
         replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
-    return ConversationResult(provider, conversation, (replays[0], replays[1]), parameters)
+    sent = model.recorded_messages[: len(conversation)]
+    return ConversationResult(provider, conversation, (replays[0], replays[1]), parameters, sent, history)
 
 
 # --- Comparing requests ---------------------------------------------------------------------------
@@ -896,6 +946,9 @@ class Exempt:
 
 Check = Literal['prefix', 'ids', 'determinism']
 
+RecordKind = Literal['request-scoped system prompt', 'request-only user prompt']
+"""A framework record a request carries for itself only, identified by structure (see `ConversationResult.record_kind`)."""
+
 
 @dataclass(frozen=True)
 class Known:
@@ -929,6 +982,9 @@ class Allowed:
     changes: tuple[tuple[str, str], ...]
     max_moves: int = 1
     tail: bool = False
+    records: tuple[RecordKind, ...] = ()
+    """For a `tail` mover, the framework records it drops from each request, in order, and nothing else: a
+    change to a real tool result or user prompt in the tail always fails."""
     providers: tuple[Provider, ...] = PROVIDERS
     """The providers this mover applies to; on the others the capability must keep the prefix."""
 
@@ -966,6 +1022,8 @@ def _violations(
         if allowed.tail:
             deep = [change for change in changes if not change.in_tail and change not in outside]
             prefix += _change_violations(deep, 'may only replace the last message of each request, but ')
+            for index in sorted({change.request_index for change in changes if change.in_tail} if result.sent else ()):
+                prefix += _tail_record_violations(result, index, allowed.records)
         elif (moves := len({change.request_index for change in changes})) > allowed.max_moves:
             prefix.append(
                 Violation(
@@ -987,6 +1045,25 @@ def _violations(
             _change_violations(differences),
         )
     return violations
+
+
+def _tail_record_violations(result: ConversationResult, index: int, records: tuple[RecordKind, ...]) -> list[Violation]:
+    """Whether request `index` dropped exactly the framework records a tail allowance names, and nothing else."""
+    dropped = result.dropped_parts(index)
+    if dropped is None:
+        return [Violation('messages', 'tail', f'request {index} rewrote the last message of request {index - 1}')]
+    kinds = [result.record_kind(part) for part in dropped]
+    if kinds == list(records):
+        return []
+    found = ', '.join(f'{type(part).__name__} ({kind or "persisted history"})' for part, kind in zip(dropped, kinds))
+    return [
+        Violation(
+            'messages',
+            'tail',
+            f'request {index} dropped {found or "nothing"} from the last message of request {index - 1}, '
+            f'not the {", ".join(records) or "no"} records its `ALLOWED` entry permits',
+        )
+    ]
 
 
 def check_conversation(
