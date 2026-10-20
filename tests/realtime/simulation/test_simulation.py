@@ -2394,6 +2394,19 @@ def test_scenario_gemini_async_parallel_calls() -> None:
     run_accepting(async_gemini(), scenario, '8760-accepted-between-results')
 
 
+def test_scenario_gemini_async_call_in_flight_at_the_result_is_accepted() -> None:
+    """A second call the model made before the first's result went out, but which the session hadn't read yet, is
+    recorded in a response of its own: the same accepted limitation as speech in flight."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks(deliver=False)
+        sim.call_tools()
+        sim.call_tools(deliver=False)
+
+    run_accepting(async_gemini(), scenario, '8760-accepted')
+
+
 def test_scenario_openai_tool_retries_exhausted() -> None:
     """A tool that asks for a retry twice in a row ends the session, as it ends a standard run."""
 

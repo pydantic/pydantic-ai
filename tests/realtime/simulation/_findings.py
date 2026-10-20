@@ -256,10 +256,6 @@ KNOWN_FINDINGS: list[Finding] = [
 """Checked in order: the more specific findings for a code come before the more general ones."""
 
 
-def _gemini_behavior(sim: Simulation, name: str) -> bool:
-    return bool(getattr(getattr(sim, 'behavior', None), name, False))
-
-
 def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
     """A response went on after its first tool call: it said more, or called another tool in a later message.
 
@@ -283,19 +279,20 @@ def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolati
 def _in_flight_at_the_result(sim: Simulation, violation: InvariantViolation) -> bool:
     """Something the calling response said (or called) before its result reached the server hadn't reached the client yet."""
     truth = sim.truth
-    responses = _context_responses(sim, violation) or []
-    for response in responses:
+    for response in _context_responses(sim, violation) or []:
         outputs = [truth.input(call_id) for call_id in response.tool_calls]
-        arrived = [output.seq for output in outputs if output is not None and output.kind == 'tool_output']
-        if not arrived:
-            continue
-        first = min(arrived)
-        calls = [truth.tool_calls[call_id] for call_id in response.tool_calls]
-        if any(
-            truth.word_seq[word] < first and truth.word_read.get(word, first + 1) > first for word in response.words
+        first = min(
+            (output.seq for output in outputs if output is not None and output.kind == 'tool_output'), default=None
+        )
+        if first is not None and (
+            any(
+                truth.word_seq[word] < first and truth.word_read.get(word, first + 1) > first for word in response.words
+            )
+            or any(
+                (call := truth.tool_calls[call_id]).seq < first and (call.read_seq is None or call.read_seq > first)
+                for call_id in response.tool_calls
+            )
         ):
-            return True
-        if any(call.seq < first and (call.read_seq is None or call.read_seq > first) for call in calls):
             return True
     return False
 
