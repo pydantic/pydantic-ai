@@ -87,8 +87,9 @@ live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.close
 The session starts receiving at whichever comes first: the first outbound call, the first
 `stream_audio()` or `stream_transcripts()` view, or the first `async for` over the session. It does
 not start on entry, so a view created inside the session block — as every example here does — cannot
-miss output the model produced before it subscribed. A fatal receive or tool failure is raised
-from active event iteration; without an active iterator, the views end and context exit raises it.
+miss output the model produced before it subscribed. A fatal receive failure or a tool failure is
+raised from active event iteration, which can go on after a tool failure; without an active
+iterator, the views end and context exit raises it.
 The next outbound session method raises an already-ended receive side's failure first, and the same
 failure is never delivered twice.
 
