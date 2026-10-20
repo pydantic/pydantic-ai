@@ -918,8 +918,8 @@ class OpenAIServer:
 
         `commit=False` is a stop server VAD takes back: the user goes on, and the next start opens the turn
         the audio is committed as (a guess at semantic VAD's pauses; no recording has one). On xAI, which commits a
-        turn a few hundred milliseconds after its stop, the next start re-opens the same turn instead (recorded:
-        `sim40/xai_race_then_speech.jsonl`, SIM-41), and `commit_stopped()` commits it if nobody speaks.
+        turn a few hundred milliseconds after its stop, the next start re-opens the same turn instead (recorded in
+        a live xAI probe, October 2026: SIM-41), and `commit_stopped()` commits it if nobody speaks.
         """
         session = self.session
         assert session is not None and session.speaking is not None
