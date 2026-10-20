@@ -46,7 +46,10 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
-    """Environment variables every command gets, also on an attached workspace; nothing is read from the host."""
+    """Environment variables every command gets, also on an attached workspace; nothing is read from the host.
+
+    The agent's commands can read them, and a new sandbox keeps them for every process it runs.
+    """
 
     def __post_init__(self) -> None:
         if self.defer_loading:
