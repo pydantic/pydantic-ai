@@ -135,7 +135,7 @@ class TestStackOneToolset:
         monkeypatch.delenv('STACKONE_API_KEY', raising=False)
         script = tmp_path / 'server.py'
         script.write_text('', encoding='utf-8')
-        StackOneToolset(account_id='45320', client=str(script), base_url='not-used')
+        StackOneToolset(account_id='45320', client=script, base_url='not-used')
 
     def test_prebuilt_client_gets_no_stackone_headers(self):
         toolset = StackOneToolset[None](account_id='45320', api_key='key', client=Client('http://proxy.example/mcp'))

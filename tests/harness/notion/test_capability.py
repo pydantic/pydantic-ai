@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
@@ -22,17 +21,12 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.notion import Notion
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-    ),
-]
+from .._mcp_server import MCPServer
 
 
 @pytest.fixture
-def server() -> FastMCP:
-    server = FastMCP('provider', instructions='Provider instructions.')
+def server() -> MCPServer:
+    server = MCPServer('provider', instructions='Provider instructions.')
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     def read_resource() -> str:
@@ -93,13 +87,13 @@ class TestNotion:
             (True, '{"read_resource":"read"}'),
         ],
     )
-    async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
+    async def test_agent_executes_selected_tools(self, server: MCPServer, read_only: bool, expected: str) -> None:
         agent = Agent(TestModel(), capabilities=[Notion(client=server, read_only=read_only)])
         result = await agent.run('Use the tools')
         assert result.output == expected
 
     @pytest.mark.parametrize('include', [True, False])
-    async def test_server_instructions(self, server: FastMCP, include: bool) -> None:
+    async def test_server_instructions(self, server: MCPServer, include: bool) -> None:
         agent = Agent(TestModel(call_tools=[]), capabilities=[Notion(client=server, include_instructions=include)])
         result = await agent.run('Hello')
         request = result.all_messages()[0]
@@ -125,7 +119,7 @@ class TestNotion:
     def test_custom_id_is_forwarded(self, capability: Notion[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-notion'
 
-    def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
+    def test_defer_loading_needs_no_id(self, server: MCPServer) -> None:
         Agent(TestModel(), capabilities=[Notion(client=server, defer_loading=True)])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:

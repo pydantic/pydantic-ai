@@ -16,13 +16,6 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-    ),
-]
-
 
 async def connections_for(capability: GoogleWorkspace[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
     """The MCP connections a run with `deps` would open."""

@@ -8,7 +8,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import anyio
 import httpx
@@ -19,6 +19,7 @@ from rich.console import Console
 
 import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_ai import Agent
+from pydantic_ai._mcp_compat import is_mcp_sdk_v2
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
@@ -51,8 +52,9 @@ def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]
         f'Path({str(pid_file)!r}).write_text(str(os.getpid()))\n'
         f'Path({str(tmp_path / "server.cwd")!r}).write_text(os.getcwd())\n'
         'print("server booted", file=sys.stderr, flush=True)\n'
-        'from mcp.server.fastmcp import FastMCP\n'
-        'server = FastMCP("test")\n'
+        'try:\n    from mcp.server.mcpserver import MCPServer\n'
+        'except ImportError:  # MCP SDK v1\n    from mcp.server.fastmcp import FastMCP as MCPServer\n'
+        'server = MCPServer("test")\n'
         + ('@server.tool()\ndef ping() -> str:\n    return "pong"\n' if with_tool else '')
         + 'server.run()\n'
     )
@@ -66,22 +68,24 @@ def assert_exited(pid_file: Path) -> None:
 
 
 async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[Any] = []
+    # The MCP SDK builds the client on the HTTPX the installed FastMCP drives: `httpx2` under FastMCP 4.
+    httpx_module = cast(Any, httpx2 if is_mcp_sdk_v2() else httpx)
 
-    async def respond(transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+    async def respond(transport: Any, request: Any) -> Any:
         requests.append(request)
-        return httpx.Response(307, headers={'location': 'http://127.0.0.1/private'}, request=request)
+        return httpx_module.Response(307, headers={'location': 'http://127.0.0.1/private'}, request=request)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', respond)
+    monkeypatch.setattr(httpx_module.AsyncHTTPTransport, 'handle_async_request', respond)
     async with http_client(headers={'X-Test': 'present'}) as client:
         response = await client.post('https://example.com/mcp')
         assert response.status_code == 307
         assert len(requests) == 1
         assert requests[0].headers['X-Test'] == 'present'
         assert client.timeout.read == 300
-    async with http_client(timeout=httpx.Timeout(5), auth=httpx.BasicAuth('user', 'password')) as client:
+    async with http_client(timeout=httpx_module.Timeout(5), auth=httpx_module.BasicAuth('user', 'password')) as client:
         assert client.timeout.read == 5
-        assert isinstance(client.auth, httpx.BasicAuth)
+        assert isinstance(client.auth, httpx_module.BasicAuth)
     async with http_client(follow_redirects=True) as client:
         assert not client.follow_redirects, 'FastMCP asks for redirects; the endpoint stays fixed'
 
@@ -370,10 +374,13 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
         port = probe.getsockname()[1]
     script = tmp_path / 'remote_server.py'
     script.write_text(
-        'from mcp.server.fastmcp import FastMCP\n'
-        f'server = FastMCP("web", host="127.0.0.1", port={port}, log_level="WARNING")\n'
+        # SDK v2 renamed the server to `MCPServer` and takes the address when it runs, not when it is built.
+        'try:\n    from mcp.server.mcpserver import MCPServer\n'
+        f'    server = MCPServer("web")\n    options = {{"host": "127.0.0.1", "port": {port}}}\n'
+        'except ImportError:  # MCP SDK v1\n    from mcp.server.fastmcp import FastMCP\n'
+        f'    server = FastMCP("web", host="127.0.0.1", port={port}, log_level="WARNING")\n    options = {{}}\n'
         '@server.tool()\ndef ping() -> str:\n    return "pong"\n'
-        f'server.run(transport={"streamable-http" if kind == "http" else "sse"!r})\n'
+        f'server.run(transport={"streamable-http" if kind == "http" else "sse"!r}, **options)\n'
     )
     process = subprocess.Popen([sys.executable, str(script)], stderr=subprocess.DEVNULL)
     try:

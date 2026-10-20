@@ -9,7 +9,6 @@ import httpx
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
 from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
@@ -23,9 +22,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import MCPReadOnlyNoToolsWarning
 from pydantic_ai_harness.pylon import Pylon
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import MCPServer
 
 DepsT = TypeVar('DepsT')
 
@@ -69,7 +66,7 @@ class TestPylon:
         [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
-        server = FastMCP('pylon-fake')
+        server = MCPServer('pylon-fake')
 
         @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
         def read() -> str:
@@ -87,7 +84,7 @@ class TestPylon:
         assert (await agent.run('Use the tools')).output == expected
 
     async def test_read_only_warns_when_it_removes_every_tool(self) -> None:
-        server = FastMCP('pylon-fake')
+        server = MCPServer('pylon-fake')
 
         @server.tool()
         def unmarked() -> str:
@@ -103,13 +100,13 @@ class TestPylon:
             await agent.run('Use the tools')
 
     async def test_read_only_does_not_warn_for_an_empty_server(self) -> None:
-        server = FastMCP('pylon-fake')
+        server = MCPServer('pylon-fake')
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
         await agent.run('Use the tools')
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('pylon-fake', instructions='Pylon instructions.')
+        server = MCPServer('pylon-fake', instructions='Pylon instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[Pylon(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)

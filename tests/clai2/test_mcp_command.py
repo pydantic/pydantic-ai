@@ -259,7 +259,9 @@ async def test_edit_prefills_renames_and_cancels(tmp_path: Path) -> None:
 async def test_edit_restarts_a_running_server(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text(
-        'from mcp.server.fastmcp import FastMCP\nserver = FastMCP("t")\n'
+        'try:\n    from mcp.server.mcpserver import MCPServer\n'
+        'except ImportError:  # MCP SDK v1\n    from mcp.server.fastmcp import FastMCP as MCPServer\n'
+        'server = MCPServer("t")\n'
         '@server.tool()\ndef ping() -> str:\n    return "pong"\nserver.run()\n'
     )
     config = json.dumps({'command': sys.executable, 'args': [str(server)], 'cwd': str(tmp_path)})
@@ -549,7 +551,11 @@ async def test_symlinked_project_file_is_never_trusted(tmp_path: Path) -> None:
 @pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_revoke_disconnects_project_servers(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
-    server.write_text('from mcp.server.fastmcp import FastMCP\nFastMCP("t").run()\n')
+    server.write_text(
+        'try:\n    from mcp.server.mcpserver import MCPServer\n'
+        'except ImportError:  # MCP SDK v1\n    from mcp.server.fastmcp import FastMCP as MCPServer\n'
+        'MCPServer("t").run()\n'
+    )
     command, _ = make(tmp_path)
     project = tmp_path / 'repo' / PROJECT_MCP_FILE
     project.parent.mkdir()
