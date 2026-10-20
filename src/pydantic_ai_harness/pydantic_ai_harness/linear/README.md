@@ -63,15 +63,15 @@ def linear_token(ctx: RunContext[Deps]) -> str | None:
 agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Linear(auth=linear_token)])
 ```
 
-The function runs once per run, so each run opens its own connection with the token from its own deps. `read_only=True` still applies to every run.
+Each run opens its own connection. `read_only=True` still applies to every run.
 
 Your app obtains, stores, and refreshes each user's token: a Linear API key the user pastes, or an access token from your own Linear OAuth flow. Load it into the deps before the run, asynchronously if you need to. The `auth` function itself is sync and only reads it.
 
-## Multiple connections and durable execution
+With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
 
-- With durable execution such as Temporal, read the token from the run's deps, not a global: the function may run in another process.
-- The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. `None` and `''` also mean `linear`.
-- To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
+## Multiple connections
+
+The capability's `id` defaults to `linear`, so `defer_loading=True` works without one. `None` and `''` also mean `linear`. To use two Linear accounts in one agent, give each `Linear` its own `id` and wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since their tool names are the same. Two with the same `id` but different settings raise when the agent is built.
 
 ## Provider settings
 

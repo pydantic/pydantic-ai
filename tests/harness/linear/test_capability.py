@@ -231,23 +231,25 @@ def fake_linear() -> FastMCP:
     return server
 
 
-@pytest.mark.parametrize(
-    'page', ['docs/harness/linear.md', 'src/pydantic_ai_harness/pydantic_ai_harness/linear/README.md']
-)
-def test_documented_examples_run(page: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('LINEAR_ACCESS_TOKEN', 'docs-token')
-    urls: list[str] = []
+class TestDocs:
+    @pytest.mark.parametrize(
+        'page', ['docs/harness/linear.md', 'src/pydantic_ai_harness/pydantic_ai_harness/linear/README.md']
+    )
+    def test_documented_examples_run(self, page: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('LINEAR_ACCESS_TOKEN', 'docs-token')
+        urls: list[str] = []
 
-    def offline(
-        client: str, *, id: str | None, include_instructions: bool, auth: str | None = None
-    ) -> MCPToolset[object]:
-        urls.append(client)
-        return MCPToolset(fake_linear(), id=id, include_instructions=include_instructions)
+        # Takes the arguments `Linear` passes `MCPToolset`, and connects to `fake_linear()` instead.
+        def offline(
+            client: str, *, id: str | None, include_instructions: bool, auth: str | None = None
+        ) -> MCPToolset[object]:
+            urls.append(client)
+            return MCPToolset(fake_linear(), id=id, include_instructions=include_instructions)
 
-    monkeypatch.setattr('pydantic_ai_harness.linear._capability.MCPToolset', offline)
-    quickstart, per_user, approval = python_blocks(page)
-    _, runs = run_block(quickstart)
-    assert (len(runs), urls) == (1, ['https://mcp.linear.app/mcp/readonly'])
-    assert isinstance(run_block(per_user)[0]['agent'], Agent)
-    assert isinstance(run_block(approval)[0]['agent'], Agent)
-    assert urls[-1] == 'https://mcp.linear.app/mcp'
+        monkeypatch.setattr('pydantic_ai_harness.linear._capability.MCPToolset', offline)
+        quickstart, per_user, approval = python_blocks(page)
+        _, runs = run_block(quickstart)
+        assert (len(runs), urls) == (1, ['https://mcp.linear.app/mcp/readonly'])
+        assert isinstance(run_block(per_user)[0]['agent'], Agent)
+        assert isinstance(run_block(approval)[0]['agent'], Agent)
+        assert urls[-1] == 'https://mcp.linear.app/mcp'
