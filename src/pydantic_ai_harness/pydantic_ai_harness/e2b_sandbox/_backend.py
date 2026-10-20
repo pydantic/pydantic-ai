@@ -115,6 +115,16 @@ _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
+def _require_asyncio() -> None:
+    """Refuse to start an operation that runs a command off asyncio, before it creates a sandbox."""
+    if not running_on_asyncio():
+        # E2B's command handle starts its output reader with `asyncio.create_task`.
+        raise UserError(
+            'E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks, '
+            'and file reads, removes, and `working_dir()` run a command.'
+        )
+
+
 # Prints a process's start time and then its group id, for the launcher to record and the stop to check:
 # a reused PID belongs to another run. Linux's `/proc` needs no extra package, and E2B sandboxes
 # always have it; the `ps` branch keeps the host-backed test fake working on macOS, under
@@ -255,6 +265,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     deadline is enforced client-side instead. On timeout or cancellation (including while
     starting), a separate command signals the process group when `setsid` is available.
     Custom templates without `setsid` fall back to stopping the command leader only.
+
+    Commands, file reads, removes, and `working_dir()` need the asyncio event loop, because
+    the E2B SDK reads command output on asyncio tasks; under Trio they raise `UserError`
+    before any sandbox is created.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -423,6 +437,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return error
 
     async def read_bytes(self, path: str) -> bytes:
+        _require_asyncio()
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not read {path!r}', path):
             # envd reports FIFOs as files and its read blocks indefinitely without a writer.
@@ -484,6 +499,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
+        _require_asyncio()
         sandbox = await self.get_sandbox()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
             # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
@@ -601,9 +617,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         line = shlex.join(command_argv(command, shell))
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
             raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        if not running_on_asyncio():
-            # E2B's command handle starts its output reader with `asyncio.create_task`.
-            raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
+        _require_asyncio()
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
         handle: e2b.AsyncCommandHandle | None = None

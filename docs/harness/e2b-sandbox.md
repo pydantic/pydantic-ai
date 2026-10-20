@@ -224,7 +224,7 @@ agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hook
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. |
 
-Commands run on the asyncio event loop only: the E2B SDK reads their output with asyncio tasks, so under Trio `run` raises `UserError`.
+`E2BSandbox` needs asyncio for commands: the E2B SDK reads their output with asyncio tasks. File reads, removes, and relative paths run a command too, so under Trio they raise `UserError` before a sandbox is created.
 
 ## Durable execution
 

@@ -379,8 +379,28 @@ async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
-async def test_commands_need_asyncio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
-    # The E2B SDK starts each command's output reader on an asyncio task, so Trio gets a clear error, not a crash.
+@pytest.mark.parametrize('operation', ['run', 'read_bytes', 'remove', 'working_dir', 'relative_path'])
+async def test_commands_need_asyncio(fake_e2b: FakeE2B, anyio_backend: str, operation: str) -> None:
+    # The E2B SDK starts each command's output reader on an asyncio task, so Trio gets a clear error, not a
+    # crash. File reads, removes and `working_dir()` run a command, so they refuse before creating a sandbox.
+    backend = E2BSandboxBackend()
     with pytest.raises(UserError, match='need the asyncio event loop'):
-        await E2BSandboxBackend().run(['true'])
+        if operation == 'run':
+            await backend.run(['true'])
+        elif operation == 'read_bytes':
+            await backend.read_bytes('/file')
+        elif operation == 'remove':
+            await backend.remove('/file')
+        elif operation == 'working_dir':
+            await backend.working_dir()
+        else:
+            await Workspace(backend).read_text('file')
     assert not fake_e2b.sandboxes
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_native_file_calls_work_on_trio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
+    backend = E2BSandboxBackend()
+    await backend.write_bytes('/file', b'data')
+    assert await backend.exists('/file')
+    assert (await backend.stat('/file')).size == 4
