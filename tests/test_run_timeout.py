@@ -93,10 +93,20 @@ def _slow_tool_agent() -> Agent[object, str]:
 
 
 async def test_timeout_during_model_request():
-    agent = Agent(FunctionModel(_never_returns))
+    contexts: list[RunContext[object]] = []
+
+    async def expire_then_block(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        _expire(contexts[-1])
+        return await _never_returns(messages, info)
+
+    agent = Agent(FunctionModel(expire_then_block))
+
+    @agent.instructions
+    def capture_context(ctx: RunContext[object]) -> None:
+        contexts.append(ctx)
 
     with pytest.raises(RunTimedOut) as exc_info:
-        await agent.run('go', timeout=SHORT_TIMEOUT)
+        await agent.run('go', timeout=LONG_TIMEOUT)
 
     exc = exc_info.value
     assert isinstance(exc, RunCancelled)
