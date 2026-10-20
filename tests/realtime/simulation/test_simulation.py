@@ -947,20 +947,39 @@ def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect,
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
-@known('SIM-41')
-def test_known_xai_reopening_a_turn_after_its_own_stop() -> None:
-    """Recorded live (`xai_race_then_speech` probe): xAI hears the user stop, they speak again before it commits the
-    turn, and it reports `speech_started` for the same item, then stops and commits it once."""
+@pytest.mark.parametrize('transcription', [False, True])
+def test_xai_reopening_a_turn_after_its_own_stop(transcription: bool) -> None:
+    """SIM-41, recorded live (October 2026): xAI hears the user stop and starts its reply, they speak again before it
+    commits the turn, and it reports `speech_started` for the same item and drops that reply without a
+    `response.done`. It then stops, starts another reply, and commits the turn once. The turn is recorded once,
+    the dropped reply ends cancelled, and the reply that follows is recorded."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.speech_start()
         sim.speech_stop(commit=False)
         sim.send_audio()
-        # The same item starts again: the lifecycle starts the turn it already placed a second time.
         sim.speech_start()
+        sim.speech_stop(commit=False)
+        sim.settle()
 
-    reproduce('SIM-41', OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=transcription)), scenario)
+
+
+def test_xai_reopening_a_turn_it_started_no_reply_for() -> None:
+    """A reply asked for while the user spoke is under way when xAI hears them stop, so it starts none of its own
+    then: the turn it re-opens has no reply to drop."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.send_text()
+        sim.speech_stop(commit=False)
+        sim.send_audio()
+        sim.speech_start()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
 
 
 def test_xai_commits_a_stopped_turn_nobody_reopens() -> None:
