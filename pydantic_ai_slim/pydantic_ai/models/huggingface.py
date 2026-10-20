@@ -19,6 +19,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -50,6 +52,7 @@ from . import (
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
@@ -496,6 +499,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         'content': tool_text,
                     }
                 )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, _UnpreparedPart):  # pragma: no cover
                 raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover

@@ -10,6 +10,7 @@ from .models import (
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -129,6 +130,8 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 system_prompt.append(pai_message.instructions)
 
             for part in _sendable_request_parts(pai_message.parts):
+                if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
+                    raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):
                     system_prompt.append(part.content)
                 elif isinstance(part, messages.UserPromptPart):

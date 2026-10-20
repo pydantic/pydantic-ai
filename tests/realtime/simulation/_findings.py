@@ -438,9 +438,9 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
-def _hand_commit_raced_by_vad(sim: Simulation) -> bool:
-    """Under server VAD, a turn `commit_audio()` committed whose acknowledgement the client hadn't read when the
-    session ended or the connection dropped."""
+def _unacknowledged_commit_under_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    """Under server VAD, every turn missing is one `commit_audio()` committed whose acknowledgement the client never
+    read, the session having ended or the connection dropped first."""
     options = getattr(sim, 'openai', None)
     truth = sim.truth
     ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
@@ -449,25 +449,32 @@ def _hand_commit_raced_by_vad(sim: Simulation) -> bool:
         and options is not None
         and options.turn_detection != 'manual'
         and any(
-            input_.kind == 'speech' and input_.committed_by_client and input_.committed_read is None
+            input_.kind == 'speech'
+            and input_.committed_by_client
+            and input_.committed_read is None
+            and input_.key in violation.context.get('inputs', ())
             for input_ in truth.inputs
         )
     )
 
 
-HAND_COMMIT_RACED_BY_VAD = Finding(
-    id='SIM-40',
+UNACKNOWLEDGED_COMMIT_UNDER_VAD = Finding(
+    id='SIM-42',
     title=(
-        'under server VAD, a turn `commit_audio()` committed after VAD committed the turn before it is lost when the '
-        "session ends or the connection drops before its acknowledgement is read: VAD's acknowledgement is taken for "
-        "the hand commit's, and a commit still unacknowledged once VAD stopped can't be told from one that committed "
-        'nothing'
+        'under server VAD, a `commit_audio()` whose acknowledgement never arrives (the session ends or the connection '
+        'drops first) makes a turn only if the client heard the speech it commits start: OpenAI and Azure commit only '
+        'speech their VAD heard and refuse anything else as empty, so a commit of speech whose `speech_started` the '
+        "client hadn't read yet can't be told from a commit of silence, which would be a phantom turn"
     ),
-    tracked_by='telling VAD commits from hand commits by their acknowledgement; found by this simulator on #10652',
+    tracked_by=(
+        "the OpenAI-protocol lifecycle's documented choice for an unacknowledged commit under server VAD; found by "
+        'this simulator on #10722'
+    ),
     evidence='simulated',
     codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_raced_by_vad(sim),
+    providers=frozenset({'openai', 'azure'}),
+    matches=_unacknowledged_commit_under_vad,
+    accepted=True,
 )
 
 
@@ -632,6 +639,29 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
 )
 
 
+def _turn_xai_reopened(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The violation names a turn xAI heard stop, then start again under the same item before committing it."""
+    return any(f"'item_{key}'" in violation.detail for key in sim.truth.speech_reopened)
+
+
+XAI_REOPENED_TURN = Finding(
+    id='SIM-41',
+    title=(
+        'under server VAD, xAI takes back its own stop: speech resumed before it commits the turn reopens the same '
+        'item (a second `speech_started` for it, then another `speech_stopped`, then `committed`). The lifecycle '
+        'already placed the turn at the first stop, so it starts the same turn again'
+    ),
+    tracked_by=(
+        "placing an xAI spoken turn at its commit rather than at VAD's stop; recorded live "
+        '(`xai_race_then_speech` probe, October 2026)'
+    ),
+    evidence='recorded',
+    codes=frozenset({'lifecycle.turn_started_twice'}),
+    providers=frozenset({'xai'}),
+    matches=_turn_xai_reopened,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
@@ -650,7 +680,8 @@ KNOWN_FINDINGS.extend(
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
-        HAND_COMMIT_RACED_BY_VAD,
+        UNACKNOWLEDGED_COMMIT_UNDER_VAD,
+        XAI_REOPENED_TURN,
     ]
 )
 

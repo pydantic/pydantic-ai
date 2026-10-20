@@ -45,7 +45,8 @@ Checked at rest (`settle()`):
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
 - `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read
-  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement);
+  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement); for a session that
+  ended on its own, once it closes;
 - `history.not_restored`: a re-dialed provider conversation started a response without something history
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
@@ -90,6 +91,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models._speech import assistant_speech_text
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
@@ -172,6 +174,24 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
         said += [part.transcript for part in message.parts if isinstance(part, SpeechPart) and part.speaker != 'user']
         fingerprints |= {f'assistant:{" ".join(text.split())}' for text in said if text}
     return fingerprints
+
+
+def cut_off_replays(messages: list[ModelMessage]) -> dict[str, str]:
+    """How history replays each reply it records as cut off: its marked text, keyed by the plain transcript's fingerprint.
+
+    A reply the listener cut off is replayed with a marker (see `assistant_speech_text`), whether or not the provider
+    applied the truncation (a truncation whose send failed may not have reached it).
+    """
+    return {
+        f'assistant:{" ".join(part.transcript.split())}': f'assistant:{" ".join(replayed.split())}'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for index, part in enumerate(message.parts)
+        if isinstance(part, SpeechPart)
+        and part.speaker != 'user'
+        and part.transcript
+        and (replayed := assistant_speech_text(message, index)) != part.transcript
+    }
 
 
 def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
@@ -446,7 +466,21 @@ class Checker:
             if call.read and response.status == 'completed' and not call.cancelled_by_server
         ]
         outputs = [truth.input(call.call_id) for call in calls]
-        return all(output is not None and self._input_resolved(output, by, seen) for output in outputs)
+        return all(
+            self._input_resolved(output, by, seen) if output is not None else self._round_cut_by_drop(response, by)
+            for output in outputs
+        )
+
+    def _round_cut_by_drop(self, response: TruthResponse, by: int) -> bool:
+        """Whether a drop after `response` started had settled its tool calls still running, by `by`.
+
+        Where a reconnect doesn't restore what was in flight, it interrupts the calls still running: their results
+        never go out, and nothing more is owed for them.
+        """
+        session = self.sim.session
+        assert session is not None
+        settled_by_drop = not session._connection.reconnect_restores_in_flight_state  # pyright: ignore[reportPrivateUsage]
+        return settled_by_drop and any(response.seq_start < loss <= by for loss in self.sim.truth.connection_losses)
 
     def _input_resolved(self, input_: TruthInput, by: int, seen: set[str]) -> bool:
         if (input_.refused_read is not None and input_.refused_read <= by) or input_.answer_lost:
@@ -712,6 +746,10 @@ class Checker:
         self.report('history.order', violations)
 
     def _check_spoken_turns(self, messages: list[ModelMessage]) -> None:
+        if self.sim.receive_ended and self.sim.close_requested is None:
+            # The session ended on its own: a turn it holds back for a response it will never read the end of is
+            # recorded when it closes, and checked then.
+            return
         # By count: a turn recorded without its transcript can't be told apart from another.
         committed = [
             input_.key
@@ -773,8 +811,17 @@ class Checker:
                     for call in response.tool_calls
                     for kind in ('function_call', 'function_call_output')
                 }
+        cut_off = cut_off_replays(messages)
         missing = [
-            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            (
+                restoration,
+                sorted(
+                    fingerprint
+                    for fingerprint in (restoration.before & recorded) - restoration.held - settled
+                    # (Restored as cut off, which is how history records it.)
+                    if cut_off.get(fingerprint) not in restoration.held
+                ),
+            )
             for restoration in sim.truth.restorations
         ]
         truncated = {

@@ -113,6 +113,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
         OpenAIChatModel,
@@ -121,12 +122,17 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.zai import ZaiProvider
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
@@ -5389,6 +5395,41 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == 'hello'
+
+
+@pytest.mark.parametrize(
+    'model_class,provider_class,model_name',
+    [
+        pytest.param(OpenAIChatModel, OpenAIProvider, 'gpt-5.2', id='openai'),
+        pytest.param(GitHubCopilotModel, GitHubCopilotProvider, 'gpt-5.2', id='github-copilot'),
+        pytest.param(OpenRouterModel, OpenRouterProvider, 'openai/gpt-5.2', id='openrouter'),
+        pytest.param(ZaiModel, ZaiProvider, 'glm-5.1', id='zai'),
+    ]
+    if imports_successful()
+    else [],
+)
+async def test_metadata_non_string_value(
+    allow_model_requests: None,
+    model_class: type[OpenAIChatModel],
+    provider_class: type[OpenAIProvider | GitHubCopilotProvider | OpenRouterProvider | ZaiProvider],
+    model_name: str,
+) -> None:
+    """OpenAI-compatible providers can return `metadata` values outside the SDK's `dict[str, str]`."""
+    metadata: dict[str, JsonValue] = {
+        'weight_version': 'default',
+        'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}],
+    }
+    # Emulate an unvalidated SDK response, including OpenRouter's downstream provider.
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_copy(
+        update={'metadata': metadata, 'provider': 'test'}
+    )
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = model_class(model_name, provider=provider_class(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
+    assert m._validate_completion(c).metadata == metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:

@@ -16,6 +16,8 @@ from ._uuid import uuid7
 from .exceptions import UserError
 from .messages import (
     EnqueuedMessagesEvent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -114,6 +116,8 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                InstructionDeltaPart,
+                InstructionBaselinePart,
                 SpeechPart,
             ),
         ):

@@ -71,6 +71,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -590,6 +591,9 @@ def _part_text(part: MessagePart) -> str:
         return f'{part.tool_name}({part.args_as_dict()!r})'
     if isinstance(part, ToolAvailabilityDeltaPart):
         return f'tool availability changed: tools_added={part.tools_added!r}'
+    if isinstance(part, InstructionBaselinePart):
+        # Records what the request's instructions were made of; the transcript leaves instructions out.
+        return ''
     return str(part.content)
 
 

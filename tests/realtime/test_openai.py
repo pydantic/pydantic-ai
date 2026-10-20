@@ -2486,7 +2486,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -5626,7 +5626,7 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
 
 
 def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
-    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
     return RealtimeSession(
         connection,
         model=FakeRealtimeModel(connection, system='openai'),

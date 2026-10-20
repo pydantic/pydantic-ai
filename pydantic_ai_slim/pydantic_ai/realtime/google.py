@@ -56,6 +56,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -613,9 +615,12 @@ async def _seed_request_parts(
         # reads exactly like the retried return the framework emits for the same failure.
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(

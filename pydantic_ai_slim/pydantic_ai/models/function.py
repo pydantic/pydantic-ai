@@ -17,6 +17,8 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -42,9 +44,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -149,6 +153,7 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -189,6 +194,7 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -419,6 +425,12 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
+    """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
+    if _has_instruction_state(messages):
+        raise _unprojected_instruction_delta_error()
+
+
 def _estimate_usage(  # noqa: C901
     messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
 ) -> usage.RequestUsage:
@@ -440,6 +452,8 @@ def _estimate_usage(  # noqa: C901
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
+                elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                    raise _unprojected_instruction_delta_error()
                 elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
                 elif isinstance(part, _UnpreparedPart):

@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 from pydantic_core import ErrorDetails
 
-import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -927,10 +926,7 @@ class TestSearchScope:
         assert 'TEXTTAIL' not in excerpts
         assert '...' in excerpts
 
-    @pytest.mark.skipif(
-        not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates'
-    )
-    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:  # pragma: lax no cover
+    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
@@ -943,7 +939,7 @@ class TestSearchScope:
         )
         rendered = await _search(_StubSource({'r1': history}), 'DELTATAIL')
         assert 'Found 1 match(es)' in rendered
-        assert "System: Instruction block 'agent:state' is replaced" in rendered
+        assert 'System: <context id="agent:state">' in rendered
         assert 'DELTATAIL' not in rendered.split(':\n\n', 1)[1]
 
     async def test_max_matches_and_context_lines_honored(self) -> None:

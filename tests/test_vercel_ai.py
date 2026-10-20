@@ -23,6 +23,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -35,6 +36,8 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -12107,6 +12110,7 @@ async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> 
         messages=(
             ModelResponse(parts=[TextPart('synthetic')]),
             ModelRequest(parts=[SystemPromptPart(content='hidden'), UserPromptPart(content='visible')]),
+            ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='hidden')]),
         ),
     )
     event_stream = VercelAIEventStream()

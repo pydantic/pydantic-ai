@@ -300,10 +300,14 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
+            manual_turns=manual_turns,
         )
         # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
-        # is a turn only if it did.
-        self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled, commits_need_speech=manual_turns)
+        # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
+        # checked live): it commits only what its VAD hears.
+        self._lifecycle = OpenAILifecycle(
+            transcribes=input_transcription_enabled, commits_need_speech=manual_turns, acknowledges_commits=manual_turns
+        )
         self._conversation_id = conversation_id
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is

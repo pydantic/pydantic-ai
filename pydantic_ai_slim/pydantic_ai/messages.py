@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import dataclasses
+import difflib
 import hashlib
 import html
 import mimetypes
@@ -2711,6 +2712,10 @@ SerializedInstructionId: TypeAlias = Annotated[
 """An [`InstructionId`][pydantic_ai.messages.InstructionId] that persists as the string it renders to."""
 
 
+InstructionChangePolicy: TypeAlias = Literal['rewrite', 'append']
+"""How changes to an instruction block are delivered; see [`InstructionPart.on_change`][pydantic_ai.messages.InstructionPart.on_change]."""
+
+
 @dataclass(repr=False)
 class InstructionPart:
     """A single instruction part with metadata about its origin.
@@ -2732,6 +2737,16 @@ class InstructionPart:
     Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
     Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
     or toolset `get_instructions()` methods.
+    """
+
+    on_change: InstructionChangePolicy = 'rewrite'
+    """How changes to this part are delivered.
+
+    `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
+    prefix and appends full replacements to trusted message history when this block changes,
+    including withdrawal when it stops contributing content. Requires an addressable `id`;
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
+    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
     """
 
     name: str | None = None
@@ -2783,6 +2798,133 @@ class InstructionPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class InstructionDeltaPart:
+    """Replace or withdraw one operator-authored instruction from this point in history onward.
+
+    Earlier statements remain in history; the latest statement for an id is effective. This is
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    """
+
+    id: SerializedInstructionId
+    """The id of the block being replaced, as on its [`InstructionPart`][pydantic_ai.messages.InstructionPart.id].
+
+    Serialized as the string it renders to. A change written by a newer version, for a source namespace this
+    one doesn't know, loads with `None` here, and the next request opens a new window instead of applying it.
+    """
+
+    content: str | None
+    """The complete replacement text, or `None` to withdraw the block."""
+
+    base_hash: str | None = None
+    """The SHA-256 hex digest of the block's text this change replaces, or `None` if it replaces none.
+
+    A model can then send the change as a diff against the text it sent before, and only when that text
+    is still what this change was computed against: if a history processor dropped an earlier change,
+    the hashes differ and the model sends `content` in full instead.
+    """
+
+    part_kind: Literal['instruction-delta'] = 'instruction-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
+        """Render this change as a `<context>` element that replaces the block's earlier one.
+
+        A replacement is rendered as a `<context-diff>` element instead, holding a unified diff against
+        `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
+        shorter than the full replacement.
+
+        Args:
+            inline_system: Whether the receiving model supports mid-conversation system messages, per its
+                profile's `supports_inline_system_prompts`. When `False`, the model gets this text as
+                `<system>`-tagged user text, and a withdrawal says that it stays in effect. Defaults to
+                `True` for callers with no model to ask, such as token estimates and search.
+            previous: The block's text as the model last received it, if known.
+        """
+        if self.content is not None:
+            full = _context_element(self.id, self.content)
+            if (
+                previous is not None
+                and self.base_hash is not None
+                and _instruction_text_hash(previous) == self.base_hash
+            ):
+                diff = _context_diff_element(self.id, previous, self.content)
+                if len(diff) < len(full):
+                    return diff
+            return full
+        elif inline_system:
+            content = 'This context has been withdrawn.'
+        else:
+            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+        return _context_element(self.id, content)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the replacement in traces only when content capture is enabled."""
+        return [_otel_messages.TextPart(type='text', content=self.render())] if settings.include_content else []
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _instruction_text_hash(text: str) -> str:
+    """The digest an `InstructionDeltaPart.base_hash` records for the text it replaces."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+_CLOSING_FRAMING_TAG = re.compile(r'</(context-diff|context|system)\s*>', re.IGNORECASE)
+
+
+def _neutralize_closing_tags(content: str) -> str:
+    """Escape closing framing tags in a block's text, so the text can't end its own element early."""
+    return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+
+
+def _id_attribute(instruction_id: InstructionId | None) -> str:
+    """The `id` attribute naming a block, or nothing for a change a newer version wrote that this one can't address."""
+    return f' id="{html.escape(str(instruction_id))}"' if instruction_id is not None else ''
+
+
+def _context_element(instruction_id: InstructionId | None, content: str) -> str:
+    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
+    return f'<context{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(content)}\n</context>'
+
+
+def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
+    """Tag a unified diff from a block's previous text to its new text with the block's id."""
+    diff = '\n'.join(
+        difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
+    )
+    return f'<context-diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context-diff>'
+
+
+_SUPERSESSION_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
+
+
+def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
+    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+
+    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
+    with the same id replaces it and stays in effect, which models need to keep following an update on later
+    turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as
+    written: agent history never holds an unaddressable append-mode part (it is downgraded to `'rewrite'` with
+    a warning), but a `before_model_request` hook or a direct caller can still supply one.
+
+    History stores only the content, so each model renders its own prefix, and renders it identically on
+    every request.
+    """
+    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    rendered = list(parts)
+    for index in tagged:
+        part = parts[index]
+        content = _context_element(part.id, part.content)
+        if index == tagged[-1]:
+            content = f'{content}\n{_SUPERSESSION_SENTENCE}'
+        rendered[index] = replace(part, content=content)
+    return rendered
+
+
+@dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point.
 
@@ -2819,6 +2961,88 @@ class ToolAvailabilityDeltaPart:
         """
         changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionDigest:
+    """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
+
+    Only what decides whether the block is unchanged: a later request can keep its window's prefix only if
+    every rewrite-mode block is still the same, in the same place.
+    """
+
+    id: SerializedInstructionId = None
+    """The block's [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id], if it has one."""
+
+    dynamic: bool = False
+    """The block's [`InstructionPart.dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which decides its cache placement."""
+
+    content_hash: str
+    """The SHA-256 hex digest of the block's content."""
+
+    part_kind: Literal['instruction-digest'] = 'instruction-digest'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    @classmethod
+    def of(cls, part: InstructionPart) -> InstructionDigest:
+        """The digest of a rewrite-mode `part`."""
+        return cls(id=part.id, dynamic=part.dynamic, content_hash=_instruction_text_hash(part.content))
+
+    def matches(self, part: InstructionPart) -> bool:
+        """Whether `part` is a rewrite-mode block this digest records unchanged."""
+        return part.on_change != 'append' and self == InstructionDigest.of(part)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _baseline_block_kind(value: Any) -> str:
+    """Discriminate an `InstructionBaselinePart` block; an `InstructionPart` may be serialized without `part_kind`."""
+    kind = (
+        cast(dict[str, Any], value).get('part_kind') if isinstance(value, dict) else getattr(value, 'part_kind', None)
+    )
+    return 'instruction-digest' if kind == 'instruction-digest' else 'instruction'
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionBaselinePart:
+    """The instructions a request was sent with, recorded where a run of `on_change='append'` requests starts.
+
+    A request records this when it opens a window: the first request with an
+    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change] block, and each request whose
+    prefix has to change anyway (a rewritten block changed, a block's policy changed, compaction). Every
+    request in the window is sent the same prefix, with each append-mode block at its value here, followed in
+    history by the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s since. An empty
+    `instructions` list ends the window, so earlier changes stop applying.
+
+    It's never sent to a model: it records what the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request can
+    tell whether it can keep the prefix and what its append-mode blocks said. Like a system prompt, it's
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    """
+
+    instructions: list[
+        Annotated[
+            Annotated[InstructionPart, pydantic.Tag('instruction')]
+            | Annotated[InstructionDigest, pydantic.Tag('instruction-digest')],
+            pydantic.Discriminator(_baseline_block_kind),
+        ]
+    ]
+    """The request's instruction parts, in order.
+
+    Append-mode blocks are recorded in full, since their changes are computed against them. Rewrite-mode
+    blocks are recorded as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest], which is enough
+    to tell whether one changed, so a long block that is rewritten on every request isn't stored again each
+    time.
+    """
+
+    part_kind: Literal['instruction-baseline'] = 'instruction-baseline'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Contribute nothing to traces: the instructions it records are reported with the request itself."""
+        return []
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3603,6 +3827,8 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
+    | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
     # the deprecated class is never constructed. `SerializeAsAny` covers the other direction: an
     # instance a caller built by hand and never validated still dumps in its own shape rather than
@@ -4606,8 +4832,10 @@ def sanitize_messages(
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
-            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
-            [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s.
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
+            [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s,
+            [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and
+            [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -4814,7 +5042,7 @@ def _sanitize_request_parts(
         # honoring a client-submitted one would hand the client the system voice the strip exists to
         # protect. Every cause goes with the system prompts, not through them.
         if strip_system_prompts and (
-            isinstance(part, SystemPromptPart | RetryFeedbackPart)
+            isinstance(part, SystemPromptPart | RetryFeedbackPart | InstructionDeltaPart | InstructionBaselinePart)
             # TODO(v3): remove `RetryPromptPart`. A tool-less one is the feedback part it always
             # meant, not translated yet, so it goes with the system prompts on the same terms.
             or (isinstance(part, RetryPromptPart) and part.tool_name is None)  # pyright: ignore[reportDeprecated]

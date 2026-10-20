@@ -12,6 +12,13 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai import (
+    CapabilityInstructionSource,
+    InstructionBaselinePart,
+    InstructionDigest,
+    InstructionId,
+    InstructionPart,
+)
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
@@ -815,7 +822,22 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='hi', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            )
+                        ]
+                    ),
+                ],
                 timestamp=IsDatetime(),
                 instructions="""\
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -1076,7 +1098,26 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionDigest(
+                                id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                                content_hash='97321e5185a6577bd855abec078319a0b556019f94499fd828a05d24bd9d9a5e',
+                            ),
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            ),
+                        ]
+                    ),
+                ],
                 timestamp=IsDatetime(),
                 instructions="""\
 Visible billing instructions.

@@ -60,6 +60,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -611,9 +613,12 @@ async def _seed_request_items(
         # retry seeds through the `ToolReturnPart` branch below like the retried return it always meant.
         if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
             part = _translate_legacy_retry_part(part)
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
@@ -1258,16 +1263,25 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     }
 
 
-def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
-    """Whether the session's configured VAD makes the server cancel the active response on speech onset.
+def _config_turn_detection(session_config: dict[str, Any]) -> dict[str, Any] | None:
+    """The `turn_detection` payload of an OpenAI-protocol session config.
 
-    Reads the `turn_detection` payload from either place an OpenAI-protocol session config carries
-    it: nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
+    It is nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
     """
-    turn_detection = session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
+    return session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
         'turn_detection'
     )
+
+
+def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
+    """Whether the session's configured VAD makes the server cancel the active response on speech onset."""
+    turn_detection = _config_turn_detection(session_config)
     return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
+
+
+def config_has_manual_turns(session_config: dict[str, Any]) -> bool:
+    """Whether the session's config turns turn detection off, leaving the client to commit every turn."""
+    return _config_turn_detection(session_config) is None
 
 
 def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:

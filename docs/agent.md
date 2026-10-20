@@ -1680,6 +1680,73 @@ Two consequences worth knowing before you key configuration on an id:
 
     Naming a part whose source has no `id` leaves its `id` as `None`, because there is no source key to qualify the name against. The name still travels with the part, so you can see what its author called it, but nothing addresses it.
 
+### Appending instruction changes {#appending-instruction-changes}
+
+Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
+
+```python {title="instruction_changes.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Todo:
+    status: str = 'pending'
+
+
+todos = Capability[Todo](id='todos')
+
+
+@todos.instructions(name='state', on_change='append')
+def todo_state(ctx: RunContext[Todo]) -> str:
+    return f'Todo status: {ctx.deps.status}.'
+
+
+@todos.tool
+def finish_todo(ctx: RunContext[Todo]) -> str:
+    ctx.deps.status = 'done'
+    return 'Saved.'
+
+
+agent = Agent(TestModel(), deps_type=Todo, capabilities=[todos])
+result = agent.run_sync('Finish the todo.', deps=Todo())
+changes = [
+    part.content
+    for message in result.all_messages()
+    if isinstance(message, ModelRequest)
+    for part in message.parts
+    if isinstance(part, InstructionDeltaPart)
+]
+assert changes == ['Todo status: done.']
+```
+
+The function still runs before each model request, including the request after a tool call. The initial value stays in the prefix. A changed value produces a typed [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of history containing the complete replacement. Unchanged values add nothing; changing from A to B and back to A emits both replacements. Returning `None` or an empty string withdraws the previous instruction. Removing a contributing source also withdraws its tracked blocks. A block first appearing after the baseline is delivered at the end of history.
+
+Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
+
+The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
+
+Persist the complete [message history](message-history.md), including these baseline parts, to retain the original prefix when another agent instance continues the conversation. Every previously sent replacement stays in history even after it is superseded. Compaction, or removing the baseline from history, starts a fresh baseline from current instructions. Do not prune old replacements independently if you want to preserve the prefix.
+
+The guarantee concerns instruction-induced prefix changes between baseline resets, with other request inputs unchanged. Changes to tools, models, provider caching rules, or cache expiry can still prevent cache reuse. History written by a newer Pydantic AI version with an instruction source this version doesn't know also starts a fresh baseline.
+
+Each block is sent as a `<context id="...">` element, and the last of them is followed once by the sentence "A later `<context>` element with the same id replaces the earlier one and stays in effect until replaced again." Each replacement or withdrawal is sent as a new element with that id. When a replacement differs from the text the model already has by less than its full length, as when one line of a long memory file is edited, it's sent as a `<context-diff id="...">` element holding a unified diff instead. History still records the complete replacement, along with a hash of the text it replaces: if a [history processor](message-history.md#processing-message-history) removed an earlier change, so the model never saw the text a diff would apply to, the model gets the complete replacement. Closing `</context>`, `</context-diff>` and `</system>` tags in a block's text are escaped, so the text can't end its element early. Models that support mid-conversation system messages receive the replacements that way; other models receive them as `<system>`-tagged user text. History stores only the content, so the prefix is the same on every request and for every model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel].
+
+Whether a model accepts and follows an update is model-dependent: preserving the prefix doesn't suppress provider refusals. See the provider pages for known issues, such as [refusals on repeated prompts](models/anthropic.md#refusals-on-repeated-prompts) on Anthropic.
+
+Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`) and [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`). A skill added to the workspace, a new sub-agent definition or an edited `AGENTS.md` between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
+
+!!! note "Scope and trust"
+    Append delivery supports always-on agent, capability, and toolset instruction sources. Deferred capability instructions and realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. Legacy `system_prompt(dynamic=True)` is unchanged.
+
+    [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
+
+    Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
+
 ## Reflection and self-correction
 
 Validation errors from both function tool parameter validation and [structured output validation](output.md#structured-output) can be passed back to the model with a request to retry.
