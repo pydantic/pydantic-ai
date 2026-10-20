@@ -141,6 +141,14 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 results back. Speech and delegated work run independently, so the Live model can keep talking while
 that happens rather than leaving dead air.
 
+In history, the round has the shape a [standard run](../message-history.md) gives it: the reply that
+delegated holds the backend's tool calls, their results follow it, and then comes the answer Live
+speaks once the backend has them. What Live says while the backend works ("Okay, checking the
+forecast ... now.") is part of the reply that delegated, ahead of the results: Live only speaks with
+them in hand once the backend answers. So that reply, and the results after it, appear in
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
+calls more tools with those results, which are then a response of their own, after them.
+
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:
 
