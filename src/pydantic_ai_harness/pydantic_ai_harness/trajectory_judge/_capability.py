@@ -95,7 +95,8 @@ _STEERING_FRAMING = (
 )
 
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands; this matches its escaping.
-_CLOSING_STEERING_TAG = re.compile(rf'</({_STEERING_TAG})\s*>', re.IGNORECASE)
+_CLOSING_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_STEERING_TAG}(?=[\s/>]))', re.IGNORECASE)
+"""The `<` that opens anything a parser could read as a closing `steering` tag, whitespace and case included."""
 
 
 _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(strict=True, ge=1)])
@@ -401,7 +402,7 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
     continued conversations.
     """
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge}
-    body = _CLOSING_STEERING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', message)
+    body = _CLOSING_STEERING_TAG_OPENER.sub('&lt;', message)
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}">\n{body}\n</{_STEERING_TAG}>'
     return SystemPromptPart(_STEERING_FRAMING, metadata=metadata), TextContent(data, metadata=dict(metadata))
 
