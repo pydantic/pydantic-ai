@@ -7,6 +7,7 @@ the import boundary. Every value crossing back into the harness is narrowed with
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from collections.abc import Mapping
 from types import ModuleType
@@ -62,19 +63,19 @@ def _load_module(path: Path) -> ModuleType:
     runs the new source. `dont_inherit` keeps this module's `__future__` imports
     out of the authored code.
 
-    The module is in `sys.modules` only while its body runs, under a name unique to
-    this load, because `dataclasses` and Pydantic look up a class's module there to
-    resolve string annotations (as under `from __future__ import annotations`).
+    The module is registered in `sys.modules` because `dataclasses` and Pydantic look
+    up a class's module there to resolve string annotations (as under
+    `from __future__ import annotations`), during the class body and later. The key
+    is derived from the file's resolved path, so reloading a file replaces its entry
+    instead of adding one.
     """
-    module = ModuleType(path.stem)
-    module.__name__ = f'_authored_capability_{path.stem}_{id(module):x}'
-    module.__file__ = str(path)
+    resolved = str(path.resolve())
+    name = f'_authored_capability_{path.stem}_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}'
+    module = ModuleType(name)
+    module.__file__ = resolved
     code = compile(path.read_bytes(), str(path), 'exec', dont_inherit=True)
-    sys.modules[module.__name__] = module
-    try:
-        exec(code, module.__dict__)
-    finally:
-        sys.modules.pop(module.__name__, None)
+    sys.modules[name] = module
+    exec(code, module.__dict__)
     return module
 
 

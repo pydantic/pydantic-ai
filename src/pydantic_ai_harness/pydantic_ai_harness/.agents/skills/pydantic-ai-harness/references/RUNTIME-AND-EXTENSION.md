@@ -174,8 +174,9 @@ Rules that apply to every harness capability:
   derived ids; two instances of one class need distinct `id=`.
 - Per-run inputs (tokens, user ids) come from `deps`, never globals: tools and `auth` functions can
   execute on another worker.
-- Inside a durable workflow or flow, `agent.run(..., capabilities=...)` raises `UserError` for any
-  capability except a few core ones such as `Instrumentation`, and Temporal also refuses toolsets
+- Inside a Temporal or DBOS workflow, `agent.run(..., capabilities=...)` raises `UserError` for any
+  capability except a few core ones such as `Instrumentation`. A Prefect flow accepts per-run
+  capabilities that contribute no function, MCP, or dynamic toolset. Temporal also refuses toolsets
   added at run time (for example `SubAgents` with `agent_folders`). Load authored capabilities at
   construction; they take effect on the next worker start.
 - Removing or adding a capability changes the replay shape. Drain in-flight workflows first.
@@ -429,9 +430,10 @@ async def main():
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
 authored code executes in your process and would bypass a sandbox. Only use it where you would run the
 model's code yourself. Authored code runs during `author_capability` validation, in the current run.
-`load_active()` runs the same checks and skips entries that fail them. Inside a durable workflow,
-`capabilities=` on a run is refused, so authored capabilities cannot be activated there; the
-authoring tools still work. `guidance=''` drops the
+`load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
+workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
+a Prefect flow accepts only authored capabilities that contribute no tools. The authoring tools
+still work. `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs

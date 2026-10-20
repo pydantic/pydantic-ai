@@ -198,7 +198,34 @@ class TestValidate:
         # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be findable there.
         code = 'from __future__ import annotations\n' + _marker_code('WithField', 'X') + '    value: int = 0\n'
         assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithField'
-        assert not any(name.startswith('_authored_capability_') for name in sys.modules)
+
+    def test_future_annotations_pydantic_forward_ref_after_load(self, tmp_path: Path) -> None:
+        # Pydantic resolves a forward reference when the model is first used, after the module body has run.
+        code = """from __future__ import annotations
+
+from pydantic import BaseModel
+
+from pydantic_ai.capabilities import AbstractCapability
+
+class A(BaseModel):
+    b: B | None = None
+
+class B(BaseModel):
+    x: int = 0
+
+class UsesModels(AbstractCapability):
+    def get_instructions(self):
+        return str(A(b=B(x=1)).b)
+"""
+        assert validate_capability_file(_write(tmp_path, 'm', code)) == 'UsesModels'
+
+    def test_reload_replaces_module_registration(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, 'm', VALID_CODE)
+        before = set(sys.modules)
+        validate_capability_file(path)
+        validate_capability_file(path)
+        added = [name for name in set(sys.modules) - before if name.startswith('_authored_capability_m_')]
+        assert len(added) == 1
 
     def test_load_leaves_bytecode_settings_and_cache_alone(self, tmp_path: Path) -> None:
         before = sys.dont_write_bytecode

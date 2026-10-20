@@ -128,11 +128,12 @@ workflow code, so there the store call runs as its own step.
 The records are named after the capability's `id`, which defaults to
 `capability_creation`, so durable execution needs no configuration.
 
-Inside a Temporal, DBOS, or Prefect workflow, a run refuses capabilities passed with
-`agent.run(..., capabilities=...)`, because durable execution registers a capability's
-activities, tasks, or steps when the capability is bound to the agent. The integration
-contract above therefore cannot activate authored capabilities inside a workflow. The
-authoring tools still work there.
+Inside a Temporal or DBOS workflow, a run refuses capabilities passed with
+`agent.run(..., capabilities=...)`, because those engines register a capability's
+activities or steps when the capability is bound to the agent. The integration contract
+above therefore cannot activate authored capabilities there. A Prefect flow accepts an
+authored capability that only adds hooks, instructions, or model settings, and refuses one
+whose `get_toolset()` contributes tools. The authoring tools work under all three.
 
 ## Trust boundary
 
@@ -154,9 +155,11 @@ run, with the agent process's environment and permissions, even when validation 
 rejects the code. Validation waits for that code to return, so authored code that blocks
 also blocks the tool call, and cancelling the run does not interrupt it.
 
-Keep `directory` out of reach of the agent's file tools if you want every authored file to
-pass through validation. With `LocalWorkspace('.')` and `directory=Path('.authored')`, the
-agent can also edit authored files and `manifest.json` directly.
+If the agent also has file or shell tools (such as `FileSystem` or `Shell`) over a
+workspace that contains `directory`, as with `LocalWorkspace('.')` and
+`directory=Path('.authored')`, it can edit authored files and `manifest.json` directly,
+without going through `author_capability`. Keep `directory` outside that workspace if every
+authored file should pass through validation.
 
 Because authored capabilities hold live code, they are not spec-serializable
 (`get_serialization_name()` returns `None`) and are persisted as source rather than as an

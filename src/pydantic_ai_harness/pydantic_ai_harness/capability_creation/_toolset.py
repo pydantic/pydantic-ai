@@ -64,8 +64,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         run; whether a later run loads it depends on how this agent is set up.
 
         Args:
-            name: Identifier for the capability. Lowercase letters, digits, and
-                underscores, starting with a letter. Reusing a name replaces the
+            name: Identifier for the capability. At most 64 lowercase letters, digits,
+                and underscores, starting with a letter. Reusing a name replaces the
                 previous capability of that name.
             code: Complete Python source defining one `AbstractCapability` subclass.
         """
