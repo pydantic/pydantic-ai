@@ -36,7 +36,7 @@ print(result.output)
 | Not set, `None`, or `''` | `LOGFIRE_API_KEY`. If that is not set either, creating the agent raises an error. |
 | An API key | That key, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The key it returns is used for that run. If it returns `None` or `''`, that run has no Logfire tools. A function never uses `LOGFIRE_API_KEY`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The key it returns is used for that run. If it returns `None` or `''`, that run has no Logfire tools. A function never uses `LOGFIRE_API_KEY`, and must not return `'oauth'`. |
 
 A fixed key or `LOGFIRE_API_KEY` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -63,7 +63,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[LogfireMCP(au
 
 Each run connects as its own user, so concurrent runs never share an account.
 
-Your app gets each user's credential, stores it, and refreshes it. For example, a settings page where each user pastes their own API key, or a "Connect Logfire" button that signs them in with OAuth and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's credential, stores it, and refreshes it. For example, a settings page where each user pastes their own API key, or a "Connect Logfire" button that signs them in with OAuth and saves the token to their account. Before each run, put it in the deps, or load it in an async `auth` function.
 
 When users differ in more than their credential, such as users whose data is in the EU region, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 

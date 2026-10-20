@@ -33,7 +33,7 @@ print(result.output)
 | --- | --- |
 | Not set, `None`, or `''` | `GITHUB_TOKEN`. If that is not set either, creating the agent raises an error. |
 | A token | That token, for every run. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no GitHub tools. A function never uses `GITHUB_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no GitHub tools. A function never uses `GITHUB_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `GITHUB_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
 
@@ -60,7 +60,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[GitHub(auth=g
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only`, `toolsets`, and `url` still apply to every run.
 
-Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, put it in the deps, or load it in an async `auth` function.
 
 When users differ in more than their credential, such as a user whose organization is on a GitHub Enterprise Cloud data-residency endpoint, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 
