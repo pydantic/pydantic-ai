@@ -27,6 +27,7 @@ from tests.conftest import try_import
 with try_import() as imports_successful:
     import httpx2
     from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai.auth import WorkloadIdentity
 
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_codex import OpenAICodexModel
@@ -243,6 +244,20 @@ async def test_batch_requires_a_static_api_key() -> None:
 
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=api_key)))
     with pytest.raises(UserError, match='requires a static API key'):
+        await model.batch_encode(_request())
+
+
+async def test_batch_rejects_a_workload_identity() -> None:
+    """Clients of different workload identities have the same headers, so their requests would share a batch group."""
+    identity: WorkloadIdentity = {
+        'identity_provider_id': 'idp',
+        'service_account_id': 'tenant-a',
+        'provider': {'token_type': 'jwt', 'get_token': lambda: 'token'},
+    }
+    model = OpenAIResponsesModel(
+        'gpt-4.1-nano', provider=OpenAIProvider(openai_client=AsyncOpenAI(workload_identity=identity))
+    )
+    with pytest.raises(UserError, match='not an API key callback or workload identity'):
         await model.batch_encode(_request())
 
 

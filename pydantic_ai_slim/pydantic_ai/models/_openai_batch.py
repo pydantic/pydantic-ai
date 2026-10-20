@@ -254,7 +254,11 @@ def _batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
     if model.batch_max_requests is None:
         raise UserError(f'The {model.system!r} provider does not support the OpenAI Batch API.')
     client = model.client
-    # A batch is grouped, submitted and polled with one credential, which an API key callback could vary per request.
-    if getattr(client, '_api_key_provider', None) is not None:
-        raise UserError('The OpenAI Batch API requires a static API key on the client, not an API key callback.')
+    # A batch is grouped, submitted and polled with one credential, which an API key callback could vary per request,
+    # and which a workload identity keeps out of the client's headers, so clients of different identities would share
+    # a group.
+    if getattr(client, '_api_key_provider', None) is not None or getattr(client, 'workload_identity', None) is not None:
+        raise UserError(
+            'The OpenAI Batch API requires a static API key on the client, not an API key callback or workload identity.'
+        )
     return client
