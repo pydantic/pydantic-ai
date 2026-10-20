@@ -459,6 +459,54 @@ class TestAdvisor:
         with pytest.raises(UserError, match='tool whose name conflicts'):
             await agent.run('Review this.')
 
+    async def test_merged_native_advisor_sends_settings_only_one_instance_states(self) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            _ProviderFunctionModel('anthropic', executor, supports_advisor=True),
+            capabilities=[
+                Advisor('anthropic:claude-opus-4-8', max_tokens=2048, caching='1h'),
+                Advisor('anthropic:claude-opus-4-8'),
+            ],
+        )
+
+        await agent.run('Review this plan.')
+
+        assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8', max_tokens=2048, caching='1h')]
+
+    async def test_merged_local_advisor_uses_settings_only_one_instance_states(self) -> None:
+        advisor_settings: list[ModelSettings | None] = []
+
+        def advisor_model(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            advisor_settings.append(info.model_settings)
+            return ModelResponse(parts=[TextPart('advice')])
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not _has_tool_return(messages):
+                return ModelResponse(parts=[ToolCallPart('advisor', {'prompt': 'How?'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        advisor = FunctionModel(advisor_model)
+        agent = Agent(FunctionModel(executor), capabilities=[Advisor(advisor, max_tokens=2048), Advisor(advisor)])
+
+        await agent.run('Plan the deployment.')
+
+        assert advisor_settings == [ModelSettings(max_tokens=2048)]
+
+    def test_combined_advisor_keeps_the_subclass(self) -> None:
+        class _CustomAdvisor(Advisor[None]):
+            pass
+
+        merged = _CustomAdvisor.combine([_CustomAdvisor('test', max_tokens=2048), _CustomAdvisor('test', max_uses=2)])
+
+        assert isinstance(merged, _CustomAdvisor)
+        assert merged.max_tokens == 2048
+        assert merged.max_uses == 2
+
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
         with pytest.raises(ValueError, match=r'Advisor.mode'):

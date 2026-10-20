@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ModelSelection, NativeOrLocalTool
+from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestContext, parse_model_id
@@ -192,11 +193,25 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             id='advisor',
         )
 
-    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Advisor[AgentDepsT]:
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the fields, then rebuild the native factory and local tool from the merged result.
+
+        Both are built in `__init__` from one instance's configuration, so the inherited merge alone
+        would send the later instance's settings while the merged fields report the union.
+        """
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        return merged._rebuilt()
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Return a fresh capability with local usage isolated to this run."""
         if self.max_uses is None or self.mode == 'native':
             return self
-        return Advisor(
+        return self._rebuilt()
+
+    def _rebuilt(self) -> Self:
+        return type(self)(
             self.model,
             mode=self.mode,
             output_type=self.output_type,
