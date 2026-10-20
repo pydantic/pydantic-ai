@@ -139,6 +139,9 @@ the run from stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
+- A `ModelRetry` from a background tool, or from its execute hooks, counts against the tool's
+  `retries` only when the tool finishes before the agent's next step. A slower tool's retries are
+  not counted, so `UsageLimits.request_limit` is what bounds a model that keeps retrying it.
 - `after_tool_execute`, `on_tool_execute_error`, and the `wrap_tool_execute` hooks of capabilities
   listed after `BackgroundTools` run inside the background task and see the real result.
   `wrap_tool_execute` hooks of capabilities listed before it, and tool result events, see the
