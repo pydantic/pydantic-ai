@@ -7,6 +7,8 @@ from pydantic import ConfigDict, with_config
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._instrumentation import mcp_telemetry_url_ids
+from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.durable_exec._capability_operation import (
     CapabilityMethodDeclaration,
@@ -276,11 +278,17 @@ def restore_telemetry_mcp_url_ids(
             url_ids.update(mcp_telemetry_url_ids([agent.root_capability]))
             for toolset in agent.toolsets:
                 url_ids.update(mcp_telemetry_url_ids([], toolset))
-        # Older payloads did not carry URL provenance. A dynamic capability is not present in
-        # the configured agent tree, but its resolved native tool is present in the request.
-        for tool in parameters.native_tools:
-            if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id:
-                url_ids.add(tool.id)
+        # Older payloads did not carry URL provenance. A dynamic capability is absent from
+        # the configured tree, but its resolved native tool is present in the request. Restrict
+        # inference to such agents so a static caller-chosen id equal to the derived value stays
+        # caller-chosen. A dynamic explicit id that coincidentally equals the URL-derived value
+        # is indistinguishable in a legacy payload; prefer withholding it from telemetry.
+        if agent is not None and any(
+            isinstance(capability, DynamicCapability) for capability in leaf_capabilities(agent.root_capability)
+        ):
+            for tool in parameters.native_tools:
+                if isinstance(tool, MCPServerTool) and MCP(tool.url, native=True, local=False).id == tool.id:
+                    url_ids.add(tool.id)
     parameters._telemetry_mcp_url_ids = url_ids  # pyright: ignore[reportPrivateUsage]
 
 

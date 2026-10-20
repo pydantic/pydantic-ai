@@ -2019,6 +2019,31 @@ def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool
     assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if derived_id else identity)
 
 
+def test_temporal_legacy_payload_preserves_static_explicit_mcp_id_matching_url() -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    model = TestModel()
+    agent = Agent(model, name='telemetry_recovery', capabilities=[MCP(url, native=True, local=False, id=identity)])
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(native_tools=[MCPServerTool(id=identity, url=url)]),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    decoded = TypeAdapter(_RequestParams).validate_python(TypeAdapter(_RequestParams).dump_python(payload, mode='json'))
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    parameters = loaded.model_request_parameters
+
+    assert not parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in json.loads(serialized)['native_tools'][0]['url']
+    assert json.loads(serialized)['native_tools'][0]['id'] == identity
+
+
 async def test_temporal_activity_does_not_manage_registered_models() -> None:
     class TrackingModel(LifecycleTrackingModel):
         def request_stream(self, *args: Any, **kwargs: Any) -> Any:
