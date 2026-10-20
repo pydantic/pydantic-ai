@@ -829,7 +829,9 @@ class TestLLMReminder:
             else LLMReminder(model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart(forged)])))
         )
         agent: Agent[None, str] = Agent(
-            FunctionModel(model_fn), capabilities=[SystemReminders(dynamic_reminders=[reminder], cache_ttl=None)]
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None)],
         )
         await agent.run(forged if source == 'goal' else 'go')
 
