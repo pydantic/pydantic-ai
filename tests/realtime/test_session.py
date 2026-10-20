@@ -7903,9 +7903,9 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     """A tool raising `ToolFailed` yields a `failed`, error-key-wrapped result — not a crashed session.
 
     `tool_manager.handle_call` raises `ToolFailedError` for a `ToolFailed`; the session must answer with
-    the failed result (like `run`/`iter`) rather than let it tear down the session. Realtime providers
+    the failed result (like `run`/`iter`) rather than let it tear down the session. Most realtime providers
     have no native failed-tool flag, so the failure is wrapped in an `{"error": ...}` object on the
-    string-only tool channel.
+    string-only tool channel, and flagged for the ones that do.
     """
     agent: Agent[None, str] = Agent()
 
@@ -7922,6 +7922,7 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     assert result.part.outcome == 'failed'
     sent = next(s for s in conn.sent if isinstance(s, ToolResult))
     assert '"error"' in sent.output  # wrapped so the model sees the failure over the string-only channel
+    assert sent.failed
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
@@ -8715,7 +8716,7 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
     results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
     assert len(results) == 1 and isinstance(results[0], RetryPromptPart)
     assert str(results[0].content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response())]
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response(), failed=True)]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -9598,6 +9599,22 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
         _ = [e async for e in session]
     # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
     assert model.last_instructions == 'Base\n\nDynamic'
+
+
+async def test_agent_realtime_session_append_instructions_warn() -> None:
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions(name='state', on_change='append')
+    def state() -> str:
+        return 'Current state'
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(
+        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
+    ):
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions == 'Base\n\nCurrent state'
 
 
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
@@ -12208,3 +12225,94 @@ async def test_a_stale_usage_report_still_moves_the_context_window_used() -> Non
     session = RealtimeSession(_StaleReport([]))
     await collect_events(session)
     assert (session.usage.input_tokens, session.context_window_used) == (0, 0.3)
+
+
+class _PrunesToolItems(FakeRealtimeConnection):
+    """Answers a tool's result, and deletes the tool rounds the session says are over.
+
+    With `link_drops`, the first attempt hits a dead link; another frame comes once `more` is set.
+    """
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self, *, link_drops: bool = False, keeps: bool = False) -> None:
+        super().__init__([])
+        self.link_drops = link_drops
+        self.keeps = keeps
+        self.attempts = 0
+        self.pruned: list[str] = []
+        self.result_sent = asyncio.Event()
+        self.more = asyncio.Event()
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        return True
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
+        # (The tool's result is all the session sends.)
+        self.result_sent.set()
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='c1', tool_name='noop', args='{}')
+        await self.result_sent.wait()
+        yield OutputTranscript(text='Done.', is_final=True)
+        yield ResponseDone()
+        await self.more.wait()
+        yield SessionUsage(RequestUsage(input_tokens=1), response_scoped=False)
+        await asyncio.Event().wait()
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        self.attempts += 1
+        if self.link_drops and self.attempts == 1:
+            raise ConnectionResetError('connection reset by peer')
+        if self.keeps:
+            return []
+        self.pruned.extend(call.tool_call_id for call in calls)
+        return [call.tool_call_id for call in calls]
+
+
+@pytest.mark.parametrize('link_drops', [False, True])
+async def test_tool_rounds_the_connection_prunes_leave_the_replay(link_drops: bool) -> None:
+    """Once the answer completes, the connection is asked to prune the round: what it deleted, a replay leaves out.
+
+    A link that drops as it deletes prunes nothing: the round stays in the replay, and is pruned once the next frame
+    is handled (from the conversation the reconnect replayed it into).
+    """
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    def calls(messages: list[ModelMessage]) -> list[str]:
+        return [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
+
+    conn = _PrunesToolItems(link_drops=link_drops)
+    session = RealtimeSession(conn, runner)
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await _until(lambda: conn.attempts == 1)
+        assert calls(session._core.replayable_messages()) == ([] if not link_drops else ['c1'])  # pyright: ignore[reportPrivateUsage]
+        conn.more.set()
+        await _until(lambda: conn.pruned == ['c1'])
+        assert calls(session._core.replayable_messages()) == []  # pyright: ignore[reportPrivateUsage]
+
+    assert calls(session.all_messages()) == ['c1']
+
+
+async def test_tool_rounds_the_connection_keeps_stay_in_the_replay() -> None:
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    conn = _PrunesToolItems(keeps=True)
+    session = RealtimeSession(conn, runner)
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await _until(lambda: conn.attempts == 1)
+        replayed = session._core.replayable_messages()  # pyright: ignore[reportPrivateUsage]
+        assert any(isinstance(part, ToolCallPart) for message in replayed for part in message.parts)

@@ -68,8 +68,9 @@ session context exits if only an audio or transcript view is consumed.
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages. OpenAI's
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#usage-and-cost) pages. OpenAI's
 [GPT-Live](openai.md#usage-is-measured-in-seconds) is the one that reports no tokens for
 itself: it meters the spoken call in seconds, recorded as `audio_seconds` and priced, so a
 `cost_limit` bounds the call once its rate is known. The backend it delegates to is billed per token
@@ -94,7 +95,10 @@ counting anything twice. Nested provider-response spans have the OpenTelemetry n
 `chat {model}` but display as `response {model}` in Logfire. A response span's input is the conversation ahead of the
 response, with any [retained audio](history.md#retaining-audio). `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
-spans mark those boundaries. A tool round can produce several response spans within one turn.
+spans mark those boundaries. A tool round can produce several response spans within one turn. On OpenAI and Azure
+OpenAI with [`openai_prune_tool_items`](openai.md#pruning-tool-items) set, a `prune tool items` span marks each
+deletion of answered tool rounds from the server conversation, with the pruned call ids in its `tool_call_ids`
+attribute.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
 That's normal on OpenAI server VAD: the provider starts a response for each detected speech segment,

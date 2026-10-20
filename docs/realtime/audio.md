@@ -29,8 +29,9 @@ Start with 100 ms input chunks to balance interactive cadence with per-chunk ove
 your transport. The provider pages list their model-specific rates and constraints:
 [OpenAI](openai.md#feature-support-and-limitations),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
-[Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations).
+[Google Gemini](gemini.md#feature-support-and-limitations),
+[xAI](xai.md#feature-support-and-limitations), and
+[ElevenLabs](elevenlabs.md#audio-formats).
 
 For a complete microphone and speaker loop with bounded buffers, playback accounting, and clean
 shutdown, use the [realtime voice assistant example](../examples/realtime-voice.md).
@@ -134,7 +135,9 @@ The shared `input_transcription_model` setting controls whether user speech reac
 
 OpenAI, Azure OpenAI, and xAI use dedicated transcription models. Gemini uses native transcription,
 configured with `google_input_transcription`: a pinned model ID in the shared setting is ignored
-(native transcription stays on), and only `None` turns it off. Provider-specific defaults and
+(native transcription stays on), and only `None` turns it off. ElevenLabs Agents transcribes with the ASR
+configured on the agent: a pinned model ID is ignored too, and `None` raises, since the agent's pipeline needs the
+transcript to answer. Provider-specific defaults and
 deployment constraints live on the provider pages.
 
 The user transcript is a separate transcription pass, not a readout of what the realtime model
