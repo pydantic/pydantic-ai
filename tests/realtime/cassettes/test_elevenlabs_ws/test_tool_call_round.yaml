@@ -37,10 +37,10 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      id: conv_2001m5d25h2nem089jcd50sbpxwp
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000001
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000001
 - kind: message
   direction: sent
   at: 0.0
@@ -59,6 +59,8 @@ interactions:
             rate: 24000
           turn_detection:
             type: semantic_vad
+            create_response: true
+            interrupt_response: true
         output:
           format:
             type: audio/pcm
@@ -81,12 +83,12 @@ interactions:
   data:
     type: conversation.created
     conversation:
-      id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      id: conv_2001m5d25h2nem089jcd50sbpxwp
       object: realtime.conversation
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000002
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000002
 - kind: message
   direction: received
-  at: 0.873
+  at: 1.48
   data:
     type: session.updated
     session:
@@ -133,13 +135,13 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      id: conv_2001m5d25h2nem089jcd50sbpxwp
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000003
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000003
 - kind: message
   direction: sent
-  at: 0.873
+  at: 1.48
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
@@ -152,7 +154,7 @@ interactions:
         text: What is the weather in London?
 - kind: message
   direction: sent
-  at: 0.873
+  at: 1.48
   data:
     type: response.create
     event_id: pydantic_ai.response.0
@@ -161,7 +163,7 @@ interactions:
         pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.923
+  at: 1.528
   data:
     type: conversation.item.added
     previous_item_id: null
@@ -179,10 +181,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000004
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000004
 - kind: message
   direction: received
-  at: 0.923
+  at: 1.528
   data:
     type: conversation.item.done
     previous_item_id: null
@@ -200,17 +202,17 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000005
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000005
 - kind: message
   direction: received
-  at: 1.476
+  at: 2.548
   data:
     type: response.created
     response:
-      id: resp_1101m5czedcmfqgvek14emv1rfxk
+      id: resp_9001m5d25kjqeq1b48b4nhhvefpx
       object: realtime.response
       status: in_progress
-      conversation_id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      conversation_id: conv_2001m5d25h2nem089jcd50sbpxwp
       output: []
       usage: null
       output_modalities:
@@ -219,113 +221,113 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000006
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000006
 - kind: message
   direction: received
-  at: 1.477
+  at: 2.548
   data:
     type: response.output_item.added
-    response_id: resp_1101m5czedcmfqgvek14emv1rfxk
+    response_id: resp_9001m5d25kjqeq1b48b4nhhvefpx
     output_index: 0
     item:
-      id: item_7401m5czedcnehxa8c9ezcdc7hvw
+      id: item_7801m5d25kjrfwpbem3bnrxypj1f
       object: realtime.item
       type: function_call
       status: in_progress
       name: get_weather
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       arguments: ''
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000007
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000007
 - kind: message
   direction: received
-  at: 1.477
+  at: 2.548
   data:
     type: conversation.item.added
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_7401m5czedcnehxa8c9ezcdc7hvw
+      id: item_7801m5d25kjrfwpbem3bnrxypj1f
       type: function_call
       role: null
       content: null
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       name: get_weather
       arguments: ''
       output: null
       status: in_progress
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000008
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000008
 - kind: message
   direction: received
-  at: 1.477
+  at: 2.548
   data:
     type: response.function_call_arguments.delta
-    response_id: resp_1101m5czedcmfqgvek14emv1rfxk
-    item_id: item_7401m5czedcnehxa8c9ezcdc7hvw
+    response_id: resp_9001m5d25kjqeq1b48b4nhhvefpx
+    item_id: item_7801m5d25kjrfwpbem3bnrxypj1f
     output_index: 0
-    call_id: chatcmpl-tool-9c7c5c086e209f14
+    call_id: chatcmpl-tool-bd9079791dba771b
     delta: '{"city": "London"}'
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000009
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000009
 - kind: message
   direction: received
-  at: 1.477
+  at: 2.548
   data:
     type: response.function_call_arguments.done
-    response_id: resp_1101m5czedcmfqgvek14emv1rfxk
-    item_id: item_7401m5czedcnehxa8c9ezcdc7hvw
+    response_id: resp_9001m5d25kjqeq1b48b4nhhvefpx
+    item_id: item_7801m5d25kjrfwpbem3bnrxypj1f
     output_index: 0
-    call_id: chatcmpl-tool-9c7c5c086e209f14
+    call_id: chatcmpl-tool-bd9079791dba771b
     name: get_weather
     arguments: '{"city": "London"}'
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000010
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000010
 - kind: message
   direction: received
-  at: 1.478
+  at: 2.549
   data:
     type: conversation.item.done
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_7401m5czedcnehxa8c9ezcdc7hvw
+      id: item_7801m5d25kjrfwpbem3bnrxypj1f
       type: function_call
       role: null
       content: null
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       name: get_weather
       arguments: '{"city": "London"}'
       output: null
       status: completed
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000011
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000011
 - kind: message
   direction: received
-  at: 1.478
+  at: 2.549
   data:
     type: response.output_item.done
-    response_id: resp_1101m5czedcmfqgvek14emv1rfxk
+    response_id: resp_9001m5d25kjqeq1b48b4nhhvefpx
     output_index: 0
     item:
-      id: item_7401m5czedcnehxa8c9ezcdc7hvw
+      id: item_7801m5d25kjrfwpbem3bnrxypj1f
       object: realtime.item
       type: function_call
       status: completed
       name: get_weather
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       arguments: '{"city": "London"}'
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000012
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000012
 - kind: message
   direction: received
-  at: 1.478
+  at: 2.549
   data:
     type: response.done
     response:
-      id: resp_1101m5czedcmfqgvek14emv1rfxk
+      id: resp_9001m5d25kjqeq1b48b4nhhvefpx
       object: realtime.response
       status: completed
-      conversation_id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      conversation_id: conv_2001m5d25h2nem089jcd50sbpxwp
       output:
-      - id: item_7401m5czedcnehxa8c9ezcdc7hvw
+      - id: item_7801m5d25kjrfwpbem3bnrxypj1f
         object: realtime.item
         type: function_call
         status: completed
         name: get_weather
-        call_id: chatcmpl-tool-9c7c5c086e209f14
+        call_id: chatcmpl-tool-bd9079791dba771b
         arguments: '{"city": "London"}'
       usage: null
       output_modalities:
@@ -334,26 +336,26 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000013
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000013
 - kind: message
   direction: received
-  at: 1.478
+  at: 2.549
   data:
     type: rate_limits.updated
     rate_limits: []
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000014
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000014
 - kind: message
   direction: sent
-  at: 1.479
+  at: 2.55
   data:
     type: conversation.item.create
     item:
       type: function_call_output
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       output: It is foggy and 12 degrees in London.
 - kind: message
   direction: sent
-  at: 1.479
+  at: 2.55
   data:
     type: response.create
     event_id: pydantic_ai.response.1
@@ -362,46 +364,46 @@ interactions:
         pydantic_ai_inputs: '1'
 - kind: message
   direction: received
-  at: 1.528
+  at: 2.597
   data:
     type: conversation.item.added
-    previous_item_id: item_7401m5czedcnehxa8c9ezcdc7hvw
+    previous_item_id: item_7801m5d25kjrfwpbem3bnrxypj1f
     item:
       id: msg_000001
       type: function_call_output
       role: null
       content: null
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       name: null
       arguments: null
       output: It is foggy and 12 degrees in London.
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000015
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000015
 - kind: message
   direction: received
-  at: 1.528
+  at: 2.597
   data:
     type: conversation.item.done
-    previous_item_id: item_7401m5czedcnehxa8c9ezcdc7hvw
+    previous_item_id: item_7801m5d25kjrfwpbem3bnrxypj1f
     item:
       id: msg_000001
       type: function_call_output
       role: null
       content: null
-      call_id: chatcmpl-tool-9c7c5c086e209f14
+      call_id: chatcmpl-tool-bd9079791dba771b
       name: null
       arguments: null
       output: It is foggy and 12 degrees in London.
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000016
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000016
 - kind: message
   direction: received
-  at: 1.741
+  at: 2.84
   data:
     type: response.created
     response:
-      id: resp_0201m5czedmxfj6shd5fz7n7g2gx
+      id: resp_4501m5d25kvzek3sqehqj2sewqw4
       object: realtime.response
       status: in_progress
-      conversation_id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      conversation_id: conv_2001m5d25h2nem089jcd50sbpxwp
       output: []
       usage: null
       output_modalities:
@@ -410,30 +412,30 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000017
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000017
 - kind: message
   direction: received
-  at: 1.741
+  at: 2.841
   data:
     type: response.output_item.added
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
     output_index: 0
     item:
-      id: item_9401m5czedmyfynvfb717krtsd11
+      id: item_0601m5d25kw0e938t301vcpyz2rf
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000018
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000018
 - kind: message
   direction: received
-  at: 1.741
+  at: 2.841
   data:
     type: conversation.item.added
     previous_item_id: msg_000001
     item:
-      id: item_9401m5czedmyfynvfb717krtsd11
+      id: item_0601m5d25kw0e938t301vcpyz2rf
       type: message
       role: assistant
       content: []
@@ -442,221 +444,185 @@ interactions:
       arguments: null
       output: null
       status: in_progress
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000019
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000019
 - kind: message
   direction: received
-  at: 1.741
+  at: 2.841
   data:
     type: response.content_part.added
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: null
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000020
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000020
 - kind: message
   direction: received
-  at: 1.741
+  at: 2.841
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: The weather in London is currently foggy with a temperature
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000021
+    delta: It is foggy and twelve degrees in London.
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000021
 - kind: message
   direction: received
-  at: 1.764
-  data:
-    type: response.output_audio_transcript.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
-    output_index: 0
-    content_index: 0
-    delta: ' of twelve degrees.'
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000022
-- kind: message
-  direction: received
-  at: 1.861
+  at: 2.949
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQABAAEAAQAB
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000023
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000022
 - kind: message
   direction: received
-  at: 1.883
+  at: 2.973
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: S/yw+3X79/sD/Nf7cvvC+z38Ifx0+2D7xPvv+8L73Pub
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000024
+    delta: 5/8hAPH+JP/+/jX/eP8IANYARgH1AHYAqgAgAGj/Gf+O
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000023
 - kind: message
   direction: received
-  at: 1.889
+  at: 2.991
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: 2PfH+bv6Xv2F/3gDRQfrCicPKxLzFAMYQxq+G/wcDx5C
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000025
+    delta: p/e39EzxIvPm9Sbzre2i7Ebs9et77mPwfvat+hf2BPQe
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000024
 - kind: message
   direction: received
-  at: 1.941
+  at: 3.034
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: AwoiCP8LGA+lCxwLTQvjCl8L5wp1DJ8M0QoJCBcImwcE
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000026
+    delta: vP62AZn8Awch/OYE3AdLA/D9p/TqAlIIkAihALD6NACt
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000025
 - kind: message
   direction: received
-  at: 2.066
+  at: 3.145
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: Xu/T74LwN+9w7N3pB+iw56bnBuqc6WTnYuWq4nPhHuIb
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000027
+    delta: SQ49DG0F3gFr/ej0Aews5n/hsd353FHe0eNj6Gnqweqd
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000026
 - kind: message
   direction: received
-  at: 2.217
+  at: 3.302
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: RQI4CQADjfxrA/b8APteCtECowPH/qP22v3HBPYMXAR1
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000028
+    delta: r/0w+T39d/6pAA79/vyi/oH6hwBoBNACvQWqAjL7r/vX
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000027
 - kind: message
   direction: received
-  at: 2.241
+  at: 3.352
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: UiHcH/geMxlWEboL/wTH+7DxLuuV5gbhXdwk2r/Zdtuz
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000029
+    delta: H/Yk9gD34fcK+Pf41vnT+Bf4w/lf+aT4E/ld+W/52PnO
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000028
 - kind: message
   direction: received
-  at: 2.427
+  at: 3.436
   data:
     type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    delta: 4f/O/8v/4//e/wYAAwDs//z/AwDK/9z/zv/l/+r/3v8F
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000030
+    delta: UgAJAP3/d//9/ycAKAB0AD0Agv8l//b+if7M/cf8Fvzv
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000029
 - kind: message
   direction: received
-  at: 2.524
-  data:
-    type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
-    output_index: 0
-    content_index: 0
-    delta: QfZo9AvzZ/K08r3zHfUT9z/4XfpY/dn/2wHEAzwF1AVH
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000031
-- kind: message
-  direction: received
-  at: 2.635
-  data:
-    type: response.output_audio.delta
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
-    output_index: 0
-    content_index: 0
-    delta: kATCAfMADP7p/ob+nv11/fX4Sfr1/5MDbAE3/BT5tve8
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000032
-- kind: message
-  direction: received
-  at: 6.588
+  at: 6.231
   data:
     type: response.output_audio.done
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000033
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000030
 - kind: message
   direction: received
-  at: 6.589
+  at: 6.231
   data:
     type: response.output_audio_transcript.done
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
-    transcript: The weather in London is currently foggy with a temperature of twelve
-      degrees.
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000034
+    transcript: It is foggy and twelve degrees in London.
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000031
 - kind: message
   direction: received
-  at: 6.589
+  at: 6.231
   data:
     type: response.content_part.done
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
-    item_id: item_9401m5czedmyfynvfb717krtsd11
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
+    item_id: item_0601m5d25kw0e938t301vcpyz2rf
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
-      transcript: The weather in London is currently foggy with a temperature of twelve
-        degrees.
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000035
+      transcript: It is foggy and twelve degrees in London.
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000032
 - kind: message
   direction: received
-  at: 6.589
+  at: 6.231
   data:
     type: conversation.item.done
     previous_item_id: msg_000001
     item:
-      id: item_9401m5czedmyfynvfb717krtsd11
+      id: item_0601m5d25kw0e938t301vcpyz2rf
       type: message
       role: assistant
       content:
       - type: output_audio
         text: null
         audio: ''
-        transcript: The weather in London is currently foggy with a temperature of
-          twelve degrees.
+        transcript: It is foggy and twelve degrees in London.
       call_id: null
       name: null
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000036
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000033
 - kind: message
   direction: received
-  at: 6.589
+  at: 6.231
   data:
     type: response.output_item.done
-    response_id: resp_0201m5czedmxfj6shd5fz7n7g2gx
+    response_id: resp_4501m5d25kvzek3sqehqj2sewqw4
     output_index: 0
     item:
-      id: item_9401m5czedmyfynvfb717krtsd11
+      id: item_0601m5d25kw0e938t301vcpyz2rf
       object: realtime.item
       type: message
       status: completed
@@ -664,21 +630,20 @@ interactions:
       content:
       - type: output_audio
         audio: ''
-        transcript: The weather in London is currently foggy with a temperature of
-          twelve degrees.
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000037
+        transcript: It is foggy and twelve degrees in London.
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000034
 - kind: message
   direction: received
-  at: 6.589
+  at: 6.231
   data:
     type: response.done
     response:
-      id: resp_0201m5czedmxfj6shd5fz7n7g2gx
+      id: resp_4501m5d25kvzek3sqehqj2sewqw4
       object: realtime.response
       status: completed
-      conversation_id: conv_3601m5czebxzf0d9v5m4j77bpkjw
+      conversation_id: conv_2001m5d25h2nem089jcd50sbpxwp
       output:
-      - id: item_9401m5czedmyfynvfb717krtsd11
+      - id: item_0601m5d25kw0e938t301vcpyz2rf
         object: realtime.item
         type: message
         status: completed
@@ -686,8 +651,7 @@ interactions:
         content:
         - type: output_audio
           audio: ''
-          transcript: The weather in London is currently foggy with a temperature
-            of twelve degrees.
+          transcript: It is foggy and twelve degrees in London.
       usage: null
       output_modalities:
       - audio
@@ -695,4 +659,4 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_3601m5czebxzf0d9v5m4j77bpkjw_000038
+    event_id: evt_conv_2001m5d25h2nem089jcd50sbpxwp_000035

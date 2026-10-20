@@ -40,6 +40,7 @@ with try_import() as imports_successful:
         ElevenLabsRealtimeConnection,
         ElevenLabsRealtimeModel,
         ElevenLabsRealtimeModelSettings,
+        _ElevenLabsLifecycle,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
@@ -98,7 +99,9 @@ def test_model_rejects_foreign_provider() -> None:
         ElevenLabsRealtimeModel('eleven_realtime_v1_mini', provider=OpenAIProvider(api_key='k'))  # pyright: ignore[reportArgumentType]
 
 
-def test_model_identity() -> None:
+def test_model_identity(env: TestEnv) -> None:
+    env.set('ELEVENLABS_API_KEY', 'env-key')
+    assert ElevenLabsRealtimeModel('eleven_realtime_v1_max').base_url == 'https://api.elevenlabs.io'
     model = _model()
     assert model.model_name == 'eleven_realtime_v1_mini'
     assert model.system == 'elevenlabs'
@@ -549,3 +552,25 @@ async def test_audio_tags_kept_when_stripping_is_off(monkeypatch: pytest.MonkeyP
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
     assert [event.text for event in events if isinstance(event, OutputTranscript)] == ['[cheerful] Hi.']
+
+
+async def test_keep_alive_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', None)
+    ws = FakeWebSocket([])
+    assert await collect_codec_events(ElevenLabsRealtimeConnection(ws)) == []  # type: ignore[arg-type]
+    assert ws.sent == []
+
+
+async def test_tool_calls_of_a_response_under_way_are_not_abandoned() -> None:
+    ws = FakeWebSocket(frames(created('resp_1'), _call('resp_1', 'call_1'), created('resp_2')))
+    events = await collect_codec_events(ElevenLabsRealtimeConnection(ws))  # type: ignore[arg-type]
+    assert [event for event in events if getattr(event, 'type', None) == 'tool_calls_abandoned'] == []
+
+
+def test_semantic_vad_stop_is_not_a_commit() -> None:
+    """A stop doesn't place the turn: semantic VAD may hear the user carry on, and commits the turn itself."""
+    stopped = {'type': 'input_audio_buffer.speech_stopped', 'event_id': 'e', 'audio_end_ms': 1, 'item_id': 'item_1'}
+    assert _ElevenLabsLifecycle(server_vad=True).speech_stopped(stopped) == []
+    manual = _ElevenLabsLifecycle(server_vad=False)
+    assert manual.speech_stopped(stopped) == []
+    assert manual._vad_stopped == set()  # pyright: ignore[reportPrivateUsage]

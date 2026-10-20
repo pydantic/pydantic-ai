@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
 try:
     import websockets as websockets
+    from openai.types.realtime import InputAudioBufferSpeechStoppedEvent
     from websockets.asyncio.client import ClientConnection
 
     from ..providers.openai import OpenAIProvider
@@ -174,7 +175,10 @@ class _ElevenLabsLifecycle(OpenAILifecycle):
     """
 
     def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
-        del data
+        # Its commit, when it comes, is still VAD's own, not the acknowledgement of one of ours. (ElevenLabs also
+        # reports a stop for an item it never reported starting after a commit of ours, which is no turn at all.)
+        if (item_id := InputAudioBufferSpeechStoppedEvent.model_validate(data).item_id) and self._server_vad:
+            self._vad_stopped.add(item_id)
         return []
 
 
@@ -209,6 +213,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
+        manual_turns: bool = False,
     ) -> None:
         # ElevenLabs transcribes every spoken turn, so its transcripts arrive (and belong in history) even when
         # `input_transcription_model=None` asked for none.
@@ -224,8 +229,10 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             audio_output_sample_rate=audio_output_sample_rate,
             prune_tool_items=prune_tool_items,
             keep_tool_items=keep_tool_items,
+            manual_turns=manual_turns,
         )
-        self._lifecycle = _ElevenLabsLifecycle()
+        # Semantic VAD commits the speech it hears on its own, unless turn detection is off.
+        self._lifecycle = _ElevenLabsLifecycle(server_vad=not manual_turns)
         self._strip_audio_tags = True
         # The streamed transcript of each output item under way, with its audio tags removed, and the tags each
         # response's transcripts held (see `_strip_transcript_tags`).

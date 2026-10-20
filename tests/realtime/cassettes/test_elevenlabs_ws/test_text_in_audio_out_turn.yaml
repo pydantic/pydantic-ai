@@ -37,10 +37,10 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_7401m5czdpqgfwcasnebzj3bg6w7
+      id: conv_0501m5d24wm4e7psnan3jypstkke
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000001
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000001
 - kind: message
   direction: sent
   at: 0.0
@@ -58,6 +58,8 @@ interactions:
             rate: 24000
           turn_detection:
             type: semantic_vad
+            create_response: true
+            interrupt_response: true
         output:
           format:
             type: audio/pcm
@@ -68,12 +70,12 @@ interactions:
   data:
     type: conversation.created
     conversation:
-      id: conv_7401m5czdpqgfwcasnebzj3bg6w7
+      id: conv_0501m5d24wm4e7psnan3jypstkke
       object: realtime.conversation
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000002
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000002
 - kind: message
   direction: received
-  at: 0.905
+  at: 1.26
   data:
     type: session.updated
     session:
@@ -108,13 +110,13 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_7401m5czdpqgfwcasnebzj3bg6w7
+      id: conv_0501m5d24wm4e7psnan3jypstkke
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000003
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000003
 - kind: message
   direction: sent
-  at: 0.905
+  at: 1.26
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
@@ -127,7 +129,7 @@ interactions:
         text: Say a short greeting.
 - kind: message
   direction: sent
-  at: 0.905
+  at: 1.26
   data:
     type: response.create
     event_id: pydantic_ai.response.0
@@ -136,7 +138,7 @@ interactions:
         pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.954
+  at: 1.308
   data:
     type: conversation.item.added
     previous_item_id: null
@@ -154,10 +156,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000004
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000004
 - kind: message
   direction: received
-  at: 0.956
+  at: 1.309
   data:
     type: conversation.item.done
     previous_item_id: null
@@ -175,17 +177,17 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000005
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000005
 - kind: message
   direction: received
-  at: 1.214
+  at: 1.691
   data:
     type: response.created
     response:
-      id: resp_8101m5czdqy1efbsqghjgaxes2n7
+      id: resp_5201m5d24yamfxnbftk6h2dt7wcn
       object: realtime.response
       status: in_progress
-      conversation_id: conv_7401m5czdpqgfwcasnebzj3bg6w7
+      conversation_id: conv_0501m5d24wm4e7psnan3jypstkke
       output: []
       usage: null
       output_modalities:
@@ -194,30 +196,30 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000006
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000006
 - kind: message
   direction: received
-  at: 1.214
+  at: 1.691
   data:
     type: response.output_item.added
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
     output_index: 0
     item:
-      id: item_5901m5czdqy2egt9z2kjs1afj6yv
+      id: item_5901m5d24yanftftqth528zx0d45
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000007
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000007
 - kind: message
   direction: received
-  at: 1.214
+  at: 1.691
   data:
     type: conversation.item.added
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_5901m5czdqy2egt9z2kjs1afj6yv
+      id: item_5901m5d24yanftftqth528zx0d45
       type: message
       role: assistant
       content: []
@@ -226,130 +228,130 @@ interactions:
       arguments: null
       output: null
       status: in_progress
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000008
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000008
 - kind: message
   direction: received
-  at: 1.214
+  at: 1.692
   data:
     type: response.content_part.added
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: null
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000009
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000009
 - kind: message
   direction: received
-  at: 1.214
+  at: 1.692
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
     delta: Hello there
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000010
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000010
 - kind: message
   direction: received
-  at: 1.317
+  at: 1.793
   data:
     type: response.output_audio.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
     delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000011
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000011
 - kind: message
   direction: received
-  at: 1.34
+  at: 1.817
   data:
     type: response.output_audio.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
-    delta: dvjf+GD/SQSRAv3+9P26AI77h/jL9NP3HP5b/5wCBgIt
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000012
+    delta: 1vqQ+tX3W/mJ/NQC6AjSBfYHZQ3+DK8MmBDCEJ8PrQ2e
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000012
 - kind: message
   direction: received
-  at: 1.358
+  at: 1.829
   data:
     type: response.output_audio.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
-    delta: IO987z3wBe4L7PLtyvMv9Gbx6fEn+XsCegetBzAInQ7g
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000013
+    delta: wPYH+kL7qvxIAE4B/QTlBdoDCgn5DeMPaBqnIiofTCBc
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000013
 - kind: message
   direction: received
-  at: 1.4
+  at: 1.863
   data:
     type: response.output_audio.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
-    delta: fPi9+Kj4zPid+Aj4CPiz90P3+vaZ9nz2C/aH9XX1lfXN
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000014
+    delta: Iwl3CdUJdgqfCiwKQwqmCm4KWwqcCqgKNQqfCdYJigmX
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000014
 - kind: message
   direction: received
-  at: 1.443
+  at: 1.898
   data:
     type: response.output_audio.delta
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
-    delta: uwD1AHECTAI7A/oC9QLkAtUBWAGCABEA2/6L/gv+zP2L
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000015
+    delta: vgB/AMUBZwGvAuECGgMnAzoC5AE8AdoAfv9e/4v+OP4i
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000015
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: response.output_audio.done
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000016
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000016
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: response.output_audio_transcript.done
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
     transcript: Hello there
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000017
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000017
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: response.content_part.done
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
-    item_id: item_5901m5czdqy2egt9z2kjs1afj6yv
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
+    item_id: item_5901m5d24yanftftqth528zx0d45
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: Hello there
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000018
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000018
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: conversation.item.done
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_5901m5czdqy2egt9z2kjs1afj6yv
+      id: item_5901m5d24yanftftqth528zx0d45
       type: message
       role: assistant
       content:
@@ -362,16 +364,16 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000019
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000019
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: response.output_item.done
-    response_id: resp_8101m5czdqy1efbsqghjgaxes2n7
+    response_id: resp_5201m5d24yamfxnbftk6h2dt7wcn
     output_index: 0
     item:
-      id: item_5901m5czdqy2egt9z2kjs1afj6yv
+      id: item_5901m5d24yanftftqth528zx0d45
       object: realtime.item
       type: message
       status: completed
@@ -380,19 +382,19 @@ interactions:
       - type: output_audio
         audio: ''
         transcript: Hello there
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000020
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000020
 - kind: message
   direction: received
-  at: 2.504
+  at: 2.747
   data:
     type: response.done
     response:
-      id: resp_8101m5czdqy1efbsqghjgaxes2n7
+      id: resp_5201m5d24yamfxnbftk6h2dt7wcn
       object: realtime.response
       status: completed
-      conversation_id: conv_7401m5czdpqgfwcasnebzj3bg6w7
+      conversation_id: conv_0501m5d24wm4e7psnan3jypstkke
       output:
-      - id: item_5901m5czdqy2egt9z2kjs1afj6yv
+      - id: item_5901m5d24yanftftqth528zx0d45
         object: realtime.item
         type: message
         status: completed
@@ -408,4 +410,4 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_7401m5czdpqgfwcasnebzj3bg6w7_000021
+    event_id: evt_conv_0501m5d24wm4e7psnan3jypstkke_000021

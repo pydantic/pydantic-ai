@@ -37,10 +37,10 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      id: conv_5501m5d25vhpeqnvjen3hxg1js1m
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000001
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000001
 - kind: message
   direction: sent
   at: 0.0
@@ -58,6 +58,8 @@ interactions:
             rate: 24000
           turn_detection:
             type: semantic_vad
+            create_response: true
+            interrupt_response: true
         output:
           format:
             type: audio/pcm
@@ -68,12 +70,12 @@ interactions:
   data:
     type: conversation.created
     conversation:
-      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      id: conv_5501m5d25vhpeqnvjen3hxg1js1m
       object: realtime.conversation
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000002
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000002
 - kind: message
   direction: received
-  at: 1.141
+  at: 13.572
   data:
     type: session.updated
     session:
@@ -108,13 +110,13 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_8301m5czeqmhezptvp81wzc0dsks
+      id: conv_5501m5d25vhpeqnvjen3hxg1js1m
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000003
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000003
 - kind: message
   direction: sent
-  at: 1.142
+  at: 13.573
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
@@ -127,7 +129,7 @@ interactions:
         text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
 - kind: message
   direction: sent
-  at: 1.142
+  at: 13.573
   data:
     type: response.create
     event_id: pydantic_ai.response.0
@@ -136,7 +138,7 @@ interactions:
         pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 1.191
+  at: 13.619
   data:
     type: conversation.item.added
     previous_item_id: null
@@ -154,10 +156,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000004
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000004
 - kind: message
   direction: received
-  at: 1.191
+  at: 13.619
   data:
     type: conversation.item.done
     previous_item_id: null
@@ -175,17 +177,17 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000005
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000005
 - kind: message
   direction: received
-  at: 1.498
+  at: 14.13
   data:
     type: response.created
     response:
-      id: resp_1701m5czes45esjvqvgbw5q9b2kz
+      id: resp_3301m5d269bte3j9j3471tq96510
       object: realtime.response
       status: in_progress
-      conversation_id: conv_8301m5czeqmhezptvp81wzc0dsks
+      conversation_id: conv_5501m5d25vhpeqnvjen3hxg1js1m
       output: []
       usage: null
       output_modalities:
@@ -194,30 +196,30 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000006
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000006
 - kind: message
   direction: received
-  at: 1.498
+  at: 14.13
   data:
     type: response.output_item.added
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    response_id: resp_3301m5d269bte3j9j3471tq96510
     output_index: 0
     item:
-      id: item_7201m5czes46evza5s0b26264ap9
+      id: item_5601m5d269bveha93d1wfhh727kh
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000007
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000007
 - kind: message
   direction: received
-  at: 1.498
+  at: 14.13
   data:
     type: conversation.item.added
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_7201m5czes46evza5s0b26264ap9
+      id: item_5601m5d269bveha93d1wfhh727kh
       type: message
       role: assistant
       content: []
@@ -226,185 +228,174 @@ interactions:
       arguments: null
       output: null
       status: in_progress
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000008
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000008
 - kind: message
   direction: received
-  at: 1.498
+  at: 14.13
   data:
     type: response.content_part.added
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: null
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000009
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000009
 - kind: message
   direction: received
-  at: 1.498
+  at: 14.13
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: I acknowledge your code word is cobalt.
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000010
+    delta: I have noted the code word.
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000010
 - kind: message
   direction: received
-  at: 1.591
+  at: 14.228
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: AAAAAAAAAAAAAAEAAQABAAAAAAAAAAAAAAABAAAAAAAB
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000011
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000011
 - kind: message
   direction: received
-  at: 1.602
+  at: 14.252
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: JBQAEt0Qew5tCc8Esf+u+fz0s+6K6mHnU+fc6Afq7+sC
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000012
+    delta: 8fjZ+YIAG/8S/IL3vv1zAKn/8vm0+DT9/f34+kn38/eK
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000012
 - kind: message
   direction: received
-  at: 1.611
+  at: 14.264
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: sP0N/kr+rf4p/8L/HAB/AAkBhgEGAl4CnwKGAmMCdAKZ
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000013
+    delta: kve2BSMSXxe3Gp8aJBfPGnsfOiPuJ+glXR5cFtAPdgY/
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000013
 - kind: message
   direction: received
-  at: 1.658
+  at: 14.301
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: 5QA4AdYC7wT6CDYNnxFRFc0WiBYMFtUUJhQYFaQWwhl7
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000014
+    delta: VQ+RD9wP2Q/nD8APqA80D7gOcg7zDfUNkQ1XDeQMWgwG
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000014
 - kind: message
   direction: received
-  at: 1.765
+  at: 14.43
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: JRPXDFIKJgfZDT8Q/Aa3BloKYQ7lDiUQNxGvELoS4RhJ
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000015
+    delta: a/VK9uL2cfci+Bn5x/kS+z78YP1l/qL/0QCZAY4CGwMJ
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000015
 - kind: message
   direction: received
-  at: 1.884
+  at: 14.439
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: xwOOAzgDBQPEAmMCCgKhAVkBEQHQAJcAVAAlAOD/oP9c
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000016
+    delta: LfsI/L37wftv/OT8jf0N/QP9l/vr+438//pd++L6nPnX
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000016
 - kind: message
   direction: received
-  at: 1.977
+  at: 14.597
   data:
     type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    delta: wv+9/7T/qv+l/6f/qP+g/5r/mf+S/43/j/+P/4//iv+D
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000017
+    delta: GgPcAqcCcQJEAvEB4QGuAZsBgQFlAWUBQAFEARwBGwH1
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000017
 - kind: message
   direction: received
-  at: 1.977
-  data:
-    type: response.output_audio.delta
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
-    output_index: 0
-    content_index: 0
-    delta: AAAAAAAAAAACAAEAAgABAAMAAgABAAIAAQAAAAEAAQAA
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000018
-- kind: message
-  direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: response.output_audio.done
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000019
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000018
 - kind: message
   direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: response.output_audio_transcript.done
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
-    transcript: I acknowledge your code word is cobalt.
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000020
+    transcript: I have noted the code word.
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000019
 - kind: message
   direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: response.content_part.done
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
-    item_id: item_7201m5czes46evza5s0b26264ap9
+    response_id: resp_3301m5d269bte3j9j3471tq96510
+    item_id: item_5601m5d269bveha93d1wfhh727kh
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
-      transcript: I acknowledge your code word is cobalt.
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000021
+      transcript: I have noted the code word.
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000020
 - kind: message
   direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: conversation.item.done
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_7201m5czes46evza5s0b26264ap9
+      id: item_5601m5d269bveha93d1wfhh727kh
       type: message
       role: assistant
       content:
       - type: output_audio
         text: null
         audio: ''
-        transcript: I acknowledge your code word is cobalt.
+        transcript: I have noted the code word.
       call_id: null
       name: null
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000022
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000021
 - kind: message
   direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: response.output_item.done
-    response_id: resp_1701m5czes45esjvqvgbw5q9b2kz
+    response_id: resp_3301m5d269bte3j9j3471tq96510
     output_index: 0
     item:
-      id: item_7201m5czes46evza5s0b26264ap9
+      id: item_5601m5d269bveha93d1wfhh727kh
       object: realtime.item
       type: message
       status: completed
@@ -412,20 +403,20 @@ interactions:
       content:
       - type: output_audio
         audio: ''
-        transcript: I acknowledge your code word is cobalt.
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000023
+        transcript: I have noted the code word.
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000022
 - kind: message
   direction: received
-  at: 4.307
+  at: 16.435
   data:
     type: response.done
     response:
-      id: resp_1701m5czes45esjvqvgbw5q9b2kz
+      id: resp_3301m5d269bte3j9j3471tq96510
       object: realtime.response
       status: completed
-      conversation_id: conv_8301m5czeqmhezptvp81wzc0dsks
+      conversation_id: conv_5501m5d25vhpeqnvjen3hxg1js1m
       output:
-      - id: item_7201m5czes46evza5s0b26264ap9
+      - id: item_5601m5d269bveha93d1wfhh727kh
         object: realtime.item
         type: message
         status: completed
@@ -433,7 +424,7 @@ interactions:
         content:
         - type: output_audio
           audio: ''
-          transcript: I acknowledge your code word is cobalt.
+          transcript: I have noted the code word.
       usage: null
       output_modalities:
       - audio
@@ -441,22 +432,22 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000024
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000023
 - kind: message
   direction: received
-  at: 4.308
+  at: 16.436
   data:
     type: rate_limits.updated
     rate_limits: []
-    event_id: evt_conv_8301m5czeqmhezptvp81wzc0dsks_000025
+    event_id: evt_conv_5501m5d25vhpeqnvjen3hxg1js1m_000024
 - kind: close
   code: 1011
   reason: test reconnect
   ok: false
-  at: 4.357
+  at: 16.482
 - kind: message
   direction: received
-  at: 4.506
+  at: 16.613
   data:
     type: session.created
     session:
@@ -491,13 +482,13 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      id: conv_2301m5d26brrepar412hnra47m8b
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000001
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000001
 - kind: message
   direction: sent
-  at: 4.506
+  at: 16.613
   data:
     type: session.update
     session:
@@ -512,22 +503,24 @@ interactions:
             rate: 24000
           turn_detection:
             type: semantic_vad
+            create_response: true
+            interrupt_response: true
         output:
           format:
             type: audio/pcm
       model: eleven_realtime_v1_mini
 - kind: message
   direction: received
-  at: 4.506
+  at: 16.613
   data:
     type: conversation.created
     conversation:
-      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      id: conv_2301m5d26brrepar412hnra47m8b
       object: realtime.conversation
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000002
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000002
 - kind: message
   direction: received
-  at: 5.602
+  at: 17.863
   data:
     type: session.updated
     session:
@@ -562,13 +555,13 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      id: conv_2301m5d26brrepar412hnra47m8b
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000003
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000003
 - kind: message
   direction: sent
-  at: 5.602
+  at: 17.864
   data:
     type: conversation.item.create
     item:
@@ -579,7 +572,7 @@ interactions:
         text: 'Remember exactly: the code word is cobalt. Briefly acknowledge it.'
 - kind: message
   direction: sent
-  at: 5.603
+  at: 17.864
   data:
     type: conversation.item.create
     item:
@@ -587,10 +580,10 @@ interactions:
       role: assistant
       content:
       - type: output_text
-        text: I acknowledge your code word is cobalt.
+        text: I have noted the code word.
 - kind: message
   direction: sent
-  at: 5.603
+  at: 17.864
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.1
@@ -603,7 +596,7 @@ interactions:
         text: What code word did I ask you to remember?
 - kind: message
   direction: sent
-  at: 5.603
+  at: 17.864
   data:
     type: response.create
     event_id: pydantic_ai.response.1
@@ -612,7 +605,7 @@ interactions:
         pydantic_ai_inputs: '1'
 - kind: message
   direction: received
-  at: 5.651
+  at: 17.913
   data:
     type: conversation.item.added
     previous_item_id: null
@@ -630,10 +623,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000004
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000004
 - kind: message
   direction: received
-  at: 5.651
+  at: 17.913
   data:
     type: conversation.item.done
     previous_item_id: null
@@ -651,10 +644,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000005
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000005
 - kind: message
   direction: received
-  at: 5.651
+  at: 17.913
   data:
     type: conversation.item.added
     previous_item_id: msg_000001
@@ -664,7 +657,7 @@ interactions:
       role: assistant
       content:
       - type: output_text
-        text: I acknowledge your code word is cobalt.
+        text: I have noted the code word.
         audio: null
         transcript: null
       call_id: null
@@ -672,10 +665,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000006
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000006
 - kind: message
   direction: received
-  at: 5.651
+  at: 17.913
   data:
     type: conversation.item.done
     previous_item_id: msg_000001
@@ -685,7 +678,7 @@ interactions:
       role: assistant
       content:
       - type: output_text
-        text: I acknowledge your code word is cobalt.
+        text: I have noted the code word.
         audio: null
         transcript: null
       call_id: null
@@ -693,10 +686,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000007
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000007
 - kind: message
   direction: received
-  at: 5.763
+  at: 17.978
   data:
     type: conversation.item.added
     previous_item_id: msg_000002
@@ -714,10 +707,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000008
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000008
 - kind: message
   direction: received
-  at: 5.763
+  at: 17.978
   data:
     type: conversation.item.done
     previous_item_id: msg_000002
@@ -735,17 +728,17 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000009
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000009
 - kind: message
   direction: received
-  at: 6.028
+  at: 18.343
   data:
     type: response.created
     response:
-      id: resp_6401m5czexhqf04vx4pv8fzqms01
+      id: resp_0701m5d26dfdf4nsd0td8xvhykdj
       object: realtime.response
       status: in_progress
-      conversation_id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      conversation_id: conv_2301m5d26brrepar412hnra47m8b
       output: []
       usage: null
       output_modalities:
@@ -754,30 +747,30 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000010
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000010
 - kind: message
   direction: received
-  at: 6.028
+  at: 18.343
   data:
     type: response.output_item.added
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
     output_index: 0
     item:
-      id: item_6101m5czexhrfebrhem946e7wzjb
+      id: item_0901m5d26dfeeeaaa3161f94hq3s
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000011
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000011
 - kind: message
   direction: received
-  at: 6.028
+  at: 18.343
   data:
     type: conversation.item.added
     previous_item_id: pydantic_ai_item_1
     item:
-      id: item_6101m5czexhrfebrhem946e7wzjb
+      id: item_0901m5d26dfeeeaaa3161f94hq3s
       type: message
       role: assistant
       content: []
@@ -786,163 +779,196 @@ interactions:
       arguments: null
       output: null
       status: in_progress
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000012
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000012
 - kind: message
   direction: received
-  at: 6.028
+  at: 18.343
   data:
     type: response.content_part.added
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: null
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000013
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000013
 - kind: message
   direction: received
-  at: 6.028
+  at: 18.343
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: The code word is cobalt.
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000014
+    delta: The code word you asked me to remember is cob
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000014
 - kind: message
   direction: received
-  at: 6.133
+  at: 18.359
+  data:
+    type: response.output_audio_transcript.delta
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
+    output_index: 0
+    content_index: 0
+    delta: alt.
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000015
+- kind: message
+  direction: received
+  at: 18.442
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAA
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000015
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000016
 - kind: message
   direction: received
-  at: 6.161
+  at: 18.469
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: Ofyl/FD7Nv3K/AX8sPxC/OP7Lf3c/JD7Cv2j/GX7zfzc
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000016
+    delta: dQkkCDYJHg87EpgT7xOzEjkPBQ2vDdYKqwmwDLcNZwqt
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000017
 - kind: message
   direction: received
-  at: 6.169
+  at: 18.473
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: GQKVCOYJ3Av0Dm8STA6MA3EHtQYpDKUAWQLo/9T3xvvd
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000017
+    delta: 7fnI/wYDswf1CJ0N7wt5C5ARDQrYBqX82vyb/Kj8wPqi
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000018
 - kind: message
   direction: received
-  at: 6.23
+  at: 18.521
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: YBUuFSsVGRUmFkgScBH4ElQMywMF/072G+476yTelNYZ
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000018
+    delta: WQnaCwgQdBaXHioh3xw9HeYc9xm/Gn4bBRNdDJAQLBCM
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000019
 - kind: message
   direction: received
-  at: 6.374
+  at: 18.793
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: /OVu55boE+pN6z7tyfCp9Kf3Dvo1/S0A8gNUCB4L4wyD
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000019
+    delta: EvN19Sv3+/g4+zP9zf8sAugE4gf7CpAMRQ9iEpoVYBed
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000020
 - kind: message
   direction: received
-  at: 6.517
+  at: 18.936
   data:
     type: response.output_audio.delta
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    delta: CwRr/7oB9v3U/gj6RPdp90n1NPl9+dT4qvn7+tf9AgKU
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000020
+    delta: 1vUD9//4V/pn+cv4m/d59uv2x/hV+1r82/yh/un95P6h
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000021
 - kind: message
   direction: received
-  at: 8.273
+  at: 18.96
+  data:
+    type: response.output_audio.delta
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
+    output_index: 0
+    content_index: 0
+    delta: AQ3oCukITQkqCxAMPgyWDFMLyAn5B6sFTQSXAoUAD/8w
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000022
+- kind: message
+  direction: received
+  at: 19.102
+  data:
+    type: response.output_audio.delta
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
+    output_index: 0
+    content_index: 0
+    delta: xwyjDWcMFw07DvcNsA2XDnwO/wy4DBsNBg0iDs8PFBAK
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000023
+- kind: message
+  direction: received
+  at: 21.7
   data:
     type: response.output_audio.done
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000021
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000024
 - kind: message
   direction: received
-  at: 8.274
+  at: 21.7
   data:
     type: response.output_audio_transcript.done
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
-    transcript: The code word is cobalt.
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000022
+    transcript: The code word you asked me to remember is cobalt.
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000025
 - kind: message
   direction: received
-  at: 8.274
+  at: 21.7
   data:
     type: response.content_part.done
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
-    item_id: item_6101m5czexhrfebrhem946e7wzjb
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
+    item_id: item_0901m5d26dfeeeaaa3161f94hq3s
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
-      transcript: The code word is cobalt.
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000023
+      transcript: The code word you asked me to remember is cobalt.
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000026
 - kind: message
   direction: received
-  at: 8.274
+  at: 21.701
   data:
     type: conversation.item.done
     previous_item_id: pydantic_ai_item_1
     item:
-      id: item_6101m5czexhrfebrhem946e7wzjb
+      id: item_0901m5d26dfeeeaaa3161f94hq3s
       type: message
       role: assistant
       content:
       - type: output_audio
         text: null
         audio: ''
-        transcript: The code word is cobalt.
+        transcript: The code word you asked me to remember is cobalt.
       call_id: null
       name: null
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000024
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000027
 - kind: message
   direction: received
-  at: 8.274
+  at: 21.701
   data:
     type: response.output_item.done
-    response_id: resp_6401m5czexhqf04vx4pv8fzqms01
+    response_id: resp_0701m5d26dfdf4nsd0td8xvhykdj
     output_index: 0
     item:
-      id: item_6101m5czexhrfebrhem946e7wzjb
+      id: item_0901m5d26dfeeeaaa3161f94hq3s
       object: realtime.item
       type: message
       status: completed
@@ -950,20 +976,20 @@ interactions:
       content:
       - type: output_audio
         audio: ''
-        transcript: The code word is cobalt.
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000025
+        transcript: The code word you asked me to remember is cobalt.
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000028
 - kind: message
   direction: received
-  at: 8.274
+  at: 21.701
   data:
     type: response.done
     response:
-      id: resp_6401m5czexhqf04vx4pv8fzqms01
+      id: resp_0701m5d26dfdf4nsd0td8xvhykdj
       object: realtime.response
       status: completed
-      conversation_id: conv_5601m5czew0yeqfbyjpxtbypygc5
+      conversation_id: conv_2301m5d26brrepar412hnra47m8b
       output:
-      - id: item_6101m5czexhrfebrhem946e7wzjb
+      - id: item_0901m5d26dfeeeaaa3161f94hq3s
         object: realtime.item
         type: message
         status: completed
@@ -971,7 +997,7 @@ interactions:
         content:
         - type: output_audio
           audio: ''
-          transcript: The code word is cobalt.
+          transcript: The code word you asked me to remember is cobalt.
       usage: null
       output_modalities:
       - audio
@@ -979,4 +1005,4 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_5601m5czew0yeqfbyjpxtbypygc5_000026
+    event_id: evt_conv_2301m5d26brrepar412hnra47m8b_000029

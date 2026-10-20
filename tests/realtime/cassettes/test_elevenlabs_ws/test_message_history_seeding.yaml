@@ -37,10 +37,10 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      id: conv_2501m5d25qbqevnrqne1sq3j6fgn
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000001
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000001
 - kind: message
   direction: sent
   at: 0.0
@@ -58,6 +58,8 @@ interactions:
             rate: 24000
           turn_detection:
             type: semantic_vad
+            create_response: true
+            interrupt_response: true
         output:
           format:
             type: audio/pcm
@@ -68,9 +70,9 @@ interactions:
   data:
     type: conversation.created
     conversation:
-      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      id: conv_2501m5d25qbqevnrqne1sq3j6fgn
       object: realtime.conversation
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000002
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000002
 - kind: message
   direction: received
   at: 0.048
@@ -108,10 +110,10 @@ interactions:
       max_response_output_tokens: 4096
       max_duration_seconds: 600
       tracing: null
-      id: conv_1201m5czejj2e85a5gyptbxbngjz
+      id: conv_2501m5d25qbqevnrqne1sq3j6fgn
       object: realtime.session
       expires_at: null
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000003
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000003
 - kind: message
   direction: sent
   at: 0.048
@@ -125,7 +127,7 @@ interactions:
         text: My name is Alice and my favorite color is teal.
 - kind: message
   direction: sent
-  at: 0.049
+  at: 0.048
   data:
     type: conversation.item.create
     item:
@@ -158,7 +160,7 @@ interactions:
         pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.095
+  at: 0.094
   data:
     type: conversation.item.added
     previous_item_id: null
@@ -176,10 +178,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000004
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000004
 - kind: message
   direction: received
-  at: 0.095
+  at: 0.094
   data:
     type: conversation.item.done
     previous_item_id: null
@@ -197,10 +199,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000005
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000005
 - kind: message
   direction: received
-  at: 0.095
+  at: 0.094
   data:
     type: conversation.item.added
     previous_item_id: msg_000001
@@ -218,10 +220,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000006
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000006
 - kind: message
   direction: received
-  at: 0.095
+  at: 0.094
   data:
     type: conversation.item.done
     previous_item_id: msg_000001
@@ -239,10 +241,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000007
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000007
 - kind: message
   direction: received
-  at: 0.654
+  at: 0.207
   data:
     type: conversation.item.added
     previous_item_id: msg_000002
@@ -260,10 +262,10 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000008
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000008
 - kind: message
   direction: received
-  at: 0.654
+  at: 0.207
   data:
     type: conversation.item.done
     previous_item_id: msg_000002
@@ -281,17 +283,17 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000009
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000009
 - kind: message
   direction: received
-  at: 1.178
+  at: 0.423
   data:
     type: response.created
     response:
-      id: resp_6101m5czekqge6p8m22k47c19e6d
+      id: resp_1001m5d25qsre5f9dv364js2r9wq
       object: realtime.response
       status: in_progress
-      conversation_id: conv_1201m5czejj2e85a5gyptbxbngjz
+      conversation_id: conv_2501m5d25qbqevnrqne1sq3j6fgn
       output: []
       usage: null
       output_modalities:
@@ -300,30 +302,30 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000010
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000010
 - kind: message
   direction: received
-  at: 1.178
+  at: 0.423
   data:
     type: response.output_item.added
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
     output_index: 0
     item:
-      id: item_6001m5czekqhe73tsp9e8qczat2y
+      id: item_2501m5d25qssfgnbgc8cfhw3fr52
       object: realtime.item
       type: message
       status: in_progress
       role: assistant
       content: []
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000011
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000011
 - kind: message
   direction: received
-  at: 1.178
+  at: 0.423
   data:
     type: conversation.item.added
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_6001m5czekqhe73tsp9e8qczat2y
+      id: item_2501m5d25qssfgnbgc8cfhw3fr52
       type: message
       role: assistant
       content: []
@@ -332,185 +334,185 @@ interactions:
       arguments: null
       output: null
       status: in_progress
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000012
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000012
 - kind: message
   direction: received
-  at: 1.178
+  at: 0.423
   data:
     type: response.content_part.added
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: null
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000013
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000013
 - kind: message
   direction: received
-  at: 1.178
+  at: 0.423
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
     delta: Your name is Alice and your favorite color is teal
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000014
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000014
 - kind: message
   direction: received
-  at: 1.183
+  at: 0.432
   data:
     type: response.output_audio_transcript.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
     delta: .
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000015
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000015
 - kind: message
   direction: received
-  at: 1.276
+  at: 0.546
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAA
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000016
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000016
 - kind: message
   direction: received
-  at: 1.316
+  at: 0.598
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: TP/h/v//JACn/R/9c/ta+lr8Xv61+yf7ev3+/dH7Z/j/
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000017
+    delta: WRwYHnAgfiH3H3webBshGUAaZBxvGvUZoBiyGNAWQxRE
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000017
 - kind: message
   direction: received
-  at: 1.33
+  at: 0.606
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: yBgGHMAdwyLXJQknGCZ9IzMhViDiIJAgniKCJOkljiUC
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000018
+    delta: NATqBc8GFwlqCQkKfguYDgET2xU/GGMZGxtDHH8dWR9C
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000018
 - kind: message
   direction: received
-  at: 1.371
+  at: 0.654
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: u+yk8Fvvkey455Hny+RL4ETef91w3xHp4/Ra9i76/uh0
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000019
+    delta: UPA08anzX/PD80X1TfVC9mj27PXc9MvwGO4u8SH0D/PK
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000019
 - kind: message
   direction: received
-  at: 1.453
+  at: 0.728
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: ofdB+DH4I/up+yz7Tfx0+x365Pdu+Nn45/hd+nb7B/3w
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000020
+    delta: QvQx9cr07fd5+dz5bftb+0T79/nJ+tv6xfp/+6X7Kvy7
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000020
 - kind: message
   direction: received
-  at: 1.617
+  at: 0.908
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: D/5PAccBDQLY/ZX/TP9w/48CkgD//lT/n/4FAGMCpgG0
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000021
+    delta: 5QPBAO37If6d/hIAJgWbAAT/mQDj/ZAB3QB/AFz/Hv74
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000021
 - kind: message
   direction: received
-  at: 1.645
+  at: 0.956
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: 4/wj/TP9Lv0N/Qv98fwC/Tb9p/0u/rj+Mf+r/xEAUwBO
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000022
+    delta: Qv0t/Vz9IP3D/B38ZPuv+vb5u/lw+YD5j/kD+mP69/pE
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000022
 - kind: message
   direction: received
-  at: 1.757
+  at: 1.094
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: vfgf+DP5Wvph+q/6G/2j/un+6v78/ygAUv+Z/in+Bf6x
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000023
+    delta: iQDpAIQAAf/6/jj/zP5OAJMAu/+8/1//w/5t/if+Uv5C
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000023
 - kind: message
   direction: received
-  at: 1.826
+  at: 1.103
   data:
     type: response.output_audio.delta
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    delta: kv6Z/qb+sP65/sD+0f7K/tL+1v7W/tj+zP7P/rD+oP6C
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000024
+    delta: kgCdAOcACgEjASIB6QDBAKAAeABeAIYASACQAHkAVQCU
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000024
 - kind: message
   direction: received
-  at: 5.006
+  at: 4.089
   data:
     type: response.output_audio.done
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000025
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000025
 - kind: message
   direction: received
-  at: 5.006
+  at: 4.089
   data:
     type: response.output_audio_transcript.done
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
     transcript: Your name is Alice and your favorite color is teal.
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000026
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000026
 - kind: message
   direction: received
-  at: 5.006
+  at: 4.089
   data:
     type: response.content_part.done
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
-    item_id: item_6001m5czekqhe73tsp9e8qczat2y
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
+    item_id: item_2501m5d25qssfgnbgc8cfhw3fr52
     output_index: 0
     content_index: 0
     part:
       type: audio
       audio: ''
       transcript: Your name is Alice and your favorite color is teal.
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000027
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000027
 - kind: message
   direction: received
-  at: 5.007
+  at: 4.089
   data:
     type: conversation.item.done
     previous_item_id: pydantic_ai_item_0
     item:
-      id: item_6001m5czekqhe73tsp9e8qczat2y
+      id: item_2501m5d25qssfgnbgc8cfhw3fr52
       type: message
       role: assistant
       content:
@@ -523,16 +525,16 @@ interactions:
       arguments: null
       output: null
       status: completed
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000028
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000028
 - kind: message
   direction: received
-  at: 5.007
+  at: 4.09
   data:
     type: response.output_item.done
-    response_id: resp_6101m5czekqge6p8m22k47c19e6d
+    response_id: resp_1001m5d25qsre5f9dv364js2r9wq
     output_index: 0
     item:
-      id: item_6001m5czekqhe73tsp9e8qczat2y
+      id: item_2501m5d25qssfgnbgc8cfhw3fr52
       object: realtime.item
       type: message
       status: completed
@@ -541,19 +543,19 @@ interactions:
       - type: output_audio
         audio: ''
         transcript: Your name is Alice and your favorite color is teal.
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000029
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000029
 - kind: message
   direction: received
-  at: 5.007
+  at: 4.09
   data:
     type: response.done
     response:
-      id: resp_6101m5czekqge6p8m22k47c19e6d
+      id: resp_1001m5d25qsre5f9dv364js2r9wq
       object: realtime.response
       status: completed
-      conversation_id: conv_1201m5czejj2e85a5gyptbxbngjz
+      conversation_id: conv_2501m5d25qbqevnrqne1sq3j6fgn
       output:
-      - id: item_6001m5czekqhe73tsp9e8qczat2y
+      - id: item_2501m5d25qssfgnbgc8cfhw3fr52
         object: realtime.item
         type: message
         status: completed
@@ -569,4 +571,4 @@ interactions:
       output_audio_format: audio/pcm
       temperature: 0.7
       max_output_tokens: 4096
-    event_id: evt_conv_1201m5czejj2e85a5gyptbxbngjz_000030
+    event_id: evt_conv_2501m5d25qbqevnrqne1sq3j6fgn_000030

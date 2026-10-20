@@ -79,7 +79,11 @@ async def test_text_in_audio_out_turn(elevenlabs_ws_cassette: tuple[ElevenLabsPr
                     'audio': {
                         'input': {
                             'format': {'type': 'audio/pcm', 'rate': 24000},
-                            'turn_detection': {'type': 'semantic_vad'},
+                            'turn_detection': {
+                                'type': 'semantic_vad',
+                                'create_response': True,
+                                'interrupt_response': True,
+                            },
                         },
                         'output': {'format': {'type': 'audio/pcm'}},
                     },
@@ -225,7 +229,11 @@ async def test_tool_call_round(elevenlabs_ws_cassette: tuple[ElevenLabsProvider,
                     'audio': {
                         'input': {
                             'format': {'type': 'audio/pcm', 'rate': 24000},
-                            'turn_detection': {'type': 'semantic_vad'},
+                            'turn_detection': {
+                                'type': 'semantic_vad',
+                                'create_response': True,
+                                'interrupt_response': True,
+                            },
                         },
                         'output': {'format': {'type': 'audio/pcm'}},
                     },
@@ -386,7 +394,7 @@ async def test_handle_barge_in_over_live_speech(
         [
             {
                 'type': 'conversation.item.truncate',
-                'item_id': 'item_2901m5czf1xxfjv91n21mdr7trmz',
+                'item_id': 'item_6801m5d26jvme4mv551f6aj74t5f',
                 'content_index': 0,
                 'audio_end_ms': 0,
             }
