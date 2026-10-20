@@ -494,8 +494,8 @@ SUBAGENT_INSTRUCTIONS = (
     'evidence-grounded answer to your caller — do not try to act on it.'
 )
 
-# A sub-agent that hits its timeout has usually finished its reads and is writing its answer.
-# `task` then makes one request without tools on its saved history to recover that answer.
+# A sub-agent that hits its timeout has often gathered most of what it needs. `task` then makes
+# one request without tools on its saved history to recover its answer.
 SUBAGENT_RESUME_PROMPT = (
     'Your time is up and your tools are no longer available. Answer your caller now, in the '
     'format your task asks for, from what you have already found. Name everything you were '
@@ -1242,7 +1242,12 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         resume_usage = RunUsage()
         try:
             resumed = await asyncio.wait_for(
-                Agent(cast('Model[Any]', model), instructions=instructions).run(
+                # Streamed like the sub-agent, so a long report is not cut by the client's read timeout.
+                Agent(
+                    cast('Model[Any]', model),
+                    instructions=instructions,
+                    capabilities=[ProcessEventStream(_stream_events)],
+                ).run(
                     SUBAGENT_RESUME_PROMPT,
                     message_history=repair_messages(history),
                     usage_limits=UsageLimits(request_limit=1),

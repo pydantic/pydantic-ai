@@ -1596,13 +1596,19 @@ def _cut_delegate(
         return f'source of {file_path}'
 
     def _select_tools(
-        _allowed: frozenset[str] | None, _permission_mode: str | None, *, task: shim.TaskCallable | None
+        _allowed: frozenset[str] | None, permission_mode: str | None, *, task: shim.TaskCallable | None
     ) -> AbstractToolset[object]:
         return tools
 
     monkeypatch.setattr(shim, 'select_claude_code_toolset', _select_tools)
 
-    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        # The resume request is the only one made without tools.
+        if not info.function_tools:
+            for part in resume(messages, info).parts:
+                assert isinstance(part, TextPart)
+                yield part.content
+            return
         kind, value = turns.pop(0)
         if kind == 'read':
             yield {0: DeltaToolCall(name='Read', json_args=json.dumps({'file_path': value}))}
@@ -1611,8 +1617,7 @@ def _cut_delegate(
             yield value
         raise TimeoutError
 
-    # The delegate streams; the resume request is the only one made without streaming.
-    return FunctionModel(resume, stream_function=_stream)
+    return FunctionModel(stream_function=_stream)
 
 
 def _resumed_report(report: str) -> str:

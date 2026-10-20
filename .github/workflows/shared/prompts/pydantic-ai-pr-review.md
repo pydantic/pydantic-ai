@@ -187,6 +187,10 @@ Before posting **any** inline comment:
    `.review-context/diff/<file>.diff` and check the target line
    has an `NL:<n>` prefix. If not, move the finding into the review body.
 
+Once the time budget is nearly spent, only the safe-output tools remain. Post
+no finding you have not verified inline: name it in the review body as
+unverified, and do not `APPROVE`.
+
 ### Step 5 — Comment and submit
 
 For each surviving finding, call `mcp__safeoutputs__create_pull_request_review_comment` with:
