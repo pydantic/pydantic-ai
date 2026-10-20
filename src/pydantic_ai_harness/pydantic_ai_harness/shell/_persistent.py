@@ -70,18 +70,32 @@ class _CommandOutput(Generic[AgentDepsT]):
         # `None` where events cannot reach the run's event stream: then nothing is read or emitted.
         self.ctx = ctx
         self.offset = 0
+        """Position in the log, which goes back to 0 when `max_log_bytes` empties it."""
+        self.emitted = 0
+        self.cleared = False
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
 
     async def emit(self) -> bool:
-        if self.ctx is None or self.offset >= _OUTPUT_TAIL_BYTES:
+        if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
             return False
         chunk = await self.job.read(
-            self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.offset)
+            self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.emitted)
         )
+        if not chunk and self._was_cleared(await self.job.size(self.job.output_path)):
+            # Read the emptied log from its start, so its notice is emitted too.
+            self.offset = 0
+            self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+            return True
         self.offset += len(chunk)
+        self.emitted += len(chunk)
         if chunk:
             await self.ctx.emit(CommandOutputEvent(text=self.decoder.decode(chunk)))
         return bool(chunk)
+
+    def _was_cleared(self, size: int) -> bool:
+        """Whether the log is shorter than what was read from it, so `max_log_bytes` emptied it."""
+        self.cleared = self.cleared or size < self.offset
+        return size < self.offset
 
     async def drain(self) -> None:
         while await self.emit():
@@ -93,14 +107,17 @@ class _CommandOutput(Generic[AgentDepsT]):
         tail = self.decoder.decode(b'', final=True)
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
+        size = await self.job.size(self.job.output_path)
+        cleared = self._was_cleared(size) or self.cleared
         await self.ctx.emit(
             CommandFinishedEvent(
                 pid=self.job.pid,
                 output_path=self.job.output_path,
                 status_path=self.job.status_path,
                 exit_code=(await self.job.status())[1],
-                truncated=await self.job.size(self.job.output_path) > self.offset,
-                total_lines=await _count_lines(self.job),
+                truncated=cleared or size > self.offset,
+                # An emptied log no longer holds the earlier lines, so their count is unknown.
+                total_lines=None if cleared else await _count_lines(self.job),
             )
         )
 

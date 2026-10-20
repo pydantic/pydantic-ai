@@ -14,9 +14,10 @@ from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
-from pydantic_ai_harness.shell import Shell, _jobs
+from pydantic_ai_harness.shell import Shell
 
 from .._tool_calls import call_tool
+from .test_persistent import Recorder
 
 pytestmark = [pytest.mark.skipif(os.name == 'nt', reason='POSIX shell commands and process groups')]
 
@@ -27,7 +28,7 @@ CHATTY = "while :; do printf '%01000d\\n' 0{redirect}; sleep 0.01; done"
 
 @pytest.fixture(autouse=True)
 def fast_log_checks(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_jobs, 'LOG_CHECK_INTERVAL', 0.05)
+    monkeypatch.setattr('pydantic_ai_harness.shell._jobs._LOG_CHECK_INTERVAL', 0.05)
 
 
 def _handle(output: str, label: str) -> Path:
@@ -46,9 +47,10 @@ def _ctx(working_dir: Path) -> RunContext[None]:
     )
 
 
-async def _shell(cwd: Path, arguments: dict[str, object]) -> str:
+async def _shell(cwd: Path, arguments: dict[str, object], *, recorder: Recorder | None = None) -> str:
     capability = Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000)
-    return await call_tool([capability], 'shell', arguments, workspace=LocalWorkspaceBackend(cwd))
+    capabilities = [capability] if recorder is None else [capability, recorder]
+    return await call_tool(capabilities, 'shell', arguments, workspace=LocalWorkspaceBackend(cwd))
 
 
 async def _wait_for_notice(log: Path) -> None:
@@ -74,6 +76,17 @@ class TestShellLogLimits:
         log = _handle(output, 'Output')
         assert NOTICE in log.read_text(encoding='utf-8')
         assert log.stat().st_size < 1_000_000
+
+    async def test_events_report_a_cleared_log(self, tmp_path: Path) -> None:
+        # The first write is streamed before the second pushes the log past the limit and it is emptied.
+        command = "printf '%01500d\\n' 0; sleep 0.3; printf '%01500d\\n' 0; sleep 0.5; echo after"
+        recorder = Recorder()
+        output = await _shell(tmp_path, {'command': command, 'timeout': 60}, recorder=recorder)
+        assert '"exit_code": 0' in output
+        assert recorder.output.startswith('0' * 1500)
+        assert recorder.output.endswith(f'{NOTICE}\nafter\n')
+        assert recorder.finished.truncated
+        assert recorder.finished.total_lines is None
 
     async def test_chatty_shell_command_keeps_running(self, tmp_path: Path) -> None:
         output = await _shell(tmp_path, {'command': CHATTY.format(redirect=''), 'mode': 'background'})
