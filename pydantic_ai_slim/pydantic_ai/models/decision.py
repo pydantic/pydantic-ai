@@ -29,6 +29,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -60,6 +62,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -2263,6 +2266,8 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
         raise _unsynthesized_tool_availability_delta_error()
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
+        raise _unprojected_instruction_delta_error()
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()
