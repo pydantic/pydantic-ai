@@ -1141,7 +1141,7 @@ async def test_file_understanding_describes_what_a_decision_model_cannot_read(al
         text_only,
         output_type=bool,
         instructions='Is this urgent?',
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
     ).run(prompt)
     [request] = text_only.requests
     assert request.state == snapshot("""\
@@ -1163,7 +1163,7 @@ A description of the file.
         reads_images,
         output_type=bool,
         instructions='Is this urgent?',
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
     ).run(prompt)
     [request] = reads_images.requests
     assert request.state == snapshot("""\

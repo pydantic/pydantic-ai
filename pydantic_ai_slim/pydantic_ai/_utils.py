@@ -766,21 +766,48 @@ def own_annotations(cls: type) -> dict[str, Any]:
     return dict(inspect.get_annotations(cls))
 
 
+def prepend_class_annotations(cls: type, extra: dict[str, Any]) -> None:
+    """Declare `extra` on `cls` ahead of the annotations written on it, for a later `@dataclass` to pick up.
+
+    On Python 3.14+ this wraps the class's lazy (PEP 649) `__annotate__` function rather than
+    materializing `__annotations__`, so annotations referencing names defined later in the module
+    stay unevaluated until `@dataclass` (or Pydantic) asks for them.
+    """
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        original_annotate = annotationlib.get_annotate_from_class_namespace(cls.__dict__)
+        if original_annotate is not None:
+
+            def annotate(format: int, /) -> dict[str, Any]:
+                return {
+                    **extra,
+                    **annotationlib.call_annotate_function(original_annotate, annotationlib.Format(format), owner=cls),
+                }
+
+            cls.__annotate__ = annotate  # pyright: ignore[reportAttributeAccessIssue]
+            return
+        # No lazy annotate function: the class body had no annotations, or stored them eagerly
+        # (e.g. under `from __future__ import annotations`); merge with whatever it has.
+    cls.__annotations__ = {**extra, **cls.__dict__.get('__annotations__', {})}
+
+
 def declares_dataclass_fields(cls: type) -> bool:
     """Whether `@dataclass` would give `cls` fields of its own, i.e. it annotates a non-`ClassVar` name.
 
     Annotations are inspected without being evaluated (see [`own_annotations`][]), so a `ClassVar`
     that can't be resolved yet is still recognized from the way it was written.
     """
-    for annotation in own_annotations(cls).values():
-        if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
-            continue
-        # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
-        text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
-        if text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()):
-            continue
+    return any(not is_classvar_annotation(annotation) for annotation in own_annotations(cls).values())
+
+
+def is_classvar_annotation(annotation: Any) -> bool:
+    """Whether an annotation from [`own_annotations`][] declares a `ClassVar`, evaluated or not."""
+    if typing_objects.is_classvar(get_origin(annotation)) or typing_objects.is_classvar(annotation):
         return True
-    return False
+    # An unevaluated annotation arrives as a string or `ForwardRef`; match how it was written.
+    text = annotation if isinstance(annotation, str) else getattr(annotation, '__forward_arg__', None)
+    return text is not None and re.match(r'^(typing\.)?ClassVar\b', text.strip()) is not None
 
 
 def copy_dataclass_fields(src: Any, dst_cls: type, **overrides: Any) -> Any:

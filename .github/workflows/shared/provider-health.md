@@ -24,6 +24,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
           PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}

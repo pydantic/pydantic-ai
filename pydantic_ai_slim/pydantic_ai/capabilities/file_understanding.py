@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeGuard, TypeVar
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard, TypeVar
 
 from pydantic_ai._file_input import SendableFile, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
@@ -27,10 +27,15 @@ from .durable_operation import durable_operation
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
+_File: TypeAlias = SendableFile
 _T = TypeVar('_T')
 
 _MAX_DESCRIPTIONS = 256
 """Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
+
+_MAX_CACHED_CHARS = 100_000
+"""Longest text kept for reuse: a downloaded text document can be large, so a longer one is fetched again
+instead of holding up to `_MAX_DESCRIPTIONS` full bodies in memory. Descriptions are well under it."""
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -44,8 +49,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     Before each request, every image, document, audio file or video in a user prompt or a tool result that
     the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
-    text description of it, written by `fallback_model`. The agent's model sees the description in the
-    file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
+    text description of it, written by `fallback_subagent_model`. The agent's model sees the description in
+    the file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
     that the model cannot read is replaced by a note saying so instead.
 
     ```python
@@ -56,7 +61,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         'typesafe:jev-latest',
         output_type=bool,
         instructions='Is this document about animals?',
-        capabilities=[FileUnderstanding(fallback_model='openai:gpt-5.6-sol')],
+        capabilities=[FileUnderstanding(fallback_subagent_model='openai:gpt-5.6-sol')],
     )
     result = agent.run_sync([DocumentUrl('https://example.com/whatever.pdf')])
     ```
@@ -66,11 +71,13 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
     A file is described once and the description reused for the steps that follow, so a history that carries the
     same file into every request costs one description. Binary content is reused for as long as the capability
-    lives, since the bytes are their own identity; a file given by URL is reused only within the run that fetched
-    it, because the same URL can serve different bytes to different callers and stop resolving once a signature
-    expires. Run ids come from the caller when one is passed to `run(..., run_id=...)`, so a caller that passes
-    the same `run_id` to two runs gets the first run's description of a URL in the second, without the URL being
-    fetched again.
+    lives, since the bytes are their own identity; a file given by URL is reused only within the conversation
+    that fetched it, because the same URL can serve different bytes to different callers and stop resolving once
+    a signature expires. A run continues the conversation of the `message_history` it is given, so the turns of
+    one chat share their URL descriptions. The conversation id comes from the caller when one is passed to
+    `run(..., conversation_id=...)`, so a caller that passes the same id to two unrelated runs gets the first
+    run's description of a URL in the second, without the URL being fetched again. A text document given by URL
+    is kept only up to 100,000 characters; a longer one is downloaded again each time a request carries it.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
@@ -78,8 +85,12 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     requests were the run's next ones.
     """
 
-    fallback_model: Model | KnownModelName | str
-    """The model that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`."""
+    fallback_subagent_model: Model | KnownModelName | str
+    """The model of the subagent that describes the files, with its provider: `'openai:gpt-5.6-sol'`, or a `Model`.
+
+    Named like `ImageGeneration` and `XSearch`'s `fallback_subagent_model`: a separate agent run, not a
+    replacement for the agent's model.
+    """
 
     _: KW_ONLY
 
@@ -108,20 +119,37 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         descriptions: dict[str, str] = {}
-        pending: dict[str, SendableFile] = {}
-        for item in _file_content(request_context.messages):
-            if not _needs_describing(item, profile):
+        pending: dict[str, _File] = {}
+        unaccepted = False
+        for content in _file_content(request_context.messages):
+            if (item := _unaccepted_file(content, profile)) is None:
                 continue
-            identity = _identity(item, ctx.run_id)
+            unaccepted = True
+            if _is_text_bytes(item):
+                # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
+                continue
+            identity = _identity(item, ctx.conversation_id)
             if identity in descriptions or identity in pending:
                 continue
             if (cached := self._descriptions.get(identity)) is not None:
                 descriptions[identity] = cached
             else:
                 pending[identity] = item
-        if not pending:
+        if not unaccepted:
             return request_context
 
+        if pending:
+            await self._describe_pending(ctx, pending, descriptions)
+
+        messages = [
+            _substitute(message, profile, descriptions, ctx.conversation_id) for message in request_context.messages
+        ]
+        return replace(request_context, messages=messages)
+
+    async def _describe_pending(
+        self, ctx: RunContext[AgentDepsT], pending: dict[str, _File], descriptions: dict[str, str]
+    ) -> None:
+        """Describe the `pending` files at once into `descriptions`, adding what that costs to the run."""
         if (usage_limits := ctx.usage_limits) is not None:
             # The run checked its limits for this step's request before this hook, so the describing requests go
             # in front of it: a limit without room for all of them and the request itself stops the run before
@@ -135,31 +163,26 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
             descriptions[identity] = description
-            if _reuse_key(item, ctx.run_id) is not None:
+            if _reuse_key(item, ctx.conversation_id) is not None and len(description) <= _MAX_CACHED_CHARS:
                 if len(self._descriptions) >= _MAX_DESCRIPTIONS:
                     del self._descriptions[next(iter(self._descriptions))]
                 self._descriptions[identity] = description
 
-        messages = [_substitute(message, profile, descriptions, ctx.run_id) for message in request_context.messages]
-        return replace(request_context, messages=messages)
-
     @durable_operation(name='describe')
-    async def _describe(self, item: SendableFile) -> tuple[str, RunUsage]:
+    async def _describe(self, item: _File) -> tuple[str, RunUsage]:
         """The file as text, with the usage it cost.
 
-        A text-like document is its own content, at no cost; anything else is described by `fallback_model`. The
+        A text-like document is its own content, at no cost; anything else is described by `fallback_subagent_model`. The
         usage is returned rather than added to the run's here, so it reaches the run whether this runs in place or
         under a durable engine, and the caller adds it.
         """
         from pydantic_ai.agent import Agent
 
-        if isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type):
-            return item.data.decode('utf-8'), RunUsage()
         if isinstance(item, DocumentUrl) and is_text_like_media_type(item.media_type):
             return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
-            self.fallback_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
+            self.fallback_subagent_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
         )
         result = await agent.run([item])
         return result.output, result.usage
@@ -176,23 +199,22 @@ def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
                     yield from part.content_items()
 
 
-def _needs_describing(item: object, profile: ModelProfile) -> TypeGuard[SendableFile]:
-    return isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None
-
-
 def _substitute(
-    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], run_id: str | None
+    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], conversation_id: str | None
 ) -> ModelMessage:
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(item: _T) -> _T | str:
-        if not _needs_describing(item, profile):
-            return item
+    def text_for(content: _T) -> _T | str:
+        if (item := _unaccepted_file(content, profile)) is None:
+            return content
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
         # inlined as its own content instead of described, and that one keeps the media type it came with.
         media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
-        description = descriptions[_identity(item, run_id)]
+        if _is_text_bytes(item):
+            description = item.data.decode('utf-8')
+        else:
+            description = descriptions[_identity(item, conversation_id)]
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
@@ -207,24 +229,35 @@ def _substitute(
     return replace(message, parts=parts) if parts != original_parts else message
 
 
-def _identity(item: SendableFile, run_id: str | None) -> str:
-    """What makes two items one file within this request: the reuse key, or for a URL with no run, the URL."""
-    if (key := _reuse_key(item, run_id)) is not None:
+def _identity(item: _File, conversation_id: str | None) -> str:
+    """What makes two items one file within this request: the reuse key, or for a URL with no conversation, the URL."""
+    if (key := _reuse_key(item, conversation_id)) is not None:
         return key
     assert not isinstance(item, BinaryContent), 'bytes always have a reuse key'
     return f'url:{item.url}'
 
 
-def _reuse_key(item: SendableFile, run_id: str | None) -> str | None:
+def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
     """What identifies this file for reuse, or `None` when its description must not be reused.
 
     Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
     not its content: it can serve different bytes to different callers and stop resolving once a signature
-    expires, so a description of one is kept only for the run that fetched it, and not at all for a run with no
-    id to scope it to.
+    expires, so a description of one is kept only for the conversation that fetched it, and not at all without a
+    conversation id to scope it to.
     """
     if isinstance(item, BinaryContent):
         # The media type is part of the identity, not a label on it: the same bytes are described when they
         # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
         return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
-    return f'{run_id}:{item.url}' if run_id is not None else None
+    return f'{conversation_id}:{item.url}' if conversation_id is not None else None
+
+
+def _unaccepted_file(item: object, profile: ModelProfile) -> _File | None:
+    """The file in `item` the model doesn't take as it is, or `None`; text and anything but a file is left alone."""
+    if isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None:
+        return item
+    return None
+
+
+def _is_text_bytes(item: _File) -> TypeGuard[BinaryContent]:
+    return isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type)

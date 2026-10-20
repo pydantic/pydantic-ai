@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import os
 import re
 import socket
@@ -44,7 +45,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserR
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_clai2.builtin_plugins.web import WebPlugin, remote as remote_module, server as server_module
+from pydantic_clai2.builtin_plugins.web import WebPlugin, channel as channel_module, server as server_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Receive, Scope, Send
 from pydantic_clai2.builtin_plugins.web.dialogs import BrowserDialogs
 from pydantic_clai2.builtin_plugins.web.live import BrowserAnswerer, Hub
@@ -57,6 +58,8 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Item,
     ItemAdded,
     ItemLog,
+    LiveChanged,
+    LiveEntry,
     Notice,
     ServerMessage,
     ShellDone,
@@ -71,10 +74,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolOutput,
     TurnEnded,
     TurnStarted,
+    dump,
+    dump_session,
     history_items,
 )
-from pydantic_clai2.builtin_plugins.web.remote import Observer
 from pydantic_clai2.builtin_plugins.web.server import WebServer
+from pydantic_clai2.builtin_plugins.web.service import Observer
 from pydantic_clai2.cli import _cli
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
@@ -309,8 +314,8 @@ async def test_hub_fans_out_only_while_subscribed() -> None:
         assert hub.clients == 2
         hub.publish(Notice(text='hello'))
         assert (
-            first.get_nowait()
-            == second.get_nowait()
+            first.queue.get_nowait()
+            == second.queue.get_nowait()
             == '{"type":"notice","text":"hello","level":"info","command":null,"usage":null}'
         )
     assert hub.clients == 0
@@ -327,7 +332,7 @@ async def test_the_browser_answers_first() -> None:
             stopped.set()
         return RED  # pragma: no cover
 
-    answerer = BrowserAnswerer(publish=published.append, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: published.append(message), terminal=terminal)
     answers: list[AskUserResponse] = []
     async with anyio.create_task_group() as group:
 
@@ -353,7 +358,7 @@ async def test_the_terminal_answers_first() -> None:
     async def terminal(request: AskUserRequest) -> AskUserResponse:
         return RED
 
-    answerer = BrowserAnswerer(publish=lambda message: None, terminal=terminal)
+    answerer = BrowserAnswerer(publish=lambda message, _: None, terminal=terminal)
     assert await answerer(REQUEST) == RED
     assert answerer.questions == []
 
@@ -366,29 +371,31 @@ async def test_only_the_held_conversation_reaches_the_browser(monkeypatch: pytes
     """A background `/fork` or delegated task runs with the plugin's capability too; the browser shows only the shell's own."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
-    with plugin.hub.subscribe() as queue:
+    observer = Observer(plugin.service)
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         await observer.on_event(context('another'), event=PartStartEvent(index=0, part=TextPart('fork')))
         assert queue.empty()
-        monkeypatch.setattr(remote_module, 'STATUS_INTERVAL', 0)
+        monkeypatch.setattr(channel_module, 'STATUS_INTERVAL', 0)
         await observer.on_event(
             context(host.conversation.conversation_id), event=PartStartEvent(index=0, part=TextPart('mine'))
         )
         assert '"text":"mine"' in queue.get_nowait()
         assert '"type":"status"' in queue.get_nowait()
-    assert isinstance(StatusChanged(status=plugin.remote.status()), StatusChanged)
+    assert isinstance(StatusChanged(status=plugin.service.default().status()), StatusChanged)
 
 
 async def test_runs_of_the_held_conversation_are_turns() -> None:
     """A run woken by a finished task has no prompt; a failure without a message is named by its type."""
     host = PluginHost[None](name='web', console=Console(file=io.StringIO()), settings={}, conversation=Transcript())
     plugin = WebPlugin.from_host(host)
-    observer = Observer(plugin.remote)
+    observer = Observer(plugin.service)
 
     async def fail() -> AgentRunResult[object]:
         raise RuntimeError()
 
-    with plugin.hub.subscribe() as queue:
+    with plugin.service.hub.subscribe() as client:
+        queue = client.queue
         with pytest.raises(RuntimeError):
             await observer.wrap_run(context('another'), handler=fail)
         assert queue.empty(), 'a background run is not a turn'
@@ -399,7 +406,7 @@ async def test_runs_of_the_held_conversation_are_turns() -> None:
         TurnStarted(item=None),
         TurnEnded(outcome='failed', error='RuntimeError'),
     ]
-    assert not plugin.remote.running
+    assert not plugin.service.default().running
 
 
 async def test_a_taken_port_is_reported() -> None:
@@ -477,7 +484,10 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
 
 
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere."""
+    """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
+
+    The process's working directory never changes.
+    """
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
     launch, other = tmp_path / 'launch', tmp_path / 'other'
@@ -501,7 +511,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
                 )
             )
             await output.ready.wait()
-            assert Path.cwd() == other.resolve()
+            assert Path.cwd() == launch
             found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
             assert found is not None
             async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
@@ -512,7 +522,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
             group.cancel_scope.cancel()
     assert 'Resumed Elsewhere' in output.getvalue()
     assert f'New session in {launch.resolve()}.' in output.getvalue()
-    assert Path.cwd() == launch.resolve()
+    assert Path.cwd() == launch
 
 
 async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
@@ -743,3 +753,18 @@ async def test_browser_dialogs_back_out_and_cancel_a_wait() -> None:
             dialogs.answer(second.id, 'a')
     assert sorted(answers, key=str) == [False, None]
     assert [type(message).__name__ for message in published].count('DialogClosed') == 4
+
+
+def test_dump_names_the_session_of_a_per_session_message() -> None:
+    """A per-session message carries its conversation ID first; a global one carries none."""
+    assert json.loads(dump_session(TextDelta(id='live1', text='hi'), session='conv "1"')) == {
+        'session': 'conv "1"',
+        'type': 'delta',
+        'id': 'live1',
+        'text': 'hi',
+    }
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    assert json.loads(dump(live)) == {
+        'type': 'live',
+        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+    }

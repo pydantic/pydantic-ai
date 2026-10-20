@@ -669,6 +669,19 @@ class BedrockConverseModel(Model[BaseClient]):
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
 
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'timeout',
+        }
+    )
+
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
     _client: BaseClient | None = field(default=None, repr=False)

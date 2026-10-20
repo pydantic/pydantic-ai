@@ -161,6 +161,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     # Hugging Face's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
 
+    unsupported_settings = frozenset(
+        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+    )
+
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
 

@@ -10,7 +10,7 @@ agent = Agent(
     'typesafe:jev-latest',
     output_type=bool,
     instructions='Is this document about animals?',
-    capabilities=[FileUnderstanding(fallback_model='{{ openai:medium }}')],
+    capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')],
 )
 result = agent.run_sync([DocumentUrl('https://example.com/field-guide.pdf')])
 print(result.output)
@@ -19,20 +19,37 @@ print(result.output)
 
 Which files need describing comes from the model's [profile](../models/overview.md#inspecting-a-models-profile): [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input]. Most models accept images and documents, so with them the capability mostly has audio and video described; on [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], Word and Excel documents too. A text-only model like [Jev](../models/typesafe.md) has everything described.
 
-`fallback_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
+A flag is `True` unless an adapter or a model family is known not to take that kind of file, so it is not a check that the model reads it. A text-only model served through an adapter that sends images, such as a text-only Llama behind vLLM, needs its profile to say so, or its images are sent and the provider rejects them:
+
+```python {title="file_understanding_text_only_profile.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import FileUnderstanding
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.vllm import VLLMProvider
+
+model = OpenAIChatModel(
+    'meta-llama/Llama-3.3-70B-Instruct',
+    provider=VLLMProvider(base_url='http://localhost:8000/v1'),
+    profile=ModelProfile(supports_image_input=False, supports_document_input=False),
+)
+agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model='{{ openai:medium }}')])
+```
+
+`fallback_subagent_model` is the model that writes the descriptions, as a `'provider:model'` name or a [`Model`][pydantic_ai.models.Model] instance, and it must accept the files itself. `instructions` replaces the default request for a detailed description:
 
 ```python {title="file_understanding_instructions.py"}
 from pydantic_ai.capabilities import FileUnderstanding
 
 FileUnderstanding(
-    fallback_model='{{ anthropic:medium }}',
+    fallback_subagent_model='{{ anthropic:medium }}',
     instructions='Transcribe the text in this file. Keep headings and tables.',
 )
 ```
 
 The description reaches the model between `-----BEGIN FILE-----` and `-----END FILE-----` lines that name the file, the same way text files are inlined for models that take no attachments. A description is prose, so its block is marked `text/plain` whatever the file was; a text-like document (plain text, CSV, JSON, XML, YAML) needs no describing, is inlined as it is, and keeps its own media type. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone, since only its own provider can read it.
 
-A file is described once and the description reused for the steps that follow, so a long conversation does not describe the same file again; the last 256 descriptions are kept. Binary content is reused for as long as the capability lives, because the bytes are their own identity. A file given by URL is reused only within the run that fetched it: the same URL can serve different bytes to different callers, and stop resolving once a signature expires, so one run's description of it is never handed to the next. A run's id is what scopes it, and the caller can pass that id to [`run()`][pydantic_ai.agent.AbstractAgent.run] as `run_id`: two runs given the same `run_id` share their URL descriptions, so the second gets the first run's description without the URL being fetched again.
+A file is described once and the description reused for the steps that follow, so a long conversation does not describe the same file again; the last 256 descriptions are kept. A text document given by URL is kept only when it is at most 100,000 characters long; a longer one is downloaded again each time a request carries it, so the cache never holds large bodies. Binary content is reused for as long as the capability lives, because the bytes are their own identity. A file given by URL is reused only within the [conversation](../message-history.md#correlating-runs-with-run_id-and-conversation_id) that fetched it: the same URL can serve different bytes to different callers, and stop resolving once a signature expires, so one conversation's description of it is not handed to another. A run continues the conversation of the `message_history` it is given, so the turns of one chat describe a URL once. The conversation id is what scopes it, and the caller can pass it to [`run()`][pydantic_ai.agent.AbstractAgent.run] as `conversation_id`: two runs given the same `conversation_id` share their URL descriptions, so the second gets the first run's description without the URL being fetched again.
 
 The files a request needs described are described concurrently, each once however often it appears. Describing a file is a model run of its own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any describing request is sent, as if those were the run's next requests: a `request_limit` bounds them together with the agent's own.
 

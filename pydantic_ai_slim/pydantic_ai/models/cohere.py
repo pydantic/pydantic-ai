@@ -129,6 +129,10 @@ class CohereModel(Model[AsyncClientV2]):
     # Cohere's chat API takes text only.
     _unsupported_file_inputs = frozenset({'image', 'document', 'audio', 'video'})
 
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+    )
+
     _model_name: CohereModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
 

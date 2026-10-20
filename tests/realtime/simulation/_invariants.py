@@ -49,6 +49,8 @@ Checked at rest (`settle()`):
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
   one truncated, as though the user had heard all of it;
+- `prune.unanswered` / `prune.dropped_from_history`: the session deleted a tool call's items from the server
+  conversation before the model answered its result, or history lost what it deleted (history keeps everything);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -251,6 +253,7 @@ class Checker:
     ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
         """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
         checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
+        self.lifecycle.brackets_responses = True
 
         def observe(event: RealtimeCodecEvent | LifecycleEvent | None) -> None:
             self._codec_issues += checker.finish() if event is None else checker.feed(event)
@@ -534,6 +537,7 @@ class Checker:
         self._check_completeness(messages)
         self._check_spoken_turns(messages)
         self._check_restored(messages)
+        self._check_pruned(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -731,6 +735,26 @@ class Checker:
             else [],
         )
 
+    def _check_pruned(self, messages: list[ModelMessage]) -> None:
+        """Tool rounds deleted from the server conversation were answered, and history still holds them."""
+        truth = self.sim.truth
+        self.report(
+            'prune.unanswered',
+            [
+                (f'{call} was deleted before the model answered its result', {'call': call})
+                for call in truth.pruned_unanswered
+            ],
+        )
+        recorded = conversation_fingerprints(messages)
+        self.report(
+            'prune.dropped_from_history',
+            [
+                (f'{fingerprint} was deleted from the server conversation and from history', {'item': fingerprint})
+                for fingerprint in truth.pruned
+                if fingerprint not in recorded
+            ],
+        )
+
     def _check_restored(self, messages: list[ModelMessage]) -> None:
         """A re-dialed conversation must hold what history records and the one before held (a local replay's promise).
 
@@ -851,19 +875,28 @@ class Checker:
             if wrong
             else [],
         )
+        # A response the server identified is recorded with exactly the usage reported under its id: none, if the client
+        # read no report for it, rather than another response's.
+        billed_by_id = {
+            message.provider_response_id: truth.usage_read.get(message.provider_response_id, (0, 0))
+            for message in messages
+            if isinstance(message, ModelResponse)
+            and message.provider_response_id is not None
+            and (message.provider_response_id in truth.usage_read or message.provider_response_id in truth.responses)
+        }
         self.report(
             'usage.attribution',
             [
                 (
                     f'{message.provider_response_id} is recorded with {message.usage.input_tokens} / '
-                    f'{message.usage.output_tokens} tokens, but was billed {truth.usage_read[message.provider_response_id]}',
+                    f'{message.usage.output_tokens} tokens, but was billed {billed_by_id[message.provider_response_id]}',
                     {'response': message.provider_response_id},
                 )
                 for message in messages
                 if isinstance(message, ModelResponse)
-                and message.provider_response_id in truth.usage_read
+                and message.provider_response_id in billed_by_id
                 and (message.usage.input_tokens, message.usage.output_tokens)
-                != truth.usage_read[message.provider_response_id]
+                != billed_by_id[message.provider_response_id]
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.

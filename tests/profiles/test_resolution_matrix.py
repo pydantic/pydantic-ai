@@ -1376,6 +1376,30 @@ def test_openrouter_mistral_large():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_zai_glm_5_3():
+    """OpenRouter inlines GLM-5.3 schemas while retaining its own reasoning settings."""
+    profile = OpenRouterProvider.model_profile('z-ai/glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_xai_grok_4():
     profile = OpenRouterProvider.model_profile('x-ai/grok-4')
     assert _normalize(profile) == snapshot(

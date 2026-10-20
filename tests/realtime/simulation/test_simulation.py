@@ -33,6 +33,7 @@ with try_import() as imports_successful:
         run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
     )
 
+    from ._elevenlabs_agents import ElevenLabsAgentsMachine, ElevenLabsAgentsOptions, ElevenLabsAgentsSimulation
     from ._findings import FINDINGS_BY_ID, KNOWN_FINDINGS
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
     from ._live import LiveMachine, LiveSimulation
@@ -66,6 +67,7 @@ def exploration_settings() -> settings:
         pytest.param(XaiMachine, id='xai'),
         pytest.param(GeminiMachine, id='gemini'),
         pytest.param(LiveMachine, id='gpt-live'),
+        pytest.param(ElevenLabsAgentsMachine, id='elevenlabs-agents'),
     ]
     if imports_successful()
     else [],
@@ -145,6 +147,44 @@ def test_raising_tool_ends_the_exchange() -> None:
         sim.finish_tool(outcome='error')
 
     run_clean(OpenAISimulation(), scenario)
+
+
+def test_pruned_tool_round_leaves_the_server_conversation_and_stays_in_history() -> None:
+    """With `openai_prune_tool_items`, an answered tool round is deleted from the server conversation, not history.
+
+    A reconnect after it replays the conversation without the round, and nothing it deleted was still needed.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.settle()  # (the server answers the result)
+        assert sim.truth.pruned, 'the round was deleted from the server conversation'
+        sim.drop()
+        sim.settle()  # (reconnected)
+        session = sim.server.session
+        assert session is not None and not set(sim.truth.pruned) & session.conversation, 'the replay leaves them out'
+        sim.send_text()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(prune_tool_items=True)), scenario)
+
+
+def test_kept_tool_round_stays_in_the_server_conversation() -> None:
+    """A tool named in `openai_keep_tool_items` keeps its round in the server conversation while pruning."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.settle()  # (the server answers the result)
+        assert not sim.truth.pruned, 'the kept round stays'
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(prune_tool_items=True, keep_tool_items=frozenset({'lookup'}))), scenario
+    )
 
 
 @known('SIM-10')
@@ -471,9 +511,13 @@ def test_barge_in_on_a_tool_round_releases_the_deferred_request() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('8801')
-def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
-    """#8801's case: the `response.done` of a reply the user cut off arrives after the next reply started."""
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+def test_late_terminal_of_a_barged_in_reply_stays_its_own(dialect: Dialect) -> None:
+    """The `response.done` of a reply the user cut off arrives after the next reply started (#8801).
+
+    Each reply is assembled under its own id: the late terminal and its usage end the reply it names, not the one
+    streaming.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -482,8 +526,47 @@ def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
         sim.speech_start(late=True)
         sim.speech_stop()
         sim.speak()
+        sim.release_late_done()
+        sim.speak()
+        sim.finish()
 
-    reproduce('8801', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+
+
+def test_late_terminal_of_a_barged_in_reply_lands_while_the_next_calls_a_tool() -> None:
+    """The cut-off reply's terminal arrives between the next reply's tool call and its own terminal (#8801).
+
+    It neither closes the tool-call reply early nor lands its usage on it.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start(late=True)
+        sim.speech_stop()
+        sim.speak()
+        sim.call_tool()
+        sim.release_late_done()
+        sim.finish()
+
+    run_clean(OpenAISimulation(), scenario)
+
+
+def test_late_terminal_of_a_barged_in_reply_lands_after_the_next_ended() -> None:
+    """The cut-off reply's terminal arrives only after the next reply ended (#8801): it records the cut-off reply."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start(late=True)
+        sim.speech_stop()
+        sim.speak()
+        sim.finish()
+        sim.release_late_done()
+
+    run_clean(OpenAISimulation(), scenario)
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'xai'])
@@ -833,9 +916,11 @@ def test_late_transcript_holds_back_the_reply_instead_of_being_inserted() -> Non
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('8801')
-def test_known_repeated_terminal_recorded_as_a_new_response() -> None:
-    """A robustness fault, not recorded provider behavior: the server sends a `response.done` twice."""
+def test_repeated_terminal_is_not_recorded_as_a_new_response() -> None:
+    """A robustness fault, not recorded provider behavior: the server sends a `response.done` twice (#8801).
+
+    The repeat is about a response already recorded, so it records nothing, and its usage isn't counted twice.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
@@ -843,7 +928,7 @@ def test_known_repeated_terminal_recorded_as_a_new_response() -> None:
         sim.finish()
         sim.repeat_done()
 
-    reproduce('8801', OpenAISimulation(), scenario)
+    run_clean(OpenAISimulation(), scenario)
 
 
 def test_started_reply_lost_to_a_drop_is_settled_openai() -> None:
@@ -1164,12 +1249,17 @@ def test_live_queued_text_answered_together() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
-@known('SIM-8')
-def test_known_live_drop_raises_a_raw_websocket_error() -> None:
+def test_live_drop_raises_a_realtime_error() -> None:
+    """SIM-8: a dropped GPT-Live connection ends the session with a `RealtimeError`, as on the other providers."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.drop()
 
-    reproduce('SIM-8', LiveSimulation(), scenario)
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    assert repr(sim.consumer_error) == snapshot(
+        "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+    )
 
 
 def test_live_abandoned_calls_owe_nothing() -> None:
@@ -2221,3 +2311,155 @@ def test_xai_server_vad_answers_every_turn() -> None:
     vad: dict[str, Any] = {'type': 'server_vad', 'create_response': False}
     assert not ServerSession(index=0, socket=socket, turn_detection=vad).create_response
     assert ServerSession(index=0, socket=socket, turn_detection=vad, answers_every_turn=True).create_response
+
+
+# --- ElevenLabs Agents ------------------------------------------------------------------------------
+
+
+def test_baseline_elevenlabs_agents_conversation() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.wait_for_reply()
+        sim.finish_tool()
+        sim.speak(chunks=2)
+        sim.finish()
+        sim.report_usage()
+        sim.ping()
+        sim.send_audio()
+        sim.user_says()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+        sim.send_text(respond=False)
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_barge_in_keeps_the_truncated_reply_with_the_reply_it_cut() -> None:
+    """Recorded: the reply still being generated is cut to what was heard, and that `agent_response` ends it."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak(chunks=2)
+        sim.send_audio()
+        sim.barge_in()
+        sim.user_says()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+@pytest.mark.parametrize('voiced', [False, True], ids=['being-voiced', 'voiced-in-full'])
+def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
+    """Cut in on while its audio still comes, the reply ends with what was heard; voiced in full, nothing changes."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        if voiced:
+            sim.report_usage()
+        sim.barge_in()
+        sim.user_says()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_tool_calls_end_after_a_quiet_stretch() -> None:
+    """With nothing after them, a reply's calls are over once no more come for a moment."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.call_tool(count=2)
+        sim.advance_time(0.1)
+        sim.finish_tool(call=0)
+        sim.finish_tool(call=0)
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_hold_audio_while_queued_is_no_reply() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.deliver()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(elevenlabs=ElevenLabsAgentsOptions(queued=True)), scenario)
+
+
+def test_elevenlabs_agents_drop_ends_the_session() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.drop()
+        sim.settle()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_scenario_elevenlabs_agents_edges() -> None:
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.send_text(ticks=1)
+        sim.deliver()
+        sim.barge_in(deliver=False)
+        sim.user_says(deliver=False)
+        sim.deliver(count=1)
+        sim.speak()
+        sim.finish()
+        sim.call_tool(deliver=False)
+        sim.deliver()
+        sim.send_text()
+        sim.fail_next_send()
+        sim.finish_tool()
+        sim.settle()
+
+    run_tolerant(ElevenLabsAgentsSimulation(options=SessionOptions(latency=True)), scenario)
+
+
+def test_elevenlabs_agents_reply_voiced_after_its_text() -> None:
+    """Recorded: the whole text arrives once the LLM is done, while TTS voices the rest; the reply ends with its audio."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.voice(chunks=2)
+        sim.report_usage()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.voice()
+        sim.barge_in()
+        sim.user_says()
+        sim.speak()
+        sim.finish()
+        sim.advance_time(2.0)
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_parallel_tool_calls_are_one_response() -> None:
+    """A reply's parallel tool calls are one response, and the agent answers once every result is in."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.call_tool(count=2)
+        sim.finish_tool(call=0)
+        sim.finish_tool(call=0)
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)

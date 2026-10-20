@@ -31,7 +31,7 @@ from typing import Any, cast
 import httpx2
 import pytest
 import yaml
-from anthropic import AsyncAnthropic, RateLimitError
+from anthropic import APITimeoutError, AsyncAnthropic, RateLimitError
 from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
@@ -53,6 +53,7 @@ from pydantic_ai_gh_aw_shim import (
     shared,
 )
 
+from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -76,6 +77,23 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+
+
+@pytest.mark.subprocess(reason='the staged shim must import without repository sibling modules on PYTHONPATH')
+def test_shim_cli_imports_from_isolated_staged_package(tmp_path: Path):
+    scripts_dir = Path(__file__).parent
+    staged_package = tmp_path / 'pydantic_ai_gh_aw_shim'
+    shutil.copytree(scripts_dir / 'pydantic_ai_gh_aw_shim', staged_package)
+    result = subprocess.run(
+        [sys.executable, '-P', '-c', 'from pydantic_ai_gh_aw_shim import cli'],
+        capture_output=True,
+        check=False,
+        env={**os.environ, 'PYTHONPATH': str(tmp_path)},
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
 
 # The exact argv shape gh-aw's claude_harness.cjs passes, prompt appended last.
 GHAW_ARGV = [
@@ -1018,7 +1036,11 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
             prompt='review the PR',
             model=FunctionModel(respond, stream_function=_stream),
             label='test-model',
-            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+            claude_code_toolset=shim.select_claude_code_toolset(
+                None,
+                None,
+                task=None if os.environ.get('GITHUB_WORKFLOW') == shim.ATTENTION_WORKFLOW else shim.task,
+            ),
             mcp_servers=[_safe_outputs_toolset(sink)],
             session_id='test-session',
         )
@@ -1049,6 +1071,101 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
 
 
+def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    snapshot.write_text(
+        json.dumps(
+            {
+                'candidates': [
+                    {'number': 1045, 'updated_at': '2026-10-16T00:00:00Z'},
+                    {'number': 1046, 'updated_at': '2026-10-16T00:00:00Z'},
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    sink = tmp_path / 'outputs.jsonl'
+    existing_decision = json.dumps({'type': 'record_attention_decision', 'item_number': '1045'})
+    missing_decision = json.dumps({'type': 'record_attention_decision', 'item_number': '1046'})
+    sink.write_text(existing_decision + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    retries: list[str] = []
+
+    def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, RetryPromptPart):
+                    retries.append(str(part.content))
+        if retries:
+            with sink.open('a', encoding='utf-8') as f:
+                f.write(missing_decision + '\n')
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    assert len(retries) == 1
+    assert '1046' in retries[0]
+    assert '1045' not in retries[0]
+    outputs = sink.read_text(encoding='utf-8').splitlines()
+    assert outputs.count(existing_decision) == 1
+    assert outputs.count(missing_decision) == 1
+    assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def test_attention_agent_cannot_shrink_candidates_to_hide_a_missing_decision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    candidates = [{'number': number, 'updated_at': '2026-10-16T00:00:00Z'} for number in range(1040, 1050)]
+    snapshot.write_text(json.dumps({'candidates': candidates}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(
+        ''.join(
+            json.dumps({'type': 'record_attention_decision', 'item_number': str(candidate['number'])}) + '\n'
+            for candidate in candidates[:-1]
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda _obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    retries: list[str] = []
+    available_tools: list[set[str]] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        available_tools.append({tool.name for tool in info.function_tools})
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, RetryPromptPart):
+                    retries.append(str(part.content))
+        if not available_tools[:-1]:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'Write',
+                        {
+                            'file_path': str(snapshot),
+                            'content': json.dumps({'candidates': candidates[:-1]}),
+                        },
+                    )
+                ]
+            )
+        if any('1049' in retry for retry in retries):
+            with sink.open('a', encoding='utf-8') as output:
+                output.write(json.dumps({'type': 'record_attention_decision', 'item_number': '1049'}) + '\n')
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 0
+    assert json.loads(snapshot.read_text(encoding='utf-8'))['candidates'] == candidates
+    assert {'Write', 'Edit', 'MultiEdit', 'Bash'}.isdisjoint(available_tools[0])
+    assert 'Task' not in available_tools[0]
+    assert any('1049' in retry for retry in retries)
+
+
 def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
@@ -1064,6 +1181,205 @@ def test_run_fails_when_the_model_never_emits_a_safe_output(monkeypatch: pytest.
     assert _run_shim(_respond, sink) == 1
     assert requests == shim.NO_SAFE_OUTPUT_RETRIES + 1
     assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
+
+
+def test_attention_completion_requests_only_missing_candidate_decisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    snapshot.write_text(
+        json.dumps(
+            {
+                'candidates': [
+                    {'number': 1045, 'updated_at': '2026-10-16T00:00:00Z'},
+                    {'number': 1046, 'updated_at': '2026-10-16T00:00:00Z'},
+                ]
+            }
+        ),
+        encoding='utf-8',
+    )
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(
+        json.dumps({'type': 'record_attention_decision', 'item_number': '1045'})
+        + '\n'
+        + json.dumps({'type': 'noop', 'message': 'already recorded'})
+        + '\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    with pytest.raises(ModelRetry, match='1046') as exc_info:
+        shim.require_safe_output('done')
+    assert 'only for these missing IDs' in str(exc_info.value)
+
+    with sink.open('a', encoding='utf-8') as f:
+        f.write(json.dumps({'type': 'record_attention_decision', 'item_number': '1046'}) + '\n')
+        # The completion check leaves exact-set enforcement to the host.
+        f.write(json.dumps({'type': 'record_attention_decision', 'item_number': '1045'}) + '\n')
+        f.write(json.dumps({'type': 'record_attention_decision', 'item_number': '9999'}) + '\n')
+    assert shim.require_safe_output('done') == 'done'
+
+
+def test_attention_validator_fails_when_candidate_snapshot_is_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'complete'}) + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    assert shim.safe_output_pending()
+    with pytest.raises(ValueError, match='Attention candidate snapshot is missing'):
+        shim.require_safe_output('done')
+
+
+def test_attention_validator_fails_when_safe_output_sink_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+
+    assert shim.safe_output_pending()
+    with pytest.raises(ValueError, match='Attention safe-output sink is not configured'):
+        shim.require_safe_output('done')
+
+
+def test_ordinary_workflow_accepts_unconfigured_safe_output_sink(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+
+    assert not shim.safe_output_pending()
+    assert shim.require_safe_output('done') == 'done'
+
+
+@pytest.mark.parametrize('sink_configured', [True, False])
+def test_attention_run_fails_when_immutable_completion_artifact_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sink_configured: bool
+):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'complete'}) + '\n', encoding='utf-8')
+    if sink_configured:
+        monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    else:
+        monkeypatch.delenv('GH_AW_SAFE_OUTPUTS', raising=False)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    requests = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 1
+    assert requests == 1
+    assert any(e.get('type') == 'result' and e.get('is_error') is True for e in emitted)
+
+
+def test_attention_safe_output_pending_tracks_missing_decisions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    snapshot.write_text(json.dumps({'candidates': [{'number': number} for number in range(1, 11)]}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(
+        ''.join(
+            json.dumps({'type': 'record_attention_decision', 'item_number': str(number)}) + '\n'
+            for number in range(1, 10)
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    assert shim.safe_output_pending()
+
+    with sink.open('a', encoding='utf-8') as f:
+        f.write(json.dumps({'type': 'record_attention_decision', 'item_number': '10'}) + '\n')
+    assert not shim.safe_output_pending()
+
+
+def test_attention_request_limit_fails_when_decisions_are_incomplete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    snapshot.write_text(json.dumps({'candidates': [{'number': number} for number in range(1, 11)]}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(
+        ''.join(
+            json.dumps({'type': 'record_attention_decision', 'item_number': str(number)}) + '\n'
+            for number in range(1, 10)
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 1)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink) == 1
+    results = [e for e in emitted if e.get('type') == 'result']
+    assert len(results) == 1
+    assert results[0].get('is_error') is True
+
+
+def test_attention_request_limit_fails_when_snapshot_is_invalid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    (tmp_path / 'attention-candidates.json').write_text('{}', encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'output exists'}) + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 1)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('probe', {})])
+
+    assert _run_shim(_respond, sink) == 1
+    results = [e for e in emitted if e.get('type') == 'result']
+    assert len(results) == 1
+    assert results[0].get('is_error') is True
+
+
+def test_attention_request_limit_succeeds_when_decisions_are_complete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', shim.ATTENTION_WORKFLOW)
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    snapshot = tmp_path / 'attention-candidates.json'
+    snapshot.write_text(json.dumps({'candidates': [{'number': 1}]}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'record_attention_decision', 'item_number': '1'}) + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'run_request_limit', lambda: 1)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('noop', {'message': 'complete'})])
+
+    assert _run_shim(_respond, sink) == 0
+    results = [e for e in emitted if e.get('type') == 'result']
+    assert [(result.get('is_error'), result.get('result')) for result in results] == [
+        (False, 'request limit reached after the safe output was emitted')
+    ]
+
+
+def test_attention_completion_accepts_noop_for_empty_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Attention Triage')
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    (tmp_path / 'attention-candidates.json').write_text(json.dumps({'candidates': []}), encoding='utf-8')
+    sink = tmp_path / 'outputs.jsonl'
+    sink.write_text(json.dumps({'type': 'noop', 'message': 'nothing to classify'}) + '\n', encoding='utf-8')
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+
+    assert shim.require_safe_output('done') == 'done'
 
 
 def test_run_succeeds_when_the_safe_output_takes_the_last_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -2427,6 +2743,30 @@ def test_failure_metadata_classifies_typed_errors(
     details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
     assert details['kind'] == expected_kind
     assert details.get('http_status') == expected_status
+
+
+def test_failure_metadata_classifies_wrapped_transport_timeout():
+    error = shim.ModelAPIError('test-model', 'ReadTimeout')
+    error.__cause__ = httpx2.ReadTimeout('read timed out')
+
+    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+
+    assert details == {'kind': 'timeout'}
+
+
+def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_error():
+    try:
+        raise httpx2.ReadTimeout('read timed out')
+    except httpx2.ReadTimeout as transport_error:
+        try:
+            raise APITimeoutError(request=httpx2.Request('POST', 'https://example.com')) from transport_error
+        except APITimeoutError as sdk_error:
+            error = shim.ModelAPIError('test-model', 'APITimeoutError')
+            error.__cause__ = sdk_error
+
+    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+
+    assert details == {'kind': 'timeout'}
 
 
 def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):

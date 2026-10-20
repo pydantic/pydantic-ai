@@ -29,8 +29,13 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
 
-pytestmark = pytest.mark.anyio
+with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.google import GoogleProvider
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -66,7 +71,7 @@ async def test_unsupported_files_are_described():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run(
         [
             'Compare these:',
@@ -119,7 +124,9 @@ async def test_supported_files_are_sent_as_they_are():
     video = VideoUrl('https://example.com/cat.mp4')
     audio = AudioUrl('https://example.com/cat.mp3')
     # Every kind of file is accepted by default: only a model adapter or profile that says otherwise turns one off.
-    agent = Agent(FunctionModel(capture), capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(
+        FunctionModel(capture), capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))]
+    )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(['Two', 'texts'])]),
         ModelResponse(parts=[TextPart('ok')]),
@@ -139,7 +146,7 @@ async def test_video_and_audio_are_described_when_the_profile_rejects_them():
 
     describer = Describer()
     model = FunctionModel(capture, profile=ModelProfile(supports_video_input=False, supports_audio_file_input=False))
-    agent = Agent(model, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run(
         [
             VideoUrl('https://example.com/cat.mp4', identifier='clip'),
@@ -174,7 +181,7 @@ async def test_custom_instructions_reach_the_describer():
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(
         text_only,
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(capture), instructions='One sentence.')],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(capture), instructions='One sentence.')],
     )
     await agent.run([ImageUrl('https://example.com/cat.png')])
     request = seen[0][0]
@@ -192,7 +199,7 @@ async def test_fallback_model_is_left_alone():
 
     describer = Describer()
     model = FallbackModel(FunctionModel(capture, profile=ModelProfile(supports_image_input=False)))
-    agent = Agent(model, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     await agent.run([ImageUrl('https://example.com/cat.png')])
     assert describer.calls == 0
     assert isinstance(last_prompt(seen)[0], ImageUrl)
@@ -208,7 +215,7 @@ async def test_text_like_documents_are_inlined_not_described():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
     with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
         download.return_value = {'data': 'Buy milk.', 'data_type': 'text/plain'}
         await agent.run(
@@ -245,7 +252,7 @@ async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(file_understanding, '_MAX_DESCRIPTIONS', 2)
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     for name in ['first', 'second', 'third']:
         await agent.run([_png(name)])
@@ -257,24 +264,22 @@ async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
     assert describer.calls == 4, 'the oldest was evicted'
 
 
-async def test_a_url_description_is_not_reused_by_another_run():
-    """A URL is not its content, so one run's description of it is never handed to the next.
+async def test_a_url_description_is_not_reused_by_another_conversation():
+    """A URL is not its content, so one conversation's description of it is not handed to another.
 
     The same URL can serve different bytes to different callers and stop resolving once a signature expires,
-    so reusing a description across runs would hand one caller a description of what another caller fetched.
+    so reusing a description across conversations would hand one caller a description of what another fetched.
     """
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
-    # `media_type` is explicit because inferring it from a URL with a query string works on 3.11+ but not
-    # on 3.10; what this test is about is the signature, not the inference.
-    signed = ImageUrl('https://example.com/receipt.png?signature=abc', media_type='image/png')
+    signed = ImageUrl('https://example.com/receipt.png?signature=abc')
     await agent.run([signed])
     await agent.run([signed])
     assert describer.calls == 2
 
-    # Bytes are their own identity, so those are reused across runs.
+    # Bytes are their own identity, so those are reused across conversations.
     await agent.run([_png('chart')])
     await agent.run([_png('chart')])
     assert describer.calls == 3
@@ -290,7 +295,7 @@ async def test_the_same_bytes_under_two_media_types_are_two_files():
 
     text_only = FunctionModel(capture, profile=ModelProfile(supports_image_input=False, supports_document_input=False))
     describer = Describer()
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     data = b'a,b\n1,2'
     await agent.run([BinaryContent(data, media_type='image/png', identifier='as-image')])
@@ -314,17 +319,20 @@ async def test_a_url_is_not_described_twice_within_a_run():
     """Within one run the description is reused, so a history carrying the same file costs one description."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     url = ImageUrl('https://example.com/cat.png')
     await agent.run([url, 'and again:', url])
     assert describer.calls == 1
 
 
-async def test_a_url_is_described_every_time_without_a_run_id():
-    """With no run to scope it to, a URL's description is not kept across requests, only shared within one."""
+async def test_a_url_is_described_every_time_without_a_conversation_id():
+    """With no conversation to scope it to, a URL's description is not kept across requests, only within one.
+
+    An agent run always has a conversation id, so this calls the hook directly with a bare `RunContext`.
+    """
     describer = Describer()
-    capability: FileUnderstanding[None] = FileUnderstanding(fallback_model=FunctionModel(describer))
+    capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
     item = ImageUrl('https://example.com/cat.png')
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     request_context = ModelRequestContext(
@@ -344,7 +352,7 @@ async def test_describing_counts_toward_the_runs_usage_and_limits():
     """The describing requests are the agent run's own spend: they show in its usage and its limits bound them."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describer))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
     result = await agent.run([_png('first'), _png('second')], usage_limits=UsageLimits(request_limit=3))
     assert describer.calls == 2
@@ -376,7 +384,53 @@ async def test_distinct_files_are_described_concurrently():
         return ModelResponse(parts=[TextPart(f'A description of {item.identifier}.')])
 
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))])
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))])
     await agent.run([_png('first'), _png('second'), 'and the first again:', _png('first')])
 
     assert sorted(described) == ['first', 'second']
+
+
+async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
+    """Each turn of a chat is a run of its own, but continues the conversation, so the URL is described once."""
+    describer = Describer()
+    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
+
+    first = await agent.run([DocumentUrl('https://example.com/report.pdf'), 'What is this?'])
+    second = await agent.run('And who wrote it?', message_history=first.all_messages())
+    assert second.conversation_id == first.conversation_id
+    assert describer.calls == 1
+
+
+async def test_a_long_text_document_is_fetched_again_rather_than_kept():
+    """A downloaded text body over the cache's size limit isn't kept, so the next turn downloads it again."""
+    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
+    with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
+        download.return_value = {'data': 'x' * 100_001, 'data_type': 'text/plain'}
+        first = await agent.run([DocumentUrl('https://example.com/big.txt'), 'Summarize.'])
+        await agent.run('Again.', message_history=first.all_messages())
+        assert download.call_count == 2
+
+        download.return_value = {'data': 'short', 'data_type': 'text/plain'}
+        third = await agent.run([DocumentUrl('https://example.com/small.txt'), 'Summarize.'])
+        await agent.run('Again.', message_history=third.all_messages())
+        assert download.call_count == 3
+
+
+@pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')
+@pytest.mark.vcr()
+async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
+):
+    # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
+    claude = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    gemini = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
+
+    result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
+
+    assert result.output == snapshot(
+        'A professional camera rig records a scenic desert landscape with a winding path leading toward distant snowy mountains during golden hour.'
+    )
+    assert result.usage.requests == 2

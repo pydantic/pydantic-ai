@@ -507,6 +507,22 @@ pre {
   background: var(--amber);
 }
 
+/* A running session with input queued behind its turn: the running dot, ringed. */
+.state.queued {
+  background: var(--lithium);
+  outline: 1.5px solid var(--lithium);
+  outline-offset: 1.5px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
+/* A question or dialog waits for the user: amber, and pulsing, unlike a cancelled turn's. */
+.state.asking {
+  background: var(--amber);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
 @keyframes pulse {
   70% {
     box-shadow: 0 0 0 6px transparent;

@@ -1,6 +1,7 @@
 """Exercise real module reloads in a process isolated from pytest's imported class identities."""
 
 import asyncio
+import gc
 import io
 import sys
 from dataclasses import replace
@@ -35,9 +36,10 @@ PromptT = TypeVar('PromptT')
 async def main(root: Path, mode: str) -> None:
     package = root / 'pydantic_clai2'
     app = package / '_app.py'
-    original = app.read_text()
-    updated = original.replace("prompt_async('> ')", "prompt_async('updated> ')")
-    updated = updated.replace("'Goodbye.'", "'Updated goodbye.'")
+    updated = app.read_text()
+    runtime = package / 'runtime' / 'session_runtime.py'
+    updated_runtime = runtime.read_text().replace("prompt_async('> ')", "prompt_async('updated> ')")
+    updated_runtime = updated_runtime.replace("'Goodbye.'", "'Updated goodbye.'")
     commands = package / 'commands.py'
     commands.write_text(commands.read_text().replace('Use /help.', 'Use updated /help.'))
     if mode == 'new_imports':
@@ -111,12 +113,16 @@ async def main(root: Path, mode: str) -> None:
                 'reload'
             ]
             labels.append(label)
+            # The terminal's session stays live through every reload, failed ones included, and is the only one.
+            live = [len(o.listing()) for o in gc.get_objects() if type(o).__name__ == 'LiveRuntimes']
+            assert sum(live) == 1, live
             text = next(prompts)
             if text == '/reload' and mode != 'unchanged':
                 reloads += 1
                 sys.path.insert(0, str(root))
                 pydantic_clai2.__path__.insert(0, str(package))
                 app.write_text(updated)
+                runtime.write_text(updated_runtime)
                 if reloads == 1:
                     if mode == 'syntax':
                         app.write_text(updated + '\ninvalid syntax!\n')
@@ -126,8 +132,11 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'harness':
                         app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
-                        app.write_text(
-                            updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
+                        runtime.write_text(
+                            updated_runtime.replace(
+                                '    commands = Commands(workspace=lambda: Path(session.workspace))',
+                                '    raise RuntimeError("bad build")',
+                            )
                         )
             return text
 
@@ -164,7 +173,7 @@ async def main(root: Path, mode: str) -> None:
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
     ):
         patch.setattr(prompt_toolkit, 'PromptSession', Prompt)
-        patch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        patch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
         await chat(
             agent,
             deps=deps,

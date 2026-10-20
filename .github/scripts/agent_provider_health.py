@@ -24,11 +24,15 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
+# Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
+_NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
 _RETIRED_PROVIDER_REASON = (
     'Workflow passes retired `MINIMAX_API_KEY` instead of `ZAI_API_KEY`; update the workflow from `main`'
 )
 
 Scope = Literal['provider', 'workflow', 'task']
+# Externally verified incident markers may use queue; attempt-job evidence cannot classify it.
+Stage = Literal['setup', 'inference', 'validation', 'publication', 'queue']
 QuotaStatus = Literal['healthy', 'exhausted', 'unknown']
 QuotaDiagnostic = Literal[
     'missing_api_key',
@@ -80,10 +84,16 @@ class Health:
     reason: str
     checked_at: str
     quota: Quota
+    run_id: str | None = None
+    recovery_issue: int | None = None
 
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
             raise ValueError('run_attempt must be a positive integer')
+        if self.run_id is not None and _positive_int_string(self.run_id) is None:
+            raise ValueError('run_id must be a positive integer string')
+        if self.recovery_issue is not None and _positive_attempt(self.recovery_issue) is None:
+            raise ValueError('recovery_issue must be a positive integer')
 
 
 @dataclass(frozen=True)
@@ -95,6 +105,8 @@ class IncidentMarker:
     kind: str
     run_id: str | None
     reset_at: str | None
+    stage: Stage | None = None
+    run_attempt: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +118,7 @@ class Issue:
     body: str
     state: str
     html_url: str
+    created_at: str | None
 
 
 @dataclass(frozen=True)
@@ -157,27 +170,35 @@ def _positive_attempt(value: object) -> int | None:
     return value
 
 
+def _positive_int_string(value: object) -> int | None:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        return None
+    try:
+        result = int(value)
+    except ValueError:
+        return None
+    return result if result > 0 else None
+
+
 def _run_attempt_from_env() -> int:
     value = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
-    if value is None or not value.isascii() or not value.isdecimal():
-        raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
-    attempt = int(value)
-    if attempt < 1:
+    attempt = _positive_int_string(value)
+    if attempt is None:
         raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
     return attempt
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 def _timestamp(value: dt.datetime) -> str:
-    return value.astimezone(dt.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
+    return value.astimezone(dt.UTC).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
 
 def _timestamp_from_millis(value: int | float) -> str | None:
     try:
-        return _timestamp(dt.datetime.fromtimestamp(value / 1000, tz=dt.timezone.utc))
+        return _timestamp(dt.datetime.fromtimestamp(value / 1000, tz=dt.UTC))
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -222,6 +243,10 @@ def _write_health(path: Path, health: Health) -> None:
         'checked_at': health.checked_at,
         'quota': quota_data,
     }
+    if health.run_id is not None:
+        payload['run_id'] = health.run_id
+    if health.recovery_issue is not None:
+        payload['recovery_issue'] = health.recovery_issue
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
 
@@ -260,6 +285,10 @@ def _health_from_json(value: object) -> Health:
     diagnostic_value = quota_data.get('diagnostic')
     diagnostic = _QUOTA_DIAGNOSTICS.get(diagnostic_value) if isinstance(diagnostic_value, str) else None
     http_status = _safe_http_status(quota_data.get('http_status'))
+    run_id_value = data.get('run_id')
+    recovery_issue_value = data.get('recovery_issue')
+    run_id = _string(run_id_value)
+    recovery_issue = _positive_attempt(recovery_issue_value) if recovery_issue_value is not None else None
     if quota_status != 'unknown':
         diagnostic = None
         http_status = None
@@ -271,6 +300,8 @@ def _health_from_json(value: object) -> Health:
         or reason is None
         or checked_at is None
         or not isinstance(ready, bool)
+        or (run_id_value is not None and (run_id is None or _positive_int_string(run_id) is None))
+        or (recovery_issue_value is not None and recovery_issue is None)
         or (quota_data.get('reset_at') is not None and reset_at is None)
         or (quota_data.get('interval_reset_at') is not None and interval_reset_at is None)
         or (quota_data.get('weekly_reset_at') is not None and weekly_reset_at is None)
@@ -294,6 +325,8 @@ def _health_from_json(value: object) -> Health:
             diagnostic,
             http_status,
         ),
+        run_id,
+        recovery_issue,
     )
 
 
@@ -371,7 +404,7 @@ def _parse_zai_quota(value: object) -> Quota:
         return _unknown_quota('invalid_response' if quota_data is None else 'invalid_limits')
 
     quota_rows: list[object] = limits  # pyright: ignore[reportUnknownVariableType]
-    windows: dict[int, tuple[float, str, int]] = {}
+    windows: dict[int, tuple[float, str | None, int | None]] = {}
     for item in quota_rows:
         entry = _mapping(item)
         if entry is None:
@@ -396,19 +429,24 @@ def _parse_zai_quota(value: object) -> Quota:
         ):
             return _unknown_quota('invalid_percentage')
         reset_millis = entry.get('nextResetTime')
-        if isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
+        if 'nextResetTime' in entry and reset_millis is None and consumed_value == 0:
+            reset = None
+            reset_millis_value = None
+        elif isinstance(reset_millis, bool) or not isinstance(reset_millis, int):
             return _unknown_quota('invalid_reset_time')
-        reset = _timestamp_from_millis(reset_millis)
-        if reset is None:
-            return _unknown_quota('invalid_reset_time')
-        windows[unit] = (100 - float(consumed_value), reset, reset_millis)
+        else:
+            reset = _timestamp_from_millis(reset_millis)
+            if reset is None:
+                return _unknown_quota('invalid_reset_time')
+            reset_millis_value = reset_millis
+        windows[unit] = (100 - float(consumed_value), reset, reset_millis_value)
 
     if set(windows) != {3, 6}:
         return _unknown_quota('missing_windows')
     interval_remaining, interval_reset, _ = windows[3]
     weekly_remaining, weekly_reset, _ = windows[6]
-    exhausted_resets: list[tuple[int, str]] = [
-        (reset_millis, reset) for remaining, reset, reset_millis in (windows[3], windows[6]) if remaining == 0
+    exhausted_resets: list[tuple[int | None, str | None]] = [
+        (reset_millis, reset) for remaining, reset, reset_millis in windows.values() if remaining == 0
     ]
     status: QuotaStatus = 'exhausted' if exhausted_resets else 'healthy'
     reset_at = max(exhausted_resets)[1] if exhausted_resets else None
@@ -502,6 +540,28 @@ class GitHubClient:
                 return found
             page += 1
 
+    def attempt_jobs(self, run_id: str, attempt: int) -> list[dict[str, object]]:
+        found: list[dict[str, object]] = []
+        page = 1
+        while True:
+            response = self.request('GET', f'actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100&page={page}')
+            data = _mapping(response)
+            jobs = data.get('jobs') if data is not None else None
+            if not isinstance(jobs, list):
+                raise ValueError('GitHub returned an invalid attempt-jobs response')
+            job_entries: list[object] = []
+            entry: object
+            for entry in jobs:  # pyright: ignore[reportUnknownVariableType]
+                job_entries.append(entry)  # pyright: ignore[reportUnknownArgumentType]
+            found.extend(job for item in job_entries if (job := _mapping(item)) is not None)
+            if len(job_entries) < 100:
+                return found
+            page += 1
+
+    def default_branch(self) -> str | None:
+        data = _mapping(self.request('GET', ''))
+        return _object_string(data, 'default_branch') if data is not None else None
+
     def create_incident(self, title: str, body: str) -> Issue:
         response = self.request(
             'POST',
@@ -530,7 +590,7 @@ def _issue(value: object) -> Issue | None:
         return None
     if state is None or url is None:
         return None
-    return Issue(number, title, body, state, url)
+    return Issue(number, title, body, state, url, _iso_time(data.get('created_at')))
 
 
 def _marker_from_body(body: str) -> IncidentMarker | None:
@@ -554,7 +614,14 @@ def _marker_from_body(body: str) -> IncidentMarker | None:
         return None
     if data.get('reset_at') is not None and reset_at is None:
         return None
-    return IncidentMarker(scope, key, kind, run_id, reset_at)
+    stage_value = data.get('stage')
+    stage: Stage | None = (
+        stage_value if stage_value in ('setup', 'inference', 'validation', 'publication', 'queue') else None
+    )
+    run_attempt = _positive_attempt(data.get('run_attempt')) if data.get('run_attempt') is not None else None
+    if data.get('run_attempt') is not None and run_attempt is None:
+        return None
+    return IncidentMarker(scope, key, kind, run_id, reset_at, stage, run_attempt)
 
 
 def _matching_incident(health: Health, issues: list[Issue]) -> Issue | None:
@@ -574,39 +641,22 @@ def _matching_incident(health: Health, issues: list[Issue]) -> Issue | None:
 
 def _health_decision(health: Health, issues: list[Issue]) -> Health:
     incident = _matching_incident(health, issues)
+    if incident is not None and health.recovery_issue == incident.number:
+        marker = _marker_from_body(incident.body)
+        matching = [item for item in issues if _matching_incident(health, [item]) is not None]
+        if (
+            health.trigger_event == 'workflow_dispatch'
+            and marker is not None
+            and marker.scope == 'workflow'
+            and len(matching) == 1
+        ):
+            incident = None
     if incident is not None:
-        return Health(
-            health.workflow,
-            health.task_key,
-            health.trigger_event,
-            health.run_attempt,
-            False,
-            f'Open operational incident #{incident.number} blocks inference',
-            health.checked_at,
-            health.quota,
-        )
+        return replace(health, ready=False, reason=f'Open operational incident #{incident.number} blocks inference')
     if health.quota.status != 'healthy':
         message = 'Z.ai quota is exhausted' if health.quota.status == 'exhausted' else 'Z.ai quota health is unknown'
-        return Health(
-            health.workflow,
-            health.task_key,
-            health.trigger_event,
-            health.run_attempt,
-            False,
-            message,
-            health.checked_at,
-            health.quota,
-        )
-    return Health(
-        health.workflow,
-        health.task_key,
-        health.trigger_event,
-        health.run_attempt,
-        True,
-        'Provider health check passed',
-        health.checked_at,
-        health.quota,
-    )
+        return replace(health, ready=False, reason=message)
+    return replace(health, ready=True, reason='Provider health check passed')
 
 
 def check_health(
@@ -617,11 +667,22 @@ def check_health(
     quota: Quota,
     issues: list[Issue],
     checked_at: dt.datetime | None = None,
+    recovery_issue: int | None = None,
 ) -> Health:
     """Return the inference gate decision from provider and incident state."""
     if _positive_attempt(run_attempt) is None:
         raise ValueError('run_attempt must be a positive integer')
-    base = Health(workflow, task_key, trigger_event, run_attempt, True, '', _timestamp(checked_at or _now()), quota)
+    base = Health(
+        workflow,
+        task_key,
+        trigger_event,
+        run_attempt,
+        True,
+        '',
+        _timestamp(checked_at or _now()),
+        quota,
+        recovery_issue=recovery_issue,
+    )
     return _health_decision(base, issues)
 
 
@@ -665,7 +726,11 @@ def _json_values(path: Path) -> list[object]:
     if path.is_file():
         files = [path]
     elif path.is_dir():
-        files = sorted(file for file in path.rglob('*') if file.is_file() and file.suffix in ('.json', '.jsonl'))
+        files = sorted(
+            file
+            for file in path.rglob('*')
+            if file.is_file() and (file.suffix in ('.json', '.jsonl') or file.name == 'agent-stdio.log')
+        )
     else:
         raise ValueError(f'artifact path does not exist: {path}')
     values: list[object] = []
@@ -684,15 +749,43 @@ def _json_values(path: Path) -> list[object]:
     return values
 
 
-def parse_run_result(path: Path) -> RunResult | None:
-    """Find validated terminal provider metadata in a downloaded agent artifact."""
+def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResult | None:
+    """Return one unambiguous terminal record from downloaded agent artifacts."""
     if not path.exists():
         return None
+    if path.is_file() and path.name != 'agent-stdio.log':
+        return None
+    if path.is_dir():
+        eligible = sorted(
+            file
+            for file in path.rglob('agent-stdio.log')
+            if file.is_file()
+            and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
+        )
+        if expected_attempt is None:
+            if len(eligible) != 1:
+                return None
+            path = eligible[0]
+        else:
+            results_by_artifact: list[set[RunResult]] = []
+            for artifact in eligible:
+                results = {
+                    result
+                    for value in _json_values(artifact)
+                    if (result := _run_result_from(value)) is not None and result.run_attempt == expected_attempt
+                }
+                if results:
+                    results_by_artifact.append(results)
+            if len(results_by_artifact) != 1:
+                return None
+            results = results_by_artifact[0]
+            return next(iter(results)) if len(results) == 1 else None
+    results: set[RunResult] = set()
     for value in _json_values(path):
         result = _run_result_from(value)
-        if result is not None:
-            return result
-    return None
+        if result is not None and (expected_attempt is None or result.run_attempt == expected_attempt):
+            results.add(result)
+    return next(iter(results)) if len(results) == 1 else None
 
 
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
@@ -703,9 +796,154 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
         return 'provider', 'zai', failure.kind
     if failure.kind == 'rate_limit':
         return 'provider', 'zai', failure.kind
-    if result.trigger_event == 'schedule':
+    if result.trigger_event == 'schedule' and failure.kind not in ('timeout', 'time_limit'):
         return 'workflow', result.workflow, failure.kind
     return 'task', f'{result.workflow}:{result.task_key}', failure.kind
+
+
+def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
+    """Return a stage from trusted failed steps and their position in the agent job."""
+    for job in jobs:
+        if job.get('conclusion') not in ('failure', 'timed_out', 'cancelled', 'action_required'):
+            continue
+        steps = job.get('steps')
+        if not isinstance(steps, list):
+            continue
+        parsed = [_mapping(item) for item in steps]  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+        failures = [
+            i
+            for i, step in enumerate(parsed)
+            if step is not None and step.get('conclusion') in ('failure', 'timed_out', 'cancelled')
+        ]
+        if not failures:
+            continue
+        execution = next(
+            (
+                i
+                for i, item in enumerate(parsed)
+                if item is not None
+                and _string(item.get('name'))
+                in ('Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine')
+            ),
+            None,
+        )
+        for index in failures:
+            step = parsed[index]
+            name = _string(step.get('name')) if step is not None else None
+            if name == 'Restore full history and tags for dynamic versioning' or (
+                _string(job.get('name')) == 'pre_activation' and name == 'Setup Scripts'
+            ):
+                return 'setup'
+            if name == 'Restore exact candidate allowlist':
+                if _string(job.get('name')) == 'record_attention_decision':
+                    return 'validation'
+                return 'setup'
+            if execution is not None and index < execution:
+                return 'setup'
+            if name is None:
+                continue
+            low = name.lower()
+            if any(word in low for word in ('validat', 'schema', 'attention')):
+                return 'validation'
+            if any(word in low for word in ('publish', 'output', 'post agent', 'ingest')):
+                return 'publication'
+            if name in ('Execute Claude Code CLI', 'Execute Pydantic AI CLI', 'Run agent', 'Run legacy engine'):
+                return 'inference'
+            if execution is not None and index > execution:
+                return 'publication'
+        # A failed agent job without a step-level cause (including a queued job) is unknown.
+    return None
+
+
+def _monitor_workflow_outcome(
+    client: GitHubClient,
+    args: argparse.Namespace,
+    health: Health,
+    run_attempt: int,
+    result: RunResult | None,
+    repo: str,
+) -> int:
+    """Record only trusted host failures and typed, identity-matched provider outcomes."""
+    needs_failure_evidence = args.conclusion in ('failure', 'timed_out') or (
+        result is not None and result.failure is not None
+    )
+    jobs = client.attempt_jobs(str(args.run_id), run_attempt) if needs_failure_evidence else []
+    failed_stage = _stage_from_attempt_jobs(jobs)
+    if (
+        args.conclusion is not None
+        and args.conclusion not in ('failure', 'timed_out')
+        and health.ready
+        and (result is None or result.failure is None)
+    ):
+        print(f'Workflow concluded {args.conclusion}; no operational incident was created')
+        return 0
+    if result is None:
+        if not health.ready:
+            if health.reason.startswith('Open operational incident #'):
+                print(
+                    f'Activation was blocked by an existing incident: {health.reason}{_quota_diagnostic_suffix(health.quota)}'
+                )
+                return 0
+            if health.quota.status == 'healthy':
+                print(f'Activation was blocked by existing state: {health.reason}')
+                return 0
+            kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
+            marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
+            result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
+            existing = next(
+                (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker), None
+            )
+            if existing is None:
+                _create_or_reuse_incident(
+                    client,
+                    result,
+                    str(args.run_id),
+                    repo,
+                    health.reason + _quota_diagnostic_suffix(health.quota),
+                    dry_run=args.dry_run,
+                    marker_override=marker,
+                    quota=health.quota,
+                )
+            else:
+                print(
+                    f'Reusing operational incident #{existing.number}: {existing.html_url}{_quota_diagnostic_suffix(health.quota)}'
+                )
+            return 0
+        if failed_stage is None:
+            print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
+            return 0
+        result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
+    if result.failure is not None and (result.failure.kind == 'timeout' or result.failure.http_status == 529):
+        print('Transient request failure remains local to this attempt')
+        return 0
+    if args.conclusion in ('cancelled', 'timed_out') and failed_stage == 'inference':
+        print('Transient deadline failure remains local to this attempt')
+        return 0
+    if result.failure is None and failed_stage is None:
+        print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
+        return 0
+    reason = health.reason if not health.ready else _failure_reason(result.failure)
+    marker_override = None
+    if result.failure is None and failed_stage is not None:
+        scope, key = (
+            ('workflow', health.workflow)
+            if health.trigger_event == 'schedule'
+            else ('task', f'{health.workflow}:{health.task_key}')
+        )
+        marker_override = IncidentMarker(scope, key, failed_stage, str(args.run_id), None, failed_stage, run_attempt)
+        reason = f'Agent workflow failed during the trusted {failed_stage} stage'
+    if health.ready and result.failure is not None:
+        reason = _failure_reason(result.failure)
+    _create_or_reuse_incident(
+        client,
+        result,
+        str(args.run_id),
+        repo,
+        reason,
+        dry_run=args.dry_run,
+        marker_override=marker_override,
+    )
+    return 0
 
 
 def _failure_reason(failure: Failure | None) -> str:
@@ -732,12 +970,17 @@ def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id:
         'run_id': marker.run_id,
         'reset_at': marker.reset_at,
     }
+    if marker.stage is not None:
+        marker_data['stage'] = marker.stage
+    if marker.run_attempt is not None:
+        marker_data['run_attempt'] = marker.run_attempt
     run_url = f'https://github.com/{repo}/actions/runs/{urllib.parse.quote(run_id)}'
-    check = (
-        'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
-        if marker.kind in ('request_limit', 'time_limit')
-        else 'Confirm provider credentials, configuration, and quota health.'
-    )
+    if marker.kind in ('request_limit', 'time_limit'):
+        check = 'The run stopped at its own limit, not on a provider error. Find out why it needed more than the limit.'
+    elif marker.stage is not None:
+        check = f'Inspect the trusted {marker.stage} stage logs and correct the host-side failure.'
+    else:
+        check = 'Confirm provider credentials, configuration, and quota health.'
     return (
         f'## Operational failure\n\n{reason}\n\n'
         f'- Workflow: `{workflow}`\n- Task: `{task_key}`\n- First failing run: {run_url}\n\n'
@@ -759,7 +1002,7 @@ def _create_or_reuse_incident(
 ) -> Issue | None:
     scope, key, kind = _scope_for(result)
     marker = marker_override or IncidentMarker(
-        scope, key, kind, run_id, result.failure.retry_at if result.failure else None
+        scope, key, kind, run_id, result.failure.retry_at if result.failure else None, run_attempt=result.run_attempt
     )
     matching_key = Health(
         result.workflow,
@@ -834,6 +1077,15 @@ def _check_command(args: argparse.Namespace) -> int:
     else:
         quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
         client = GitHubClient(repo, token)
+        recovery_issue = None
+        raw_issue = os.environ.get('PYDANTIC_AI_RECOVERY_ISSUE')
+        requested_issue = _positive_int_string(raw_issue)
+        if requested_issue is not None and os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+            default_branch = client.default_branch()
+            if default_branch is not None and os.environ.get('GITHUB_REF') == f'refs/heads/{default_branch}':
+                recovery_issue = requested_issue
+        if raw_issue and recovery_issue is None:
+            print('Recovery input ignored; use a positive issue number on a default-branch workflow_dispatch.')
         health = check_health(
             workflow or 'unknown',
             task_key or 'unknown',
@@ -841,18 +1093,11 @@ def _check_command(args: argparse.Namespace) -> int:
             run_attempt,
             quota,
             client.open_incidents(),
+            recovery_issue=recovery_issue,
         )
     if not workflow or not task_key or not trigger_event:
-        health = Health(
-            health.workflow,
-            health.task_key,
-            health.trigger_event,
-            health.run_attempt,
-            False,
-            'Workflow task identity is unavailable',
-            health.checked_at,
-            health.quota,
-        )
+        health = replace(health, ready=False, reason='Workflow task identity is unavailable')
+    health = replace(health, run_id=_string(os.environ.get('GITHUB_RUN_ID')))
     _write_health(args.output, health)
     if output := os.environ.get('GITHUB_OUTPUT'):
         with open(output, 'a', encoding='utf-8') as handle:
@@ -903,10 +1148,9 @@ def _monitor_command(args: argparse.Namespace) -> int:
     health = _health_from_artifact(args.health_artifact)
     if health.run_attempt != run_attempt:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
-    if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
-        print(f'Skipping retired provider configuration: {health.workflow}')
-        return 0
-    result = parse_run_result(args.agent_artifact) if args.agent_artifact is not None else None
+    if health.run_id is not None and health.run_id != str(args.run_id):
+        raise ValueError('provider-health artifact run id does not match the triggering workflow_run')
+    result = parse_run_result(args.agent_artifact, run_attempt) if args.agent_artifact is not None else None
     if result is not None and (
         result.workflow != health.workflow
         or result.task_key != health.task_key
@@ -915,54 +1159,10 @@ def _monitor_command(args: argparse.Namespace) -> int:
     ):
         print('Agent result identity did not match the trusted provider-health artifact; treating it as untyped')
         result = None
-    if (
-        args.conclusion is not None
-        and args.conclusion not in ('failure', 'timed_out')
-        and health.ready
-        and (result is None or result.failure is None)
-    ):
-        print(f'Workflow concluded {args.conclusion}; no operational incident was created')
+    if not health.ready and health.reason == _RETIRED_PROVIDER_REASON:
+        print(f'Skipping retired provider configuration: {health.workflow}')
         return 0
-    if result is None:
-        if not health.ready:
-            if health.reason.startswith('Open operational incident #'):
-                print(
-                    f'Activation was blocked by an existing incident: {health.reason}{_quota_diagnostic_suffix(health.quota)}'
-                )
-                return 0
-            if health.quota.status == 'healthy':
-                print(f'Activation was blocked by existing state: {health.reason}')
-                return 0
-            kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
-            marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
-            result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
-            existing = next(
-                (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker),
-                None,
-            )
-            if existing is None:
-                _create_or_reuse_incident(
-                    client,
-                    result,
-                    str(args.run_id),
-                    repo,
-                    health.reason + _quota_diagnostic_suffix(health.quota),
-                    dry_run=args.dry_run,
-                    marker_override=marker,
-                    quota=health.quota,
-                )
-            else:
-                print(
-                    f'Reusing operational incident #{existing.number}: {existing.html_url}'
-                    f'{_quota_diagnostic_suffix(health.quota)}'
-                )
-            return 0
-        result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
-    reason = health.reason if not health.ready else _failure_reason(result.failure)
-    if health.ready and result.failure is not None:
-        reason = _failure_reason(result.failure)
-    _create_or_reuse_incident(client, result, str(args.run_id), repo, reason, dry_run=args.dry_run)
-    return 0
+    return _monitor_workflow_outcome(client, args, health, run_attempt, result, repo)
 
 
 def _recover_issue(
@@ -983,16 +1183,17 @@ def _recover_issue(
                 f'{_quota_diagnostic_suffix(quota)}'
             )
         return False
-    if marker.kind in ('rate_limit', 'quota_exhausted'):
-        if marker.reset_at is None:
-            if automatic:
-                return False
-        else:
-            reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
-            if now < reset_at:
-                if not automatic:
-                    print(f'Incident #{issue.number} remains open until the recorded reset time')
-                return False
+    if marker.kind in ('rate_limit', 'quota_exhausted') and marker.reset_at is not None:
+        reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
+        if now < reset_at:
+            if not automatic:
+                print(f'Incident #{issue.number} remains open until the recorded reset time')
+            return False
+    elif automatic and (
+        issue.created_at is None
+        or now < dt.datetime.fromisoformat(issue.created_at.replace('Z', '+00:00')) + _NULL_RESET_COOL_DOWN
+    ):
+        return False
     if dry_run:
         print(f'DRY RUN: recovery checks passed; would close incident #{issue.number}')
     else:
@@ -1012,6 +1213,12 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             raise ValueError(f'issue #{issue.number} is not a provider-health incident')
         if marker.scope == 'provider' and marker.key != 'zai':
             raise ValueError(f'issue #{issue.number} is not a Z.ai provider-health incident')
+        if marker.scope in ('workflow', 'task'):
+            print(
+                f'Incident #{issue.number} is a {marker.scope} incident; verify the affected workflow execution '
+                'and close it manually'
+            )
+            return 0
         api_key = os.environ.get('ZAI_API_KEY', '')
         quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
         now = _now()
@@ -1073,7 +1280,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             continue
         if marker.key != 'zai':
             continue
-        if marker.kind not in ('rate_limit', 'quota_exhausted') or marker.reset_at is None:
+        if marker.kind not in ('rate_limit', 'quota_exhausted', 'quota_unknown'):
             continue
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=True)
     return 0

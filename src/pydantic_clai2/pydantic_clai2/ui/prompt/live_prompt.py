@@ -144,6 +144,13 @@ class LivePrompt:
     def _queued(self) -> list[_Queued]:
         return [item for item in self._submissions if isinstance(item, _Queued)]
 
+    def take_queued(self) -> list[str]:
+        """Remove the queued prompts and return their text, as when another session reads this editor next."""
+        queued = self._queued()
+        for entry in queued:
+            self._discard(entry)
+        return [entry.text for entry in queued]
+
     def submit(self, value: str | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         """Publish a submission without ending or replacing the editor."""
         self._enqueue(_Queued(value) if isinstance(value, str) else value)

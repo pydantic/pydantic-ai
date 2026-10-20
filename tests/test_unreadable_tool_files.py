@@ -279,7 +279,7 @@ async def test_file_understanding_describes_the_file_before_a_note_is_needed():
     agent = agent_with_tool_file(
         FunctionModel(calls_get_file_then(sent), profile=NO_AUDIO),
         MEMO,
-        capabilities=[FileUnderstanding(fallback_model=FunctionModel(describe))],
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
     )
 
     await agent.run('Get the file.')

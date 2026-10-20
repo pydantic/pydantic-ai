@@ -46,8 +46,9 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
+from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -104,7 +105,7 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -177,6 +178,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'fireworks',
         'meta',
         'nebius',
+        'openai-chatgpt',
         'openai-codex',
         'openrouter',
         'ovhcloud',
@@ -548,6 +550,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """The document media types this adapter's message mapping can send, or `None` for all of them.
 
     Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
+    unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
+    """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
+
+    When a request sets one of them that changes what the request guarantees, like `timeout` or
+    `stop_sequences`, [`prepare_request`][pydantic_ai.models.Model.prepare_request] emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
+    like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
+
+    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
+    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
+    listed here.
+
+    It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
+    SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
+    [`openai_unsupported_model_settings`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_unsupported_model_settings].
     """
 
     _provider: Provider[InterfaceClient]
@@ -925,6 +943,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
         model_settings = merge_model_settings(self.settings, model_settings)
+        self._warn_unsupported_settings(model_settings, model_request_parameters)
 
         params = self.customize_request_parameters(model_request_parameters)
         params = prepare_return_schemas(
@@ -1013,6 +1032,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return model_settings, params
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        """The settings this model ignores: its class's `unsupported_settings`, plus any its profile adds."""
+        return self.unsupported_settings
+
+    def _warn_unsupported_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Warn about each set setting that changes what the request guarantees and that this model ignores."""
+        if not model_settings:
+            return
+        unsupported = self._unsupported_settings()
+        suppressed = SUPPRESSED_WARNINGS.get()
+        for name, hint in GUARANTEE_SETTINGS.items():
+            if name not in model_settings or name not in unsupported or name in suppressed:
+                continue
+            # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
+            if name == 'parallel_tool_calls' and (
+                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
+            ):
+                continue
+            warnings.warn(
+                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored.{hint}',
+                UnsupportedSettingWarning,
+                stacklevel=2,
+            )
 
     def prepare_messages(
         self,
@@ -1243,6 +1288,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
+          3b. Defaults for this model instance from `_instance_profile_defaults()`, such as narrowing that
+             depends on the provider's SDK client. Unlike narrowing in a subclass's `profile` override,
+             which runs after the user's layer, the user's `profile=` can still override these.
           4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
@@ -1266,6 +1314,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             context_window = lookup_context_window(self)
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+
+        # Step 3b: defaults that depend on this model instance (such as its SDK client), which the user can override
+        resolved = self._instance_profile_defaults(resolved)
 
         # Step 4: user override
         if user is None:
@@ -1308,6 +1359,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         return resolved
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
+
+        Override this for defaults that depend on more than the model name, such as the SDK client the provider
+        was built with, so that a value the user sets explicitly in either `profile=` form still wins.
+        """
+        return profile
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
@@ -2052,8 +2111,9 @@ def infer_model(  # noqa: C901
 
         return OpenAICodexModel(model_name, provider=provider)
     # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
-    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API. ChatGPT plan usage only serves
+    # the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta', 'openai-chatgpt'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)

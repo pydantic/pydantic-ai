@@ -2090,16 +2090,16 @@ def test_model_json_schema_with_capabilities():
                 'spec_params_FileUnderstanding': {
                     'additionalProperties': False,
                     'properties': {
-                        'fallback_model': {
+                        'fallback_subagent_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}],
-                            'title': 'Fallback Model',
+                            'title': 'Fallback Subagent Model',
                         },
                         'instructions': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Instructions'},
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
                     },
-                    'required': ['fallback_model'],
+                    'required': ['fallback_subagent_model'],
                     'title': 'spec_params_FileUnderstanding',
                     'type': 'object',
                 },

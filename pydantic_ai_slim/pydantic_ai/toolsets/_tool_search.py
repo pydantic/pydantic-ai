@@ -49,7 +49,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .._run_context import AgentDepsT, RunContext
-from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
+from .._tool_search import _NO_MATCHES_MESSAGE, TOOL_SEARCH_KIND  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
     ModelMessage,
@@ -425,7 +425,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             name=_SEARCH_TOOLS_NAME,
             description=self.tool_description or _DEFAULT_TOOL_DESCRIPTION,
             parameters_json_schema=schema,
-            tool_kind='tool-search',
+            tool_kind=TOOL_SEARCH_KIND,
             unless_native=unless_native,
         )
 

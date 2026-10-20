@@ -68,7 +68,7 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
+ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
 GEMINI = frozenset({'gemini'})
 
@@ -93,51 +93,6 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     matches=_late_cancel,
 )
 
-
-def _stray_terminal(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A repeated or late `response.done` for the response the violation names, or for one before it.
-
-    (A stray terminal lands on whatever response the session is assembling when it's read, which can be any later one.)
-    """
-    truth = sim.truth
-    stray = truth.repeated_terminals | getattr(getattr(sim, 'server', None), 'late_terminals', set[str]())
-    responses = _context_responses(sim, violation)
-    if responses is None:
-        return bool(stray)
-    first = min((truth.responses[key].number for key in stray), default=None)
-    return first is not None and any(response.number >= first for response in responses)
-
-
-REPEATED_TERMINAL = Finding(
-    id='8801',
-    title=(
-        "a cancelled response's `response.done` (and its usage) arriving after the next response started lands on "
-        'whichever response the session is assembling: stamped onto the next response, or recorded as an empty one '
-        '(8801 #1, #4, #7). The simulator also sends a `response.done` twice, a robustness fault no provider was '
-        'recorded doing, which lands the same way'
-    ),
-    tracked_by='#8801 (per-response-id session state; adapters report one terminal per response)',
-    evidence='live-stress',
-    codes=frozenset(
-        {
-            'codec.content_after_terminal',
-            'codec.duplicate_terminal',
-            'codec.overlapping_responses',
-            'history.order',
-            'history.tool_round_order',
-            'response.duplicated',
-            'response.mixed',
-            'response.truncated',
-            'usage.total',
-            'usage.attribution',
-            'usage.requests',
-            'wait.early',
-            'wait.hang',
-        }
-    ),
-    providers=OPENAI_PROTOCOL,
-    matches=_stray_terminal,
-)
 
 LOST_RESPONSE_RESERVATION = Finding(
     id='SIM-1',
@@ -215,9 +170,10 @@ def _sent_before_reply_content(sim: Simulation, violation: InvariantViolation) -
 UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     id='SIM-39',
     title=(
-        'Gemini Live and GPT-Live neither acknowledge an input nor say when a response starts, so an input that asks '
-        'for no reply (context, an image), sent while a reply is owed but before any of its content arrived, is '
-        'placed after that reply: the server may have had it before it started'
+        'Gemini Live, GPT-Live, and ElevenLabs Agents neither acknowledge an input nor say when a response starts, so '
+        "an input that asks for no reply (context, an image), sent before any of a reply's content arrived, is placed "
+        'by what the client knew when it sent it: after the reply it owed, before one it had no word of yet, where '
+        'the server may have had it the other way around'
     ),
     tracked_by=(
         "the inferred lifecycle's documented inference (`_inferred_lifecycle.py`): an input sent while the model "
@@ -225,7 +181,7 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
     ),
     evidence='simulated',
     codes=frozenset({'history.order'}),
-    providers=GEMINI | {'gpt-live'},
+    providers=GEMINI | {'gpt-live', 'elevenlabs-agents'},
     matches=_sent_before_reply_content,
     accepted=True,
 )
@@ -283,7 +239,6 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
 
 KNOWN_FINDINGS: list[Finding] = [
     RESERVATION_TAKEN_BY_OTHER_RESPONSE,
-    REPEATED_TERMINAL,
     LATE_CANCEL_DROPS_CONTENT,
     RECEIVE_LOOP_SEND_FAILURE,
 ]
@@ -390,27 +345,6 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
     codes=frozenset({'response.duplicated', 'history.tool_round_order', 'wait.hang'}),
     providers=GEMINI,
     matches=_spoke_after_calling,
-)
-
-
-def _raw_transport_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from websockets.exceptions import WebSocketException
-
-    errors = [operation.error for operation in sim.operations] + [sim.consumer_error]
-    return any(isinstance(error, WebSocketException) for error in errors)
-
-
-LIVE_RAW_CLOSE_ERROR = Finding(
-    id='SIM-8',
-    title=(
-        'an abnormal close of a GPT-Live connection escapes as a raw `websockets.ConnectionClosedError` (from iterating '
-        'the session and from the next send) instead of `RealtimeError`: the connection only handles a clean close'
-    ),
-    tracked_by='an adapter-local fix in `OpenAILiveConnection.__aiter__`; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'api.unexpected_error'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_raw_transport_error,
 )
 
 
@@ -729,7 +663,6 @@ KNOWN_FINDINGS.extend(
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
-        LIVE_RAW_CLOSE_ERROR,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
         CUT_OFF_TURN_COMPLETE,

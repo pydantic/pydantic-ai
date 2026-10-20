@@ -186,6 +186,8 @@ class GroqModel(Model[AsyncGroq]):
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
 
+    unsupported_settings = frozenset({'service_tier', 'top_k'})
+
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
 

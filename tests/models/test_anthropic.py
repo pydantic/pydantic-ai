@@ -498,6 +498,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -4069,6 +4070,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'output_tokens': 277,
                         'thinking_tokens': 32,
                     },
+                    output_reasoning_tokens=32,
                     cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4128,6 +4130,7 @@ I should provide practical advice for crossing a river safely.\
                         'output_tokens': 440,
                         'thinking_tokens': 98,
                     },
+                    output_reasoning_tokens=98,
                     cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4337,6 +4340,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 91,
                         'thinking_tokens': 42,
                     },
+                    output_reasoning_tokens=42,
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4779,6 +4783,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 274,
                         'thinking_tokens': 160,
                     },
+                    output_reasoning_tokens=160,
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -6226,6 +6231,7 @@ def test_streaming_usage_thinking_tokens():
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -9684,6 +9690,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 113,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -9753,6 +9760,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 103,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -14415,6 +14423,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()

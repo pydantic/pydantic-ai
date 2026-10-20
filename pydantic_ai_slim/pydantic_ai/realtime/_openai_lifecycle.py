@@ -44,6 +44,7 @@ from ._lifecycle import (
 )
 from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
+    CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
     client_item_input,
     is_user_message_item,
@@ -51,7 +52,6 @@ from ._openai_protocol import (
     response_metadata_answers,
 )
 
-_CONVERSATION_ITEM_ADDED_FRAMES = frozenset({'conversation.item.added', 'conversation.item.created'})
 _TRANSCRIPTION_SETTLED_FRAMES = frozenset(
     {'conversation.item.input_audio_transcription.completed', 'conversation.item.input_audio_transcription.failed'}
 )
@@ -288,7 +288,7 @@ class OpenAILifecycle:
         if event_type == 'input_audio_buffer.timeout_triggered':
             self._idle_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
             return []
-        if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
+        if event_type in CONVERSATION_ITEM_ADDED_EVENTS:
             return self.item_added(data)
         if event_type == 'response.output_item.added':
             return _output_item_details(data)
