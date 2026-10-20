@@ -116,6 +116,8 @@ Handoff body sections (required):
 ```markdown
 # Handoff · YYYY-MM-DD · <summary>
 
+Before acting, load the skills branch-context SKILL.md step 5 names — always `i-have-adhd`.
+
 ## Done
 - …
 

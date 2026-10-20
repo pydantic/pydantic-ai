@@ -203,7 +203,7 @@ Record each dispatch in `pr-decisions.md` — not in the session, which does not
   --title "pre-push review N of 3 at <candidate-head-sha>" \
   --decision "<no findings | remediated: one line>" \
   --why "<reviewed tree ID; scope endpoints; what changed since the previous review>" \
-  --source "<PR URL, or the branch name until a PR exists>"
+  --source "<PR URL, or the branch's GitHub tree URL until a PR exists>"
 ```
 
 Reserve the dispatch number before launch, then append the outcome under the same candidate anchor.

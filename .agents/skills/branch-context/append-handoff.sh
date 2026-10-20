@@ -267,6 +267,8 @@ else
     cat > "$DEST" <<EOF
 # Handoff · ${TS} · ${SUMMARY}
 
+Before acting, load the skills branch-context SKILL.md step 5 names — always \`i-have-adhd\`.
+
 ## Done
 - TODO
 
