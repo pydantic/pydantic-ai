@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +11,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 pytest.importorskip('temporalio')
 
@@ -51,15 +50,6 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('done')])
 
 
-async def _stream(messages: list[ModelMessage], info: AgentInfo):
-    for index, part in enumerate(_model(messages, info).parts):
-        if isinstance(part, TextPart):
-            yield part.content
-        else:
-            assert isinstance(part, ToolCallPart)
-            yield {index: DeltaToolCall(name=part.tool_name, json_args=json.dumps(part.args))}
-
-
 @pytest.fixture
 def anyio_backend() -> str:
     return 'asyncio'  # Temporal's test server requires an asyncio event loop.
@@ -70,7 +60,7 @@ async def test_review_runs_as_a_temporal_activity(tmp_path: Path) -> None:
     command.write_text(f"#!/bin/sh\nprintf '%s\\n' review_id=rev-1 '{_ISSUE_LINE}' issue_status=completed >&2\n")
     command.chmod(0o755)
     ReviewWorkflow.agent = Agent(
-        FunctionModel(_model, stream_function=_stream),
+        FunctionModel(_model),
         name='durable_macroscope',
         capabilities=[LocalWorkspace(tmp_path), Macroscope(command=str(command), base='main'), TemporalDurability()],
     )
