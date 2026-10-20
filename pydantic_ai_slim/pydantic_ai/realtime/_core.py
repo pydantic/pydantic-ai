@@ -629,7 +629,8 @@ class SessionCore:
         elif isinstance(command, (ToolReturned, ToolCallRefused, ToolCallsPruned)):
             self._tool_command(command)
         elif isinstance(command, Interrupted):
-            if (response := self._speaking_response()) is not None:
+            # (A later cancel without a position doesn't erase where an earlier interruption cut the response.)
+            if (response := self._speaking_response()) is not None and command.played_ms is not None:
                 response.interrupted_at_ms = command.played_ms
             for item_id, heard_ms in command.cuts:
                 self._cut_recorded_item(item_id, heard_ms)
@@ -1078,7 +1079,10 @@ class SessionCore:
             for item_id in response.closed_parts
             if item_id in self._pending_cuts
         ]
-        if interrupted:
+        # A response the listener cut off that ended before the provider processed the cancel was still cut off, as
+        # one that had already ended is (see `_cut_recorded_item`).
+        cut = response.interrupted_at_ms is not None and any(isinstance(part, SpeechPart) for part in parts)
+        if interrupted or cut:
             for index in range(len(parts) - 1, -1, -1):
                 if isinstance(part := parts[index], SpeechPart):
                     parts[index] = replace(part, interrupted_at_ms=response.interrupted_at_ms)
@@ -1096,7 +1100,7 @@ class SessionCore:
             provider_response_id=response.id if response.provider_id else response.reported_id,
             finish_reason=finish_reason,
             conversation_id=self._conversation_id,
-            state='interrupted' if interrupted else 'complete',
+            state='interrupted' if interrupted or cut else 'complete',
         )
         fill_run_metadata(message, run_id=self._run_id, conversation_id=self._conversation_id)
         if self._annotate_response is not None:
