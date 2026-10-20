@@ -63,6 +63,10 @@ class FakeBoxLite:
         """When set, every exec raises it, like the SDK failing to start a command."""
         self.read_chunks: list[str] | None = None
         """When set, every exec streams exactly these stdout chunks, like a misbehaving guest."""
+        self.stream_error: boxlite.BoxliteError | None = None
+        """When set, every exec's stdout raises it, like the SDK losing a command's output stream."""
+        self.wait_error: boxlite.BoxliteError | None = None
+        """When set, the next `wait()` raises it, like the SDK losing a command's exit status."""
         self.start_started = asyncio.Event()
         self.start_gate: asyncio.Event | None = None
         self.exec_started = asyncio.Event()
@@ -93,8 +97,10 @@ class FakeBoxLite:
 
     def close(self) -> None:
         for process in self.spawned:
-            if process.returncode is None:
-                _kill(process)
+            if process.returncode is None:  # pragma: no cover - only a failing test leaves a command running
+                # macOS refuses a group whose processes have exited but are not reaped yet with EPERM, not ESRCH.
+                with suppress(ProcessLookupError, PermissionError):
+                    os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
             for stream in (process.stdin, process.stdout, process.stderr):
                 assert stream is not None
@@ -205,18 +211,23 @@ class FakeHandle:
         )
         self._box.processes.add(process)
         self._control.spawned.append(process)
-        return FakeExecution(process, self._box, self._control.read_chunks)
+        return FakeExecution(process, self._box, self._control)
 
 
 class FakeExecution:
     """`boxlite.Execution` over a host process; like the real one, `signal` reaches only that process."""
 
-    def __init__(self, process: subprocess.Popen[bytes], box: FakeBox, chunks: list[str] | None) -> None:
+    def __init__(self, process: subprocess.Popen[bytes], box: FakeBox, control: FakeBoxLite) -> None:
         self._process = process
         self._box = box
-        self._chunks = chunks
+        self._control = control
+        self._chunks = control.read_chunks
+        self._error = control.stream_error
 
     async def wait(self) -> Any:
+        if (error := self._control.wait_error) is not None:
+            self._control.wait_error = None
+            raise error
         code = await asyncio.to_thread(self._process.wait)
         self._box.processes.discard(self._process)
         return types.SimpleNamespace(exit_code=code)
@@ -231,6 +242,8 @@ class FakeExecution:
             raise boxlite.InternalError('internal error: Failed to send signal') from None
 
     def stdout(self) -> AsyncIterator[str]:
+        if self._error is not None:
+            return _fail(self._error)
         if self._chunks is not None:
             return _replay(self._chunks)
         return _read(self._process.stdout)
@@ -252,6 +265,11 @@ async def _replay(chunks: list[str]) -> AsyncIterator[str]:
         yield chunk
 
 
+async def _fail(error: Exception) -> AsyncIterator[str]:
+    raise error
+    yield  # pragma: no cover - makes this an async generator
+
+
 def _end(box: FakeBox) -> None:
     # The runtime sends TERM to every process in a box it stops or removes, including the commands each
     # script runs in a session of its own.
@@ -265,11 +283,3 @@ def _end(box: FakeBox) -> None:
                     os.killpg(int(child), signal.SIGTERM)
             with suppress(ProcessLookupError):
                 os.kill(process.pid, signal.SIGTERM)
-
-
-def _kill(process: subprocess.Popen[bytes]) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    # macOS refuses a group whose processes have exited but are not reaped yet with EPERM, not ESRCH.
-    except (ProcessLookupError, PermissionError):  # pragma: no cover - depends on timing and platform
-        pass

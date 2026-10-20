@@ -201,11 +201,11 @@ Nothing deletes a box for you. Creating one logs its id (see [Telemetry](#teleme
 
 ## How commands run
 
-Every command runs through the box's `/bin/sh`, in a session of its own when the image has `setsid`, as BusyBox and util-linux images do. A missing program gives exit code 127, and a program killed by a signal 128 plus its number. A `shell=True` string runs under `/bin/sh -c`. Custom images need a POSIX `/bin/sh`, `head`, `rm` and a writable `/tmp`.
+Every command runs through the box's `/bin/sh`, in a session of its own when the image has `setsid`, as BusyBox and util-linux images do. A missing program gives exit code 127, and a program killed by a signal 128 plus its number. A `shell=True` string runs under `/bin/sh -c`. Custom images need a POSIX `/bin/sh`.
 
-On a timeout or cancellation, the backend kills the command and the processes it started, and returns the output so far on `WorkspaceTimeoutError`. Jobs that outlive the command that started them, like a [Shell](shell.md) background job, keep running and never hold the command open. In an image without `setsid`, only the command itself is killed, and a program named like a shell builtin, such as `echo`, runs the builtin.
+On a timeout or cancellation, the backend kills the command and the processes it started, and returns the output so far on `WorkspaceTimeoutError`. Jobs that outlive the command that started them, like a [Shell](shell.md) background job, keep running; the command returns at most two seconds after it exits, even if such a job still holds its output open. In an image without `setsid`, only the command itself is killed, and a program named like a shell builtin, such as `echo`, runs the builtin.
 
-Output arrives once the command exits. If the combined output passes 10 MiB, the command raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`; as that is checked at the end, a command that keeps writing runs until its timeout, so redirect large output to a file. Output BoxLite fails to deliver whole raises `WorkspaceError` rather than come back cut short. The backend's own `mkdir -p` and `pwd -P` time out after 60 seconds, so a broken image can't hang the run.
+If the combined output passes 10 MiB, the backend stops the command and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`; redirect large output to a file instead. Output BoxLite fails to deliver whole raises `WorkspaceError` rather than come back cut short. The backend's own `mkdir -p` and `pwd -P` time out after 60 seconds, so a broken image can't hang the run.
 
 File operations run as shell commands in the box, 64 KiB per command (see [Writing a backend](../workspace.md#writing-a-backend)), so images need the usual file utilities, which Alpine's BusyBox has.
 

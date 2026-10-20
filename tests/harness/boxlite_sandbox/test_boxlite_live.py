@@ -76,9 +76,6 @@ async def test_a_timeout_stops_the_command_and_what_it_started(owned: list[BoxLi
     # Killed; an orphaned child stays a zombie of PID 1, which doesn't reap.
     state = await backend.run(['sh', '-c', 'cut -d" " -f3 "/proc/$1/stat" 2>/dev/null || echo gone', 'sh', child])
     assert state.stdout.strip() in {'Z', 'gone'}
-    # Only the listing's own output files are left.
-    leftovers = await backend.run(['sh', '-c', 'ls /tmp/pydantic-ai-* | wc -l'])
-    assert leftovers.stdout.strip() == '2'
 
 
 @pytest.mark.parametrize('image', _IMAGES)
@@ -99,13 +96,17 @@ async def test_the_script_works_with_any_command_env_and_program_name(
     assert killed.exit_code == 137
 
 
-async def test_output_past_the_limit_is_an_error(owned: list[BoxLiteSandboxBackend]) -> None:
-    """Validates the fake's assumption that the read-back caps each stream, so 10 MiB plus one byte arrives intact."""
+async def test_output_past_the_limit_stops_the_command(owned: list[BoxLiteSandboxBackend]) -> None:
+    """Validates the fake's assumption that BoxLite streams output as it is written, without dropping any.
+
+    A dropped chunk would raise `WorkspaceError` instead, and output held back until the command ends would
+    leave `yes` running.
+    """
     backend = BoxLiteSandboxBackend()
     owned.append(backend)
-    with pytest.raises(WorkspaceOutputLimitError) as caught:
-        await backend.run('head -c 11000000 /dev/zero | tr "\\0" x', shell=True)
-    assert caught.value.stdout == 'x' * 64 * 1024
+    with anyio.fail_after(60), pytest.raises(WorkspaceOutputLimitError) as caught:
+        await backend.run(['yes', 'x'])
+    assert caught.value.stdout == 'x\n' * 32 * 1024
 
 
 async def test_a_stopped_box_ends_its_command_and_boots_again(owned: list[BoxLiteSandboxBackend]) -> None:

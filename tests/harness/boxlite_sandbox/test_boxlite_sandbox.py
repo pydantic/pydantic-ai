@@ -45,10 +45,20 @@ class _Abort(BaseException):
 
 
 async def _wrapper_started(fake_boxlite: FakeBoxLite, count: int) -> None:
-    """Wait until the fake has spawned `count` processes: creating a box runs two, `mkdir` and its read."""
+    """Wait until the fake has spawned `count` processes: creating a box runs one, its `mkdir`."""
     with anyio.fail_after(5):
         while len(fake_boxlite.spawned) < count:
             await asyncio.sleep(0.01)
+
+
+def _awaiting(task: asyncio.Task[Any]) -> list[str]:
+    """The names of the coroutines `task` is suspended in, outermost first."""
+    names: list[str] = []
+    awaited: Any = task.get_coro()
+    while hasattr(awaited, 'cr_code'):
+        names.append(awaited.cr_code.co_name)
+        awaited = awaited.cr_await
+    return names
 
 
 def test_env_and_box_options_are_not_shown_in_repr(fake_boxlite: FakeBoxLite) -> None:
@@ -178,12 +188,9 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_boxlite: FakeBo
     backend = BoxLiteSandboxBackend(working_dir=working_dir, env={'BASE': 'base', 'OVERRIDE': 'base'})
     result = await backend.run('printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2', shell=True, env={'OVERRIDE': 'run'})
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'base run', f'{working_dir}\n')
-    program, args, env, cwd = fake_boxlite.commands[-2]
+    program, args, env, cwd = fake_boxlite.commands[-1]
     assert program == '/bin/sh' and args[-3:] == ['/bin/sh', '-c', 'printf "%s %s" "$BASE" "$OVERRIDE"; pwd -P >&2']
     assert env == {'BASE': 'base', 'OVERRIDE': 'run'} and cwd == working_dir
-    # The output is read back with the box's own environment, not the command's.
-    _, _, read_env, read_cwd = fake_boxlite.commands[-1]
-    assert read_env == {} and read_cwd is None
 
 
 async def test_the_command_env_does_not_break_the_backend(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -192,14 +199,14 @@ async def test_the_command_env_does_not_break_the_backend(fake_boxlite: FakeBoxL
     assert (await backend.run(['ls'])).exit_code == 127
     assert (await backend.run(['/bin/echo', 'a b'])).stdout == 'a b\n'
     # The script's own variables start empty whatever the command's environment holds.
-    assert (await backend.run(['/bin/echo', 'ran'], env={'t': '1', 'o': '/nonexistent', 'c': '1'})).stdout == 'ran\n'
+    assert (await backend.run(['/bin/echo', 'ran'], env={'t': '1', 'c': '1', 'r': '9'})).stdout == 'ran\n'
 
 
 async def test_no_working_dir_uses_the_boxs_own(fake_boxlite: FakeBoxLite) -> None:
     backend = BoxLiteSandboxBackend(working_dir=None)
     assert await backend.working_dir() == str(fake_boxlite.root)
     assert await backend.working_dir() == str(fake_boxlite.root)
-    assert [cwd for _, _, _, cwd in fake_boxlite.commands] == [None, None]
+    assert [cwd for _, _, _, cwd in fake_boxlite.commands] == [None]
 
 
 async def test_missing_working_dir_is_an_error(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -480,9 +487,6 @@ async def test_timeout_stops_the_command_and_keeps_partial_output(fake_boxlite: 
     assert (caught.value.stdout, caught.value.stderr) == ('started\n', 'oops\n')
     (box,) = fake_boxlite.boxes.values()
     assert box.processes == set()
-    # The output files are removed with the rest.
-    output = fake_boxlite.commands[-2][1][3]
-    assert not Path(f'{output}.stdout').exists()
 
 
 async def test_a_command_that_kills_its_script_reports_the_signal(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -491,12 +495,15 @@ async def test_a_command_that_kills_its_script_reports_the_signal(fake_boxlite: 
     assert (result.exit_code, result.stdout) == (128 + signal.SIGKILL, 'before\n')
 
 
-async def test_output_past_the_limit_is_an_error(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+async def test_output_past_the_limit_stops_the_command(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
-    with pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as caught:
-        await backend.run('head -c 11000000 /dev/zero | tr "\\0" x', shell=True)
+    # `yes` never ends by itself: the cap is checked as output arrives, and the command is stopped.
+    with anyio.fail_after(30), pytest.raises(WorkspaceOutputLimitError, match='exceeded the 10 MiB limit') as caught:
+        await backend.run(['yes', 'x'])
     assert caught.value.limit == 10 * 1024 * 1024
-    assert caught.value.stdout == 'x' * 64 * 1024 and caught.value.stderr == ''
+    assert caught.value.stdout == 'x\n' * 32 * 1024 and caught.value.stderr == ''
+    (box,) = fake_boxlite.boxes.values()
+    assert box.processes == set()
 
 
 async def test_one_huge_output_chunk_is_cut_to_the_preview(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -517,24 +524,6 @@ async def test_output_boxlite_dropped_is_an_error(fake_boxlite: FakeBoxLite, wor
     # The same text inside a chunk of the command's own output is just output.
     fake_boxlite.read_chunks = ['x [boxlite] stdout output dropped 1 bytes\r\n']
     assert (await backend.run(['true'])).stdout == 'x [boxlite] stdout output dropped 1 bytes\r\n'
-
-
-@pytest.mark.parametrize('stream', ['stdout', 'stderr'])
-async def test_lost_output_is_an_error(fake_boxlite: FakeBoxLite, working_dir: str, stream: str) -> None:
-    backend = BoxLiteSandboxBackend(working_dir=working_dir)
-    gate = Path(working_dir).parent / 'gate'
-    command = asyncio.create_task(
-        backend.run(['sh', '-c', 'while [ ! -f "$1" ]; do sleep 0.01; done', 'sh', str(gate)])
-    )
-    await _wrapper_started(fake_boxlite, 3)
-    output = Path(f'{fake_boxlite.commands[-1][1][3]}.{stream}')
-    with anyio.fail_after(5):
-        while not output.exists():
-            await asyncio.sleep(0.01)
-    output.unlink()
-    gate.touch()
-    with pytest.raises(WorkspaceError, match=r'Could not read the command output in BoxLite box .* \(exit code [12]\)'):
-        await command
 
 
 async def test_engine_errors_are_classified(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
@@ -570,14 +559,16 @@ async def test_a_deletion_ending_a_command_is_unavailable(fake_boxlite: FakeBoxL
     await backend.get_sandbox()
     assert backend.ref is not None
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 3)
+    await _wrapper_started(fake_boxlite, 2)
     script = fake_boxlite.spawned[-1]
     fake_boxlite.remove_gate = gate = asyncio.Event()
     deletion = asyncio.create_task(BoxLiteSandbox[None]().destroy(backend.ref))
     with anyio.fail_after(5):
         await asyncio.to_thread(script.wait)
-    # Ended by the deletion, the command waits for it rather than reading output from a box being removed,
-    # which would fail as `stopped during the command`.
+        # Ended by the deletion, the command waits for it rather than checking a box being removed, which
+        # would fail as `stopped during the command`.
+        while '_unavailable' not in _awaiting(command):
+            await asyncio.sleep(0.01)
     gate.set()
     with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
         await command
@@ -589,7 +580,7 @@ async def test_a_box_stopped_during_a_command_is_unavailable(fake_boxlite: FakeB
     await backend.get_sandbox()
     (box,) = fake_boxlite.boxes.values()
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 3)
+    await _wrapper_started(fake_boxlite, 2)
     fake_boxlite.stop(box.name)
     with pytest.raises(WorkspaceUnavailableError, match=f"The BoxLite box '{box.name}' is stopped"):
         await command
@@ -605,32 +596,29 @@ async def test_a_box_stopped_elsewhere_while_still_reported_running_is_unavailab
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 3)
+    await _wrapper_started(fake_boxlite, 2)
     fake_boxlite.exec_error = boxlite.UpstreamUnavailableError('gRPC/tonic error: status: Unavailable')
     fake_boxlite.spawned[-1].send_signal(signal.SIGTERM)
     with pytest.raises(WorkspaceUnavailableError, match='stopped during the command: gRPC'):
         await command
 
 
-@pytest.mark.parametrize('status', ['stopped', 'running'])
-async def test_a_failed_output_read_is_classified(fake_boxlite: FakeBoxLite, working_dir: str, status: str) -> None:
-    # The command finished, but reading its output failed: unavailable if the box went away, else the SDK error.
+@pytest.mark.parametrize('lost', ['stream', 'wait'])
+async def test_a_failed_output_stream_or_wait_stops_the_command(
+    fake_boxlite: FakeBoxLite, working_dir: str, lost: str
+) -> None:
+    # In a running box, the SDK's error propagates as itself, and the command doesn't run on unread.
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
-    gate = Path(working_dir).parent / 'gate'
-    command = asyncio.create_task(
-        backend.run(['sh', '-c', 'while [ ! -f "$1" ]; do sleep 0.01; done', 'sh', str(gate)])
-    )
-    await _wrapper_started(fake_boxlite, 3)
-    (box,) = fake_boxlite.boxes.values()
-    fake_boxlite.exec_error = boxlite.UpstreamUnavailableError('gRPC/tonic error: status: Unavailable')
-    box.status = status
-    gate.touch()
-    if status == 'stopped':
-        with pytest.raises(WorkspaceUnavailableError, match='is stopped'):
-            await command
+    await backend.get_sandbox()
+    error = boxlite.UpstreamUnavailableError('gRPC/tonic error: status: Unavailable')
+    if lost == 'stream':
+        fake_boxlite.stream_error = error
     else:
-        with pytest.raises(boxlite.UpstreamUnavailableError):
-            await command
+        fake_boxlite.wait_error = error
+    with anyio.fail_after(10), pytest.raises(boxlite.UpstreamUnavailableError):
+        await backend.run(['sleep', '30'])
+    (box,) = fake_boxlite.boxes.values()
+    assert box.processes == set()
 
 
 async def test_agent_without_workspace_use_does_not_create(fake_boxlite: FakeBoxLite) -> None:

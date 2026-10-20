@@ -14,7 +14,8 @@ command, or error handling:
   unflushed writes included, survives, and `get` plus `start()` boots it again.
 - `Box.exec` raises instead of exiting 127 for a missing program, and leaves the command's stdin open.
 - Output and exit status come over separate streams: `Execution.wait()` returns when the process exits,
-  but its output ends only once every process holding its pipes has exited. The guest buffers 1 MiB of
+  but its output ends only once every process holding its pipes has exited; a caller can stop reading
+  it there, and the box's next exec works as usual. The guest buffers 1 MiB of
   output and, when the host falls behind, drops the oldest and sends `[boxlite] stdout output dropped N
   bytes` in its place, as a chunk of its own.
 - Each exec'd process leads its own session and process group, but `Execution.signal`, `kill` and
@@ -59,6 +60,8 @@ from pydantic_ai_harness._workspace_provider import (
 )
 
 if TYPE_CHECKING:
+    from anyio.abc import TaskGroup
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('BoxLiteSandboxBackend',)
@@ -133,14 +136,15 @@ RESERVED_OPTIONS = frozenset(
 """`boxlite.BoxOptions` arguments the named settings own, so `box_options` can't pass them too."""
 
 _SETUP_TIMEOUT = 60.0
-"""Seconds the backend's own commands in the box (`mkdir -p` and `pwd -P`) get."""
-
-_OUTPUT = '/tmp/pydantic-ai-'
-"""Prefix of the files in the box each command writes its output to, named per command."""
+"""Seconds the backend's own commands in the box get: `mkdir -p`, `pwd -P`, and the check that the box still runs."""
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
+
+_OUTPUT_DRAIN_GRACE = 2.0
+"""Seconds the output is still read after the command exits, as the local backend does: a background
+job can hold the output pipes open."""
 
 _STOP = 1
 """SIGHUP, which the backend sends to stop a command; it has the same number on every platform.
@@ -150,25 +154,22 @@ of it then, so the backend can tell that apart from a command that exited.
 """
 
 _STOP_GRACE = 5.0
-"""Seconds a stopped command gets to end before its partial output is read anyway."""
+"""Seconds a stopped command gets to end, so the next command doesn't find it still running."""
 
 # The command runs in the background, in its own session where `setsid` exists, so the script can act on
 # `_STOP` while waiting and then reap it: an orphan goes to the box's PID 1, the image's command, which
 # never reaps. Without `setsid`, a stop reaches only the command, not processes it started, and a program
 # named like a shell builtin runs the builtin. A stop that arrives before the command starts sets `t`, which
-# starts empty whatever the command's `env` says.
-# Output goes to files, not the exec's pipes, so a background job the command starts can't hold the
-# command open. Stdin is at EOF; a missing program exits 127 and a program killed by a signal 128 plus its
-# number. The second `wait` reaps a command after `_STOP` interrupts the first. Only builtins run before the
-# command, as the command's `env` applies to the whole script.
+# starts empty whatever the command's `env` says. Stdin is at EOF; a missing program exits 127 and a
+# program killed by a signal 128 plus its number. The second `wait` reaps a command after `_STOP`
+# interrupts the first. Only builtins run before the command, as the command's `env` applies to the whole
+# script.
 _EXEC_SCRIPT = """t=
 trap 't=1' HUP
-o=$1
-shift
 if command -v setsid >/dev/null; then
-setsid -- "$@" </dev/null >"$o.stdout" 2>"$o.stderr" &
+setsid -- "$@" </dev/null &
 else
-"$@" </dev/null >"$o.stdout" 2>"$o.stderr" &
+"$@" </dev/null &
 fi
 c=$!
 trap 'kill -KILL "-$c" 2>/dev/null || kill -KILL "$c"' HUP
@@ -176,15 +177,6 @@ trap 'kill -KILL "-$c" 2>/dev/null || kill -KILL "$c"' HUP
 wait "$c"
 r=$?
 wait "$c" 2>/dev/null
-exit "$r"
-"""
-
-# Reads a command's output, at most one byte past the cap of each, and removes it. Missing output fails
-# unless `$2` is set.
-_READ_SCRIPT = f"""[ -f "$1.stdout" ] || {{ [ -n "$2" ]; exit; }}
-head -c {_MAX_OUTPUT_BYTES + 1} "$1.stdout" && head -c {_MAX_OUTPUT_BYTES + 1} "$1.stderr" >&2
-r=$?
-rm -f "$1.stdout" "$1.stderr"
 exit "$r"
 """
 
@@ -275,12 +267,34 @@ class _StaleHandle(Exception):
 
 
 class _Output:
-    """A command's output, bounded by `_MAX_OUTPUT_BYTES` across both streams."""
+    """A command's output and exit code so far, the output bounded by `_MAX_OUTPUT_BYTES` across both streams."""
 
     def __init__(self) -> None:
         self.stdout: list[str] = []
         self.stderr: list[str] = []
         self.size = 0
+        self.exit_code: int | None = None
+        self.error: Exception | None = None
+        """Why collecting stopped early, raised by the caller after the task group so it isn't wrapped in an
+        `ExceptionGroup`."""
+
+    async def read(self, stream: AsyncIterator[str], chunks: list[str], group: TaskGroup) -> None:
+        try:
+            async for data in stream:
+                self.add(chunks, data)
+        except Exception as error:
+            self.error = error
+            group.cancel_scope.cancel()
+
+    async def wait(self, execution: _Execution, group: TaskGroup) -> None:
+        try:
+            self.exit_code = (await execution.wait()).exit_code
+        except Exception as error:
+            self.error = error
+            group.cancel_scope.cancel()
+        else:
+            # A background job the command started can hold its output open; read on briefly.
+            group.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
 
     def add(self, stream: list[str], data: str) -> None:
         if _DROPPED.fullmatch(data):
@@ -493,80 +507,55 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         working_dir: str | None,
         timeout: float | None,
     ) -> CommandResult:
-        output_files = f'{_OUTPUT}{uuid.uuid4().hex}'
-        signalled = False
+        output = _Output()
+        execution: _Execution | None = None
         try:
-            exit_code = await self._run_script(
-                box, argv, output_files, env=env, working_dir=working_dir, timeout=timeout
-            )
-            if signalled := exit_code < 0:
-                # Only the script itself dies by a signal, so the box was stopped or deleted, or a command
-                # killed the script; in that last case, report it as `sh` would.
-                if (unavailable := await self._unavailable(box)) is not None:
-                    raise unavailable
-                exit_code = 128 - exit_code
-            stdout, stderr = await self._read_output(box, output_files)
-        except boxlite.BoxliteError as error:
-            if (unavailable := await self._unavailable(box)) is not None:
+            # The deadline covers starting the command too; one that starts after it is stopped by `_start`.
+            with anyio.move_on_after(timeout):
+                execution = await self._start(box, argv, env=env, working_dir=working_dir)
+                async with anyio.create_task_group() as group:
+                    group.start_soon(output.read, execution.stdout(), output.stdout, group)
+                    group.start_soon(output.read, execution.stderr(), output.stderr, group)
+                    group.start_soon(output.wait, execution, group)
+            if output.error is not None:
+                raise output.error
+            if output.exit_code is None:
+                stdout, stderr = output.text()
+                raise WorkspaceTimeoutError(
+                    f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr
+                )
+        except BaseException as error:
+            if execution is not None:
+                # Timed out, cancelled, over the output cap, or the SDK failed during the command.
+                started = execution
+                await stop_shielded(lambda: _stop(started), grace=_STOP_GRACE)
+            if isinstance(error, boxlite.BoxliteError) and (unavailable := await self._unavailable(box)) is not None:
                 raise unavailable from error
-            if signalled:
-                # The box still reports itself running for a moment after being stopped from elsewhere.
-                raise WorkspaceUnavailableError(
-                    f'The BoxLite box {box.name!r} stopped during the command: {error}'
-                ) from error
             raise
+        stdout, stderr = output.text()
+        exit_code = output.exit_code
+        if exit_code < 0:
+            # Only the script itself dies by a signal, so the box was stopped or deleted, or the command
+            # killed the script; in that last case, report it as `sh` would.
+            await self._check_running(box)
+            exit_code = 128 - exit_code
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
-    async def _run_script(
-        self,
-        box: _Box,
-        argv: list[str],
-        output_files: str,
-        *,
-        env: dict[str, str],
-        working_dir: str | None,
-        timeout: float | None,
-    ) -> int:
-        """The script's exit code; on a timeout, stop the command and raise with its partial output."""
-        execution: _Execution | None = None
-        with anyio.move_on_after(timeout) as deadline:
-            execution = started = await self._start(box, argv, output_files, env=env, working_dir=working_dir)
-            try:
-                return (await started.wait()).exit_code
-            except BaseException:
-                if not deadline.cancel_called:
-                    await stop_shielded(lambda: self._stop(box, started, output_files))
-                raise
-        message = f'Command timed out after {timeout:g} seconds'
-        if execution is None:
-            # It timed out starting, so it has no output; if it starts later, `_start` stops it.
-            raise WorkspaceTimeoutError(message)
-        await self._signal_stop(execution)
-        with anyio.move_on_after(_STOP_GRACE):
-            await execution.wait()
-        # A command stopped before the script started it has no output.
-        stdout, stderr = await self._read_output(box, output_files, missing_ok=True)
-        raise WorkspaceTimeoutError(message, stdout=stdout, stderr=stderr)
-
-    async def _start(
-        self, box: _Box, argv: list[str], output_files: str, *, env: dict[str, str], working_dir: str | None
-    ) -> _Execution:
+    async def _start(self, box: _Box, argv: list[str], *, env: dict[str, str], working_dir: str | None) -> _Execution:
         opening = asyncio.ensure_future(
-            box.exec('/bin/sh', ['-c', _EXEC_SCRIPT, 'sh', output_files, *argv], env=list(env.items()), cwd=working_dir)
+            box.exec('/bin/sh', ['-c', _EXEC_SCRIPT, 'sh', *argv], env=list(env.items()), cwd=working_dir)
         )
         try:
             await asyncio.wait([opening])
         except asyncio.CancelledError:
             # The SDK starts the command even when its caller is cancelled first; stop it once it has.
-            opening.add_done_callback(lambda done: self._stop_late(box, done, output_files))
+            opening.add_done_callback(_stop_late)
             raise
         try:
             return opening.result()
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
                 raise _StaleHandle from error
-            if (unavailable := await self._unavailable(box)) is not None:
-                raise unavailable from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
                     f'Could not start the command in BoxLite box {box.name}: {error}. '
@@ -574,49 +563,18 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 ) from error
             raise
 
-    def _stop_late(self, box: _Box, opening: asyncio.Future[_Execution], output_files: str) -> None:
-        if opening.cancelled() or opening.exception() is not None:
-            return
-        stop = asyncio.ensure_future(self._stop(box, opening.result(), output_files))
-        _late_stops.add(stop)
-        stop.add_done_callback(_late_stops.discard)
-
-    async def _signal_stop(self, execution: _Execution) -> None:
-        # A command that exits as it is stopped can't be signalled any more.
-        with suppress(boxlite.BoxliteError):
-            await execution.signal(_STOP)
-
-    async def _stop(self, box: _Box, execution: _Execution, output_files: str) -> None:
-        await self._signal_stop(execution)
-        with suppress(boxlite.BoxliteError):
-            await box.exec('rm', ['-f', f'{output_files}.stdout', f'{output_files}.stderr'])
-
-    async def _read_output(self, box: _Box, output_files: str, *, missing_ok: bool = False) -> tuple[str, str]:
-        reader = await box.exec('/bin/sh', ['-c', _READ_SCRIPT, 'sh', output_files, 'missing_ok' if missing_ok else ''])
-        collected = _Output()
-        failures: list[Exception] = []
-
-        async def collect(stream: AsyncIterator[str], chunks: list[str]) -> None:
-            try:
-                async for chunk in stream:
-                    collected.add(chunks, chunk)
-            except Exception as error:
-                # Raised below, after the task group, so it doesn't reach the caller wrapped in an `ExceptionGroup`.
-                failures.append(error)
-                group.cancel_scope.cancel()
-
-        async with anyio.create_task_group() as group:
-            group.start_soon(collect, reader.stdout(), collected.stdout)
-            group.start_soon(collect, reader.stderr(), collected.stderr)
-        if failures:
-            raise failures[0]
-        exit_code = (await reader.wait()).exit_code
-        if exit_code != 0:
-            raise WorkspaceError(
-                f'Could not read the command output in BoxLite box {box.name} (exit code {exit_code}). '
-                'The image needs `/bin/sh`, `head` and `rm`, and a writable `/tmp`.'
-            )
-        return collected.text()
+    async def _check_running(self, box: _Box) -> None:
+        """Raise `WorkspaceUnavailableError` if the box was stopped or deleted during a command."""
+        if (unavailable := await self._unavailable(box)) is not None:
+            raise unavailable
+        # A box stopped from elsewhere still reports itself running for a moment, but can't start a command.
+        try:
+            with anyio.fail_after(_SETUP_TIMEOUT):
+                await (await box.exec('/bin/sh', ['-c', ':'])).wait()
+        except (boxlite.BoxliteError, TimeoutError) as error:
+            raise WorkspaceUnavailableError(
+                f'The BoxLite box {box.name!r} stopped during the command: {error}'
+            ) from error
 
     async def _unavailable(self, box: _Box) -> WorkspaceUnavailableError | None:
         """A `WorkspaceUnavailableError` if the box is gone or stopped; `None` if it's running or can't be checked.
@@ -638,6 +596,24 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 f'The BoxLite box {box.name!r} is {info.state.status}: it was stopped during the command.'
             )
         return None
+
+
+async def _stop(execution: _Execution) -> None:
+    """Stop a command and the processes it started, and wait for it to end."""
+    # A command that exits as it is stopped can't be signalled any more.
+    with suppress(boxlite.BoxliteError):
+        await execution.signal(_STOP)
+        with anyio.move_on_after(_STOP_GRACE):
+            await execution.wait()
+
+
+def _stop_late(opening: asyncio.Future[_Execution]) -> None:
+    """Stop a command that started after its caller was cancelled."""
+    if opening.cancelled() or opening.exception() is not None:
+        return
+    stop = asyncio.ensure_future(_stop(opening.result()))
+    _late_stops.add(stop)
+    stop.add_done_callback(_late_stops.discard)
 
 
 async def _boot(box: _Box) -> None:
