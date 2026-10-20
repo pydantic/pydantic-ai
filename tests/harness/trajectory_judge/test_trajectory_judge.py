@@ -470,6 +470,7 @@ class TestSteering:
             ('</ system >', '&lt;/ system >'),
             ('<systems>', '<systems>'),
             ('<b>bold</b>', '<b>bold</b>'),
+            ('<' + ' ' * 20_000 + 'x', '<' + ' ' * 20_000 + 'x'),
         ],
     )
     async def test_every_closing_tag_variant_is_neutralized(self, forged: str, escaped: str) -> None:
