@@ -22,6 +22,7 @@ from . import (
     ModelRequestContext,
     ModelRequestParameters,
     StreamedResponse,
+    _SettingsLayer,  # pyright: ignore[reportPrivateUsage]
     infer_model,
 )
 from ._request_timeout import RequestDeadline
@@ -111,7 +112,7 @@ class WrapperModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[tuple[str, ModelSettings | None]]) -> None:
+    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
         self.wrapped._warn_if_thinking_overridden(layers)
 
     def prepare_messages(

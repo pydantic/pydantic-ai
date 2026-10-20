@@ -16,12 +16,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
+from pydantic_ai.capabilities import CAPABILITY_TYPES, AbstractCapability, SelectModel, Thinking
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -2372,6 +2372,77 @@ class TestCrossScopeThinkingOverrideWarning:
             'from `override(model_settings=...)`. Set `openai_reasoning_effort` in `override(model_settings=...)` '
             "instead of `thinking`, or remove it from the model's `settings`."
         ]
+
+    async def test_thinking_capability_overridden_by_model_setting(self, allow_model_requests: None):
+        model, client = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
+        agent = Agent(model, capabilities=[Thinking(effort='high')])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await agent.run('What is 2+2?')
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            "from a capability. Remove `openai_reasoning_effort` from the model's `settings` to apply `thinking`."
+        ]
+        assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'low'
+
+    async def test_each_model_a_step_selects_is_checked_once(self, allow_model_requests: None):
+        """`SelectModel` can switch models between steps, so each model is checked when a step first uses it."""
+        plain, plain_client = _mock_openai_chat('gpt-5', ModelSettings())
+        tuned_client = MockOpenAI.create_mock(
+            [completion_message(ChatCompletionMessage(content='4', role='assistant'))] * 2
+        )
+        tuned = OpenAIChatModel(
+            'gpt-5',
+            provider=OpenAIProvider(openai_client=tuned_client),
+            settings=OpenAIChatModelSettings(openai_reasoning_effort='low'),
+        )
+        agent = Agent(capabilities=[SelectModel(lambda ctx: plain if ctx.run_step == 1 else tuned)], retries=2)
+        attempts = 0
+
+        @agent.output_validator
+        def retry_twice(output: str) -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise ModelRetry('Try again.')
+            return output
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await agent.run('What is 2+2?', model_settings=ModelSettings(thinking='high'))
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` "
+            "from the run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` "
+            "instead of `thinking`, or remove it from the model's `settings`."
+        ]
+        assert [kwargs['reasoning_effort'] for kwargs in get_mock_chat_completion_kwargs(plain_client)] == ['high']
+        assert [kwargs['reasoning_effort'] for kwargs in get_mock_chat_completion_kwargs(tuned_client)] == [
+            'low',
+            'low',
+        ]
+
+    async def test_model_replaced_in_for_run_is_silent(self, allow_model_requests: None):
+        """A model that a capability's `for_run` replaces sends no request, so its settings override nothing."""
+        replaced, _ = _mock_openai_chat('gpt-5', OpenAIChatModelSettings(openai_reasoning_effort='low'))
+        replacement, client = _mock_openai_chat('gpt-5', ModelSettings())
+
+        @dataclass
+        class ReplaceModel(AbstractCapability[None]):
+            replacement_model: Model | None = None
+
+            def get_model(self) -> Model | None:
+                return self.replacement_model
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return ReplaceModel(replacement)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            await Agent(replaced, capabilities=[ReplaceModel()], deps_type=type(None)).run(
+                'What is 2+2?', model_settings=ModelSettings(thinking='high')
+            )
+        assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
+        assert get_mock_chat_completion_kwargs(client)[0]['reasoning_effort'] == 'high'
 
     async def test_narrower_setting_over_broader_thinking_is_silent(self, allow_model_requests: None):
         """A provider-specific setting narrower than `thinking` is the caller's explicit choice, so nothing warns."""

@@ -1744,21 +1744,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         run_model_settings = model_settings if model_settings_override is None else None
 
-        # Warn when a provider-specific thinking setting from a broader static layer replaces a narrower `thinking`.
-        # Callable and capability-supplied layers are not checked, as for `tool_choice` below.
-        model_used._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
-            [
-                ("the model's `settings`", model_used.settings),
-                (
-                    '`override(model_settings=...)`'
-                    if model_settings_override is not None
-                    else "the agent's `model_settings`",
-                    None if callable(agent_model_settings) else agent_model_settings,
-                ),
-                ("the run's `model_settings`", None if callable(run_model_settings) else run_model_settings),
-            ]
-        )
-
         # Validate `tool_choice` on the static baseline. Callable layers (agent-level callable,
         # run-level callable, capability-supplied) may inject `'required'` or `list[str]` per-step
         # and are trusted to adapt across steps. A static forcing choice must leave at least one
@@ -1958,6 +1943,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
             )
 
+        # The ids of the models this run has checked for a thinking override, so each warns once per run.
+        thinking_checked_model_ids: set[int] = set()
+
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
@@ -1968,8 +1956,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
             # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
             step_model = run_context.model
-            # The model's own settings as the base also keep `Model.prepare_request` from repeating the
-            # thinking-override warning `iter` already gave.
+            # Warn when a provider-specific thinking setting from a broader static layer replaces a narrower
+            # `thinking`, for each model a step uses. Callable layers are not checked, as for `tool_choice` above.
+            # Passing the model's own settings as the base keeps `Model.prepare_request` from repeating it.
+            step_model_id = id(step_model)
+            if isinstance(step_model, models.Model) and step_model_id not in thinking_checked_model_ids:
+                thinking_checked_model_ids.add(step_model_id)
+                step_model._warn_if_thinking_overridden(  # pyright: ignore[reportPrivateUsage]
+                    [
+                        models._SettingsLayer("the model's `settings`", step_model.settings),  # pyright: ignore[reportPrivateUsage]
+                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                            '`override(model_settings=...)`'
+                            if model_settings_override is not None
+                            else "the agent's `model_settings`",
+                            None if callable(agent_model_settings) else agent_model_settings,
+                        ),
+                        # A capability like `Thinking` sets only `thinking`, so the warning doesn't suggest setting
+                        # the provider-specific one there.
+                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                            'a capability', None if callable(cap_model_settings) else cap_model_settings, settable=False
+                        ),
+                        models._SettingsLayer(  # pyright: ignore[reportPrivateUsage]
+                            "the run's `model_settings`", None if callable(run_model_settings) else run_model_settings
+                        ),
+                    ]
+                )
             return _layer_model_settings(
                 run_context,
                 (agent_model_settings, cap_model_settings, run_model_settings),
