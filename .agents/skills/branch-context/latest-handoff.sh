@@ -51,62 +51,41 @@ fi
 
 # Readers participate in the writer's lock, so the index, lane map, ledger, and
 # handoff file are observed before or after a complete transition, never midway.
+# The lock block below is identical to append-handoff.sh's; keep them in sync.
 mkdir -p "$HAND_DIR"
-LOCK_DIR="$HAND_DIR/.append.lock"
-lock_acquired=false
-LOCK_OWNER="$LOCK_DIR/owner"
-for ((attempt = 0; attempt < 400; attempt++)); do
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        printf '%s %s\n' "$$" "$(date +%s)" > "$LOCK_OWNER"
-        lock_acquired=true
-        break
-    fi
-    owner_record=''
-    owner_pid=''
-    owner_started=''
-    if [ -f "$LOCK_OWNER" ]; then
-        owner_record="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
-        IFS=' ' read -r owner_pid owner_started <<< "$owner_record" || true
-    fi
-    now="$(date +%s)"
-    stale=false
-    if [[ "$owner_pid" =~ ^[1-9][0-9]*$ ]]; then
-        if ! kill -0 "$owner_pid" 2>/dev/null; then
-            stale=true
-        fi
-    elif [[ "$owner_started" =~ ^[0-9]+$ ]] && ((now - owner_started >= 60)); then
-        stale=true
-    elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
-        stale=true
-    fi
-    if [ "$stale" = true ]; then
-        if [ -n "$owner_record" ]; then
-            current_owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
-            if [ "$current_owner" = "$owner_record" ]; then
-                rm -f "$LOCK_OWNER"
-                rmdir "$LOCK_DIR" 2>/dev/null || true
-            fi
-        elif [ -n "$(find "$LOCK_DIR" -prune -mmin +0 -print 2>/dev/null)" ]; then
-            rmdir "$LOCK_DIR" 2>/dev/null || true
-        fi
-    fi
-    sleep 0.05
-done
-if [ "$lock_acquired" != true ]; then
-    echo "error: timed out waiting for branch-context handoff lock: $LOCK_DIR" >&2
+
+# The lock is flock(2) on fd 9, which this shell holds open until it exits. macOS
+# ships no flock(1), so perl takes the lock on the inherited descriptor. A flock
+# lock belongs to the open file description, so it outlives perl, and the kernel
+# drops it once every process holding fd 9 has exited, SIGKILL included. Nothing
+# reclaims it, so no contender can remove a live holder's lock. Do not switch to
+# fcntl(2) locks: closing any descriptor for the file drops those.
+LOCK_FILE="$HAND_DIR/.transition.lock"
+if ! command -v perl >/dev/null 2>&1; then
+    echo "error: perl is required to take the branch-context handoff lock" >&2
     exit 1
 fi
-release_lock() {
-    current_owner="$(cat "$LOCK_OWNER" 2>/dev/null || true)"
-    if [[ "$current_owner" == "$$ "* ]]; then
-        rm -f "$LOCK_OWNER"
-        rmdir "$LOCK_DIR" 2>/dev/null || true
-    fi
+exec 9>>"$LOCK_FILE" || {
+    echo "error: cannot open branch-context handoff lock: $LOCK_FILE" >&2
+    exit 1
 }
-trap release_lock EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+lock_rc=0
+perl -MFcntl=:flock -e '
+    open(my $fh, ">&=", 9) or exit 2;
+    for (1 .. 400) {
+        exit 0 if flock($fh, LOCK_EX | LOCK_NB);
+        $!{EWOULDBLOCK} or exit 2;
+        select(undef, undef, undef, 0.05);
+    }
+    exit 1;
+' || lock_rc=$?
+if [ "$lock_rc" -eq 1 ]; then
+    echo "error: timed out waiting for branch-context handoff lock: $LOCK_FILE" >&2
+    exit 1
+elif [ "$lock_rc" -ne 0 ]; then
+    echo "error: cannot lock branch-context handoff lock: $LOCK_FILE" >&2
+    exit 1
+fi
 
 LANE_LABEL=""
 if [ -f "$LANES" ]; then
