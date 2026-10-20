@@ -144,10 +144,11 @@ GuardOutcome = bool | GuardrailResult
 
 
 GuardCallable = Callable[..., object]
-"""A guard as the helpers below handle it. `evaluate` normalizes whatever it returns.
+"""A guard as the helpers below handle it.
 
-The public `*GuardrailFunc` aliases pin down what a guard may return; by the time
-one reaches here it has already been checked against that field type.
+Deliberately loose: whether a guard takes `RunContext` is decided from its signature at call
+time, which no static callable type can express, and `evaluate` checks what it returns at
+runtime. The public `*GuardrailFunc` aliases carry the precise types for users.
 """
 
 
