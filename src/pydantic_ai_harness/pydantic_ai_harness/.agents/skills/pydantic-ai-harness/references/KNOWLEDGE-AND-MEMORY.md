@@ -202,6 +202,9 @@ Gotchas:
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
   retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
   grows with in-scope history.
+- History a run inherits through `message_history` is indexed once, under the run that first
+  persisted it. Excerpts are clipped to 500 characters, centred on the matched term when it lies
+  past the cutoff. The `\w+` tokenizer cannot match a word inside unspaced CJK or Thai text.
 
 ## Skills
 
