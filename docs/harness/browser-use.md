@@ -210,8 +210,13 @@ whenever `sensitive_data` is configured, BrowserUse:
   navigations;
 - replaces each secret value in the `browse_web` result with its placeholder,
   so a value the sub-agent writes into its answer does not reach the host
-  model. Every occurrence is replaced, including inside other words, so a very
-  short value can garble the result. Schema output stays valid JSON: a
+  model. It matches the value as written, its JSON-escaped form (as schema
+  output writes it), and its two URL-encoded forms: `urllib.parse.quote_plus`,
+  which writes `p@ss word` as `p%40ss+word` (the query in a blocked `search`
+  action's URL), and `urllib.parse.quote`, which writes it as `p%40ss%20word`.
+  Other encodings, such as HTML entities, base64, or a change of letter case,
+  are not matched. Every occurrence is replaced, including inside other words,
+  so a very short value can garble the result. Schema output stays valid JSON: a
   non-string field holding a secret becomes its placeholder string.
 
 A domain-scoped secret is still substituted into a navigation made from its own

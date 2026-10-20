@@ -1420,6 +1420,29 @@ class TestSensitiveDataSafety:
             '(typed <secret>x_password</secret> into a field that rejected it).'
         )
 
+    async def test_url_encoded_secret_values_are_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """A blocked `search` reports the URL it built, with the query encoded by `quote_plus`."""
+        history = _FakeHistory(
+            step_errors=[
+                'Failed to search duckduckgo for "p@ss word": Navigation to non-allowed URL: '
+                'https://duckduckgo.com/?q=p%40ss+word',
+                'Navigation to non-allowed URL: https://evil.example/p%40ss%20word',
+            ]
+        )
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'p@ss word'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result (Failed to search duckduckgo for '
+            '"<secret>x_password</secret>": Navigation to non-allowed URL: '
+            'https://duckduckgo.com/?q=<secret>x_password</secret>; '
+            'Navigation to non-allowed URL: https://evil.example/<secret>x_password</secret>).'
+        )
+
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""
         facts = _Facts(name='pa"ssé', price_usd=1)
