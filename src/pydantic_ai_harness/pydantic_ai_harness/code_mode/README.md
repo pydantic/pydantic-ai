@@ -795,6 +795,8 @@ CodeMode(
     os_access=None,       # OS behavior; custom handlers may expose host resources
     mount=None,           # host directories to share with the sandbox
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
+    eager=False,          # run statements while the run_code call is still streaming
+    speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
     monty_sandbox_url=None, # ws:// or wss:// URL of a remote Monty worker server
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
