@@ -774,13 +774,13 @@ async def main():
         'span_abc': _make_context(
             inputs={'query': 'What is AI?'},
             output='AI is artificial intelligence.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=1.2,
         ),
         'span_def': _make_context(
             inputs={'query': 'What is ML?'},
             output='ML is machine learning.',
-            metadata={'model': 'gpt-4o'},
+            metadata={'model': '{{ openai:medium.name }}'},
             duration=0.8,
         ),
     })
@@ -822,7 +822,7 @@ ctx = EvaluatorContext[dict[str, str], str, dict[str, str]](
     inputs={'query': 'What is AI?'},
     output='AI is artificial intelligence.',
     expected_output=None,
-    metadata={'model': 'gpt-4o'},
+    metadata={'model': '{{ openai:medium.name }}'},
     duration=1.2,
     _span_tree=SpanTree(),
     attributes={},
@@ -997,7 +997,7 @@ class OutputNotEmpty(Evaluator):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     name='assistant',
     capabilities=[OnlineEvaluation(evaluators=[OutputNotEmpty()])],
 )

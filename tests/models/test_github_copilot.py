@@ -799,7 +799,7 @@ async def test_github_copilot_streams_a_tool_call_round_trip_through_a_proxy(
                     {
                         'id': 'toolu_proxy_stream_01',
                         'type': 'function',
-                        'function': {'name': 'get_weather', 'arguments': '{"city": "Paris"}'},
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"Paris"}'},
                     }
                 ],
             },

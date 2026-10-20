@@ -47,7 +47,11 @@ class Spent:
     """Total tokens, counted whether or not the request could be priced."""
 
     requests: int = 0
-    """Model requests recorded against this window."""
+    """Model requests recorded against this window.
+
+    Every billed request counts, including a response a `FallbackModel` rejected, so this can be
+    higher than the run's `RunUsage.requests`, which counts the responses the agent acted on.
+    """
 
     unpriced_requests: int = 0
     """How many of `requests` had no resolvable price, so `usd` understates them."""

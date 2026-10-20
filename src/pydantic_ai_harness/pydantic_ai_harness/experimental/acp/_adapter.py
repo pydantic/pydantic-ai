@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from inspect import isawaitable
@@ -100,15 +101,32 @@ def _finish_reason_to_stop_reason(finish_reason: FinishReason | None) -> schema.
     return 'end_turn'
 
 
+_USAGE_LIMIT_STOP_REASONS: dict[str, schema.StopReason] = {
+    'request_limit': 'max_turn_requests',
+    'tool_calls_limit': 'max_turn_requests',
+    'input_tokens_limit': 'max_tokens',
+    'output_tokens_limit': 'max_tokens',
+    'total_tokens_limit': 'max_tokens',
+    'per_request_input_tokens_limit': 'max_tokens',
+    # ACP has no budget stop reason; a cost ceiling bounds how much work the turn may do.
+    'cost_limit': 'max_turn_requests',
+}
+"""The ACP stop reason for each `UsageLimits` field, keyed by the field name its exception names."""
+
+_USAGE_LIMIT_NAME = re.compile(rf'\b({"|".join(_USAGE_LIMIT_STOP_REASONS)})\b')
+
+
 def _usage_limit_stop_reason(exc: UsageLimitExceeded) -> schema.StopReason:
     """Map a run's exceeded usage limit to the ACP stop reason ending the turn.
 
-    Token-based limits report `max_tokens`; the request/tool-call count limits report
-    `max_turn_requests`. The exception carries no structured detail, so this reads its message; an
-    unrecognized wording falls back to `max_turn_requests` (the limit pydantic-ai's default
-    configuration can hit).
+    Token limits report `max_tokens`; the request, tool-call, and cost limits report
+    `max_turn_requests`. The exception carries no structured detail, so this finds the exceeded
+    `UsageLimits` field named in its message, matched as a whole identifier so
+    `input_tokens_limit` is not confused with `per_request_input_tokens_limit`. A message naming no
+    known field (a custom subclass such as a spend budget) falls back to `max_turn_requests`.
     """
-    return 'max_tokens' if 'tokens_limit' in str(exc) else 'max_turn_requests'
+    match = _USAGE_LIMIT_NAME.search(str(exc))
+    return _USAGE_LIMIT_STOP_REASONS[match.group(1)] if match else 'max_turn_requests'
 
 
 def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> list[ModelMessage]:
@@ -564,8 +582,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except asyncio.CancelledError:
                 # `turn.done()` cannot fully prove the cancellation came from the turn: in the one
                 # tick between the turn completing and this coroutine resuming, a teardown cancel
-                # aimed at *this* handler is indistinguishable on 3.10 (3.11's `Task.cancelling()`
-                # would settle it). Accepted residual; every wider window is covered below.
+                # aimed at this handler is indistinguishable using `turn.done()`.
+                # Accepted residual; every wider window is covered below.
                 if turn.done() and state.cancel_requested:
                     return schema.PromptResponse(stop_reason='cancelled')
                 if state.cancel_requested:
@@ -621,7 +639,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except (asyncio.CancelledError, _TurnCancelled):
                 # As in `prompt`, `turn.done()` is a heuristic with a one-tick residual: a
                 # teardown cancel landing between the turn completing and this resuming is
-                # swallowed here on 3.10. Accepted.
+                # swallowed here. Accepted.
                 if not turn.done():
                     raise
 

@@ -5022,8 +5022,9 @@ def test_return_schema_tool_return_generic():
 
 def test_return_schema_self_bound_method():
     """Self return type on a bound method resolves to the owning class."""
+    from typing import Self
+
     from pydantic import BaseModel
-    from typing_extensions import Self
 
     class Weather(BaseModel):
         temperature: float
@@ -5040,9 +5041,7 @@ def test_return_schema_self_bound_method():
 
 def test_return_schema_self_unbound():
     """Self return type on a non-bound function falls back to unconstrained schema."""
-    from typing import Any
-
-    from typing_extensions import Self
+    from typing import Any, Self
 
     from pydantic_ai._function_schema import extract_return_schema_type
 
@@ -5327,14 +5326,14 @@ def test_tool_return_part_serializes_with_serialization_alias():
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
 
 
-class DescribedEnum(UseEnumMemberDocstrings, str, Enum):
+class DescribedEnum(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """A base for enums built by the functional API, which takes one mix-in type and no extra bases."""
 
 
 def test_enum_member_docstrings_describe_options():
     """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
 
-    class Priority(UseEnumMemberDocstrings, str, Enum):
+    class Priority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
         """How urgent the ticket is."""
 
         low = 'low'
@@ -5380,7 +5379,7 @@ def test_enum_member_docstrings_describe_options():
     )
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5389,7 +5388,7 @@ class Urgency(UseEnumMemberDocstrings, str, Enum):
     """Needs attention today."""
 
 
-class UnopinionatedUrgency(str, Enum):
+class UnopinionatedUrgency(str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5441,7 +5440,7 @@ def test_an_enum_that_does_not_mix_it_in_is_described_exactly_as_pydantic_descri
     )
 
 
-class Level(UseEnumMemberDocstrings, str, Enum):
+class Level(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     low = 'low'
     """Can wait a week."""
     high = 'high'
@@ -5482,7 +5481,7 @@ def test_a_none_member_keeps_the_enum_in_its_plain_form():
     assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
 
 
-class Aliased(UseEnumMemberDocstrings, str, Enum):
+class Aliased(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     high = 'high'

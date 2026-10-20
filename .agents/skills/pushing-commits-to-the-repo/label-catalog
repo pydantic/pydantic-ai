@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Print the checked-in label catalog path. Use --refresh after repository labels change.
+set -euo pipefail
+
+if [[ $# -gt 1 || (${1:-} != '' && ${1:-} != '--refresh') ]]; then
+  echo "Usage: $0 [--refresh]" >&2
+  exit 2
+fi
+
+catalog="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/labels.tsv"
+if [[ -f "$catalog" && ${1:-} != '--refresh' ]]; then
+  printf '%s\n' "$catalog"
+  exit 0
+fi
+
+response=$(gh api graphql -f query='
+  query {
+    repository(owner: "pydantic", name: "pydantic-ai") {
+      firstBatch: labels(first: 100) {
+        totalCount
+        nodes { name description }
+        pageInfo { endCursor }
+      }
+      lastBatch: labels(last: 100) {
+        nodes { name description }
+        pageInfo { startCursor }
+      }
+    }
+  }')
+data=$(jq -ce '.data.repository | {
+  total: .firstBatch.totalCount,
+  labels: (.firstBatch.nodes + .lastBatch.nodes | unique_by(.name))
+}' <<<"$response")
+
+if ! jq -e '.total == (.labels | length)' <<<"$data" >/dev/null; then
+  first_cursor=$(jq -er '.data.repository.firstBatch.pageInfo.endCursor' <<<"$response")
+  last_cursor=$(jq -er '.data.repository.lastBatch.pageInfo.startCursor' <<<"$response")
+  response=$(gh api graphql -f firstCursor="$first_cursor" -f lastCursor="$last_cursor" -f query='
+    query($firstCursor: String!, $lastCursor: String!) {
+      repository(owner: "pydantic", name: "pydantic-ai") {
+        firstBatch: labels(first: 100, after: $firstCursor, before: $lastCursor) {
+          totalCount
+          nodes { name description }
+        }
+        lastBatch: labels(last: 100, after: $firstCursor, before: $lastCursor) {
+          nodes { name description }
+        }
+      }
+    }')
+  data=$(jq -ce --argjson previous "$data" '.data.repository | {
+    total: .firstBatch.totalCount,
+    labels: ($previous.labels + .firstBatch.nodes + .lastBatch.nodes | unique_by(.name))
+  }' <<<"$response")
+fi
+
+if ! jq -e '.total == (.labels | length)' <<<"$data" >/dev/null; then
+  echo 'Label catalog is incomplete after two requests; cached catalog was not replaced.' >&2
+  exit 1
+fi
+
+temporary=$(mktemp "$catalog.XXXXXX")
+trap 'rm -f "$temporary"' EXIT
+jq -r '.labels[] |
+  if (.description // "") == "" then .name else [.name, .description] | @tsv end
+' <<<"$data" > "$temporary"
+mv "$temporary" "$catalog"
+printf '%s\n' "$catalog"

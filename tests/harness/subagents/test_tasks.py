@@ -12,6 +12,7 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
@@ -20,6 +21,8 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -100,6 +103,34 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
         assert saved.messages == record.messages
 
 
+async def test_child_history_with_binary_tool_return_is_saved(tmp_path: Path) -> None:
+    """A child tool's raw bytes that aren't UTF-8 are saved as base64, like `ModelMessagesTypeAdapter` saves them."""
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='read_blob', json_args='{}', tool_call_id='blob')}
+        else:
+            yield 'child result'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+
+    @child.tool_plain
+    def read_blob() -> bytes:
+        return b'\x80'
+
+    owner = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                result = await agent.run('go', conversation_id='parent')
+    assert result.output == 'parent finished'
+    async with DelegationTasks(directory=tmp_path).opened() as restored:
+        (saved,) = restored.records.values()
+    returns = [part.content for message in saved.messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert returns == ['gA==']
+
+
 async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer() -> None:
     handled: list[AgentStreamEvent] = []
     observed: list[AgentStreamEvent] = []
@@ -126,6 +157,30 @@ async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer(
                 await agent.run('go', conversation_id='parent')
     assert handled
     assert handled == [event for event in observed if not isinstance(event, (DelegationStartEvent, DelegationEndEvent))]
+
+
+async def test_child_stream_events_carry_the_child_model_and_window() -> None:
+    updates: list[DelegationTaskEvent] = []
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        updates.append(update)
+
+    owner = DelegationTasks(observer=observe)
+    child_model = TestModel(custom_output_text='child result', model_name='child', profile={'context_window': 4096})
+    child = Agent(child_model, deps_type=object, name='worker')
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent: Agent[object, str] = Agent(
+                    parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)]
+                )
+                await agent.run('go', conversation_id='parent')
+    lifecycle = [
+        u for u in updates if u.event is None or isinstance(u.event, (DelegationStartEvent, DelegationEndEvent))
+    ]
+    streamed = [u for u in updates if u not in lifecycle]
+    assert streamed and {(u.model_name, u.context_window) for u in streamed} == {('child', 4096)}
+    assert lifecycle and {(u.model_name, u.context_window) for u in lifecycle} == {(None, None)}
 
 
 @pytest.mark.parametrize(('background', 'resume'), [(True, None), (False, 'earlier')])
@@ -192,6 +247,109 @@ async def test_background_receipt_then_automated_report(tmp_path: Path) -> None:
     async with DelegationTasks(directory=tmp_path).opened() as restored:
         assert restored.records[record.id].delivered
         assert not restored.reports(conversation_id='parent')
+
+
+async def test_steer_reaches_a_running_child_only() -> None:
+    started, release = asyncio.Event(), asyncio.Event()
+    seen: list[list[ModelMessage]] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        if len(seen) == 1:
+            started.set()
+            await release.wait()
+            yield 'first answer'
+        else:
+            yield 'steered answer'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = DelegationTasks()
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                running = asyncio.create_task(parent.run('go', conversation_id='parent'))
+                await started.wait()
+                (record,) = owner.records.values()
+                with pytest.raises(ValueError, match='must not be empty'):
+                    owner.steer(record.id, '  ')
+                assert owner.steer(record.id, 'focus on the tests')
+                release.set()
+                await running
+            assert record.output == 'steered answer'
+            steered = [
+                part.content
+                for message in seen[1]
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ]
+            assert steered == ['inspect', 'focus on the tests']
+            assert 'focus on the tests' in str(record.messages)
+            assert not owner.steer(record.id, 'too late'), 'a finished child offers resume instead'
+            with pytest.raises(KeyError):
+                owner.steer('unknown', 'hello')
+
+
+async def test_steer_sent_before_the_child_run_starts_waits_for_it() -> None:
+    seen: list[list[ModelMessage]] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'child answer'
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.event is None and update.task.status == 'running':
+            assert owner.steer(update.task.id, 'start with the README')
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = DelegationTasks(observer=observe)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                await parent.run('go', conversation_id='parent')
+    assert 'start with the README' in str(seen[0])
+
+
+async def test_steer_for_a_task_stopped_before_its_run_reaches_no_later_run() -> None:
+    seen: list[list[ModelMessage]] = []
+    accepted, release = asyncio.Event(), asyncio.Event()
+
+    class Owner(DelegationTasks):
+        async def save(self, record: DelegationTask) -> None:
+            if not accepted.is_set():
+                accepted.set()
+                await release.wait()
+            await super().save(record)
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(messages)
+        yield 'child answer'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    owner = Owner()
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                parent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                running = asyncio.create_task(parent.run('go', conversation_id='parent'))
+                await accepted.wait()
+                (record,) = owner.records.values()
+                assert owner.steer(record.id, 'stale guidance')
+                stopping = asyncio.create_task(owner.cancel(record.id))
+                release.set()
+                await stopping
+                await running
+                assert (record.outcome, seen) == ('cancelled', [])
+                await owner.allow_resume(record.id)
+                resumed = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await resumed.run('again', conversation_id='parent')
+    assert record.output == 'child answer'
+    assert 'stale guidance' not in str(seen)
 
 
 async def test_promotion_and_targeted_cancellation(tmp_path: Path) -> None:
@@ -498,6 +656,53 @@ async def test_restore_interrupted_step_history(tmp_path: Path, snapshot: bool) 
         assert bool(saved.messages) == snapshot
         if snapshot:
             assert 'step evidence' in str(saved.messages)
+
+
+async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path: Path) -> None:
+    owner = DelegationTasks(directory=tmp_path)
+    async with owner.opened():
+        await delegate(owner, conversation_id='parent')
+        (record,) = owner.records.values()
+        record.messages = [
+            ModelRequest(parts=[UserPromptPart('start')]),
+            ModelResponse(parts=[ToolCallPart('slow_tool', {}, tool_call_id='slow')]),
+        ]
+    path = tmp_path / f'{record.id}.json'
+    data = json.loads(path.read_text())
+    data['status'] = 'running'
+    path.write_text(json.dumps(data))
+
+    seen: list[ModelMessage] = []
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.extend(messages)
+        yield 'resumed result'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+    restored = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with restored.opened():
+            with restored.bind():
+                parent = Agent(
+                    parent_model(resume=record.id),
+                    capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+                )
+                await parent.run('continue', conversation_id='parent')
+    resumed = restored.records[record.id]
+    assert (resumed.outcome, resumed.output) == ('ok', 'resumed result')
+    returns = [
+        part
+        for message in seen
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.tool_call_id, part.outcome, part.content) for part in returns] == [
+        ('slow', 'interrupted', INTERRUPTED_TOOL_RETURN_CONTENT)
+    ]
+    last = seen[-1]
+    assert isinstance(last, ModelRequest)
+    assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['inspect']
 
 
 async def test_failed_parent_drains_descendants() -> None:

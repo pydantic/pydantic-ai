@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, cast
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, cast
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (

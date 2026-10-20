@@ -24,6 +24,8 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    bedrock_claude_cache_retentions,
+    bedrock_lacks_claude_structured_output,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -203,7 +205,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_adaptive_thinking: bool
-    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
     `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
@@ -212,7 +214,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_supports_effort: bool
-    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant AND only honored alongside
     `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
@@ -237,6 +239,19 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent once the history has a tool call.
+
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
+
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
+
+    Default: `None`.
+    """
+
     bedrock_disallows_sampling_settings: bool
     """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
 
@@ -255,17 +270,6 @@ class BedrockModelProfile(ModelProfile, total=False):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These models support structured output on the direct Anthropic API but are not listed
-    # in the Bedrock Runtime structured-output docs:
-    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = (
-        'claude-opus-4-1',
-        'claude-opus-4-7',
-        'claude-opus-4-8',
-        'claude-opus-5',
-        'claude-sonnet-5',
-        'claude-fable-5',
-    )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
@@ -277,6 +281,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
+            supports_cache=True,
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models.
+            supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
@@ -286,12 +293,13 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
             bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )
-    supports_structured_output = profile.get('supports_json_schema_output', False) and not model_name.startswith(
-        bedrock_structured_output_unsupported
-    )
+    supports_structured_output = profile.get(
+        'supports_json_schema_output', False
+    ) and not bedrock_lacks_claude_structured_output(model_name)
     return merge_profile(
         profile,
         BedrockModelProfile(
@@ -316,6 +324,8 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                supports_cache=True,
+                supported_cache_retentions=('5m',),
                 bedrock_top_k_variant='nova',
             ),
         )
@@ -509,8 +519,17 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
     # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
-    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
+    if model_name in {
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
         return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
     # Keep other proprietary GPT models gated until their Converse support is confirmed.

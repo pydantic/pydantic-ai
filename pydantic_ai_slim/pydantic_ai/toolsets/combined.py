@@ -3,9 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather

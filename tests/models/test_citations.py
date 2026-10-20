@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, assert_never
 from urllib.parse import urlparse
 
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,
@@ -303,7 +302,7 @@ def _web_citation_agent(
         prompt = "Use Google Search to find Pydantic AI's documentation and cite it."
     elif case.provider == 'openai':
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
-        tool = WebSearchTool(max_uses=1)
+        tool = WebSearchTool()
         prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
     elif case.provider == 'openai-chat':
         # Chat Completions search models always search, so no tool is needed.

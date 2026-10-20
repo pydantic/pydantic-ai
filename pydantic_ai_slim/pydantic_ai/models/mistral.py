@@ -4,11 +4,11 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
+import httpx2
 import pydantic_core
 from pydantic import JsonValue
-from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
@@ -66,6 +66,7 @@ from . import (
     get_user_agent,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from mistralai.client import Mistral
@@ -83,6 +84,7 @@ try:
         DocumentURLChunk as MistralDocumentURLChunk,
         FileChunk as MistralFileChunk,
         FunctionCall as MistralFunctionCall,
+        FunctionName as MistralFunctionName,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
         ReferenceChunk as MistralReferenceChunk,
@@ -91,6 +93,7 @@ try:
         ThinkChunk as MistralThinkChunk,
         Tool as MistralTool,
         ToolCall as MistralToolCall,
+        ToolChoice as MistralToolChoice,
         ToolChoiceEnum as MistralToolChoiceEnum,
         UnknownContentChunk as MistralUnknownContentChunk,
     )
@@ -129,6 +132,9 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except httpx2.TransportError as e:
+        # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
+        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
 
 
 LatestMistralModelNames = Literal[
@@ -190,6 +196,8 @@ class MistralModel(Model[Mistral]):
 
     [API Documentation](https://docs.mistral.ai/)
     """
+
+    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'service_tier', 'top_k'})
 
     json_mode_schema_prompt: str
 
@@ -305,6 +313,7 @@ class MistralModel(Model[Mistral]):
                 temperature=model_settings.get('temperature', UNSET),
                 top_p=model_settings.get('top_p', 1),
                 timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+                retries=self._get_retries(model_settings),
                 random_seed=model_settings.get('seed', UNSET),
                 presence_penalty=model_settings.get('presence_penalty'),
                 frequency_penalty=model_settings.get('frequency_penalty'),
@@ -356,6 +365,7 @@ class MistralModel(Model[Mistral]):
             top_p=model_settings.get('top_p', 1 if tools or model_request_parameters.output_tools else None),
             max_tokens=model_settings.get('max_tokens', UNSET),
             timeout_ms=self._get_timeout_ms(model_settings.get('timeout')),
+            retries=self._get_retries(model_settings),
             random_seed=model_settings.get('seed', UNSET),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
@@ -372,12 +382,12 @@ class MistralModel(Model[Mistral]):
         self,
         model_request_parameters: ModelRequestParameters,
         model_settings: MistralModelSettings,
-    ) -> tuple[list[MistralTool] | None, MistralToolChoiceEnum | None]:
+    ) -> tuple[list[MistralTool] | None, MistralToolChoice | MistralToolChoiceEnum | None]:
         """Get tools and tool choice for the model.
 
         Returns a tuple of (tools, tool_choice):
         - tools: List of MistralTool definitions to send, or None if no tools
-        - tool_choice: "auto", "any", "none", "required", or None
+        - tool_choice: "auto", "any", "none", "required", a `ToolChoice` naming a single forced tool, or None
 
         Tool choice semantics:
         - "auto": Default mode. Model decides if it uses the tool or not.
@@ -388,7 +398,7 @@ class MistralModel(Model[Mistral]):
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         tool_defs = model_request_parameters.declared_tool_defs
 
-        tool_choice: MistralToolChoiceEnum
+        tool_choice: MistralToolChoice | MistralToolChoiceEnum
         if resolved_tool_choice == 'auto':
             tool_choice = 'auto'
         elif resolved_tool_choice == 'required':
@@ -399,9 +409,14 @@ class MistralModel(Model[Mistral]):
             return None, None
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            # Breaks caching, but Mistral doesn't support limiting tools via API arg
-            tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-            tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
+            if tool_choice_mode == 'required' and len(tool_names) == 1:
+                # Name the single forced tool natively and keep all tools, so the tools prefix stays cacheable.
+                (tool_name,) = tool_names
+                tool_choice = MistralToolChoice(function=MistralFunctionName(name=tool_name))
+            else:
+                # Breaks caching, but Mistral doesn't support limiting tools to a subset via API arg
+                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
+                tool_choice = 'auto' if tool_choice_mode == 'auto' else 'any'
         else:
             assert_never(resolved_tool_choice)
 
@@ -494,7 +509,7 @@ class MistralModel(Model[Mistral]):
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
             type='function',
-            function=MistralFunctionCall(name=t.tool_name, arguments=t.args or {}),
+            function=MistralFunctionCall(name=t.tool_name, arguments=t.args_as_json_str()),
         )
 
     def _generate_user_output_format(self, schemas: list[dict[str, Any]]) -> MistralUserMessage:
@@ -587,6 +602,15 @@ class MistralModel(Model[Mistral]):
         if isinstance(timeout, (int, float)):
             return int(1000 * timeout)
         raise NotImplementedError('Timeout object is not yet supported for MistralModel.')
+
+    @staticmethod
+    def _get_retries(model_settings: MistralModelSettings) -> None | MistralUnset:
+        """Map `max_retries` onto the SDK's per-request `retries`.
+
+        Mistral's retry config bounds retries by elapsed time rather than by count, so only `0` can be expressed:
+        `None` turns retries off for the request, and `UNSET` keeps the client's `retry_config`.
+        """
+        return None if model_settings.get('max_retries') == 0 else UNSET
 
     def _translate_thinking(
         self,

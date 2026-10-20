@@ -14,7 +14,7 @@ from ._warnings import CostCalculationFailedWarning
 from .exceptions import UserError
 
 if TYPE_CHECKING:
-    from genai_prices.types import PriceCalculation
+    from genai_prices.types import PriceCalculation, PriceContext
 
     from .messages import ModelResponse
     from .models._abstract import AbstractModel
@@ -90,19 +90,22 @@ def calculate_price_for_usage(
     provider_api_url: str | None = None,
     provider_name: str | None = None,
     genai_request_timestamp: datetime | None = None,
+    price_context: PriceContext | None = None,
 ) -> PriceCalculation:
     """Price a usage object with [genai-prices](https://github.com/pydantic/genai-prices), propagating its errors.
 
-    Tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
-    Only `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
+    Normally tries matching on `provider_api_url` first as it's more specific, then falls back to `provider_name`.
+    `openai-decisions` uses its provider name first because it shares OpenAI's URL with another endpoint. Only
+    `ModelResponse.cost()` wants this behaviour; everything internal goes through `best_effort_price`.
     """
-    if provider_api_url:
+    if provider_api_url and provider_name != 'openai-decisions':
         try:
             return calc_price(
                 usage,
                 model_name,
                 provider_api_url=provider_api_url,
                 genai_request_timestamp=genai_request_timestamp,
+                price_context=price_context,
             )
         except LookupError:
             # genai-prices doesn't know this URL, but the provider name may still resolve.
@@ -113,6 +116,7 @@ def calculate_price_for_usage(
         model_name,
         provider_id=provider_name,
         genai_request_timestamp=genai_request_timestamp,
+        price_context=price_context,
     )
 
 
@@ -123,6 +127,7 @@ def best_effort_price(
     provider_api_url: str | None = None,
     provider_name: str | None = None,
     genai_request_timestamp: datetime | None = None,
+    price_context: PriceContext | None = None,
 ) -> PriceCalculation | None:
     """Price a usage object, degrading any failure to `None`; pricing must never fail a run.
 
@@ -141,6 +146,7 @@ def best_effort_price(
             provider_api_url=provider_api_url,
             provider_name=provider_name,
             genai_request_timestamp=genai_request_timestamp,
+            price_context=price_context,
         )
     except (LookupError, ValueError):
         # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
@@ -168,6 +174,7 @@ def fill_response_cost(response: ModelResponse) -> None:
                 provider_api_url=response.provider_url,
                 provider_name=response.provider_name,
                 genai_request_timestamp=response.timestamp,
+                price_context=response.provider_details,
             )
         )
         is not None

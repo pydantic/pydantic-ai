@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_type_hints
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
@@ -15,7 +15,7 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (

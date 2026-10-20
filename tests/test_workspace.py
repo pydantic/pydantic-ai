@@ -1425,6 +1425,38 @@ async def test_streamed_result_keeps_the_workspace_identity() -> None:
         assert result.workspace is workspace
 
 
+@pytest.mark.parametrize('consume', ['get_output', 'stream_text', 'stream_output', 'stream_response'])
+async def test_settled_streamed_result_keeps_the_workspace(tmp_path: Path, consume: str) -> None:
+    """Settling a TestModel stream preserves its usable, wrapped workspace without serializing it."""
+    (tmp_path / 'artifact.txt').write_text('streamed artifact')
+    workspace = ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)))
+    agent = Agent(TestModel(custom_output_text='done'))
+
+    async with agent.run_stream('go', workspace=workspace) as streamed:
+        if consume == 'get_output':
+            await streamed.get_output()
+        elif consume == 'stream_text':
+            async for _ in streamed.stream_text(debounce_by=None):
+                pass
+        elif consume == 'stream_output':
+            async for _ in streamed.stream_output(debounce_by=None):
+                pass
+        else:
+            async for _ in streamed.stream_response(debounce_by=None):
+                pass
+        result = streamed.result
+
+    assert result.workspace is workspace
+    assert await result.workspace.read_text('artifact.txt') == 'streamed artifact'
+    with pytest.raises(WorkspaceReadOnlyError):
+        await result.workspace.write_text('artifact.txt', 'changed')
+
+    adapter = TypeAdapter(AgentRunResult[str])
+    reloaded = adapter.validate_json(adapter.dump_json(result))
+    assert reloaded.workspace.ref is None
+    assert reloaded.response.workspace_ref == workspace.ref
+
+
 def test_sync_streamed_result_keeps_the_workspace_identity() -> None:
     workspace = ReadOnlyWorkspace(Workspace(FakeWorkspace('sync-streamed-result')))
     agent = Agent(TestModel(custom_output_text='streamed'))

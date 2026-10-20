@@ -8,13 +8,16 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal, cast
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pydantic import HttpUrl, JsonValue, ValidationError
 from rich.console import Console
 
+import pydantic_clai2.mcp._settings as mcp_settings
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
@@ -46,6 +49,7 @@ def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]
     script.write_text(
         'import os, sys\nfrom pathlib import Path\n'
         f'Path({str(pid_file)!r}).write_text(str(os.getpid()))\n'
+        f'Path({str(tmp_path / "server.cwd")!r}).write_text(os.getcwd())\n'
         'print("server booted", file=sys.stderr, flush=True)\n'
         'from mcp.server.fastmcp import FastMCP\n'
         'server = FastMCP("test")\n'
@@ -80,6 +84,22 @@ async def test_http_client_rejects_redirects(monkeypatch: pytest.MonkeyPatch) ->
         assert isinstance(client.auth, httpx.BasicAuth)
     async with http_client(follow_redirects=True) as client:
         assert not client.follow_redirects, 'FastMCP asks for redirects; the endpoint stays fixed'
+
+
+async def test_http_client_is_the_httpx_fastmcp_drives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FastMCP 4's sign-in is an `httpx2.Auth`, which a legacy `httpx` client rejects as an invalid `auth`."""
+
+    def fastmcp_4_client(
+        headers: dict[str, str] | None = None, timeout: httpx2.Timeout | None = None, auth: httpx2.Auth | None = None
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(headers=headers, timeout=timeout, auth=auth, follow_redirects=True)
+
+    monkeypatch.setattr(mcp_settings, 'create_mcp_http_client', fastmcp_4_client)
+    sign_in = httpx2.BasicAuth('user', 'password')
+    async with http_client(auth=cast(httpx.Auth, sign_in), follow_redirects=True) as client:
+        assert isinstance(client, httpx2.AsyncClient)
+        assert client.auth is cast(httpx.Auth, sign_in)
+        assert not client.follow_redirects
 
 
 async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:
@@ -201,6 +221,7 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
     assert not list(commands)
 
 
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -248,15 +269,21 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     assert 'Stopped local' in await run('/mcp stop-all')
 
 
-async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
+@pytest.mark.parametrize('cwd', [None, 'sub'])
+async def test_tools_without_start_and_empty_server(tmp_path: Path, cwd: str | None) -> None:
+    """A stdio server starts in the session's directory, not the process's; a relative `cwd` is inside it."""
     script, pid_file = write_server(tmp_path, with_tool=False)
-    store = MCPStore(tmp_path / 'config', workspace=tmp_path)
+    (tmp_path / 'repo' / 'sub').mkdir(parents=True)
+    store = MCPStore(tmp_path / 'config', workspace=tmp_path / 'repo')
     plugin = make_plugin({}, store)
-    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
+    store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)], cwd=cwd))
     assert await plugin.commands.execute_async('/mcp tools local') == 'No tools provided by local.'
     assert_exited(pid_file)
+    assert Path((tmp_path / 'server.cwd').read_text()).resolve() == (tmp_path / 'repo' / (cwd or '')).resolve()
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_failed_start_is_reported_and_logged(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)
@@ -289,6 +316,31 @@ async def test_env_references_resolve_at_connect_time(tmp_path: Path, monkeypatc
     assert servers.state(servers.get('github')) == 'ready'
 
 
+@pytest.mark.parametrize('kind', ['stdio', 'http'])
+def test_env_reference_order_and_template_escapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: Literal['stdio', 'http']
+) -> None:
+    monkeypatch.delenv('FIRST_TOKEN', raising=False)
+    monkeypatch.delenv('SECOND_TOKEN', raising=False)
+    values = {'first': '${FIRST_TOKEN}:$SECOND_TOKEN:$FIRST_TOKEN', 'second': '$$LITERAL:$9:${'}
+    server = (
+        StdioServer(type='stdio', command='python', env=values)
+        if kind == 'stdio'
+        else HTTPServer(type='http', url=HttpUrl('https://api.example.com/mcp'), headers=values)
+    )
+    store = MCPStore(tmp_path / 'config', workspace=tmp_path)
+    store.put('configured', server)
+    servers = MCPServers(store)
+    entry = servers.get('configured')
+    assert servers.state(entry) == 'error'
+    assert servers.problem(entry) == 'set FIRST_TOKEN, SECOND_TOKEN in your environment'
+    monkeypatch.setenv('FIRST_TOKEN', 'first-value')
+    assert servers.problem(entry) == 'set SECOND_TOKEN in your environment'
+    monkeypatch.setenv('SECOND_TOKEN', 'second-value')
+    assert servers.state(entry) == 'ready'
+
+
+@pytest.mark.subprocess(reason='starts real stdio MCP servers written in Python')
 async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
@@ -310,6 +362,7 @@ async def test_reconfiguring_or_removing_releases_the_connection(tmp_path: Path)
         servers.get('local')
 
 
+@pytest.mark.subprocess(reason='serves a real HTTP/SSE MCP server from a separate process')
 @pytest.mark.parametrize(('kind', 'path'), [('http', 'mcp'), ('sse', 'sse')])
 async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
     with socket.socket() as probe:
@@ -362,7 +415,7 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
     store.put('plain', HTTPServer(type='http', url=HttpUrl('http://localhost:9/mcp'), auth='oauth', timeout=5))
     servers = MCPServers(store, {'legacy': StdioServer(type='stdio', command='x', timeout=7)})
     signin = servers.get('signin').server
-    assert isinstance(signin, HTTPServer) and signin.init_timeout() == 330
+    assert isinstance(signin, HTTPServer) and signin.auth == 'oauth' and signin.timeout is None
     assert servers.get('plain').server.model_dump()['timeout'] == 5
     assert [entry.server.type for entry in servers.entries()] == ['sse', 'http', 'http', 'stdio']
 
@@ -373,10 +426,22 @@ def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert len(plugin.capabilities) == 1
 
 
+@pytest.mark.subprocess(reason='the logger level a fresh interpreter ends up with depends on import order')
 def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
-    assert logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel() >= logging.WARNING
+    """FastMCP sets its logger to INFO as it's imported: the plugin's WARNING must outlast that, whichever comes first."""
+    script = (
+        "import logging, pydantic_clai2.mcp; print(logging.getLogger('fastmcp.client.auth.oauth').getEffectiveLevel())"
+    )
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name != 'FASTMCP_LOG_LEVEL' and not name.startswith('COVERAGE_')
+    }
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True, env=env)
+    assert int(result.stdout) >= logging.WARNING
 
 
+@pytest.mark.subprocess(reason='starts a stdio MCP server command that exits immediately')
 async def test_a_server_that_cannot_connect_does_not_fail_the_prompt(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
     plugin = make_plugin({}, store)

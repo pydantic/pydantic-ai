@@ -1,7 +1,7 @@
 """Import the modules startup defers on a background thread once the prompt is ready.
 
 Startup skips these so the prompt appears sooner. Without warming, the first prompt pays for
-them instead: `model_settings` loads the OpenAI and Anthropic SDKs, which takes about a second.
+them instead: the OpenAI and Anthropic model modules load their SDKs, which takes about a second.
 The import system locks each module, so a turn that needs a module the thread is still importing
 waits for it instead of importing it twice.
 """
@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from threading import Thread
 
 FIRST_USE_MODULES = (
+    'pydantic_ai.models.openai',
+    'pydantic_ai.models.anthropic',
     'pydantic_clai2.models.model_settings',
     'pydantic_clai2.auth',
     'pydantic_clai2.models.openrouter',
@@ -19,7 +21,8 @@ FIRST_USE_MODULES = (
     'pydantic_clai2.models.github_copilot',
     'pydantic_clai2.ui.menus.model_menu',
 )
-"""Every turn loads `model_settings`; the rest serve model resolution, `/login`, and the model menus."""
+"""Every turn loads `model_settings` and the model's provider module, usually OpenAI or Anthropic; the rest serve
+model resolution, `/login`, and the model menus."""
 
 
 def start(modules: Sequence[str] = FIRST_USE_MODULES) -> Thread:

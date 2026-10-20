@@ -7,10 +7,17 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits a formal `APPROVE`/`REQUEST_CHANGES` verdict. Same-repo PRs only. |
+| `CI Review` | `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
 | `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
+| `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` requests changes when a completed review finds a blocking issue. It approves when a completed review finds no blocking issues, including reviews with non-blocking suggestions. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It requests changes while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It approves after a complete review with no outstanding blocking findings; optional findings may remain. It submits no verdict when the review is incomplete or the PR head changes before publication. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review.
+
+The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present immediately before Claude starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
+
+Removing the approval label cancels in-flight work on a best-effort basis; cancellation may not stop a reviewer that has already started. Both review labels share the per-PR concurrency group, so removing the approval label can also cancel an ordinary review, and reapplying it starts another workflow run that uses that shared slot.
+
+Other label removals use unique concurrency groups so their no-op runs cannot replace queued review requests.
 
 **They are independent.** Neither reads the other's state, and the label suppresses
 nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
@@ -27,6 +34,17 @@ that needs to know which PR this is must read them from `needs.eligibility.outpu
 never from `github.event`. For the safe outputs specifically that means frontmatter
 `target:` plus `safe-outputs.needs:` — an out-of-scope `needs.*` expression compiles
 without error and evaluates to the empty string, silently discarding the review.
+
+The `CI Review` agent job queues in gh-aw's per-workflow engine concurrency group
+(`queue: max`), so one review runs at a time across all PRs. `eligibility` can
+therefore decide hours before the model starts. The pre-agent step `Skip a PR that
+closed or moved on while queued` writes a `noop` to safe outputs when the PR has
+closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
+`noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
+(`hasNoopInSafeOutputs`). Any other engine harness, including
+`src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
+spends a full review. The `noop` does not skip the `detection` job, which still runs
+one threat-detection pass outside the agent slot.
 
 ## What confines `CI Review` to same-repo PRs
 
@@ -158,6 +176,26 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
 
+## Shared Z.AI account limits
+
+Treat Pydanty and these workflows as consumers of one Z.AI account.
+The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
+Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
+Include delegates and SDK retries in the request timeline.
+
+Record the endpoint, model, HTTP status, provider `error.code`, and any `Retry-After` or quota reset time.
+For abnormal streaming termination without an error code, record `finish_reason`.
+Use [Z.AI's error codes](https://docs.z.ai/api-reference/api-code) to distinguish
+`1302` request rate limits, `1305` temporary overload, and quota exhaustion such as `1308` or `1310`.
+HTTP 429 alone does not identify the failure.
+
+Check the [Coding Plan usage policy](https://docs.z.ai/devpack/usage-policy) for concurrency.
+Check the [usage credit allowance](https://docs.z.ai/devpack/overview#usage-credit-allowance) for 5-hour and weekly quotas.
+Concurrency changes with plan tier and resource availability.
+Read account-specific values from the [rate-limit console](https://z.ai/manage-apikey/rate-limits).
+Do not infer an account limit from Pydanty's observed concurrency or the provider's project-count recommendations.
+A healthy usage-quota check does not establish spare request concurrency.
+
 ## Z.AI provider health
 
 Every Z.AI-backed workflow must import `shared/provider-health.md` and include
@@ -176,6 +214,13 @@ inference without emitting a passing review or other fabricated agent result. Th
 non-model provider-health monitor owns incident issue creation and recovery; do not
 enable gh-aw's generic failure-as-issue reporting for these workflows.
 
+Older compiled workflows that pass `MINIMAX_API_KEY` without a `ZAI_API_KEY`
+environment entry are intentionally blocked without an operational incident.
+They fetch this controller from the default branch, so the skip applies even
+before their branch receives the provider migration. Update the branch from
+`main` to restore agent runs. An empty or missing Z.ai credential in current
+configuration still follows the normal provider-health checks.
+
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels
 in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow from
@@ -183,22 +228,61 @@ starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
-with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
-`TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
-window, and unit `6` / number `1` is the weekly window. `percentage` is the
-percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
-epoch milliseconds. A missing or malformed required window makes health unknown
-and keeps agent workflows gated. No quota-resource repository variable is needed.
+with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
+`TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
+unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
+`percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
+epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
+a missing reset field or a null reset with consumed quota is invalid. A missing
+or malformed required window makes health unknown and keeps agent workflows
+gated. No quota-resource repository variable is needed.
 
-To request manual recovery, run **Agent Provider Health** with `workflow_dispatch`
+Unknown quota results may include one of these fixed diagnostic categories:
+`missing_api_key`, `invalid_request`, `http_error`, `timeout`, `tls_error`, `network_error`,
+`invalid_encoding`, `invalid_json`, `invalid_response`, `invalid_response_code`,
+`unsuccessful_response`, `invalid_limits`, `invalid_limit_row`,
+`invalid_window_unit`, `invalid_window_number`, `duplicate_window`,
+`invalid_percentage`, `invalid_reset_time`, or `missing_windows`. The artifact may
+also include a numeric HTTP status. These values contain no provider response text,
+request headers, URL, credential, or exception message. Version 1 artifacts without
+diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
+change gate or recovery policy.
+
+For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
-before the controller closes the named incident. A scheduled run automatically closes
-only provider rate-limit or quota-exhaustion incidents with a known, elapsed reset time
-after a fresh healthy check. Unknown or malformed quota, missing reset time,
-credentials/configuration incidents, and workflow/task incidents need operator
-attention rather than automatic recovery.
+before the controller closes the named incident. The hourly scheduled run closes Z.ai
+rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+once the recorded reset time has passed or, when none was recorded, once the incident
+is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
+and closes within minutes of opening were followed by a new incident within minutes.
+Credential and configuration incidents need operator attention rather than automatic recovery.
+
+For a workflow-scoped incident, dispatch the affected workflow from the repository's
+default branch and set `recovery_issue` to its incident number. This lets one fresh
+manual run bypass that matching workflow blocker; it does not close the incident.
+
+Task incidents block only the exact task key in their marker. Manual task keys include
+the run ID, so a fresh dispatch has a new identity and can run with healthy quota
+without `recovery_issue`. This input never closes an incident.
+
+For **CI Review**, provide `aw_context` as JSON with `item_type` set to
+`pull_request` and `item_number` set to the PR number. Verify the fresh run executed
+the agent and model.
+
+For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
+Manual dispatch does not provide `github.event.pull_request.number`, which this
+workflow requires to run its agent and publish results. After the corrected workflow
+is deployed, complete the existing UI Security review Environment approval for the
+fresh PR run.
+
+For workflow and task incidents, inspect the affected host stage and output, link that
+evidence to the incident, and close it manually. A green run that skips the model or
+affected stage is not proof.
+Resolve closed-PR tasks as retired only after API verification and representative
+workflow recovery. Record why each task is retired. Do not describe retired tasks as
+same-target recoveries.
 
 The health controller never enables a disabled agent workflow. After a fresh healthy
 provider-health check, an operator may deliberately enable a disabled workflow.
@@ -221,6 +305,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
 | `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
 | `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
+| `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:

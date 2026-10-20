@@ -4,13 +4,12 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,
@@ -297,6 +296,7 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     assert resolve(tool, 'configured') == {'base': 1}
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
