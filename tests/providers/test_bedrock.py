@@ -1078,3 +1078,16 @@ def test_strict_none_preserves_numeric_constraints():
             'required': ['score'],
         }
     )
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_bedrock_boolean_defs_preserved(definition: bool):
+    """Bedrock retains definitions, so boolean references need no inlining rewrite."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert BedrockJsonSchemaTransformer(schema).walk() == original
+    assert schema == original
