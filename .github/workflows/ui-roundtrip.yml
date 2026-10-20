@@ -4,7 +4,8 @@ name: UI round trip
 # pinned in `tests/ui_roundtrip/package-lock.json`. Those tests check that a conversation held by a
 # frontend comes back to the server as the history the server had, which no Python stand-in for
 # the clients can show. Node stays out of `ci.yml`: this job runs on changes to the code that
-# round trip goes through, and nightly against `main` for changes anywhere else that affect it.
+# round trip and the request bodies it compares go through, and nightly against `main` for changes
+# anywhere else that affect it.
 # The scheduled run opens an issue when it fails.
 #
 # The `ci.yml` test jobs collect these tests too and skip them, since they have no `node_modules`;
@@ -15,7 +16,10 @@ on:
     paths:
       - pydantic_ai_slim/pydantic_ai/ui/**
       - pydantic_ai_slim/pydantic_ai/messages.py
-      - pydantic_ai_slim/pydantic_ai/models/__init__.py
+      # `test_wire_request` compares the Anthropic and OpenAI request bodies, so the models and the
+      # helpers they render through feed the tests too.
+      - pydantic_ai_slim/pydantic_ai/models/**
+      - pydantic_ai_slim/pydantic_ai/_thinking_part.py
       - tests/ui_roundtrip/**
       - .github/workflows/ui-roundtrip.yml
   push:
@@ -24,7 +28,10 @@ on:
     paths:
       - pydantic_ai_slim/pydantic_ai/ui/**
       - pydantic_ai_slim/pydantic_ai/messages.py
-      - pydantic_ai_slim/pydantic_ai/models/__init__.py
+      # `test_wire_request` compares the Anthropic and OpenAI request bodies, so the models and the
+      # helpers they render through feed the tests too.
+      - pydantic_ai_slim/pydantic_ai/models/**
+      - pydantic_ai_slim/pydantic_ai/_thinking_part.py
       - tests/ui_roundtrip/**
       - .github/workflows/ui-roundtrip.yml
   schedule:

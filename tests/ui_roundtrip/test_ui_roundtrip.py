@@ -18,8 +18,8 @@ Three properties must hold on each path:
    the one a server keeping its own history makes.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
-never trusts from a client (its system prompt, by default) count as kept. The projection keeps only fields
-that reach the model, leaving out the message ids and timestamps a reload re-mints.
+never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
+that never reach the model, `timestamp` and `metadata`, and the message-level ids and timestamps a reload re-mints.
 
 Python ports of the client reducers are no substitute: one ignored an event the real AG-UI client handles,
 and reported a loss that real clients don't have.
