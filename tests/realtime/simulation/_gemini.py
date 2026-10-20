@@ -716,12 +716,11 @@ class GeminiSimulation(Simulation):
 
     def build_model(self) -> RealtimeModel:
         # The model that closes its tool-call turn separately is a Vertex AI one; its profile flag is only
-        # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly.
-        profile = (
-            GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=True)
-            if self.behavior.closes_tool_turn_separately
-            else None
-        )
+        # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly. So is whether a typed
+        # turn cuts the reply off, which the simulated server does for an asynchronous round on any model.
+        profile = GoogleRealtimeModelProfile(google_input_cuts_off_reply=self.behavior.cuts_off_reply)
+        if self.behavior.closes_tool_turn_separately:
+            profile['google_closes_tool_call_turn_separately'] = True
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
 
     def model_settings(self) -> RealtimeModelSettings:
