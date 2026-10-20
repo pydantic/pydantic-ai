@@ -441,8 +441,9 @@ def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) 
     """The source to attribute one of the agent's configured instructions to.
 
     Only the literal instructions the agent was built with are addressed by the agent's own key: an
-    instruction function becomes addressable when `@agent.instructions(name=...)` names it, so a bare
-    callable speaks for nobody and stays unidentified.
+    instruction function becomes addressable when `@agent.instructions(name=...)` names it, or when it
+    returns an `InstructionPart` with a `name`, so a bare callable speaks for nobody and stays
+    unidentified.
     """
     return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
 
@@ -785,7 +786,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The agent's own literal instructions are one addressable part; instruction functions are
         # only addressable if `@agent.instructions(name=...)` names them.
         self._instructions = [
-            _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+            _instructions.sourced_instruction(
+                instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+            )
             for instruction in _instructions.normalize_instructions(instructions)
         ]
 
@@ -2441,17 +2444,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | _messages.InstructionPart | None], /
+    ) -> Callable[[], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
         self, /, *, name: str | None = None, on_change: _messages.InstructionChangePolicy = 'rewrite'
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+    ) -> Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT] | None = None,
+        func: _instructions.InstructionFunc[AgentDepsT] | None = None,
         /,
         *,
         name: str | None = None,
         on_change: _messages.InstructionChangePolicy = 'rewrite',
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
+    ) -> (
+        Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]
+        | _instructions.InstructionFunc[AgentDepsT]
+    ):
         """Decorator to register an instructions function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -2494,10 +2520,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         def decorator(
-            func_: SystemPromptFunc[AgentDepsT],
-        ) -> SystemPromptFunc[AgentDepsT]:
+            func_: _instructions.InstructionFunc[AgentDepsT],
+        ) -> _instructions.InstructionFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True, on_change=on_change)
+                _instructions.SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=instruction_id,
+                    source=_messages.AgentInstructionSource(),
+                    dynamic=True,
+                    on_change=on_change,
+                )
             )
             return func_
 
@@ -3566,7 +3599,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
             instructions = [
-                _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+                _instructions.sourced_instruction(
+                    instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+                )
                 for instruction in override_instructions.value
             ]
         else:

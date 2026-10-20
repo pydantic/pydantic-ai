@@ -12,7 +12,9 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
   between;
 - [`ResponseStarted.answers`][pydantic_ai.realtime.lifecycle.ResponseStarted.answers] names the inputs whose
   reply the response is, which is what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
-  waits for;
+  waits for, and [`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] corrects them as the connection
+  learns better: `claimed` while the response is under way, `released` until its reply (tool rounds included) is
+  over;
 - a spoken user turn starts with [`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted], joins the
   conversation with [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded], and gets no more audio or
   transcript after [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed] (which drops one that hadn't
@@ -41,6 +43,7 @@ from __future__ import annotations as _annotations
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import (
     AnswersBasis,
+    AnswersRevised,
     InputAdded,
     InputId,
     InputLost,
@@ -60,6 +63,7 @@ from ._lifecycle import (
 
 __all__ = (
     'AnswersBasis',
+    'AnswersRevised',
     'InferredLifecycle',
     'InputAdded',
     'InputId',

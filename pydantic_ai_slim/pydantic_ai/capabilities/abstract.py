@@ -477,6 +477,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`RunContext`][pydantic_ai.tools.RunContext] or a
         `TemplateStr` — not a dynamic string.
 
+        A returned callable can itself return an
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart] to name its part and set its
+        [`on_change`][pydantic_ai.messages.InstructionPart.on_change] policy, for example
+        `on_change='append'` for instructions that change mid-conversation. See
+        [appending instruction changes](../agent.md#appending-instruction-changes).
+
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the
         `load_capability` tool for this capability.
