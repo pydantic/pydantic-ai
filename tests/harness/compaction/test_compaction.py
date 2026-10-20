@@ -1446,6 +1446,16 @@ class TestWarnNearLimitsMarkerDetection:
         assert len(result.messages) == 2
         assert isinstance(result.messages[1], ModelResponse)
 
+    async def test_strip_keeps_the_request_fields_of_a_mixed_request(self):
+        legacy = _legacy_warning().parts[0]
+        request = ModelRequest(
+            parts=[UserPromptPart('keep me'), legacy], instructions='Be careful.', run_id='run-1', metadata={'k': 'v'}
+        )
+        rc = _make_request_context([request])
+        result = await WarnNearLimits(max_iterations=100).before_model_request(_make_ctx(requests=5), rc)
+        [stripped] = result.messages
+        assert stripped == dataclasses.replace(request, parts=[request.parts[0]])
+
 
 class TestWarnNearLimitsTotalTokensBelowThreshold:
     """Cover _build_total_tokens_warning returning None when below threshold."""
