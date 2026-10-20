@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -66,6 +66,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
 
+    telemetry_sensitive_id: str | None = field(default=None, init=False, repr=False, compare=False)
+    """The URL-derived identity, when the caller did not supply one."""
+
     def __init__(
         self,
         url: str,
@@ -122,12 +125,14 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         ):
             local = MCPToolset(local, include_instructions=True)
         self.local = local
+        self.telemetry_sensitive_id = None
         if id is not None:
             self.id = id
         elif isinstance(native, MCPServerTool):
             self.id = native.id
         else:
             self.id = _mcp_id_from_url(url)
+            self.telemetry_sensitive_id = self.id
         self.authorization_token = authorization_token
         self.headers = headers
         self.allowed_tools = allowed_tools
@@ -135,6 +140,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     def _default_native(self) -> MCPServerTool:
         mcp_id = self.id or _mcp_id_from_url(self.url)
+        if not self.id:
+            self.telemetry_sensitive_id = mcp_id
         return MCPServerTool(
             id=mcp_id,
             url=self.url,

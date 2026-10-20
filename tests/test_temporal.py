@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import warnings
@@ -12,7 +13,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -52,6 +53,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation, NativeTool, ProcessHistory
 from pydantic_ai.direct import model_request_stream
@@ -67,7 +69,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -87,7 +89,7 @@ try:
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
     from temporalio.exceptions import ApplicationError
-    from temporalio.testing import WorkflowEnvironment
+    from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
@@ -101,7 +103,10 @@ try:
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._model import (
+        TemporalModel,
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -4047,6 +4052,92 @@ def test_pydantic_ai_plugin_no_converter_returns_pydantic_data_converter() -> No
     config: dict[str, Any] = {}
     result = plugin.configure_client(config)  # type: ignore[arg-type]
     assert result['data_converter'] is pydantic_data_converter
+
+
+async def test_request_params_preserve_telemetry_sensitive_ids() -> None:
+    sensitive_ids = {'SENTINEL-mcp-url-derived-id'}
+    request = _RequestParams(
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(telemetry_sensitive_ids=sensitive_ids),
+        serialized_run_context=None,
+        telemetry_sensitive_ids=sensitive_ids,
+    )
+
+    payloads = await pydantic_data_converter.encode([request])
+    [decoded] = await pydantic_data_converter.decode(payloads, [_RequestParams])
+
+    assert decoded.telemetry_sensitive_ids == sensitive_ids
+    assert decoded.model_request_parameters.telemetry_sensitive_ids == sensitive_ids
+
+
+@pytest.mark.parametrize('legacy_payload', [True, False])
+@pytest.mark.parametrize('streaming', [True, False])
+async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
+    identity = 'mcp.example.test-SENTINEL-path-token'
+    native_identity = 'mcp.example.test-SENTINEL-native-token'
+    observed_ids: list[set[str]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        parameters = info.model_request_parameters
+        assert parameters.telemetry_sensitive_ids is not None
+        observed_ids.append(parameters.telemetry_sensitive_ids)
+        attributes = model_request_parameters_attributes(parameters)
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert identity not in serialized
+        assert native_identity not in serialized
+        assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+        assert json.loads(serialized)['function_tools'][1]['with_native'] == 'mcp_server:[REDACTED]'
+        assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+        assert json.loads(serialized)['native_tools'][1]['id'] == ('[REDACTED]' if legacy_payload else 'docs')
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def stream_respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        respond(messages, info)
+        yield 'ok'
+
+    async def handle_events(_ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    model = FunctionModel(respond, stream_function=stream_respond)
+    temporal_model = TemporalModel(
+        model,
+        activity_name_prefix='test__request_telemetry_ids',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+        event_stream_handler=handle_events,
+    )
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    params = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            native_tools=[
+                MCPServerTool(id=native_identity, url='https://mcp.example.test/native-token'),
+                MCPServerTool(id='docs', url='https://docs.example.test'),
+            ],
+            function_tools=[
+                ToolDefinition(name='ping', capability_id=identity),
+                ToolDefinition(
+                    name='ordinary', unless_native='web_search', with_native=f'mcp_server:{native_identity}'
+                ),
+            ],
+            telemetry_sensitive_ids={identity, native_identity},
+        ),
+        telemetry_sensitive_ids={identity, native_identity},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(params, mode='json')
+    if legacy_payload:
+        wire.pop('telemetry_sensitive_ids')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    # Both activity payloads accept the historical missing-deps value.
+    activity_functions = temporal_model.temporal_activities
+    await ActivityEnvironment().run(activity_functions[int(streaming)], decoded, None)
+
+    assert observed_ids == [{identity, native_identity, 'docs'} if legacy_payload else {identity, native_identity}]
 
 
 def test_pydantic_ai_plugin_with_pydantic_payload_converter_unchanged() -> None:

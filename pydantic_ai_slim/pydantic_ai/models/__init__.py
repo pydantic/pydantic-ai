@@ -135,6 +135,10 @@ class ModelRequestParameters:
         # `pydantic.TypeAdapter`). The dump uses the new name only.
         pydantic.Field(validation_alias=pydantic.AliasChoices('native_tools', 'builtin_tools')),
     ] = field(default_factory=list[AbstractNativeTool])
+    telemetry_sensitive_ids: Annotated[set[str] | None, pydantic.Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
+    )
+    """URL-derived MCP identities excluded from telemetry; `None` denotes a legacy durable payload."""
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None

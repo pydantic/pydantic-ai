@@ -36,7 +36,9 @@ safe-outputs:
   submit-pull-request-review:
     supersede-older-reviews: true
     max: 1
-timeout-minutes: 30
+timeout-minutes: 60
+env:
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '60'
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -45,7 +47,7 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-steps:

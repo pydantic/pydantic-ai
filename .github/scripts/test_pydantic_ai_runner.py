@@ -17,6 +17,7 @@ import io
 import json
 import os
 import sys
+from collections.abc import Awaitable
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any, cast
@@ -690,7 +691,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
     ]
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(tiny_msgs)  # pyright: ignore[reportPrivateUsage]
-    assert not any('compaction trim' in m for m in caplog.messages)
+    assert not any(m.startswith('trim: ') for m in caplog.messages)
     caplog.clear()
 
     big = 'Z' * 20_000
@@ -706,7 +707,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-    log_line = next((m for m in caplog.messages if 'compaction trim' in m), None)
+    log_line = next((m for m in caplog.messages if m.startswith('trim: ')), None)
     assert log_line is not None
     assert 'deduped 1' in log_line and 'truncated 2' in log_line and 'saved' in log_line
 
@@ -840,6 +841,51 @@ def test_task_surfaces_subagent_failure_as_tool_result(monkeypatch: pytest.Monke
 
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: sub-agent failed: downstream model exploded'
+
+
+@pytest.mark.parametrize(('job_minutes', 'expected_minutes'), [(None, 15), ('60', 29)])
+def test_task_timeout_matches_job_budget(
+    monkeypatch: pytest.MonkeyPatch, job_minutes: str | None, expected_minutes: int
+):
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.usage import RunUsage
+
+    if job_minutes is None:
+        monkeypatch.delenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', job_minutes)
+
+    cancelled = False
+
+    class HangingAgent:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def run(self, *args: object, usage: RunUsage, **kwargs: object) -> None:
+            nonlocal cancelled
+            usage.requests += 1
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled = True
+
+    timeouts: list[float] = []
+    wait_for = asyncio.wait_for
+
+    async def short_wait(future: Awaitable[object], timeout: float) -> object:
+        timeouts.append(timeout)
+        return await wait_for(future, timeout=0.01)
+
+    monkeypatch.setattr(shim, 'Agent', HangingAgent)
+    monkeypatch.setattr(asyncio, 'wait_for', short_wait)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(requests=3))
+
+    out = asyncio.run(shim.task(ctx, 'review', 'inspect the diff'))
+
+    assert out == f'error: sub-agent timed out after {expected_minutes}min'
+    assert timeouts == [expected_minutes * 60]
+    assert cancelled
+    assert ctx.usage.requests == 4
 
 
 def test_task_isolates_attach_context_dedupe_set_from_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -1042,11 +1088,25 @@ def test_log_safe_outputs_state_handles_missing_env(monkeypatch: pytest.MonkeyPa
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #
 def test_model_defaults_to_claude_sonnet_4_6(monkeypatch: pytest.MonkeyPatch):
-    for v in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'):
+    for v in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL', 'GH_AW_MAX_OUTPUT_TOKENS'):
         monkeypatch.delenv(v, raising=False)
     model, label = shim.build_model(shim.parse_args(['--print']))
     assert label == 'anthropic:claude-sonnet-4-6'
     assert model.__class__.__name__ == 'AnthropicModel'
+    assert model.settings is None
+
+
+def test_model_applies_configured_output_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('GH_AW_MAX_OUTPUT_TOKENS', '16384')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert model.settings == {'max_tokens': 16_384}
+
+
+@pytest.mark.parametrize('output_tokens', ('not-an-int', '0', '-1', ''))
+def test_model_rejects_invalid_output_limit(monkeypatch: pytest.MonkeyPatch, output_tokens: str) -> None:
+    monkeypatch.setenv('GH_AW_MAX_OUTPUT_TOKENS', output_tokens)
+    with pytest.raises(ValueError):
+        shim.build_model(shim.parse_args(['--print']))
 
 
 def test_model_argv_flag_wins(monkeypatch: pytest.MonkeyPatch):
@@ -1078,13 +1138,27 @@ def test_build_model_applies_llm_timeout_and_retries(monkeypatch: pytest.MonkeyP
     assert client.max_retries == shim._LLM_MAX_RETRIES  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(
+    ('job_minutes', 'expected_seconds'),
+    [(None, 1680), ('', 1680), ('invalid', 1680), ('-1', 1680), ('0', 1680), ('2', 1680), ('30', 1680), ('60', 3480)],
+)
+def test_run_timeout_reserves_teardown_time(
+    monkeypatch: pytest.MonkeyPatch, job_minutes: str | None, expected_seconds: int
+):
+    if job_minutes is None:
+        monkeypatch.delenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', job_minutes)
+    assert shim._run_timeout_secs() == expected_seconds  # pyright: ignore[reportPrivateUsage]
+
+
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
     async def _hang(*_a: object, **_kw: object) -> int:
         await asyncio.sleep(9999)
         return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
-    monkeypatch.setattr(shim, 'RUN_TIMEOUT_SECS', 0.01)
+    monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
@@ -1095,7 +1169,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert rc == 1
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
-    assert 'timed out' in obj['result']
+    assert obj['result'] == 'run timed out after 0min'
 
 
 # --------------------------------------------------------------------------- #

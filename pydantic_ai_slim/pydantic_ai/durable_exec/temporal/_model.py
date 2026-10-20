@@ -12,6 +12,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai._instrumentation import request_telemetry_sensitive_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
@@ -37,6 +38,14 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
+    telemetry_sensitive_ids: set[str] | None = None
+
+
+def restore_telemetry_sensitive_ids(params: _RequestParams) -> None:
+    """Restore request-only provenance, including activity payloads recorded before the sidecar existed."""
+    parameters = params.model_request_parameters
+    parameters.telemetry_sensitive_ids = params.telemetry_sensitive_ids
+    parameters.telemetry_sensitive_ids = request_telemetry_sensitive_ids(parameters)
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
@@ -83,6 +92,7 @@ class TemporalModel(WrapperModel):
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            restore_telemetry_sensitive_ids(params)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -100,6 +110,7 @@ class TemporalModel(WrapperModel):
         async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
+            restore_telemetry_sensitive_ids(params)
             run_context = deserialize_run_context(
                 self.run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -159,6 +170,7 @@ class TemporalModel(WrapperModel):
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
                     model_id=model_id,
+                    telemetry_sensitive_ids=model_request_parameters.telemetry_sensitive_ids,
                 ),
                 deps,
             ],
@@ -204,6 +216,7 @@ class TemporalModel(WrapperModel):
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
                     model_id=model_id,
+                    telemetry_sensitive_ids=model_request_parameters.telemetry_sensitive_ids,
                 ),
                 run_context.deps,
             ],

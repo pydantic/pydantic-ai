@@ -75,6 +75,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -129,9 +130,23 @@ _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
 # per-request timeout so a burst of slow requests can't accumulate forever.
-RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
-SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
+DEFAULT_JOB_TIMEOUT_MINS = 30
+JOB_TIMEOUT_HEADROOM_MINS = 2
+SUBAGENT_TIMEOUT_SECS = 15 * 60
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+
+def _run_timeout_secs() -> int:
+    """Leave teardown headroom within the workflow's configured job timeout."""
+    raw = os.environ.get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '')
+    try:
+        job_mins = int(raw)
+    except ValueError:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    if job_mins <= JOB_TIMEOUT_HEADROOM_MINS:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    return (job_mins - JOB_TIMEOUT_HEADROOM_MINS) * 60
+
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -510,12 +525,20 @@ def build_model(args: Args) -> tuple[Model, str]:
       2. `ANTHROPIC_MODEL` env var (standard Anthropic SDK convention;
          gh-aw populates this from the workflow's `engine.model:` field).
       3. Fallback default `claude-sonnet-4-6`.
+
+    `GH_AW_MAX_OUTPUT_TOKENS` overrides the model's output limit when provided.
     """
     model_name = args.model or os.environ.get('ANTHROPIC_MODEL') or 'claude-sonnet-4-6'
     anthropic_base = os.environ.get('ANTHROPIC_BASE_URL')
     auth_token = (
         os.environ.get('ANTHROPIC_AUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY') or PROXY_BEARER_PLACEHOLDER
     )
+    model_settings: ModelSettings | None = None
+    if (output_tokens := os.environ.get('GH_AW_MAX_OUTPUT_TOKENS')) is not None:
+        max_tokens = int(output_tokens)
+        if max_tokens <= 0:
+            raise ValueError('`GH_AW_MAX_OUTPUT_TOKENS` must be positive')
+        model_settings = {'max_tokens': max_tokens}
     logger.info('anthropic model=%s base_url=%s', model_name, anthropic_base or '(default)')
     client = AsyncAnthropic(
         auth_token=auth_token,
@@ -524,7 +547,7 @@ def build_model(args: Args) -> tuple[Model, str]:
         max_retries=_LLM_MAX_RETRIES,
     )
     return (
-        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client), settings=model_settings),
         f'anthropic:{model_name}',
     )
 
@@ -776,11 +799,16 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     # Fresh `RunUsage` so `SUBAGENT_REQUEST_LIMIT` bounds the sub-agent, not
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
+    # Scale independent reviews with longer jobs; default jobs keep 15 minutes.
+    timeout = max(SUBAGENT_TIMEOUT_SECS, _run_timeout_secs() // 2)
     try:
         result = await asyncio.wait_for(
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
-            timeout=SUBAGENT_TIMEOUT_SECS,
+            timeout=timeout,
         )
+    except asyncio.TimeoutError:
+        ctx.usage.incr(sub_usage)
+        return f'error: sub-agent timed out after {timeout // 60}min'
     except Exception as exc:
         ctx.usage.incr(sub_usage)
         return f'error: sub-agent failed: {exc}'
@@ -798,15 +826,16 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    budget = _run_timeout_secs()
     try:
         return await asyncio.wait_for(
             run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
-            timeout=RUN_TIMEOUT_SECS,
+            timeout=budget,
         )
     except asyncio.TimeoutError:
-        logger.error('run timed out after %.0f min', RUN_TIMEOUT_SECS / 60)
+        logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
-            f'run timed out after {RUN_TIMEOUT_SECS // 60}min',
+            f'run timed out after {budget // 60}min',
             usage=None,
             session_id=session_id,
             is_error=True,

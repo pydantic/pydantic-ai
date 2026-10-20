@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import warnings
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -13,7 +13,7 @@ from opentelemetry._logs import LogRecord
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_json
 
 from pydantic_graph._utils import get_traceparent
@@ -21,9 +21,11 @@ from pydantic_graph._utils import get_traceparent
 if TYPE_CHECKING:
     from typing_extensions import Self
 
+    from pydantic_ai.capabilities.abstract import AbstractCapability
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 DEFAULT_INSTRUMENTATION_VERSION = 2
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -81,7 +83,7 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
-def serialize_any(value: Any) -> str:
+def serialize_any(value: Any) -> JsonValue:
     try:
         return ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
@@ -114,7 +116,30 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
 def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters, *, include_content: bool = True
 ) -> dict[str, AttributeValue]:
-    serialized = serialize_any(model_request_parameters)
+    from pydantic_ai.native_tools import MCPServerTool
+
+    sensitive_ids = request_telemetry_sensitive_ids(model_request_parameters)
+    safe_parameters = replace(
+        model_request_parameters,
+        telemetry_sensitive_ids=set(),
+        native_tools=[
+            replace(
+                tool,
+                id='[REDACTED]' if tool.id in sensitive_ids else tool.id,
+                url='[REDACTED]',
+                authorization_token='[REDACTED]' if tool.authorization_token is not None else None,
+                headers={key: '[REDACTED]' for key in tool.headers} if tool.headers is not None else None,
+            )
+            if isinstance(tool, MCPServerTool)
+            else tool
+            for tool in model_request_parameters.native_tools
+        ],
+        function_tools=[tool_for_telemetry(tool, sensitive_ids) for tool in model_request_parameters.function_tools],
+        output_tools=[tool_for_telemetry(tool, sensitive_ids) for tool in model_request_parameters.output_tools],
+    )
+    serialized = serialize_any(safe_parameters)
+    if isinstance(serialized, dict):
+        serialized.pop('telemetry_sensitive_ids', None)
     if not include_content:
         serialized = _redact_model_request_parameters(serialized)
         if serialized is None:
@@ -122,28 +147,105 @@ def model_request_parameters_attributes(
     return {'model_request_parameters': to_json(serialized).decode()}
 
 
-def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, Any] | None:
-    """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
+def mcp_telemetry_sensitive_ids(capabilities: Iterable[AbstractCapability[AgentDepsT]]) -> set[str]:
+    """Collect URL-derived identities through capability wrappers."""
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.capabilities.mcp import MCP
+    from pydantic_ai.capabilities.wrapper import WrapperCapability
 
-    Two fields here are that text: the instructions, whose dynamic parts can be built from deps, and
-    the prompted-output template. Instruction parts keep their origin and ids. Tool and output
-    *schemas* stay -- request structure rather than message content.
+    identities: set[str] = set()
+    pending = list(capabilities)
+    seen: set[int] = set()
+    while pending:
+        capability = pending.pop()
+        if id(capability) in seen:
+            continue
+        seen.add(id(capability))
+        if isinstance(capability, MCP) and capability.telemetry_sensitive_id is not None:
+            identities.add(capability.telemetry_sensitive_id)
+        elif isinstance(capability, WrapperCapability):
+            pending.append(capability.wrapped)
+        elif isinstance(capability, CombinedCapability):
+            pending.extend(capability.capabilities)
+    return identities
 
-    `serialize_any` infers a shape, which for a value it cannot walk -- a tool whose `metadata` holds
-    an arbitrary object, say -- is the request's string representation, instructions and all. There
-    is nothing to redact in a string, so that is reported as unredactable rather than exported.
-    """
-    if not isinstance(serialized_parameters, dict):
+
+def request_telemetry_sensitive_ids(parameters: ModelRequestParameters) -> set[str]:
+    """Read identity provenance, conservatively handling older durable payloads without it."""
+    if parameters.telemetry_sensitive_ids is not None:
+        return parameters.telemetry_sensitive_ids
+    from pydantic_ai.native_tools import MCPServerTool
+
+    # Pre-sidecar activity histories cannot distinguish explicit identities from URL-derived ones.
+    identities = {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
+    for tool in (*parameters.function_tools, *parameters.output_tools):
+        if tool.capability_id:
+            identities.add(tool.capability_id)
+        for native_name in (tool.unless_native, tool.with_native):
+            if native_name and native_name.startswith('mcp_server:'):
+                identities.add(native_name.removeprefix('mcp_server:'))
+    return identities
+
+
+def tool_for_telemetry(tool: ToolDefinition, sensitive_ids: set[str]) -> ToolDefinition:
+    """Copy structural identities without changing caller-authored tool metadata."""
+    return replace(
+        tool,
+        capability_id='[REDACTED]' if tool.capability_id in sensitive_ids else tool.capability_id,
+        unless_native=(
+            'mcp_server:[REDACTED]'
+            if tool.unless_native in {f'mcp_server:{identity}' for identity in sensitive_ids}
+            else tool.unless_native
+        ),
+        with_native=(
+            'mcp_server:[REDACTED]'
+            if tool.with_native in {f'mcp_server:{identity}' for identity in sensitive_ids}
+            else tool.with_native
+        ),
+    )
+
+
+def response_for_telemetry(response: ModelResponse, sensitive_ids: set[str]) -> ModelResponse:
+    """Mask derived native labels on a copy, preserving model content and persisted history."""
+    from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
+
+    native_names = {f'mcp_server:{identity}' for identity in sensitive_ids}
+    return replace(
+        response,
+        parts=[
+            replace(part, tool_name='mcp_server:[REDACTED]')
+            if isinstance(part, (NativeToolCallPart, NativeToolReturnPart)) and part.tool_name in native_names
+            else part
+            for part in response.parts
+        ],
+    )
+
+
+def messages_for_telemetry(messages: Sequence[ModelMessage], sensitive_ids: set[str]) -> list[ModelMessage]:
+    """Copy response labels in model request and agent run histories."""
+    from pydantic_ai.messages import ModelResponse
+
+    return [
+        response_for_telemetry(message, sensitive_ids) if isinstance(message, ModelResponse) else message
+        for message in messages
+    ]
+
+
+def _redact_model_request_parameters(serialized: JsonValue) -> dict[str, JsonValue] | None:
+    """Drop instruction content, or withhold the attribute when its shape cannot be redacted."""
+    if not isinstance(serialized, dict):
         return None
-    parameters = cast('dict[str, Any]', serialized_parameters)
-    parts = parameters.get('instruction_parts')
+    parts = serialized.get('instruction_parts')
     if isinstance(parts, list):
-        # Each part is an `InstructionPart`, inferred as its fields, so a mapping with `content`.
-        for part in cast('list[dict[str, Any]]', parts):
+        for part in parts:
+            if not isinstance(part, dict):
+                return None
             part.pop('content', None)
-    if parameters.get('prompted_output_template') is not None:
-        parameters['prompted_output_template'] = None
-    return parameters
+    elif parts is not None:
+        return None
+    if serialized.get('prompted_output_template') is not None:
+        serialized['prompted_output_template'] = None
+    return serialized
 
 
 def event_to_dict(event: LogRecord) -> dict[str, Any]:
@@ -405,7 +507,14 @@ def open_model_request_span(
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, system, span, prepared_parameters)
+                sensitive_ids = request_telemetry_sensitive_ids(prepared_parameters)
+                settings.handle_messages(
+                    messages_for_telemetry(prepared_request_context.messages, sensitive_ids),
+                    response_for_telemetry(response, sensitive_ids),
+                    system,
+                    span,
+                    prepared_parameters,
+                )
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
