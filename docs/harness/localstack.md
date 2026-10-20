@@ -17,10 +17,11 @@ stop the LocalStack Docker container for each run.
 
 ## The problem
 
-Agents that build cloud infrastructure need a place to create buckets, tables,
-and queues that is free, safe, and easy to reset. Real AWS is none of those.
-LocalStack emulates AWS locally; this capability handles the wiring: the
-endpoint, dummy credentials, the AWS CLI, and a health check.
+Agents that build or test cloud infrastructure need somewhere to create buckets,
+tables, queues, and functions. Real AWS costs money, puts real credentials
+within the agent's reach, and is hard to reset between runs. LocalStack
+emulates AWS locally; this capability handles the wiring: the endpoint, dummy
+credentials, the AWS CLI, and a health check.
 
 ## Usage
 
@@ -180,9 +181,11 @@ The records are named after the capability's `id`, which defaults to
 
 ## Telemetry
 
-`LocalStack` emits no spans of its own. Core's tool-call spans cover each
-`aws_cli` and `localstack_health` call; starting and stopping a managed
-container is not traced.
+`LocalStack` emits no spans of its own. Core's
+[instrumentation](../capabilities/instrumentation.md) already records each
+`aws_cli` and `localstack_health` call as a tool span. Starting and stopping a
+managed container makes no decision worth a span; a failed start raises
+`LocalStackError`.
 
 ## Configuration
 

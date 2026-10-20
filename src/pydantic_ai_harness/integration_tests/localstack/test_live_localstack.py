@@ -1,9 +1,9 @@
 """Live Docker integration tests for the LocalStack capability.
 
-Run them with `LOCALSTACK_AUTH_TOKEN=<token> make integration-localstack`. They
-skip unless Docker, an AWS CLI-compatible executable, and an auth token are
-available, since the default `localstack/localstack` image needs a token to
-start. Keep the token in your shell or CI secret store, never in the repo.
+Run them with `LOCALSTACK_AUTH_TOKEN=<token> make integration-localstack`. The
+container tests skip unless Docker, an AWS CLI-compatible executable, and an
+auth token are available, since the default `localstack/localstack` image needs
+a token to start. Keep the token in your shell or CI secret store, never in the repo.
 
 Environment variables:
 
@@ -14,7 +14,8 @@ Environment variables:
 - `LOCALSTACK_AWS_CLI`: CLI executable; defaults to `aws` when available, then
   `awslocal`.
 - `LOCALSTACK_IMAGE`: Docker image; defaults to `localstack/localstack`.
-- `LOCALSTACK_ENDPOINT_URL`: an existing LocalStack service to test against.
+- `LOCALSTACK_ENDPOINT_URL`: an existing LocalStack service to test against; the
+  test that uses it skips when it is unset.
 - `LOCALSTACK_SKIP_MANAGED_CONTAINERS=1`: skip the tests that start their own
   containers.
 """
