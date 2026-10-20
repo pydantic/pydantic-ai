@@ -2451,13 +2451,26 @@ async def test_corrections_after_the_replies_ended_revise_what_history_recorded(
         return f'It is sunny in {city}.'
 
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
+
+    def heard_nothing_of_the_answer(messages: list[ModelMessage]) -> bool:
+        return any(
+            isinstance(part, SpeechPart) and part.transcript is None
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+        )
+
     before: list[ModelMessage] = []
     with patched_connect(ws):
         async with agent.realtime(model, model_settings=settings).session() as session:
-            with anyio.move_on_after(1):
+            with anyio.fail_after(10):
                 async for event in session:  # pragma: no branch
                     if isinstance(event, RealtimeResponseInterruptedEvent):
                         before = session.all_messages()
+                        break
+                # The corrections make no event of their own: they only revise history.
+                while not heard_nothing_of_the_answer(session.all_messages()):
+                    await anyio.sleep(0.01)
 
     def spoken(messages: list[ModelMessage]) -> list[tuple[str | None, dict[str, Any] | None, str]]:
         return [
