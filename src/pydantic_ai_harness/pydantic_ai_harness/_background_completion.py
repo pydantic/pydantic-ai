@@ -17,14 +17,16 @@ _TOOL_RESULT_CLOSING_TAG_OPENER = re.compile(r'<(?=\s*/\s*tool_result(?=[\s/>]))
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (https://github.com/pydantic/pydantic-ai/pull/10547).
 # This escaper is local because core's `_tool_result_provenance_tags` frames media only and never escapes a
 # closing tag in a body; the background result frames text, so it neutralizes `</tool_result>` itself.
-def tool_result_tags(tool_name: str, tool_call_id: str) -> tuple[str, str]:
+def tool_result_tags(tool_name: str, tool_call_id: str, *, failed: bool = False) -> tuple[str, str]:
     """The tags framing a background tool's output, which reaches the model on the user channel.
 
     They match the `<tool_result>` tags core puts around tool files it moves to the user channel, so the
-    model can tell the tool's output from what the user said.
+    model can tell the tool's output from what the user said. A failed call is marked `outcome="failed"`,
+    like [`ToolReturnPart.outcome`][pydantic_ai.messages.ToolReturnPart.outcome].
     """
+    outcome = ' outcome="failed"' if failed else ''
     return (
-        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}">',
+        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}"{outcome}>',
         '</tool_result>',
     )
 

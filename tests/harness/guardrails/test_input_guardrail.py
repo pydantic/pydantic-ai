@@ -403,10 +403,7 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
-        completion = (
-            "Background tool 'lookup' (task tool-1) completed.\n"
-            '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
-        )
+        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']

@@ -87,18 +87,14 @@ def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
 def _format_background_failure(
     tool_name: str, task_id: str, error: ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError
 ) -> TextContent:
-    """Describe a tool-signalled failure to the model, framing any message the tool wrote as tool output."""
-    failed = f"Background tool '{tool_name}' (task {task_id}) failed"
+    """Describe a tool-signalled failure to the model, framed as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
-        text = f'{failed}: {type(error).__name__} was raised; background tools cannot defer a running task.'
+        message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
     else:
         content = error.tool_retry.content if isinstance(error, ToolRetryError) else error.tool_failed.content
-        if isinstance(content, str) and content:
-            open_tag, close_tag = tool_result_tags(tool_name, task_id)
-            text = f'{failed}.\n{open_tag}\n{escape_tool_result_body(content)}\n{close_tag}'
-        else:
-            text = f'{failed}: {type(error).__name__}'
-    return make_background_completion(text, task_id)
+        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
+    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
+    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
 
 def _format_background_result(
@@ -113,13 +109,11 @@ def _format_background_result(
         extra_content = None
 
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
-    # The announcement is the framework's and the return value is the tool's. `ToolReturn.content` follows
-    # the frame unwrapped, as core sends it: content the tool author chose to add for the model.
+    # The frame's attributes name the call the "running in background" reply announced, so the result needs no
+    # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
+    # to add for the model.
     open_tag, close_tag = tool_result_tags(tool_name, task_id)
-    completion_text = (
-        f"Background tool '{tool_name}' (task {task_id}) completed.\n"
-        f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
-    )
+    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
     files = return_part.files
     if not files:
         completion_text = f'{completion_text}\n{close_tag}'
