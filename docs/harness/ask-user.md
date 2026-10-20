@@ -136,11 +136,13 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 | Event | When | Fields |
 | --- | --- | --- |
 | `AskUserRequestedEvent` | before the answerer is called, or before a deferred call pauses the run | `request` |
-| `AskUserAnsweredEvent` | after it returns or times out, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out` |
+| `AskUserAnsweredEvent` | after it returns, times out, or raises, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out`, `failed` |
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
-start and end in step with the run. Subscribe with `@on_event` on a capability or through the
-run's event stream:
+start and end in step with the run. When the answerer raises, the answered event carries
+`failed=True` and a cancelled response, and the run then fails with the answerer's error. A run
+cancelled while the answerer waits emits no answered event, so also clear waiting state when the
+run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
 ```python
 from pydantic_ai import RunContext

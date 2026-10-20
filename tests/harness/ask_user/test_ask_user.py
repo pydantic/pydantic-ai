@@ -178,6 +178,22 @@ class TestAskUser:
         await agent.run('go')
         assert order == ['requested', 'answerer']
 
+    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self) -> None:
+        async def disconnected(request: AskUserRequest) -> AskUserResponse:
+            raise ConnectionError('client went away')
+
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=disconnected), observer]
+        )
+        with pytest.raises(ConnectionError, match='client went away'):
+            await agent.run('go')
+        (requested,) = observer.requested
+        (answered,) = observer.answered
+        assert answered.request_id == requested.request.id
+        assert answered.failed and not answered.timed_out
+        assert answered.response == AskUserResponse(cancelled=True)
+
     @pytest.mark.parametrize(
         ('arguments', 'complaint'),
         [
