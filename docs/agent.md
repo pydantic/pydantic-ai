@@ -1727,7 +1727,7 @@ assert changes == ['Todo status: done.']
 
 The function still runs before each model request, including the request after a tool call. The initial value stays in the prefix. A changed value produces a typed [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of history containing the complete replacement. Unchanged values add nothing; changing from A to B and back to A emits both replacements. Returning `None` or an empty string withdraws the previous instruction. Removing a contributing source also withdraws its tracked blocks. A block first appearing after the baseline is delivered at the end of history.
 
-Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions.
+Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
 
 Instructions passed to a run method can append too, which suits per-request context an application passes to each run of a conversation, such as the page the user is on. Pass an `InstructionPart` with a `name`, keyed `'run:<name>'`; unnamed runtime instructions always rewrite:
 
@@ -1753,7 +1753,7 @@ changes = [
 ]
 print(changes)
 #> ['The user is on /settings.']
-``` An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
+```
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 
