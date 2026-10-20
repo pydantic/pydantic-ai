@@ -5840,7 +5840,11 @@ class RealtimeSessionErrorEvent:
     _: KW_ONLY
 
     type: str | None = None
-    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
+    """Provider error category, e.g. `invalid_request_error` or `server_error`.
+
+    It can also be a category Pydantic AI defines for a condition it detects itself:
+    `'tool_calls_abandoned'` means Eleven Realtime abandoned tool calls whose results hadn't been sent yet, so
+    those results won't reach the model."""
     code: str | None = None
     """Provider error code, if any."""
     recoverable: bool = True

@@ -86,6 +86,7 @@ openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
 google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
 xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 elevenlabs-agents-realtime = ["pydantic-ai-slim[elevenlabs-agents-realtime]=={{ version }}"]
+elevenlabs-realtime = ["pydantic-ai-slim[elevenlabs-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://pydantic.dev/docs/ai/"
