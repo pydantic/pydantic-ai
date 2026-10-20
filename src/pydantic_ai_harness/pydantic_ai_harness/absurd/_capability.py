@@ -12,17 +12,18 @@ except ImportError as _import_error:
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, get_args
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._context import ENGINE_NAME, current_async_task_context
-from ._operation_backend import AbsurdOperationBackend
+from ._operation_backend import AbsurdOperationBackend, serialization_failure
 
 AbsurdParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """Tool-call execution modes usable with Absurd: a subset of `ParallelExecutionMode`. `'parallel'` is
@@ -60,11 +61,12 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_unit_noun='step',
         durable_container_noun='task',
         codec=JSON_CODEC,
+        serialization_failure=serialization_failure,
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
-        toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-never'},
+        # Steps run in the task's own process, so a run keeps one MCP session.
+        toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-in-durable-unit'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
     )
-    # Absurd has no non-retryable error type, so a serialization failure retries under the task's `RetryStrategy`.
 
     def __init__(
         self,
@@ -86,9 +88,14 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
                 step.
             name: Unique agent name used as the prefix for every checkpoint step. Defaults to the
                 agent's `name` when the capability is bound.
-            parallel_execution_mode: Tool-call execution mode applied to every run. `'parallel'` is
-                excluded; see `AbsurdParallelExecutionMode`.
+            parallel_execution_mode: Tool-call execution mode applied to runs inside a task.
+                `'parallel'` is excluded; see `AbsurdParallelExecutionMode`.
         """
+        if parallel_execution_mode not in get_args(AbsurdParallelExecutionMode):
+            raise UserError(
+                f'`AbsurdDurability` does not support `parallel_execution_mode={parallel_execution_mode!r}`; '
+                "use 'sequential' or 'parallel_ordered_events'."
+            )
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._parallel_execution_mode: ParallelExecutionMode = parallel_execution_mode
 
@@ -100,8 +107,10 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         return AbsurdOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode to every run, inside a task or not."""
+        """Apply the configured parallel-execution mode to runs inside a task."""
         agent = self.agent
         assert agent is not None
+        if not self.in_durable_context:
+            return await handler()
         with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
             return await handler()

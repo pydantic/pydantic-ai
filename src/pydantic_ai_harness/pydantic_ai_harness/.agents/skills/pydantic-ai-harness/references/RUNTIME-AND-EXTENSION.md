@@ -301,7 +301,8 @@ async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
 
 Parameters: `AbsurdDurability(*, models=None, event_stream_handler=None, name=None,
 parallel_execution_mode='sequential')`. `models` maps ids to extra models for `agent.run(model='<id>')`.
-`parallel_execution_mode` also accepts `'parallel_ordered_events'`, but not `'parallel'`.
+`parallel_execution_mode` applies only inside a task and also accepts `'parallel_ordered_events'`;
+`'parallel'` raises `UserError`.
 
 Gotchas:
 
@@ -309,8 +310,12 @@ Gotchas:
   `UserError`.
 - The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a unique
   `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run those steps.
-- Tool return values are stored as JSON. `ModelRetry`, `ToolFailed`, `CallDeferred`, and
-  `ApprovalRequired` are not checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
+- Tool return values are stored as JSON. One that can't be serialized raises `UserError` after the tool
+  ran; the failure is checkpointed, so a retry raises it again without re-running the tool.
+- `ModelRetry`, `ToolFailed`, `CallDeferred`, and `ApprovalRequired` from a tool call are not
+  checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
+- Steps match by name and order, not inputs: in-flight tasks keep stored results across a deploy.
+- A running step extends the worker's claim, so steps may outlast `claim_timeout`.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;
   `ExternalToolset` is fine.
 - Keep tool side effects idempotent: a crash after a tool runs but before its step is saved re-runs it.

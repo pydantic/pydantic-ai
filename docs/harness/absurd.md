@@ -91,14 +91,28 @@ These are not checkpointed and run again on replay:
 - a tool call that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired`;
 - tools from a `DynamicToolset`.
 
+Argument validation is its own `validate_args` step, so its result is checkpointed, including a
+`ModelRetry` raised by an `args_validator`.
+
+Steps are matched by name and encounter order, not by their inputs. A task still in flight when you
+deploy a changed prompt, tool, or model gets the stored results for the steps it already completed.
+
 ## Constraints
 
 - The agent needs a `name` (or pass `name=` to `AbsurdDurability`), and every function, MCP, or
   dynamic toolset needs a unique `id`; `Agent(...)` raises a `UserError` otherwise. Don't rename
   either once deployed: in-flight tasks re-run the steps whose names changed.
-- A checkpointed tool's return value is stored as JSON, so it must be JSON-serializable.
+- A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises a
+  `UserError` after the tool ran, and that failure is checkpointed: a retry raises it again without
+  running the tool.
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
+- While a step runs, it extends the worker's claim on the task, so a model request or tool call can
+  take longer than the worker's `claim_timeout`. If the claim can't be extended, because the task was
+  cancelled or another worker claimed it, the step is cancelled and the Absurd SDK's error propagates.
+- Checkpoints hold model responses and tool results as JSON in the queue's Postgres tables, and a
+  retry uses them as stored. Limit write access to the Absurd schema accordingly, and don't return
+  secrets from tools unless they may be stored there.
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
@@ -106,8 +120,10 @@ These are not checkpointed and run again on replay:
 
 ## Parallel execution
 
-Tool calls run sequentially by default. Pass `parallel_execution_mode='parallel_ordered_events'` to
-run them concurrently; plain `'parallel'` is not supported. Stay sequential if a capability hook
+Inside a task, tool calls run sequentially by default. Pass
+`parallel_execution_mode='parallel_ordered_events'` to run them concurrently; plain `'parallel'`
+raises a `UserError`. Outside a task, the mode doesn't apply and the agent runs tools as it would
+without the capability. Stay sequential if a capability hook
 such as `before_tool_execute` or `wrap_tool_execute` awaits before the tool runs, as that can
 reorder concurrent calls of the same tool on replay.
 
@@ -116,13 +132,20 @@ reorder concurrent calls of the same tool on replay.
 `AbsurdDurability` composes with [Code Mode](code-mode.md): each tool call made from `run_code` is
 its own step, served from its checkpoint on replay, while the `run_code` body itself re-runs.
 
+## Tracing
+
+`AbsurdDurability` adds no spans of its own: the usual agent run, model request, and tool spans cover
+the work. A step served from its checkpoint still produces its model request or tool span, so a
+replayed run's trace has the same shape as the first attempt's.
+
 ## Migrating from `pydantic-ai-absurd`
 
 Import `AbsurdDurability` and `AbsurdParallelExecutionMode` from `pydantic_ai_harness.absurd`
 instead of `pydantic_ai_absurd`. Step names and checkpoint payloads match
 [`pydantic-ai-absurd`](https://github.com/Kludex/pydantic-ai-absurd) 0.8, so tasks in flight during
-the switch resume without repeating work. A toolset without an `id` now needs one, and adding it
-re-runs that toolset's steps in tasks in flight. `AbsurdAgent`, `AbsurdModel`,
+the switch resume without repeating work. The exception is a toolset that had no `id`: it needs one
+now, and the new step names make tasks in flight run its steps again. Unlike 0.8,
+`parallel_execution_mode` applies only inside a task. `AbsurdAgent`, `AbsurdModel`,
 `AbsurdFunctionToolset`, and `AbsurdMCPToolset` are not ported; move to the capability first.
 
 ## Relation to Step Persistence
