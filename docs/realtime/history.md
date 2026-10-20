@@ -126,6 +126,7 @@ token usage over the model's
 | OpenAI | GPT-Live: reported by Live. gpt-realtime: latest response's `total_tokens` over the context window, when the window is known |
 | Azure OpenAI, Gemini Live | Latest response's `total_tokens` over the context window, when the window is known |
 | xAI Grok Voice | `None`: a response's usage counts only the input it added, not the whole conversation |
+| ElevenLabs Agents | The agent's `context_usage` report: `context_tokens` over `context_limit_tokens`, once per reply, and only with `context_usage` in the agent's `client_events` |
 
 The value is `None` until it can be calculated, and it can go down during a session: providers
 compact or truncate the conversation server-side as it grows, and none of them report when that
@@ -215,11 +216,11 @@ History follows the order of the provider's own conversation:
 
 - A spoken turn sits where the provider added it, and text, images, and tool results where they reached
   it. A turn the user started while the model was still answering, but which the provider only committed
-  after that answer ended, is recorded after the answer. Gemini Live and GPT-Live don't say where an input
-  joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the reply to it, and
-  something sent while a reply is owed (requested, or already being spoken) is recorded after that reply. On
-  them, a spoken turn's transcript is complete when the reply to it ends, and words transcribed after that are
-  recorded as a turn of their own, after the reply.
+  after that answer ended, is recorded after the answer. Gemini Live, GPT-Live, and ElevenLabs Agents don't say
+  where an input joined their conversation, nor when a reply starts: a spoken turn is recorded ahead of the
+  reply to it, and something sent while a reply is owed (requested, or already being spoken) is recorded
+  after that reply. On Gemini Live and GPT-Live, a spoken turn's transcript is complete when the reply to it
+  ends, and words transcribed after that are recorded as a turn of their own, after the reply.
 - A message appears in `all_messages()` once everything before it is final. On OpenAI, Azure OpenAI, and
   xAI, a reply waits for the transcript of the spoken turn before it, which can arrive after the reply
   itself is done, for up to 30 seconds after that; past that, the turn is recorded with the transcript it

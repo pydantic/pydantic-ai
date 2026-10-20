@@ -6148,3 +6148,59 @@ async def test_evicted_output_audio_is_released() -> None:
         assert [audio is not None for audio in retained()] == [False, True]
         gc.collect()
         assert evicted is not None and evicted() is None
+
+
+async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
+    """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
+
+    def added(item_type: str, call_id: str, item_id: str, name: str | None = None) -> str:
+        item = {'id': item_id, 'type': item_type, 'call_id': call_id, **({'name': name} if name else {})}
+        return json.dumps({'type': 'conversation.item.added', 'item': item})
+
+    frames = [
+        added('function_call', 'c1', 'item_c1', 'drop_me'),
+        added('function_call_output', 'c1', 'item_o1'),
+        added('function_call', 'c2', 'item_c2', 'keep_me'),
+        added('function_call_output', 'c2', 'item_o2'),
+        added('function_call', 'c3', 'item_c3', 'drop_me'),
+        # The beta protocol's acknowledgement counts too.
+        json.dumps(
+            {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': 'item_o5', 'type': 'function_call_output', 'call_id': 'c5'},
+            }
+        ),
+        # An output of a call this connection didn't see.
+        added('function_call_output', 'c4', 'item_o4'),
+        # Malformed: ignored here.
+        json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
+    ]
+    ws = FakeWebSocket(frames)
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items=True, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(conn)
+    # Content the tool returned besides its output follows it as a user message, which goes with the call too.
+    await conn.send(ToolResult(tool_call_id='c1', output='Taken.', content=['A photo of the table.']))
+    [content_item] = [json.loads(frame)['item'] for frame in ws.sent if '"role":"user"' in frame]
+    calls = [
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
+        ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c5'),
+    ]
+    assert await conn._prune_tool_calls(calls) == ['c1', 'c5']  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
+        {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
+        {'type': 'conversation.item.delete', 'item_id': content_item['id']},
+        {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
+    ]
+    # With pruning off, nothing is deleted: kept tools alone don't turn it on.
+    off_ws = FakeWebSocket(frames)
+    off = OpenAIRealtimeConnection(off_ws, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(off)
+    assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in off_ws.sent if 'item.delete' in frame]

@@ -19,9 +19,10 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
+from pydantic import Field
 from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -198,6 +199,18 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    _telemetry_mcp_url_ids: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """URL-derived MCP identities to mask in telemetry; `None` means provenance is unknown."""
+    _telemetry_mcp_url_toolset_ids: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
+    )
+    """URL-derived local MCP toolset identities to mask in telemetry."""
+    _telemetry_mcp_url_tool_names: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -926,7 +939,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
-        params = self.customize_request_parameters(model_request_parameters)
+        customized_params = self.customize_request_parameters(model_request_parameters)
+        from pydantic_ai._instrumentation import model_request_telemetry_url_ids
+
+        custom_tool_names = customized_params._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        original_tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        tool_names = (
+            custom_tool_names | (original_tool_names or set()) if custom_tool_names is not None else original_tool_names
+        )
+
+        # A model may rebuild the request parameters in this hook. Retain trace-only provenance
+        # without mutating its return value, which a custom model may reuse across requests.
+        params = replace(
+            customized_params,
+            _telemetry_mcp_url_ids=(
+                model_request_telemetry_url_ids(
+                    customized_params,
+                    known_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                )
+                | model_request_telemetry_url_ids(model_request_parameters)
+            ),
+            _telemetry_mcp_url_toolset_ids=(
+                customized_params._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+                | model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+            ),
+            _telemetry_mcp_url_tool_names=tool_names,
+        )
         params = prepare_return_schemas(
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
@@ -1266,6 +1304,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
+          3b. Defaults for this model instance from `_instance_profile_defaults()`, such as narrowing that
+             depends on the provider's SDK client. Unlike narrowing in a subclass's `profile` override,
+             which runs after the user's layer, the user's `profile=` can still override these.
           4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
@@ -1289,6 +1330,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
+        # Step 3b: defaults that depend on this model instance (such as its SDK client), which the user can override
+        resolved = self._instance_profile_defaults(resolved)
+
         # Step 4: user override
         if user is None:
             pass
@@ -1310,6 +1354,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
+
+        Override this for defaults that depend on more than the model name, such as the SDK client the provider
+        was built with, so that a value the user sets explicitly in either `profile=` form still wins.
+        """
+        return profile
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
