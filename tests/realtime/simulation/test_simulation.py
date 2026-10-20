@@ -1763,6 +1763,22 @@ def test_scenario_wait_after_a_drop_cut_into_a_tool_round() -> None:
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=False)), scenario)
 
 
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_scenario_wait_for_a_turn_whose_tool_round_a_drop_cut_into(dialect: Dialect) -> None:
+    """The same for a wait on a turn's reply: the drop cut into the tool round it called, which the reconnect settles."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.fail_next_send()
+        sim.finish()
+        sim.clear_audio()
+        sim.wait_for_reply()
+        sim.advance_time(0.1)
+
+    run_tolerant(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+
+
 def test_scenario_openai_server_vad_edges() -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
