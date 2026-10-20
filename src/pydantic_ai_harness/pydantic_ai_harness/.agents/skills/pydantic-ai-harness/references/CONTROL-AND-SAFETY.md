@@ -505,9 +505,9 @@ agent = Agent(
 - `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
   request, injected raw (no tag). Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
-- `GoalReanchor()` restates the run's first user prompt, quoted in a `<goal>` element; free.
-  `LLMReminder` quotes its generated text in `<reminder model="...">`. Forged closing tags are
-  escaped.
+- `GoalReanchor()` restates the run's first user prompt; free. It and `LLMReminder` put only a fixed
+  note in system voice and the quoted text (`<original_request>`, `<generated_reminder model="...">`)
+  on the user channel, kept in history. Forged closing tags are escaped.
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
   `GoalReanchor` text instead, with no warning or log; gate it with your own cadence wrapper.
