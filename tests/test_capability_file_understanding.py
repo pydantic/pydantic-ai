@@ -385,6 +385,22 @@ async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
     assert describer.calls == 1
 
 
+async def test_a_long_text_document_is_fetched_again_rather_than_kept():
+    """A downloaded text body over the cache's size limit isn't kept, so the next turn downloads it again."""
+    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
+    with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
+        download.return_value = {'data': 'x' * 100_001, 'data_type': 'text/plain'}
+        first = await agent.run([DocumentUrl('https://example.com/big.txt'), 'Summarize.'])
+        await agent.run('Again.', message_history=first.all_messages())
+        assert download.call_count == 2
+
+        download.return_value = {'data': 'short', 'data_type': 'text/plain'}
+        third = await agent.run([DocumentUrl('https://example.com/small.txt'), 'Summarize.'])
+        await agent.run('Again.', message_history=third.all_messages())
+        assert download.call_count == 3
+
+
 @pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')
 @pytest.mark.vcr()
 async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(

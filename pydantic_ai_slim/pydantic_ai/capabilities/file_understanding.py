@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard
 
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
 from pydantic_ai.messages import (
@@ -32,6 +32,10 @@ _File: TypeAlias = ImageUrl | DocumentUrl | VideoUrl | BinaryContent
 
 _MAX_DESCRIPTIONS = 256
 """Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
+
+_MAX_CACHED_CHARS = 100_000
+"""Longest text kept for reuse: a downloaded text document can be large, so a longer one is fetched again
+instead of holding up to `_MAX_DESCRIPTIONS` full bodies in memory. Descriptions are well under it."""
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -117,10 +121,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         descriptions: dict[str, str] = {}
         pending: dict[str, _File] = {}
-        for item in _user_content(request_context.messages):
-            if _accepted(item, profile):
+        unaccepted = False
+        for content in _user_content(request_context.messages):
+            if (item := _unaccepted_file(content, profile)) is None:
                 continue
-            assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
+            unaccepted = True
+            if _is_text_bytes(item):
+                # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
+                continue
             identity = _identity(item, ctx.conversation_id)
             if identity in descriptions or identity in pending:
                 continue
@@ -128,9 +136,21 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
                 descriptions[identity] = cached
             else:
                 pending[identity] = item
-        if not pending:
+        if not unaccepted:
             return request_context
 
+        if pending:
+            await self._describe_pending(ctx, pending, descriptions)
+
+        messages = [
+            _substitute(message, profile, descriptions, ctx.conversation_id) for message in request_context.messages
+        ]
+        return replace(request_context, messages=messages)
+
+    async def _describe_pending(
+        self, ctx: RunContext[AgentDepsT], pending: dict[str, _File], descriptions: dict[str, str]
+    ) -> None:
+        """Describe the `pending` files at once into `descriptions`, adding what that costs to the run."""
         if (usage_limits := ctx.usage_limits) is not None:
             # The run checked its limits for this step's request before this hook, so the describing requests go
             # in front of it: a limit without room for all of them and the request itself stops the run before
@@ -144,15 +164,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
             descriptions[identity] = description
-            if _reuse_key(item, ctx.conversation_id) is not None:
+            if _reuse_key(item, ctx.conversation_id) is not None and len(description) <= _MAX_CACHED_CHARS:
                 if len(self._descriptions) >= _MAX_DESCRIPTIONS:
                     del self._descriptions[next(iter(self._descriptions))]
                 self._descriptions[identity] = description
-
-        messages = [
-            _substitute(message, profile, descriptions, ctx.conversation_id) for message in request_context.messages
-        ]
-        return replace(request_context, messages=messages)
 
     @durable_operation(name='describe')
     async def _describe(self, item: _File) -> tuple[str, RunUsage]:
@@ -164,8 +179,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         """
         from pydantic_ai.agent import Agent
 
-        if isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type):
-            return item.data.decode('utf-8'), RunUsage()
         if isinstance(item, DocumentUrl) and is_text_like_media_type(item.media_type):
             return (await download_item(item, data_format='text'))['data'], RunUsage()
 
@@ -190,14 +203,16 @@ def _substitute(
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(item: UserContent) -> UserContent:
-        if _accepted(item, profile):
-            return item
-        assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
+    def text_for(content: UserContent) -> UserContent:
+        if (item := _unaccepted_file(content, profile)) is None:
+            return content
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
         # inlined as its own content instead of described, and that one keeps the media type it came with.
         media_type = item.media_type if is_text_like_media_type(item.media_type) else 'text/plain'
-        description = descriptions[_identity(item, conversation_id)]
+        if _is_text_bytes(item):
+            description = item.data.decode('utf-8')
+        else:
+            description = descriptions[_identity(item, conversation_id)]
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
@@ -233,12 +248,16 @@ def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
     return f'{conversation_id}:{item.url}' if conversation_id is not None else None
 
 
-def _accepted(item: UserContent, profile: ModelProfile) -> bool:
-    """Whether the model takes this item as it is; text and anything but a file is left alone."""
+def _unaccepted_file(item: UserContent, profile: ModelProfile) -> _File | None:
+    """The file in `item` the model doesn't take as it is, or `None`; text and anything but a file is left alone."""
     if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
-        return profile.get('supports_image_input', True)
+        return None if profile.get('supports_image_input', True) else item
     if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
-        return profile.get('supports_document_input', True)
+        return None if profile.get('supports_document_input', True) else item
     if isinstance(item, VideoUrl) or (isinstance(item, BinaryContent) and item.is_video):
-        return profile.get('supports_video_input', False)
-    return True
+        return None if profile.get('supports_video_input', False) else item
+    return None
+
+
+def _is_text_bytes(item: _File) -> TypeGuard[BinaryContent]:
+    return isinstance(item, BinaryContent) and is_text_like_media_type(item.media_type)
