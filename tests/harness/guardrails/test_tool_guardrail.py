@@ -675,6 +675,76 @@ class TestResultGuardOnAFailedTool:
         assert seen == ['ok']
         assert [part.content for part in retries] == ['validator: result must be uppercase']
 
+    async def test_another_capabilitys_error_hook_retry_is_not_screened(self):
+        """Converting a tool exception into a retry is that capability's instruction, as on any agent."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:  # pragma: no cover - must not run
+            seen.append(info.result)
+            return GuardrailResult.block('refused')
+
+        class RetryOnError(AbstractCapability[None]):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                raise ModelRetry(f'converted: {error}')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[RetryOnError(), ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            raise ValueError('boom')
+
+        result = await agent.run('hi')
+        retries = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        ]
+
+        assert seen == []
+        assert [part.content for part in retries] == ['converted: boom']
+
+    @pytest.mark.parametrize('retrying_first', [True, False])
+    @pytest.mark.parametrize('stage', ['args', 'result'])
+    async def test_a_stacked_guardrails_retry_verdict_is_not_screened(self, stage: str, retrying_first: bool):
+        """Splitting policies across two `ToolGuardrail`s keeps each one's retry instruction intact."""
+
+        def screen(info: ToolResultInfo) -> GuardrailResult:
+            return GuardrailResult.block('refused') if info.result != 'ok' else GuardrailResult.allow()
+
+        if stage == 'args':
+            retrying = ToolGuardrail[None](guard=lambda call: GuardrailResult.retry('retry: narrow the query'))
+        else:
+            retrying = ToolGuardrail[None](result_guard=lambda info: GuardrailResult.retry('retry: narrow the query'))
+        screening = ToolGuardrail[None](result_guard=screen)
+        guards = [retrying, screening] if retrying_first else [screening, retrying]
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=guards,
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        result = await agent.run('hi')
+        retries = [
+            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        ]
+
+        assert [part.content for part in retries] == ['retry: narrow the query']
+
     async def test_its_own_retry_verdict_is_not_screened_again(self):
         """The retry instruction is the guard's own text, not tool output."""
         seen: list[object] = []

@@ -65,6 +65,14 @@ _ARGS_DIRECTION = 'tool args'
 _RESULT_DIRECTION = 'tool result'
 
 
+class _VerdictRetry(ModelRetry):
+    """The `ModelRetry` a `ToolGuardrail` raises for a `retry` verdict.
+
+    Tagged so that no `ToolGuardrail`, this one or another stacked around it, screens a guard's
+    own instruction as if the tool had produced it.
+    """
+
+
 def _is_arguments(value: object) -> TypeGuard[Mapping[str, Any]]:
     """Whether a `replace` verdict carries something shaped like tool arguments.
 
@@ -367,7 +375,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_ARGS_DIRECTION, message=message, tool_name=call.tool_name)
                 raise SkipToolExecution(message)
             case 'retry':
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _VerdictRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'approve':
                 # A resumed run re-evaluates the guard, and a policy that asked for approval
                 # once asks again. Honoring `tool_call_approved` -- the same flag
@@ -420,16 +428,19 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
 
         A caller that asks core for raw errors, as `CodeMode` does for the calls its sandbox
         makes, gets the tool's `ModelRetry` or `ToolFailed` unwrapped, and its message reaches
-        the model the same way, so those are screened too. Only while the tool runs, though:
-        between this guardrail's argument hook, which runs after every other one, and its result
-        hook, which runs before every other one. A raw retry from outside that window is another
-        capability's instruction (or this guard's own `retry`), not tool output, and passes
-        through untouched.
+        the model the same way, so those are screened too, but only while the tool runs: from
+        this guardrail's argument hook, which runs after every other capability's, to its result
+        or error hook, which runs before every other capability's. A raw retry from outside that
+        window is another capability's instruction, not tool output, and passes through. So does
+        a `retry` verdict from any `ToolGuardrail`. A capability ordered inside this one (another
+        `position='innermost'` capability) runs within the window, and its retries are screened.
         """
         if self.result_guard is None or not self._guards(call.tool_name):
             return await handler(args)
         try:
             return await handler(args)
+        except _VerdictRetry:
+            raise
         except ModelRetry as error:
             if id(call) not in self._running:
                 raise
@@ -457,6 +468,19 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         finally:
             self._running.discard(id(call))
 
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        error: Exception,
+    ) -> Any:
+        """End the running window, so a retry another capability's error hook raises is not screened."""
+        self._running.discard(id(call))
+        raise error
+
     async def _screen_failure(
         self,
         ctx: RunContext[AgentDepsT],
@@ -482,7 +506,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 # The tool already failed, but `retry` still means retry: collapsing it into a
                 # replacement message would hand the model a failed result where it was asked
                 # to redo the call, and skip the run's retry accounting with it.
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _VerdictRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'block':
                 message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
@@ -529,7 +553,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
                 return message
             case 'retry':
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _VerdictRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'approve':
                 raise UserError(
                     'A tool result guard cannot return GuardrailResult.approve() -- the tool has already run. '
