@@ -6,7 +6,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from genai_prices.types import PriceCalculation
@@ -22,7 +22,9 @@ from pydantic_ai._instrumentation import (
     CachedMessageJson,
     MessageJsonCache,
     get_instructions,
+    mcp_telemetry_history_ids,
     message_json_fragment,
+    model_request_telemetry_url_ids,
     open_model_request_span,
     response_cost,
     safe_to_json,
@@ -37,6 +39,9 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryPromptPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
@@ -203,9 +208,20 @@ class InstrumentationSettings:
                 **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(
+        self, messages: list[ModelMessage], *, mcp_url_ids: frozenset[str] = frozenset()
+    ) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
+        sensitive_names = {f'mcp_server:{identity}' for identity in mcp_url_ids}
         for message in messages:
+            if sensitive_names and isinstance(message, ModelResponse):
+                projected_parts: list[ModelResponsePart] = [
+                    replace(part, tool_name='mcp_server:[REDACTED]')
+                    if isinstance(part, NativeToolCallPart | NativeToolReturnPart) and part.tool_name in sensitive_names
+                    else part
+                    for part in message.parts
+                ]
+                message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
                 for role, group in itertools.groupby(
                     message.parts, key=functools.partial(_otel_message_role, version=self.version)
@@ -224,7 +240,9 @@ class InstrumentationSettings:
         return result
 
     def _input_messages_json(
-        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+        self,
+        input_messages: list[ModelMessage],
+        message_json_cache: MessageJsonCache | None,
     ) -> bytes:
         """Serialize the input message history to a JSON array.
 
@@ -234,16 +252,22 @@ class InstrumentationSettings:
         in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
         bounded by the current history even when a history processor prunes or rebuilds messages.
         Without a cache (one-off requests), the whole history is serialized in a single call.
+        Historical MCP names lack their original request provenance, so each cached fragment
+        withholds those names without rescanning every part on subsequent requests.
         """
         if message_json_cache is None:
-            return safe_to_json(self.messages_to_otel_messages(input_messages))
+            history_ids = mcp_telemetry_history_ids(input_messages, frozenset())
+            return safe_to_json(self.messages_to_otel_messages(input_messages, mcp_url_ids=history_ids))
 
         fragments: list[bytes] = []
         fresh_entries: MessageJsonCache = {}
         for message in input_messages:
             entry = message_json_cache.get(id(message))
             if entry is None or entry.parts is not message.parts:
-                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+                history_ids = mcp_telemetry_history_ids([message], frozenset())
+                entry = CachedMessageJson(
+                    message, message.parts, message_json_fragment(self, message, history_ids), history_ids
+                )
             fresh_entries[id(message)] = entry
             if entry.fragment:
                 fragments.append(entry.fragment)
@@ -260,7 +284,10 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        output_messages = self.messages_to_otel_messages([response])
+        mcp_url_ids: frozenset[str] = (
+            frozenset(model_request_telemetry_url_ids(parameters)) if parameters is not None else frozenset[str]()
+        )
+        output_messages = self.messages_to_otel_messages([response], mcp_url_ids=mcp_url_ids)
         assert len(output_messages) == 1
         output_message = output_messages[0]
 

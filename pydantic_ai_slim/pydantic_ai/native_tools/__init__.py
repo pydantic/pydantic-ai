@@ -682,6 +682,15 @@ class MCPServerTool(AbstractNativeTool):
     kind: str = 'mcp_server'
 
     @property
+    def _telemetry_url_derived_id(self) -> str | None:
+        value = getattr(self, '_telemetry_url_derived_id_value', None)
+        return value if isinstance(value, str) else None
+
+    @_telemetry_url_derived_id.setter
+    def _telemetry_url_derived_id(self, value: str | None) -> None:
+        object.__setattr__(self, '_telemetry_url_derived_id_value', value)
+
+    @property
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
 
