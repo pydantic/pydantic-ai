@@ -161,8 +161,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     default is `{'background': True}`.
 
     A tool marked with `metadata={'background': 'optional'}` lets the model decide for each call
-    unless this selector chooses it. Sequential tools, realtime sessions, and calls made from inside
-    another tool, such as code mode's `run_code`, run normally.
+    unless this selector chooses it. Sequential tools, realtime sessions, and calls that code mode's
+    `run_code` makes from its sandbox run normally.
     """
 
     id: str | None = 'background_tools'

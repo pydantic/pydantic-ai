@@ -1323,19 +1323,25 @@ class TestBackgroundTools:
 
         assert retry_seen
 
-    async def test_call_dispatched_by_another_tool_returns_its_value(self) -> None:
+    @pytest.mark.parametrize(
+        ('background', 'code'),
+        [
+            (True, 'r = await lookup(n=2)\nr * 10'),
+            ('optional', 'r = await lookup(n=2, run_in_background=True)\nr * 10'),
+        ],
+        ids=['always', 'optional-flag-set'],
+    )
+    async def test_call_from_code_mode_returns_its_value(self, background: bool | str, code: str) -> None:
         """A background tool called from code mode's `run_code` hands its value to the script, not a started message."""
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
                 return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name='run_code', args={'code': 'r = await lookup(n=2)\nr * 10'})]
-            )
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
 
         agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode(), BackgroundTools()])
 
-        @agent.tool_plain(metadata={'background': True})
+        @agent.tool_plain(metadata={'background': background})
         async def lookup(n: int) -> int:
             return n
 
