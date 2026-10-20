@@ -5,9 +5,7 @@ description: "Store large images, audio, and text from Pydantic AI message histo
 
 # Media Externalization
 
-The storage plumbing that [Step Persistence](step-persistence.md) uses to keep run snapshots small. This is supporting infrastructure, not a capability: nothing on this page mounts on `Agent(capabilities=[...])`. If you want snapshots that externalize large payloads automatically, start with [Step Persistence](step-persistence.md); read this page when you configure a store yourself or call the walker helpers directly.
-
-Why it exists: a conversation that carries images, audio, or other `BinaryContent` inlines those bytes into every message, and a large text part (a big tool-return string, say) is just as heavy. Persist that history and each snapshot re-serializes the payloads; the same image referenced by ten messages is ten copies of the bytes. Content-addressed stores write each payload once, keyed by its own hash, and leave a short `media+sha256://` URI in its place.
+Content-addressed stores for large `BinaryContent` and text payloads, plus helpers that swap those payloads for `media+sha256://<digest>` URIs in serialized message history and back. [Step Persistence](step-persistence.md) uses them to keep run snapshots small; read this page when you configure a store yourself or call the helpers directly. This is not a capability: nothing here mounts on `Agent(capabilities=[...])`, and nothing here emits telemetry.
 
 !!! note "Import path"
     Import these helpers from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
@@ -24,37 +22,61 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-## Consumers
+## Quick start
 
-[`StepPersistence`](step-persistence.md) uses these stores to externalize large `BinaryContent` and text parts in run snapshots through its file, sqlite, mongo, and postgres backends (see [Persisting media](step-persistence.md#persisting-media)).
+The helpers take the JSON form of a message history, not message objects:
 
-## Why content-addressing
+```python
+import json
 
-The URI is derived from the payload hash, so identical bytes deduplicate automatically. The same bytes are stored once no matter how many messages or snapshots reference them, and moving the underlying storage is a one-line swap because the URI does not change.
+from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
+
+store = DiskMediaStore('./media')
+
+
+async def save(messages: list[ModelMessage]) -> str:
+    tree = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    lean = await externalize_media(tree, media_store=store, threshold_bytes=32_000)
+    return json.dumps(lean)
+
+
+async def load(saved: str) -> list[ModelMessage]:
+    restored = await restore_media(json.loads(saved), media_store=store)
+    return ModelMessagesTypeAdapter.validate_python(restored)
+```
+
+A payload's URI is its sha256, so identical bytes are stored once however many messages or snapshots reference them.
 
 ## Stores
 
-Every store implements the `MediaStore` protocol -- `put`, `get`, `exists`, `public_url`, and `get_metadata`, all async and content-addressed.
+Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `public_url`, and `get_metadata`, all async.
 
 | Store | Backed by | Use when |
 |---|---|---|
-| `DiskMediaStore(directory=...)` | A directory on disk | Local runs and tests |
+| `DiskMediaStore(directory)` | A directory on disk | Local runs and tests |
 | `SqliteMediaStore(database=...)` | A SQLite database | A single-file store that travels with the data |
 | `S3MediaStore(bucket=, endpoint=, region=, ...)` | S3 or an S3-compatible bucket | Shared or production storage |
-| `MongoMediaStore(client= or db_url=, database=, ...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document |
-| `PostgresMediaStore(pool, table=...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
+| `MongoMediaStore(client= or db_url=, database=, ...)` | MongoDB, chunked documents | A MongoDB deployment |
+| `PostgresMediaStore(pool, table=...)` | PostgreSQL, one `BYTEA` row per blob | A PostgreSQL deployment; blobs up to 1 GB |
 
-`S3MediaStore` uses path-style URLs plus handrolled SigV4, so it is compatible with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. `SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection`.
+None of the stores stream: `put` takes the whole payload and `get` returns it, so a blob has to fit in process memory.
 
-`MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`). Pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client -- call `await store.aclose()` to release it); `database=` is always required. Each blob is stored as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob (`_id = <digest>`). The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back. It does not bound memory: `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray`, so a blob has to fit in process memory in both directions -- there is no streaming API. The manifest holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used rather than the GridFS driver on purpose: the digest is the manifest `_id`, so identical bytes deduplicate (GridFS keys files by `ObjectId` and does no dedup), and the plain-collection surface stays fully testable in-memory.
+`SqliteMediaStore` also accepts `connection=` instead of `database=` to share a `sqlite3.Connection` (created with `check_same_thread=False`). On that connection, `put` commits its insert when no transaction is open and otherwise leaves the commit to you.
+
+`S3MediaStore` uses path-style URLs and its own SigV4 signing, so it works with AWS S3, Cloudflare R2 (`region='auto'`), MinIO, and other S3-compatible providers. It sends one PUT per blob, so a blob is limited to S3's 5 GB single-PUT cap.
+
+`MongoMediaStore` needs the `mongodb` extra:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[mongodb]"
 ```
 
-Two constructor knobs shape that layout. `collection=` (default `'media'`) names the manifest collection and derives the chunk collection as `<collection>_chunks`; names outside `[A-Za-z_][A-Za-z0-9_]*` are rejected. `chunk_size_bytes=` (default 8 MiB) sets the split size and is rejected below 1 byte or above 16 MiB minus 64 KiB of headroom for the chunk document's own fields, since a larger chunk would build a document MongoDB refuses on insert.
-
-On its first `put` or `get`, the store issues `createIndex` for a compound `(files_id, n)` index on the chunk collection, without which reassembly is a collection scan. The connecting user therefore needs the privilege to create indexes -- a restricted Atlas role may not have it -- and pointing the store at an already-populated collection pays the index build on that first call.
+- Pass a shared `AsyncMongoClient` as `client=`, or a connection string as `db_url=` (the store then owns the client; call `await store.aclose()`). `database=` is required.
+- Each blob is a manifest document in `media` (`_id` is the digest, `collection=` renames it) plus chunks in `media_chunks`. `chunk_size_bytes` (default 8 MiB, at most 16 MiB minus 64 KiB) keeps each chunk under MongoDB's 16 MiB document cap. The manifest holds `MediaContext.metadata` unchunked, so keep metadata small.
+- `get` reads the manifest's chunks and checks their sha256 against the URI, so a missing or corrupt chunk raises `ValueError`.
+- The first `put` or `get` creates a `(files_id, n)` index on the chunk collection, so the user needs the privilege to create indexes.
+- GridFS is not used because it keys files by `ObjectId` and cannot deduplicate by content.
 
 ```python
 from pymongo import AsyncMongoClient
@@ -65,13 +87,14 @@ client = AsyncMongoClient('mongodb://localhost:27017')
 store = MongoMediaStore(client=client, database='agent_media')
 ```
 
-`PostgresMediaStore` takes a caller-owned asyncpg-compatible pool, described by the `PostgresPool` protocol exported from this package. The harness imports no driver and defines no extra for it: the application installs the driver and owns the pool, and the store does not close it. Each blob is one row in the `media` table (`table=` renames it; names outside `[a-z_][a-z0-9_]*` or longer than 63 characters are rejected, lowercase because PostgreSQL folds unquoted identifiers and `'Media'` would share a table with `'media'`), keyed by its sha256 digest, so a second `put` of the same bytes is a no-op (`ON CONFLICT (sha256) DO NOTHING`). The bytes are one `BYTEA` value, which PostgreSQL caps at 1 GB, and there is no streaming API, so a blob has to fit in process memory in both directions.
+`PostgresMediaStore` takes a caller-owned asyncpg-compatible pool (the `PostgresPool` protocol) and never closes it. The harness defines no extra for the driver:
 
 ```bash
 pip/uv-add asyncpg
 ```
 
-On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. The connecting role therefore needs `CREATE` on the schema for that first call. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
+- Each blob is one row in `media`, keyed by its digest; a second `put` of the same bytes is a no-op. `table=` renames the table and accepts lowercase names matching `[a-z_][a-z0-9_]*`, up to 63 characters.
+- The first operation runs `CREATE TABLE IF NOT EXISTS` under a `pg_advisory_xact_lock`, so the role needs `CREATE` on the schema. An existing table of the same name with another layout is not migrated, and the first `put` or `get` fails on a missing column; pass `table=` in that case.
 
 ```python
 import asyncpg
@@ -84,33 +107,38 @@ async def build_media_store() -> tuple[PostgresMediaStore, asyncpg.Pool]:
     return PostgresMediaStore(pool), pool
 ```
 
-Close the returned pool during application shutdown. The store does not manage it.
+Close the returned pool during application shutdown.
+
+## Metadata
+
+`put(data, context=MediaContext(metadata={...}))` stores a `str` to `str` mapping that `get_metadata(uri)` returns. `get_metadata` raises `FileNotFoundError` for a blob that was never stored.
+
+| Store | Stored as | A later `put` with other metadata |
+|---|---|---|
+| `DiskMediaStore` | `<blob>.meta.json` sidecar | Replaces it |
+| `SqliteMediaStore`, `PostgresMediaStore` | JSON column | Is ignored |
+| `MongoMediaStore` | JSON string on the manifest | Is ignored |
+| `S3MediaStore` | Signed `x-amz-meta-*` headers | Replaces it |
+
+S3 keys must match `[A-Za-z0-9-]+` and come back lowercased. `get_metadata` never returns `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
 
 ## Walker helpers
 
-`externalize_media` and `restore_media` walk a message node and swap payloads for URIs and back:
+`externalize_media` replaces each payload of at least `threshold_bytes` with a marker that carries its URI, and `restore_media` puts the payloads back. Both walk a JSON tree such as `json.loads(ModelMessagesTypeAdapter.dump_json(messages))` or `dump_python(messages, mode='json')`; anything else, including message objects, raises `TypeError`.
 
-```python
-from pydantic_ai_harness.media import DiskMediaStore, externalize_media, restore_media
+They externalize:
 
-store = DiskMediaStore(directory='./media')
+- `BinaryContent` data, measured in decoded bytes. `data` that is not canonical base64 stays inline, since a tool can return a dict of the same shape. The restored `data` uses the source's base64 alphabet.
+- Any message part whose string `content` is at least `threshold_bytes` UTF-8 bytes: `TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`.
+- `TextContent` inside a `UserPromptPart.content` sequence or a `ToolReturn`.
 
-# Replace binary and text payloads at or above the threshold with media+sha256:// URIs.
-lean = await externalize_media(message, media_store=store, threshold_bytes=32_000)
+Markers use reserved `__harness_external_*` keys. Caller data that uses those keys, such as a tool return, is escaped on write and restored on read, so it is never read back as a marker. `media_uri_for` and `parse_media_uri` compute and parse URIs if you key media yourself.
 
-# Later, rehydrate the URIs back into the original parts.
-full = await restore_media(lean, media_store=store)
-```
-
-`externalize_media` externalizes both large `BinaryContent` and large text: any message part whose string `content` reaches `threshold_bytes` UTF-8 bytes (`TextPart`, `ThinkingPart`, a string-returning `ToolReturnPart`, a string-valued `UserPromptPart`), plus any `TextContent` element travelling inside a `UserPromptPart.content` sequence or a `ToolReturn`. The same `threshold_bytes` governs binary and text, and payloads below it stay inline. Round-trip is transparent -- `restore_media` re-inlines binary bytes and text symmetrically. If you need to key media yourself, `media_uri_for` and `parse_media_uri` give you the raw URI round-trip.
-
-The current reader restores binary markers written before text externalization. That compatibility is upgrade-only: a release that predates text externalization treats every marker as binary, so it cannot validate a snapshot containing an externalized text marker. Keep a current reader for persisted snapshots that contain those markers.
-
-If a payload uses the same namespaced keys as the marker format, the writer moves those values into a versioned reserved mapping and the current reader restores them. A marker written before this escaping format was added still restores. The reader treats the reserved keys as its own only when the reserved mapping has the shape the writer produces and the version key carries a stamp from the format's own namespace, so a payload that happened to carry either or both is left alone. A marker carrying both, stamped with a version this reader does not know, is rejected rather than restored with the reserved values stripped. Compatibility the other way is upgrade-only. A reader that predates the escaping format re-inlines the externalized field correctly, but it leaves the caller's values in the reserved mapping instead of restoring them to their own keys, and leaves the two reserved keys in the payload. Keep a current reader for persisted snapshots that contain escaped markers.
+Older snapshots restore with a newer release; the reverse is not supported. Read persisted snapshots with a release at least as new as the one that wrote them. [Step Persistence](step-persistence.md#persisting-media) lists the marker-format changes.
 
 ## Public URLs
 
-When a store is fronted by a CDN, a local HTTP server, or a signed-URL service, pass a `public_url=` resolver (or use `make_static_public_url`) to turn a stored `media+sha256://` URI into a URL the model can fetch directly. Without a resolver, `public_url(...)` returns `None`.
+Pass a `public_url=` resolver to turn a stored URI into a URL the model can fetch, for a store behind a CDN, a local HTTP server, or a signed-URL service. Without one, `public_url(...)` returns `None`.
 
 A static base URL, for a public bucket or CDN:
 
@@ -127,7 +155,7 @@ store = S3MediaStore(
 )
 ```
 
-A presigned or rotating-signature URL -- pass any async callable that takes `(uri, MediaContext)`:
+A presigned URL, from any sync or async callable that takes `(uri, MediaContext)`:
 
 ```python
 from pydantic_ai_harness.media import MediaContext, S3MediaStore
@@ -143,40 +171,31 @@ store = S3MediaStore(..., public_url=presign)
 
 ## `MediaContext`
 
-Every store method and both user-supplied callables (`PublicUrlResolver`, `KeyStrategy`) accept a `MediaContext` -- an extensible per-operation bag:
+Every store method and both user-supplied callables (`PublicUrlResolver`, `KeyStrategy`) take a `MediaContext`. All fields are optional, and new ones are added without breaking callers.
 
-```python
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-
-
-@dataclass(frozen=True, kw_only=True)
-class MediaContext:
-    media_type: str | None = None                    # e.g. 'image/png'
-    filename: str | None = None                      # original filename, when known
-    metadata: Mapping[str, str] = field(default_factory=dict)  # user-supplied tags
-```
-
-All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores; `media_type` is persisted separately (as the byte payload's `Content-Type`).
+| Field | Default | Used by |
+|---|---|---|
+| `media_type` | `None` | S3 `Content-Type`, key strategies, resolvers |
+| `filename` | `None` | Your key strategy or resolver |
+| `metadata` | `{}` | Persisted per store; read with `get_metadata` |
 
 ## `KeyStrategy`
 
-The default on-store key layout is `<sha256>.bin`. `DiskMediaStore` and `S3MediaStore` accept a `key_strategy=` override to fit an existing layout. `SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` do not, since the digest is their primary key -- use `table=` / `collection=` to move the rows or documents instead:
+`DiskMediaStore` and `S3MediaStore` store each blob at `<sha256>.bin` by default. Pass `key_strategy=` to fit an existing layout. The SQLite, MongoDB, and PostgreSQL stores key on the digest, so they take `table=` or `collection=` instead.
 
 ```python
-from pydantic_ai_harness.media import DiskMediaStore, MediaContext
+from pydantic_ai_harness.media import DiskMediaStore, MediaContext, parse_media_uri
 
 
 def by_media_type(uri: str, ctx: MediaContext) -> str:
-    digest = uri.removeprefix('media+sha256://')
     ext = {'image/png': '.png', 'image/jpeg': '.jpg'}.get(ctx.media_type or '', '.bin')
-    return f'images/{digest}{ext}'
+    return f'images/{parse_media_uri(uri)}{ext}'
 
 
 store = DiskMediaStore('runs', key_strategy=by_media_type)
 ```
 
-If your strategy depends on `ctx.media_type`, the same context must be supplied at read time for `get`/`exists` to find the blob. `DiskMediaStore` rejects strategies that produce absolute paths or `..` segments, to keep writes inside the store directory. `default_key_strategy` is exported if you want to build on it.
+A strategy that reads `ctx.media_type` needs the same context on `get` and `exists`; `restore_media` passes the part's media type. `DiskMediaStore` rejects URIs that are not `media+sha256://` URIs and keys that are absolute or contain `..`. `default_key_strategy` is exported if you want to build on it.
 
 ## API
 
@@ -188,11 +207,11 @@ If your strategy depends on `ctx.media_type`, the same context must be supplied 
 | `MediaContext` | Per-operation context (media type, filename, tags) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |
 | `PublicUrlResolver`, `make_static_public_url` | Resolve a stored URI to a public URL |
-| `externalize_media`, `restore_media` | Walk a message node to externalize / rehydrate large binary and text payloads |
+| `externalize_media`, `restore_media` | Walk a JSON message tree to externalize / rehydrate large binary and text payloads |
 | `media_uri_for`, `parse_media_uri` | Compute and parse a `media+sha256://` URI |
 
 Source: [`pydantic_ai_harness/media/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/media/).
 
 ## Related
 
-- [Step Persistence](step-persistence.md) -- the first consumer of these stores, externalizing large `BinaryContent` and text parts in run snapshots.
+- [Step Persistence](step-persistence.md): externalizes large `BinaryContent` and text parts in run snapshots through these stores.

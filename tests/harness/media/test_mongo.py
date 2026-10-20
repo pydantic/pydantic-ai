@@ -141,9 +141,9 @@ class TestMongoMediaStoreRoundTrip:
     async def test_dedup_short_circuits_the_write_path(self) -> None:
         """A repeat `put` returns on the manifest lookup without touching the chunks.
 
-        A chunk is deleted between the two writes: `$setOnInsert` is idempotent by
-        itself, so the deleted chunk staying absent is what pins the early return
-        rather than merely the absence of duplicates.
+        A chunk is deleted between the two writes, so the deleted chunk staying
+        absent is what pins the early return rather than merely the absence of
+        duplicates.
         """
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
@@ -196,45 +196,58 @@ class TestMongoMediaStoreRoundTrip:
             await store.get(_MISSING_URI)
 
     async def test_reassembly_mismatch_raises(self) -> None:
-        """A `size_bytes` that disagrees with the chunk bytes surfaces as a loud error."""
+        """A chunk whose bytes no longer hash to the digest surfaces as a loud error."""
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t')
         uri = await store.put(b'twelve chars')
         digest = parse_media_uri(uri)
-        await client['t']['media'].update_one({'_id': digest}, {'$set': {'size_bytes': 999}})
+        await client['t']['media_chunks'].update_one(
+            {'_id': f'{digest}:0'}, {'$set': {'data': Binary(b'tweLve chars')}}
+        )
         with pytest.raises(ValueError, match='reassembly mismatch'):
             await store.get(uri)
 
-    async def test_stale_chunks_from_crashed_write_never_silently_corrupt(self) -> None:
-        """Stale chunks from a crashed prior write at a different chunk size cannot corrupt a read.
+    @pytest.mark.parametrize(
+        ('stale_size', 'retry_size'),
+        [pytest.param(8, 4, id='stale-chunks-larger'), pytest.param(2, 4, id='stale-chunks-smaller')],
+    )
+    async def test_retry_after_a_crashed_write_at_another_chunk_size_reads_back(
+        self, stale_size: int, retry_size: int
+    ) -> None:
+        """A retry overwrites the chunks a crashed write left behind, and reads stop at its `chunk_count`.
 
-        Chunk `_id`s are `<digest>:<n>`, so a retry at a different
-        `chunk_size_bytes` leaves the old chunks in place (`$setOnInsert` will
-        not overwrite them). Every chunk under a digest is a slice of the SAME
-        content, so a mismatched-layout retry can only ever reassemble the
-        identical bytes (length matches) or fail the `size_bytes` guard -- it
-        can never return wrong bytes silently. In this constructed layout the
-        stale 8-byte chunks plus the fresh 4-byte chunks over-count the length,
-        so `get` fails loudly, which is the outcome asserted here. This is the
-        evidence for Macroscope 446-1.
+        Chunk `_id`s are `<digest>:<n>`, so before this the retry kept the stale
+        chunks (`$setOnInsert`) and `get` read every chunk under the digest.
+        Once the retry wrote the manifest, the blob was unreadable for good.
         """
         client = _mock_client()
         data = bytes(range(64))
         digest = parse_media_uri(media_uri_for(data))
-        # Simulate a crashed write that used an 8-byte chunk size and left its
-        # chunks behind for this digest without ever writing the manifest.
         chunks = client['t']['media_chunks']
-        for n, start in enumerate(range(0, len(data), 8)):
-            await chunks.update_one(
-                {'_id': f'{digest}:{n}'},
-                {'$setOnInsert': {'files_id': digest, 'n': n, 'data': Binary(data[start : start + 8])}},
-                upsert=True,
+        # A crashed write left its chunks for this digest without writing the manifest.
+        for n, start in enumerate(range(0, len(data), stale_size)):
+            await chunks.insert_one(
+                {'_id': f'{digest}:{n}', 'files_id': digest, 'n': n, 'data': Binary(data[start : start + stale_size])}
             )
-        # A fresh write re-puts the same content at a 4-byte chunk size.
-        store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
-        await store.put(data)
-        with pytest.raises(ValueError, match='reassembly mismatch'):
-            await store.get(media_uri_for(data))
+        store = MongoMediaStore(client=client, database='t', chunk_size_bytes=retry_size)
+        uri = await store.put(data)
+        assert await store.get(uri) == data
+
+    async def test_manifest_without_integer_chunk_count_raises(self) -> None:
+        client = _mock_client()
+        store = MongoMediaStore(client=client, database='t')
+        uri = await store.put(b'counted')
+        await client['t']['media'].update_one({'_id': parse_media_uri(uri)}, {'$unset': {'chunk_count': ''}})
+        with pytest.raises(ValueError, match='no integer chunk_count'):
+            await store.get(uri)
+
+    async def test_chunk_without_bytes_raises(self) -> None:
+        client = _mock_client()
+        store = MongoMediaStore(client=client, database='t')
+        uri = await store.put(b'chunked')
+        await client['t']['media_chunks'].update_one({'_id': f'{parse_media_uri(uri)}:0'}, {'$set': {'data': 'text'}})
+        with pytest.raises(ValueError, match='holds str, not bytes'):
+            await store.get(uri)
 
     async def test_metadata_round_trips(self) -> None:
         store = MongoMediaStore(client=_mock_client(), database='t')
@@ -253,6 +266,14 @@ class TestMongoMediaStoreRoundTrip:
         store = MongoMediaStore(client=_mock_client(), database='t')
         with pytest.raises(FileNotFoundError):
             await store.get_metadata(_MISSING_URI)
+
+    async def test_get_metadata_rejects_non_string_metadata(self) -> None:
+        client = _mock_client()
+        store = MongoMediaStore(client=client, database='t')
+        uri = await store.put(b'tagged', context=MediaContext(metadata={'k': 'v'}))
+        await client['t']['media'].update_one({'_id': parse_media_uri(uri)}, {'$set': {'metadata': {'k': 'v'}}})
+        with pytest.raises(ValueError, match='non-string metadata'):
+            await store.get_metadata(uri)
 
     async def test_custom_collection_name(self) -> None:
         client = _mock_client()

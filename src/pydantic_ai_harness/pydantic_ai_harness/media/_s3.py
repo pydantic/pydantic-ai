@@ -3,8 +3,8 @@
 Targets AWS S3, Cloudflare R2, MinIO, and other S3-compatible endpoints.
 Implements path-style URLs (`<endpoint>/<bucket>/<key>`) -- the lowest common
 denominator across providers. Only PUT / GET / HEAD are implemented;
-multipart, lifecycle, and listing operations are out of scope (any blob we
-store is sub-5GB by construction so multipart is unnecessary).
+multipart, lifecycle, and listing operations are out of scope, so a blob is
+limited to S3's 5 GB single-PUT cap.
 
 The SigV4 implementation follows the AWS reference algorithm but is local
 to this module to keep `pydantic-ai-harness` free of `botocore` / `boto3`.
@@ -23,14 +23,14 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from pydantic_ai_harness.media._store import (
-    _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    EMPTY_CONTEXT,
     KeyStrategy,
     MediaContext,
     PublicUrlResolver,
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
     default_key_strategy,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 
 _ALGORITHM = 'AWS4-HMAC-SHA256'
 _SERVICE = 's3'
-# Conservative subset for x-amz-meta-* keys: ASCII letters/digits/dash; lowercase.
+# Conservative subset for x-amz-meta-* keys: ASCII letters/digits/dash. S3
+# lowercases header names, so keys come back from `get_metadata` lowercased.
 _META_KEY_RE = re.compile(r'^[a-zA-Z0-9-]+$')
 
 
@@ -109,7 +110,9 @@ def sign_request(
             headers_to_sign[k.lower()] = v
 
     sorted_keys = sorted(headers_to_sign)
-    canonical_headers = ''.join(f'{k}:{headers_to_sign[k]}\n' for k in sorted_keys)
+    # SigV4 canonicalizes each value by trimming it and collapsing runs of
+    # whitespace; S3 does the same to the headers it receives.
+    canonical_headers = ''.join(f'{k}:{" ".join(headers_to_sign[k].split())}\n' for k in sorted_keys)
     signed_headers = ';'.join(sorted_keys)
 
     canonical_request = '\n'.join(
@@ -189,9 +192,10 @@ class S3MediaStore:
     - `client=` -- bring your own `httpx.AsyncClient` for connection pooling.
 
     **Metadata persistence**: `context.metadata` is sent as signed
-    `x-amz-meta-*` headers on PUT (subject to ASCII naming rules) and
-    read back via `get_metadata(uri)`, which strips the `x-amz-meta-`
-    prefix from the HEAD response headers.
+    `x-amz-meta-*` headers on PUT and read back via `get_metadata(uri)`,
+    which strips the `x-amz-meta-` prefix from the HEAD response headers.
+    Keys must match `[A-Za-z0-9-]+` and come back lowercased. Every `put`
+    is a PUT, so a later `put` with different metadata replaces it.
     """
 
     def __init__(
@@ -258,7 +262,7 @@ class S3MediaStore:
         async with httpx.AsyncClient() as client:
             return await client.request(method, url, content=body, headers=headers)
 
-    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
         uri = media_uri_for(data)
         meta = _meta_headers_from_context(context)
         response = await self._request(
@@ -272,7 +276,7 @@ class S3MediaStore:
             raise RuntimeError(f'S3 PUT failed for {uri}: {response.status_code} {response.text[:200]}')
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
         digest = parse_media_uri(uri)
         response = await self._request('GET', self._object_path(uri, context))
         if response.status_code == 404:
@@ -281,7 +285,7 @@ class S3MediaStore:
             raise RuntimeError(f'S3 GET failed for {digest}: {response.status_code} {response.text[:200]}')
         return response.content
 
-    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         response = await self._request('HEAD', self._object_path(uri, context))
         if response.status_code == 404:
@@ -290,10 +294,10 @@ class S3MediaStore:
             raise RuntimeError(f'S3 HEAD failed for {digest}: {response.status_code} {response.text[:200]}')
         return True
 
-    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         response = await self._request('HEAD', self._object_path(uri, context))
         if response.status_code == 404:

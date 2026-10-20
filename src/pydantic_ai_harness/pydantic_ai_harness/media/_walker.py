@@ -24,11 +24,21 @@ MongoDB's 16MB document cap when a tool returns a large string.
 Round-trip: `externalize_media` (pre-write) and `restore_media` (post-read)
 are inverses for payloads whose byte length is >= threshold. Payloads below
 the threshold pass through unchanged.
+
+The tree has to be JSON-shaped: a message object or a `dump_python()` tree
+(which carries `bytes` and `datetime` values) raises `TypeError`, because
+nothing in it would match the shapes above.
+
+A dict the walker does not externalize but which carries a reserved key
+(`_EXTERNAL_MARKER` or `_LITERAL_KEY`) is written wrapped as
+`{_LITERAL_KEY: <dict>}` and unwrapped on restore, so caller data such as a
+tool return can never be read back as a marker.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
 from typing import TypeGuard
 
 from pydantic_ai_harness.media._store import MediaContext, MediaStore
@@ -47,6 +57,13 @@ _URI_KEY = '__harness_external_uri__'
 # the metadata, and the reader puts them back after rehydrating the payload.
 _ESCAPED_KEYS = '__harness_external_escaped_keys__'
 _MARKER_FORMAT = '__harness_external_marker_format__'
+# Set on a binary marker whose source `data` used the URL-safe base64 alphabet
+# (which is what pydantic serializes `bytes` as), so restore writes the same
+# alphabet back. Markers without it restore with the standard alphabet.
+_URLSAFE_KEY = '__harness_external_urlsafe__'
+# Wraps a dict that is not a marker but carries `_EXTERNAL_MARKER` or this key
+# itself, so restore never mistakes caller data for a marker.
+_LITERAL_KEY = '__harness_external_literal__'
 # Version stamps this format issues. The prefix is what tells a stamp we wrote
 # apart from a caller-owned `_MARKER_FORMAT` value, so only a stamp inside the
 # namespace makes the version check apply at all.
@@ -58,7 +75,9 @@ _MARKER_METADATA_KEYS = (
     _URI_KEY,
     _ESCAPED_KEYS,
     _MARKER_FORMAT,
+    _URLSAFE_KEY,
 )
+_LITERAL_TRIGGER_KEYS = (_EXTERNAL_MARKER, _LITERAL_KEY)
 # `TextContent.kind` (`pydantic_ai.messages.TextContent`). Unlike a message
 # part it carries no `part_kind`, so it needs its own discriminator match.
 _TEXT_CONTENT_KIND = 'text-content'
@@ -83,12 +102,33 @@ def _is_json_list(node: object) -> TypeGuard[list[object]]:
     return isinstance(node, list)
 
 
-def _is_binary_part(node: dict[str, object]) -> bool:
-    return node.get('kind') == 'binary' and isinstance(node.get('data'), str)
+def _binary_data(node: dict[str, object]) -> str | None:
+    """The base64 `data` of a serialized `BinaryContent`, or `None` if `node` is not one."""
+    data = node.get('data')
+    if node.get('kind') == 'binary' and isinstance(data, str):
+        return data
+    return None
 
 
-def _is_text_part(node: dict[str, object]) -> bool:
-    """A serialized node carrying inline text under `content`.
+def _decode_base64(data: str) -> tuple[bytes, bytes | None] | None:
+    """Decode standard or URL-safe base64, returning the bytes and the `altchars` it used.
+
+    Invalid characters or a mixed alphabet return `None`: `ToolReturnContent`
+    permits arbitrary mappings, so a caller dict can look like `BinaryContent`
+    without holding base64, and it must stay inline rather than fail.
+    """
+    urlsafe = '-' in data or '_' in data
+    if urlsafe and ('+' in data or '/' in data):
+        return None
+    altchars = b'-_' if urlsafe else None
+    try:
+        return base64.b64decode(data, altchars=altchars, validate=True), altchars
+    except binascii.Error:
+        return None
+
+
+def _text_content(node: dict[str, object]) -> str | None:
+    """The inline text `content` of a serialized node, or `None` if `node` carries none.
 
     Requires a string `content` plus a discriminator: either a string
     `part_kind` (every `pydantic_ai` message part serializes one) or
@@ -108,21 +148,39 @@ def _is_text_part(node: dict[str, object]) -> bool:
     `UserPromptPart.content` list is not a dict, so it is never a candidate
     (replacing it with a marker dict would break `UserContent` validation).
     """
-    if not isinstance(node.get('content'), str):
-        return False
-    return isinstance(node.get('part_kind'), str) or node.get('kind') == _TEXT_CONTENT_KIND
+    content = node.get('content')
+    if not isinstance(content, str):
+        return None
+    if isinstance(node.get('part_kind'), str) or node.get('kind') == _TEXT_CONTENT_KIND:
+        return content
+    return None
 
 
 def _is_external_marker(node: dict[str, object]) -> bool:
     return node.get(_EXTERNAL_MARKER) is True
 
 
+def _literal_payload(node: dict[str, object]) -> dict[str, object] | None:
+    """The caller dict inside a `{_LITERAL_KEY: <dict>}` wrapper, or `None` if `node` is not one."""
+    if len(node) != 1:
+        return None
+    payload = node.get(_LITERAL_KEY)
+    return payload if _is_json_dict(payload) else None
+
+
+def _is_json_scalar(node: object) -> bool:
+    return node is None or isinstance(node, (str, int, float, bool))
+
+
 async def externalize_media(node: object, *, media_store: MediaStore, threshold_bytes: int) -> object:
     """Walk `node` and replace inline binary/text parts >= threshold.
 
-    Each qualifying part becomes a marker dict carrying the canonical
-    `media+sha256://` URI; the raw bytes are written to `media_store`.
-    Returns a new tree -- input is not mutated.
+    `node` must be a JSON-shaped tree, such as
+    `json.loads(ModelMessagesTypeAdapter.dump_json(messages))` or
+    `ModelMessagesTypeAdapter.dump_python(messages, mode='json')`; any other
+    value raises `TypeError`. Each qualifying part becomes a marker dict
+    carrying the canonical `media+sha256://` URI; the raw bytes are written to
+    `media_store`. Returns a new tree -- input is not mutated.
     """
     if _is_json_list(node):
         out_list: list[object] = []
@@ -130,31 +188,42 @@ async def externalize_media(node: object, *, media_store: MediaStore, threshold_
             out_list.append(await externalize_media(item, media_store=media_store, threshold_bytes=threshold_bytes))
         return out_list
     if _is_json_dict(node):
-        if _is_binary_part(node):
-            replaced = await _maybe_externalize_binary(node, media_store, threshold_bytes)
-            if replaced is not None:
-                return replaced
-        elif _is_text_part(node):
-            replaced = await _maybe_externalize_text(node, media_store, threshold_bytes)
-            if replaced is not None:
-                return replaced
+        replaced: dict[str, object] | None = None
+        if (data := _binary_data(node)) is not None:
+            replaced = await _maybe_externalize_binary(node, data, media_store, threshold_bytes)
+        elif (content := _text_content(node)) is not None:
+            replaced = await _maybe_externalize_text(node, content, media_store, threshold_bytes)
+        if replaced is not None:
+            return replaced
         out_dict: dict[str, object] = {}
         for key, value in node.items():
             out_dict[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
+        if any(key in node for key in _LITERAL_TRIGGER_KEYS):
+            return {_LITERAL_KEY: out_dict}
         return out_dict
-    return node
+    if _is_json_scalar(node):
+        return node
+    raise TypeError(
+        f'`externalize_media` takes a JSON tree, got {type(node).__name__}; '
+        "serialize messages with `ModelMessagesTypeAdapter.dump_python(messages, mode='json')` first"
+    )
 
 
 async def _maybe_externalize_binary(
     node: dict[str, object],
+    data: str,
     media_store: MediaStore,
     threshold_bytes: int,
 ) -> dict[str, object] | None:
-    # `_is_binary_part` already verified `data` is a string; the cast is safe.
-    data_value = node['data']
-    assert isinstance(data_value, str)
-    raw = base64.urlsafe_b64decode(data_value)
+    decoded = _decode_base64(data)
+    if decoded is None:
+        return None
+    raw, altchars = decoded
     if len(raw) < threshold_bytes:
+        return None
+    # Non-canonical padding bits decode fine but would not re-encode to `data`,
+    # so restoring them would change the caller's string.
+    if base64.b64encode(raw, altchars=altchars).decode('ascii') != data:
         return None
     media_type_value = node.get('media_type')
     media_type = media_type_value if isinstance(media_type_value, str) else None
@@ -165,18 +234,18 @@ async def _maybe_externalize_binary(
     marker = await _preserve_fields(node, 'data', media_store, threshold_bytes)
     _escape_marker_metadata(marker)
     marker[_EXTERNAL_MARKER] = True
+    if altchars is not None:
+        marker[_URLSAFE_KEY] = True
     _write_reference(marker, node, uri)
     return marker
 
 
 async def _maybe_externalize_text(
     node: dict[str, object],
+    content_value: str,
     media_store: MediaStore,
     threshold_bytes: int,
 ) -> dict[str, object] | None:
-    # `_is_text_part` already verified `content` is a string.
-    content_value = node['content']
-    assert isinstance(content_value, str)
     # `surrogatepass`: a JSON string can decode to an unpaired surrogate (e.g.
     # "\ud800"), which strict UTF-8 refuses to encode. Encoding it here would
     # raise even for below-threshold content that should pass through untouched.
@@ -275,7 +344,9 @@ async def restore_media(node: object, *, media_store: MediaStore) -> object:
             out_list.append(await restore_media(item, media_store=media_store))
         return out_list
     if _is_json_dict(node):
-        if _is_external_marker(node):
+        if (literal := _literal_payload(node)) is not None:
+            node = literal
+        elif _is_external_marker(node):
             return await _restore_external(node, media_store)
         out_dict: dict[str, object] = {}
         for key, value in node.items():
@@ -285,7 +356,7 @@ async def restore_media(node: object, *, media_store: MediaStore) -> object:
 
 
 async def _restore_external(node: dict[str, object], media_store: MediaStore) -> dict[str, object]:
-    dropped = {_EXTERNAL_MARKER, _TEXT_MARKER}
+    dropped = {_EXTERNAL_MARKER, _TEXT_MARKER, _URLSAFE_KEY}
     escaped: dict[str, object] | None = None
     escaped_value = node.get(_ESCAPED_KEYS)
     marker_format = node.get(_MARKER_FORMAT)
@@ -343,5 +414,6 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
     if is_text:
         restored['content'] = raw.decode('utf-8', errors='surrogatepass')
     else:
-        restored['data'] = base64.b64encode(raw).decode('ascii')
+        altchars = b'-_' if node.get(_URLSAFE_KEY) is True else None
+        restored['data'] = base64.b64encode(raw, altchars=altchars).decode('ascii')
     return restored

@@ -26,6 +26,7 @@ size-branch, so the write path is the same for a 1KB and a 100MB payload.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -35,13 +36,13 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
 from pydantic_ai_harness.media._store import (
-    _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    EMPTY_CONTEXT,
     MediaContext,
     PublicUrlResolver,
-    _coerce_metadata_mapping,  # pyright: ignore[reportPrivateUsage]
-    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
+    coerce_metadata_mapping,
     media_uri_for,
     parse_media_uri,
+    resolve_public_url,
 )
 
 _DEFAULT_CHUNK_SIZE_BYTES = 8 * 1024 * 1024
@@ -72,8 +73,12 @@ class MongoMediaStore:
     - `media_chunks` -- one document per chunk, `_id = '<digest>:<n>'`, with
       `files_id = <digest>`, `n` (0-based order), and `data` (`Binary`).
 
-    Writes are idempotent via `$setOnInsert` upserts: re-`put`-ing the same
-    bytes is a no-op. `chunk_size_bytes` (default 8MB) bounds each chunk
+    Writes are idempotent: once the manifest exists, re-`put`-ing the same
+    bytes is a no-op. Chunks are written before the manifest and overwrite
+    any chunk a crashed earlier write left behind, and `get` reads only the
+    manifest's `chunk_count` chunks and checks the sha256 of the result, so
+    a retry with a different `chunk_size_bytes` still reads back intact.
+    `chunk_size_bytes` (default 8MB) bounds each chunk
     document below the 16MB cap; it is rejected outside `1..~16MB`. Lower it
     in tests to exercise the multi-chunk split cheaply.
     """
@@ -127,7 +132,7 @@ class MongoMediaStore:
         await self._db[self._chunks_name].create_index([('files_id', 1), ('n', 1)])
         self._indexes_ready = True
 
-    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
         await self._ensure_indexes()
         uri = media_uri_for(data)
         digest = parse_media_uri(uri)
@@ -140,7 +145,7 @@ class MongoMediaStore:
             piece = data[start : start + self._chunk_size]
             await chunks.update_one(
                 {'_id': f'{digest}:{n}'},
-                {'$setOnInsert': {'files_id': digest, 'n': n, 'data': Binary(piece)}},
+                {'$set': {'files_id': digest, 'n': n, 'data': Binary(piece)}},
                 upsert=True,
             )
             chunk_count = n + 1
@@ -158,37 +163,45 @@ class MongoMediaStore:
         )
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
         await self._ensure_indexes()
         digest = parse_media_uri(uri)
-        files_doc = await self._db[self._files_name].find_one({'_id': digest}, {'size_bytes': 1})
+        files_doc = await self._db[self._files_name].find_one({'_id': digest}, {'size_bytes': 1, 'chunk_count': 1})
         if files_doc is None:
             raise FileNotFoundError(f'media not found: {uri}')
+        chunk_count = files_doc.get('chunk_count')
+        if not isinstance(chunk_count, int):
+            raise ValueError(f'media manifest for {uri} has no integer chunk_count: {chunk_count!r}')
         buffer = bytearray()
-        async for doc in self._db[self._chunks_name].find({'files_id': digest}).sort('n', 1):
+        query = {'files_id': digest, 'n': {'$lt': chunk_count}}
+        async for doc in self._db[self._chunks_name].find(query).sort('n', 1):
             piece = doc['data']
-            assert isinstance(piece, (bytes, bytearray))
+            if not isinstance(piece, bytes):
+                raise ValueError(f'media chunk for {uri} holds {type(piece).__name__}, not bytes')
             buffer.extend(piece)
-        # A chunk gone missing or truncated would silently return short bytes; the
-        # stored `size_bytes` is the reassembly checksum that turns that into a
-        # loud failure instead of a corrupt round-trip.
-        expected = files_doc.get('size_bytes')
-        if len(buffer) != expected:
-            raise ValueError(f'media reassembly mismatch for {uri}: expected {expected!r} bytes, got {len(buffer)}')
+        # A missing, truncated, or stale chunk would otherwise return wrong bytes.
+        # The digest is the content hash, so checking it catches all three.
+        if hashlib.sha256(buffer).hexdigest() != digest:
+            expected = files_doc.get('size_bytes')
+            raise ValueError(
+                f'media reassembly mismatch for {uri}: expected {expected!r} bytes '
+                f'with that sha256, got {len(buffer)} bytes that do not match'
+            )
         return bytes(buffer)
 
-    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         return await self._db[self._files_name].find_one({'_id': digest}, {'_id': 1}) is not None
 
-    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         doc = await self._db[self._files_name].find_one({'_id': digest}, {'metadata': 1})
         if doc is None:
             raise FileNotFoundError(f'media not found: {uri}')
         raw = doc.get('metadata', '{}')
-        assert isinstance(raw, str)
-        return _coerce_metadata_mapping(json.loads(raw))
+        if not isinstance(raw, str):
+            raise ValueError(f'media manifest for {uri} has non-string metadata: {raw!r}')
+        return coerce_metadata_mapping(json.loads(raw))
