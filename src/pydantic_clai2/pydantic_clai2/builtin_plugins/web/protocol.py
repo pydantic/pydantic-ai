@@ -4,12 +4,15 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
+from typing_extensions import TypeIs
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -19,6 +22,7 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     RetryPromptPart,
@@ -29,6 +33,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.usage import RunUsage
@@ -40,6 +45,7 @@ from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -95,6 +101,8 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    images: list[str] = field(default_factory=list[str])
+    """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
 
 
 @dataclass(kw_only=True)
@@ -134,7 +142,7 @@ class Choice:
     description: str = ''
 
 
-DialogKind = Literal['choose', 'text', 'confirm', 'wait']
+DialogKind = Literal['choose', 'text', 'confirm', 'wait', 'view']
 
 
 @dataclass(kw_only=True)
@@ -158,11 +166,15 @@ class Dialog:
     initial: str = ''
     secret: bool = False
     """`text`: mask what is typed; the answer is never sent to any browser."""
+    multiline: bool = False
+    """`text`: take text with line breaks, in a text area."""
     yes: str = ''
     """`confirm`: the answer that confirms; `no`, the other, is the safe one."""
     no: str = ''
     shown: str = ''
     """`wait`: the latest text the waiting task showed, such as a sign-in link."""
+    text: str = ''
+    """`view`: the read-only text to show; any answer closes it."""
 
 
 @dataclass(kw_only=True)
@@ -197,6 +209,7 @@ class StatusInfo:
     context_tokens: int | None = None
     context_window: int | None = None
     cost: str | None = None
+    cost_is_lower_bound: bool = False
     streamed_tokens: int = 0
     """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
     output_tokens: int | None = None
@@ -261,7 +274,10 @@ class UpdateInfo:
 
 @dataclass(kw_only=True)
 class Snapshot:
-    """Everything a newly connected browser needs: sent first on every connection and conversation switch."""
+    """Everything a browser needs to show one live session: sent on connect, on `watch`, and on a conversation switch.
+
+    `session.id` names the session, so a snapshot carries no `session` string of its own.
+    """
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
@@ -451,6 +467,52 @@ class DialogClosed:
     id: str
 
 
+@dataclass(frozen=True, kw_only=True)
+class TurnUsage:
+    """Tokens, requests, and cost of one turn, or of all of them, as a `/usage` row shows them."""
+
+    requests: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost: str | None
+    """In dollars, as `/cost` formats it; `None` when nothing could be priced."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class UsageReport:
+    """What `/usage` and `/cost` report about the retained history, from the same `session_usage`."""
+
+    turns: list[TurnUsage]
+    total: TurnUsage
+    unpriced: list[str]
+    """The models without price data, whose responses no cost counts."""
+    unmeasured_requests: int = 0
+
+
+def turn_usage(usage: RunUsage) -> TurnUsage:
+    """The browser's copy of one `/usage` row."""
+    return TurnUsage(
+        requests=usage.requests,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_write_tokens=usage.cache_write_tokens,
+        cost=None if usage.cost is None else format_cost(usage.cost),
+    )
+
+
+def usage_report(usage: SessionUsage) -> UsageReport:
+    """The browser's copy of what `/usage` prints."""
+    return UsageReport(
+        turns=[turn_usage(turn) for turn in usage.turns],
+        total=turn_usage(usage.total),
+        unpriced=list(usage.unpriced),
+        unmeasured_requests=usage.total.unmeasured_requests,
+    )
+
+
 @dataclass(kw_only=True)
 class Notice:
     """A `/command`'s result, or another line the browser should show once."""
@@ -459,6 +521,8 @@ class Notice:
     text: str
     level: Literal['info', 'error'] = 'info'
     command: str | None = None
+    usage: UsageReport | None = None
+    """For `/usage` and `/cost`: the figures their text reports, which the page shows as a card."""
 
 
 @dataclass(kw_only=True)
@@ -514,6 +578,39 @@ class SettingsChanged:
     type: Literal['settings'] = 'settings'
 
 
+LiveState = Literal['running', 'queued', 'asking', 'idle']
+"""`queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class LiveEntry:
+    """A session open in this CLAI, which the browser can watch and drive, named by its conversation ID."""
+
+    id: str
+    state: LiveState
+    title: str | None
+    workspace: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class LiveChanged:
+    """The live sessions, sent on connect and whenever one opens, closes, switches conversation, or changes state."""
+
+    type: Literal['live'] = 'live'
+    sessions: list[LiveEntry]
+
+
+@dataclass(frozen=True, kw_only=True)
+class Watch:
+    """From the browser: the live sessions it shows, replacing the ones it watched; each new one gets a `Snapshot`.
+
+    A connection that never sends one watches the default session, as before CLAI ran several.
+    """
+
+    type: Literal['watch'] = 'watch'
+    sessions: list[str]
+
+
 ItemMessage = (
     ItemAdded
     | TextDelta
@@ -547,6 +644,8 @@ class OrchestratorState:
     enabled: bool
     """Whether the `workspaces` plugin is on; the orchestrator runs only then."""
     running: bool
+    model: str | None
+    """The model its next turn runs on: the saved default a new session starts with, not a session's own choice."""
     items: list[Item]
     questions: list[Questions]
 
@@ -583,13 +682,33 @@ ServerMessage = (
     | TaskChanged
     | TaskItems
     | UpdateChanged
+    | LiveChanged
 )
+SessionMessage = (
+    ItemMessage
+    | TurnStarted
+    | TurnEnded
+    | StatusChanged
+    | QuestionAsked
+    | QuestionClosed
+    | Notice
+    | TitleChanged
+    | TaskChanged
+    | TaskItems
+)
+"""The messages about one live session, which only its watchers get, each with a `session` naming it."""
 _WIRE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
 
 def dump(message: ServerMessage) -> str:
     """The JSON text of one message, as the WebSocket sends it."""
     return _WIRE.dump_json(message).decode()
+
+
+def dump_session(message: SessionMessage, *, session: str) -> str:
+    """The JSON text of a message about one live session, led by `session`, its conversation ID."""
+    # Every message is a JSON object with at least its `type`, so the conversation ID goes in first.
+    return f'{{"session":{json.dumps(session)},{dump(message)[1:]}'
 
 
 SessionState = Literal['ready', 'running', 'busy', 'completed', 'failed', 'cancelled']
@@ -604,7 +723,7 @@ class SessionEntry:
     workspace: str
     updated_at: datetime
     state: SessionState
-    """`running` is this session's own turn; `busy` a turn another CLAI is running."""
+    """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
     messages: int
     model: str | None
     current: bool
@@ -723,6 +842,10 @@ class MenuField:
     """Where the value comes from when not from the user."""
     action: bool
     """Whether choosing it runs an action, with dialogs, instead of editing a value."""
+    menu: bool
+    """Whether choosing it opens another menu, which the routes reach with `?menu=KEY`, instead of editing a value."""
+    button: str = ''
+    """What the action's button says; when empty, `Change…` for a row with a value or a secret, else `Open…`."""
 
 
 @dataclass(kw_only=True)
@@ -792,29 +915,96 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
     return text
 
 
-def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show.
+def image_id(image: BinaryContent) -> str:
+    """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
+    return hashlib.sha256(image.data).hexdigest()
+
+
+class ImageIds:
+    """The transcript IDs of a live session's images, each hashed once while the session holds the image."""
+
+    def __init__(self) -> None:
+        """Start knowing no image."""
+        self._known: dict[int, tuple[BinaryContent, str]] = {}
+        """By `id()`, which stays unique as the image is kept here with its ID."""
+
+    def __call__(self, image: BinaryContent) -> str:
+        """The ID of `image`."""
+        known = self._known.get(id(image))
+        if known is None:
+            known = self._known[id(image)] = (image, image_id(image))
+        return known[1]
+
+    def find(self, wanted: str) -> BinaryContent | None:
+        """The image whose ID is `wanted`, of those the transcript listed and the session still holds."""
+        return next((image for image, known in self._known.values() if known == wanted), None)
+
+    def keep(self, images: Sequence[BinaryContent]) -> None:
+        """Forget every image but `images`, those the session holds now."""
+        held = {id(image) for image in images}
+        self._known = {key: known for key, known in self._known.items() if key in held}
+
+
+def user_images(part: UserPromptPart) -> list[BinaryContent]:
+    """The images a prompt carries, which the browser shows as thumbnails."""
+    if isinstance(part.content, str):
+        return []
+    return [item for item in part.content if _is_image(item)]
+
+
+def _is_image(item: UserContent) -> TypeIs[BinaryContent]:
+    return isinstance(item, BinaryContent) and item.is_image
+
+
+def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
+    """A prompt's text, naming the attachments the browser does not show: images too, unless as `thumbnails`.
 
     Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
     return '\n'.join(
-        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        item if isinstance(item, str) else '[image]' if _is_image(item) else f'[{type(item).__name__}]'
         for item in part.content
-        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+        # A prompt sent as images alone has an empty text.
+        if not (isinstance(item, str) and (not item or item.startswith(NOTE_PREFIX)))
+        and not (thumbnails and _is_image(item))
     )
 
 
-def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls."""
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None) -> Item:
+    """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
+
+    Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
+    """
+    images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
+    return Item(id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images)
+
+
+def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
+    """Every image the prompts of a history carry."""
+    return [
+        image
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for image in user_images(part)
+    ]
+
+
+def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
+    """The transcript items of a saved or finished history; tool results join their calls.
+
+    A live session passes its `image_ids`, so prompts list their images; see `user_item`.
+    """
     items: list[Item] = []
     tools: dict[str, Item] = {}
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
+                    items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
                 elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'

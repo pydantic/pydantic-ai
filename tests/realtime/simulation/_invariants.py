@@ -14,7 +14,8 @@ Checked after every step:
 
 - `history.mutated`: a message object that appeared in a snapshot changed afterwards;
 - `history.removed`: a message disappeared, other than a refused input taken back or the request of a
-  send that failed;
+  send that failed. A response the user barged in on after it was recorded is the one message that can be
+  replaced, by a copy cut off where the listener stopped (`is_cut_off_copy`): that counts as the same message;
 - `history.reordered` / `history.inserted`: recorded messages changed order, or a message appeared
   anywhere but the end, other than a tool return placed after its call (every snapshot should be a
   prefix of the next);
@@ -43,9 +44,14 @@ Checked at rest (`settle()`):
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
-- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
+- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read
+  or committed with `commit_audio()` (whether or not it read the provider's acknowledgement);
 - `history.not_restored`: a re-dialed provider conversation started a response without something history
   records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
+- `history.replayed_as_heard`: a re-dialed provider conversation holds the plain transcript of a reply an earlier
+  one truncated, as though the user had heard all of it;
+- `prune.unanswered` / `prune.dropped_from_history`: the session deleted a tool call's items from the server
+  conversation before the model answered its result, or history lost what it deleted (history keeps everything);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -54,6 +60,8 @@ Checked at rest (`settle()`):
   that reports its requests with usage, the number it reported);
 - `playback.cut_beyond_audio` / `playback.bad_truncate`: a reply is marked cut past the audio it had,
   or the provider had to refuse a truncation the session sent;
+- `playback.cut_not_recorded`: the provider truncated a reply's item, but history records the reply as heard
+  further than that (or as not interrupted at all), whether or not it had finished generating;
 - `wire.duplicate` / `wire.order`: the server got a send twice, or one caller's sends out of order;
 - `send.failed_across_reconnect`: a send failed on a dropped connection the session went on to replace;
 - `history.roundtrip` / `history.handoff`: history doesn't survive serialization, or a standard
@@ -66,6 +74,7 @@ import asyncio
 import os
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -82,6 +91,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models._speech import assistant_speech_text
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
@@ -173,6 +183,49 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
     return fingerprints
 
 
+def cut_off_replays(messages: list[ModelMessage]) -> dict[str, str]:
+    """How history replays each reply it records as cut off: its marked text, keyed by the plain transcript's fingerprint.
+
+    A reply the listener cut off is replayed with a marker (see `assistant_speech_text`), whether or not the provider
+    applied the truncation (a truncation whose send failed may not have reached it).
+    """
+    return {
+        f'assistant:{" ".join(part.transcript.split())}': f'assistant:{" ".join(replayed.split())}'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for index, part in enumerate(message.parts)
+        if isinstance(part, SpeechPart)
+        and part.speaker != 'user'
+        and part.transcript
+        and (replayed := assistant_speech_text(message, index)) != part.transcript
+    }
+
+
+def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
+    """Whether `new` is `old` recorded as cut off by a barge-in: the same response, marked interrupted, and nothing else changed.
+
+    A cut can only move back: a part already cut keeps its cut or an earlier one.
+    """
+    if not isinstance(old, ModelResponse) or not isinstance(new, ModelResponse) or new.state != 'interrupted':
+        return False
+    if any(
+        isinstance(before, SpeechPart)
+        and isinstance(after, SpeechPart)
+        and before.interrupted_at_ms is not None
+        and (after.interrupted_at_ms is None or after.interrupted_at_ms > before.interrupted_at_ms)
+        for before, after in zip(old.parts, new.parts)
+    ):
+        return False
+
+    def uncut(message: ModelResponse) -> bytes:
+        parts = [
+            replace(part, interrupted_at_ms=None) if isinstance(part, SpeechPart) else part for part in message.parts
+        ]
+        return ModelMessagesTypeAdapter.dump_json([replace(message, parts=parts, state='complete')])
+
+    return uncut(old) == uncut(new)
+
+
 def is_user_speech_request(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and any(
         isinstance(part, SpeechPart) and part.speaker == 'user' for part in message.parts
@@ -220,6 +273,7 @@ class Checker:
     ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
         """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
         checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
+        self.lifecycle.brackets_responses = True
 
         def observe(event: RealtimeCodecEvent | LifecycleEvent | None) -> None:
             self._codec_issues += checker.finish() if event is None else checker.feed(event)
@@ -300,7 +354,19 @@ class Checker:
         )
 
     def _check_history_stability(self, messages: list[ModelMessage]) -> None:
-        current = [id(message) for message in messages]
+        actual = [id(message) for message in messages]
+        # A response replaced by its cut-off copy is judged as the response it replaced.
+        previous_set, actual_set = set(self._previous), set(actual)
+        replaced = [self._seen[message_id][0] for message_id in self._previous if message_id not in actual_set]
+        copies: dict[int, int] = {}
+        for message in messages:
+            if id(message) not in previous_set and isinstance(message, ModelResponse):
+                old = next(
+                    (old for old in replaced if is_cut_off_copy(old, message) and id(old) not in copies.values()), None
+                )
+                if old is not None:
+                    copies[id(message)] = id(old)
+        current = [copies.get(message_id, message_id) for message_id in actual]
         mutated: list[Violation] = []
         for message in messages:
             dumped = ModelMessagesTypeAdapter.dump_json([message])
@@ -339,7 +405,7 @@ class Checker:
                 if current[position] not in previous_set and not is_tool_return_request(messages[position])
             ],
         )
-        self._previous = current
+        self._previous = actual
 
     def _describe(self, message: ModelMessage) -> str:
         # Only for a violation's message: which of these a run reaches depends on what it finds.
@@ -491,6 +557,7 @@ class Checker:
         self._check_completeness(messages)
         self._check_spoken_turns(messages)
         self._check_restored(messages)
+        self._check_pruned(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -679,6 +746,8 @@ class Checker:
             if input_.kind == 'speech'
             and (input_.committed_read is not None or input_.committed_by_client)
             and not input_.rejected
+            # A commit whose send raised, though the provider had it, is one the client was told failed.
+            and input_.key not in self.sim.truth.ambiguous_inputs
         ]
         recorded = sum(1 for message in messages if is_user_speech_request(message))
         self.report(
@@ -686,6 +755,26 @@ class Checker:
             [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
             if recorded < len(committed)
             else [],
+        )
+
+    def _check_pruned(self, messages: list[ModelMessage]) -> None:
+        """Tool rounds deleted from the server conversation were answered, and history still holds them."""
+        truth = self.sim.truth
+        self.report(
+            'prune.unanswered',
+            [
+                (f'{call} was deleted before the model answered its result', {'call': call})
+                for call in truth.pruned_unanswered
+            ],
+        )
+        recorded = conversation_fingerprints(messages)
+        self.report(
+            'prune.dropped_from_history',
+            [
+                (f'{fingerprint} was deleted from the server conversation and from history', {'item': fingerprint})
+                for fingerprint in truth.pruned
+                if fingerprint not in recorded
+            ],
         )
 
     def _check_restored(self, messages: list[ModelMessage]) -> None:
@@ -711,10 +800,37 @@ class Checker:
                     for call in response.tool_calls
                     for kind in ('function_call', 'function_call_output')
                 }
+        cut_off = cut_off_replays(messages)
         missing = [
-            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            (
+                restoration,
+                sorted(
+                    fingerprint
+                    for fingerprint in (restoration.before & recorded) - restoration.held - settled
+                    # (Restored as cut off, which is how history records it.)
+                    if cut_off.get(fingerprint) not in restoration.held
+                ),
+            )
             for restoration in sim.truth.restorations
         ]
+        truncated = {
+            f'assistant:{" ".join(response.items[item_id])}': (item_id, response)
+            for item_id, _ in sim.truth.truncations
+            if (response := sim.truth.item_responses.get(item_id)) is not None and response.items[item_id]
+        }
+        self.report(
+            'history.replayed_as_heard',
+            [
+                (
+                    f'connection {restoration.connection} holds {fingerprint!r} as heard, '
+                    f'but {response.key} was truncated at {item_id}',
+                    {'response': response.key},
+                )
+                for restoration in sim.truth.restorations
+                for fingerprint, (item_id, response) in truncated.items()
+                if response.connection < restoration.connection and fingerprint in restoration.held
+            ],
+        )
         self.report(
             'history.not_restored',
             [
@@ -790,19 +906,28 @@ class Checker:
             if wrong
             else [],
         )
+        # A response the server identified is recorded with exactly the usage reported under its id: none, if the client
+        # read no report for it, rather than another response's.
+        billed_by_id = {
+            message.provider_response_id: truth.usage_read.get(message.provider_response_id, (0, 0))
+            for message in messages
+            if isinstance(message, ModelResponse)
+            and message.provider_response_id is not None
+            and (message.provider_response_id in truth.usage_read or message.provider_response_id in truth.responses)
+        }
         self.report(
             'usage.attribution',
             [
                 (
                     f'{message.provider_response_id} is recorded with {message.usage.input_tokens} / '
-                    f'{message.usage.output_tokens} tokens, but was billed {truth.usage_read[message.provider_response_id]}',
+                    f'{message.usage.output_tokens} tokens, but was billed {billed_by_id[message.provider_response_id]}',
                     {'response': message.provider_response_id},
                 )
                 for message in messages
                 if isinstance(message, ModelResponse)
-                and message.provider_response_id in truth.usage_read
+                and message.provider_response_id in billed_by_id
                 and (message.usage.input_tokens, message.usage.output_tokens)
-                != truth.usage_read[message.provider_response_id]
+                != billed_by_id[message.provider_response_id]
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.
@@ -849,6 +974,37 @@ class Checker:
                 if at_ms > generated[id(message)]
             ],
         )
+        heard: dict[str, int] = {}
+        for item_id, audio_end_ms in truth.truncations:
+            heard[item_id] = min(audio_end_ms, heard.get(item_id, audio_end_ms))
+        spoken = {
+            (number, part.transcript): (message, part)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for number in self.response_numbers(message)
+            for part in message.parts
+            if isinstance(part, SpeechPart) and part.transcript
+        }
+        not_recorded: list[Violation] = []
+        for item_id, heard_ms in heard.items():
+            response = truth.item_responses.get(item_id)
+            recorded = (
+                spoken.get((response.number, ' '.join(response.items[item_id]))) if response is not None else None
+            )
+            if response is None or recorded is None:  # pragma: lax no cover (depends on what exploration reaches)
+                # Not recorded as the provider said it (lost with its connection, say): other invariants judge that.
+                continue
+            message, part = recorded
+            cut = part.interrupted_at_ms
+            if message.state != 'interrupted' or cut is None or cut > heard_ms:  # pragma: lax no cover (a violation)
+                not_recorded.append(
+                    (
+                        f'{response.key} was truncated at {heard_ms} ms, but history records it as '
+                        f'{message.state} with a cut at {cut}',
+                        {'response': response.key},
+                    )
+                )
+        self.report('playback.cut_not_recorded', not_recorded)
 
     def _check_wire(self) -> None:
         """Each caller's sends reach the server once each, in the order they were made."""

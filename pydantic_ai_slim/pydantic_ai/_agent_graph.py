@@ -26,6 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import (
@@ -80,6 +83,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
@@ -853,7 +857,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                                 # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
                                 part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
                                 )
 
                         reevaluated_message_parts.append(part)
@@ -1057,6 +1061,9 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), ctx.deps.tool_manager.toolset),
+        _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
+        _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
@@ -1095,13 +1102,15 @@ def _keep_default_output_mode(
     if (kept_mode := state.default_output_modes.get(model_id)) is not None:
         kept = params.with_default_output_mode(kept_mode)
         try:
-            model.prepare_request(model_settings, kept)
+            with suppress_unsupported_setting_warnings():
+                model.prepare_request(model_settings, kept)
         except exceptions.UserError:
             # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
             # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
-    _, prepared = model.prepare_request(model_settings, params)
+    with suppress_unsupported_setting_warnings():
+        _, prepared = model.prepare_request(model_settings, params)
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
         state.default_output_modes[model_id] = mode
@@ -1196,7 +1205,8 @@ def _check_continuation_usage(
         attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
         for attempt_usage in attempt_usages:
             provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
-        run_context.usage_limits.check_tokens(provisional)
+        # Provisional, so omitted usage is warned about once the merged response is recorded.
+        run_context.usage_limits._check_token_limits(provisional)  # pyright: ignore[reportPrivateUsage]
         if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
@@ -1462,10 +1472,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # means that the stream was started but not finished before `run()` was called
             raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
-        return await self._make_request(ctx)
+        try:
+            return await self._make_request(ctx)
+        except BaseException:
+            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            raise
 
     @asynccontextmanager
-    async def stream(  # noqa: C901
+    async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
+        try:
+            async with self._stream(ctx) as agent_stream:
+                yield agent_stream
+        except BaseException:
+            # A stream interrupted after it opened has already committed its partial response, which
+            # answers the request, so this only drops anything when the step never got a response.
+            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            raise
+
+    @asynccontextmanager
+    async def _stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -2006,6 +2034,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
+        # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
+        # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
+        # one call, which is what a request-scoped reminder needs. Not when resuming a suspended response: that
+        # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
+        if self._resume_suspended is None:
+            processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -2108,7 +2142,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 outgoing_namespace_before: dict[str, Any] = (
                     dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
                 )
-                with set_current_run_context(run_context):
+                # The request this counts warns about ignored settings when it's sent.
+                with set_current_run_context(run_context), suppress_unsupported_setting_warnings():
                     counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
                 # Counting models may persist framework-only state on the request they counted. When
@@ -2306,6 +2341,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
+        # response was kept in history it answers them, and this is a no-op.
+        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
         m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
@@ -2835,6 +2873,36 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> End[result.FinalResult[NodeRunEndT]]:
         return End(self.final_result)
+
+
+def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessage]) -> None:
+    """Remove the request-scoped `SystemPromptPart`s that no response will answer, in place.
+
+    Called once a step has given up on getting a response: the run raised or was cancelled, or a
+    capability asked for a retry without one. The parts were written for that step alone, so leaving
+    them in the trailing requests would carry them into the next step's request next to the ones it adds
+    for itself. Never between attempts at the same step: a retried or fallback attempt is still that
+    step's request.
+
+    Edits the list in place, since it's the run's history, but replaces the affected requests rather
+    than mutating them: instrumentation caches each message's serialized form. A request left empty
+    is removed, unless every trailing request was, in which case one empty request is kept so the
+    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
+    """
+    is_request_scoped = _messages._is_request_scoped  # pyright: ignore[reportPrivateUsage]
+    start = len(messages)
+    while start and isinstance(messages[start - 1], _messages.ModelRequest):
+        start -= 1
+    for index in range(len(messages) - 1, start - 1, -1):
+        message = messages[index]
+        assert isinstance(message, _messages.ModelRequest)
+        if not any(is_request_scoped(part) for part in message.parts):
+            continue
+        parts = [part for part in message.parts if not is_request_scoped(part)]
+        if not parts and len(messages) - start > 1:
+            del messages[index]
+        else:
+            messages[index] = replace(message, parts=parts)
 
 
 async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:

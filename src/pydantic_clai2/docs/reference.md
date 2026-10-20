@@ -10,7 +10,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 - [The prompt](#the-prompt): [Prompt area](#prompt-area), [Pasting images](#pasting-images), [Input history](#input-history), [Word deletion](#word-deletion), [Undo and redo](#undo-and-redo), [Option keys on macOS](#option-keys-on-macos), [Interrupting a turn](#interrupting-a-turn), [Rewinding a conversation](#rewinding-a-conversation), [Shell commands with !](#shell-commands-with-)
 - [Output](#output): [How tool calls look](#how-tool-calls-look), [Streaming](#streaming), [Code highlighting](#code-highlighting), [Grep previews](#grep-previews), [Shell preview limit](#shell-preview-limit), [Tool details](#tool-details), [Status line](#status-line), [Themes](#themes), [Spinners](#spinners)
 - [The agent](#the-agent): [Your instructions: /system_prompt](#your-instructions-system_prompt), [Code mode and speculative execution](#code-mode-and-speculative-execution), [Questions from the model](#questions-from-the-model), [Compacting the conversation](#compacting-the-conversation), [Task delegation](#task-delegation), [Ask CLAI to customize itself](#ask-clai-to-customize-itself)
-- [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees)
+- [Sessions](#sessions): [Saved sessions and /resume](#saved-sessions-and-resume), [Background forks: /fork](#background-forks-fork), [Git worktrees](#git-worktrees), [Several sessions in the web UI](#several-sessions-in-the-web-ui)
 - [Plugins and integrations](#plugins-and-integrations): [Plugins](#plugins), [Built-in plugins at a glance](#built-in-plugins-at-a-glance), [MCP servers: /mcp](#mcp-servers-mcp), [Desktop notifications](#desktop-notifications), [Herdr integration](#herdr-integration), [Agent of Empires integration](#agent-of-empires-integration), [Telemetry and references](#telemetry-and-references)
 - [Using CLAI from code](#using-clai-from-code): [Your own agent](#your-own-agent), [Headless mode](#headless-mode), [The stock agent in your own code](#the-stock-agent-in-your-own-code), [Bring an agent](#bring-an-agent)
 - [Working on CLAI](#working-on-clai): [Source layout](#source-layout), [Reload CLAI during development](#reload-clai-during-development), [CI coverage](#ci-coverage)
@@ -259,6 +259,9 @@ again afterwards. Without uv on `PATH`, `/update` prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
+In the web UI, `/update` opens the Settings window's **About** section instead: the running
+version and `updates.channel`, with an **Update…** button that asks before it runs `/update`.
+
 ### Environment variables
 
 CLAI trusts the launch directory and its parents for automatic dotenv loading.
@@ -306,7 +309,9 @@ settings on the left, details for the highlighted one on the right (current
 value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
-An empty value resets. `R` resets the highlighted setting. Esc closes. Every
+The input opens holding the current value unless it is the default or not
+set: Enter without changes saves nothing, and an empty input resets.
+`R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
@@ -540,6 +545,11 @@ that cache implicitly or not at all ignore it. Set it to `false` to turn caching
 to `1h` to keep the cache longer. Saved `anthropic_cache*` settings still apply and take precedence
 over it. These are CLI defaults only; plain Pydantic AI agents are unchanged.
 
+In the web UI, `/model` typed in the composer opens the Settings window's **Models** section
+instead: the model for the next prompt, each saved model's settings (this editor's rows), and
+adding and removing models. `/effort` opens a dialog with the active model's settings, effort
+among them. `/fast` still toggles, as in the terminal.
+
 `/effort` shows the active model's configured reasoning effort and supported values.
 `/effort high` (or another listed value) saves it for that model; `/effort reset`
 removes the native effort override. Custom parameters stay unchanged: remove any
@@ -633,7 +643,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
@@ -796,6 +806,13 @@ GitHub Copilot (premium requests); plugins can report their own, as the Claude
 Code plugin does. `…` means it is still loading and `?` that the service did not
 answer; the right-hand panel says why.
 
+In the web UI, `/accounts` and `/login` open the Settings window's **Keys & accounts**
+section, beside the saved `/keys`, with the same steps behind each account's button. There,
+ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
+API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
+and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
+only in the terminal.
+
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
 as `PROVIDER@*:MODEL`: it runs on the first signed-in account and moves to the next
@@ -875,6 +892,9 @@ Use `a` to add, Enter to replace a value, `r` to rename, and `d` to delete with
 confirmation. Press `/` to search key names; Enter keeps the matches, and Esc
 clears the search. Values are masked and are not shown in previews. Changes save
 immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+In the web UI, `/keys` opens the Settings window's **Keys & accounts** section,
+which lists the names, says what uses each, and asks the same steps as dialogs; a
+value goes from the page to CLAI, never back.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
@@ -929,6 +949,12 @@ than zero, the line under the table names the model, and only the cost total
 excludes those responses. Their requests and tokens remain in the usage totals. Cost is shown to four decimal places; a nonzero amount below that
 reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
 for that.
+
+When a provider response omits usage information, `/usage` and `/cost` mark the
+known token and cost totals as lower bounds. The response count is still
+included in the request total, and it is not listed as missing price data. The
+footer prefixes a known retained-history cost with `>=` while any retained
+response has omitted usage information.
 
 ## The prompt
 
@@ -1024,7 +1050,20 @@ by `/resume`. Input recall stores markers, not image bytes: paste the image agai
 if you recall an expired marker. If submission is rejected because no model is
 selected, the most recently rejected prompt keeps its attachments for retry. Unsubmitted images are discarded on exit or reload.
 
-Pillow is a terminal-only dependency; see the CLAI dependency boundary in
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `/web` or `clai2 --web`,
+paste an image into the composer with your browser's usual paste (Cmd-V or Ctrl-V), or drop image
+files on it. Each shows as a thumbnail above your text; hover one and click its **×** to remove it.
+Text copied together with a picture of itself, as from a spreadsheet, pastes as text. The page
+scales an image larger than 1568 pixels on its longest side down to that, about as far as models
+scale it anyway, so each image fits the 10 MiB limit once converted, and turns a format CLAI does
+not read, such as HEIC or SVG, into PNG when the browser can draw it. The images are sent with your
+prompt, or alone, and CLAI checks and converts them to PNG with the same limits as above; a photo
+can grow severalfold as PNG, so send fewer at a time if the 32 MiB limit refuses them. Unsent images stay with each session's draft until you reload the page.
+The transcript shows each sent image as a thumbnail in your message, also after a reload or `/resume`.
+The preview of a saved session that is not open, and a delegated task's transcript, show `[image]`
+instead.
+
+Pillow is a CLAI dependency, for the terminal and the web UI, not a harness one; see the CLAI dependency boundary in
 [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
 
 ### Input history
@@ -1144,7 +1183,7 @@ Done (0.1s)
 
 The command runs through the system shell (`/bin/sh -c` on POSIX, `cmd.exe` on
 Windows), not your login shell, so zsh or fish syntax and shell aliases are not
-available. It runs in CLAI's working directory. Stdout and stderr are captured
+available. It runs in the session's directory. Stdout and stderr are captured
 separately and displayed as they arrive. CLAI reports `Done` or the exit code
 with the elapsed time.
 
@@ -1546,10 +1585,12 @@ and replace none of them.
 
 | Row | What it does |
 | --- | --- |
-| Edit your instructions | Opens your instructions in an editor. Saving an empty text removes them. |
-| Append to your instructions | Opens an empty editor; what you write is added as a new paragraph. |
-| Reset: remove your instructions | Removes them, so only CLAI's defaults are sent. Greyed out when you have none. |
-| View the full system prompt | The instructions sent with the conversation's latest request, yours included. Enter opens them in a scrollable view. |
+| Your instructions | Shows their first line and how many lines they have. Enter opens them in an editor; saving an empty text removes them. `r` removes them, so only CLAI's defaults are sent. |
+| Append to yours | Opens an empty editor; what you write is added as a new paragraph. |
+| Full system prompt | The instructions sent with the conversation's latest request, yours included, in a scrollable view. |
+
+The web UI shows the same menu as its Settings window's **System prompt** section, with a
+multi-line dialog for the editor.
 
 Editing opens `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, on a temporary
 Markdown file. Save and quit the editor to keep your changes. Unchanged text
@@ -1913,8 +1954,8 @@ Two frontmatter fields decide who can use a skill:
   deploy.
 - `user-invocable: false` makes it model-only: there is no `/command`.
 
-CLAI ignores the other behavioral fields some clients support, such as
-`allowed-tools` or `model`, and names the skills that use them when it starts.
+CLAI quietly ignores the other behavioral fields some clients support, such as
+`allowed-tools` or `model`, so skills shared with those clients load as they are.
 
 When two folders have a skill with the same name, the earlier folder wins:
 project skills over personal ones, `.agents` over `.claude`. A skill reached
@@ -1928,8 +1969,11 @@ The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
 `/plugins reload coder`. Choose different folders in `/plugins configure coder`
 under **Skill folders**, as a JSON list of paths; `~/` means your home directory
-and `[]` turns skills off. A folder CLAI cannot read when it starts, such as one
-without read permission, turns skills off, with a notice, until the next
+and `[]` turns skills off. To turn off single skills, choose **Skills** there:
+each pick turns a skill on or off. A skill that is off is hidden from the model
+and has no `/command`, in every project; skills you add later start on. A
+folder CLAI cannot read when it starts, such as one without read permission,
+turns skills off, with a notice, until the next
 `/reload`; the coding tools still load. A folder that becomes a file or a single
 skill mid-session is left out of the next turn's catalog.
 
@@ -2244,6 +2288,51 @@ A worktree separates working files, not permissions. CLAI's default tools can
 still access files outside it. Creation runs before the agent starts and emits
 no agent telemetry spans.
 
+### Several sessions in the web UI
+
+```bash
+clai2 --web
+```
+
+The [web UI](../PLUGINS.md#web-this-session-in-your-browser), from `clai2 --web` or
+`/web` in a terminal, keeps several sessions live in one CLAI. Click any session in the sidebar and it opens live, even while
+others run turns. Each live session has its own conversation, folder, plugins,
+queued prompts, and running turn, and keeps working while you look at another.
+It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
+`.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
+asks which folder; with `/web`, it starts in the folder of the session you are
+looking at.
+CLAI never changes its own working directory to do this. There is no limit on how
+many sessions run at once.
+
+- **Status dots.** A dot beside a live session in the sidebar shows that it runs a
+  turn, that input waits behind its turn, or that it asks you a question.
+- **Esc** and the stop button interrupt the session you are looking at, and only it.
+- **Idle closing.** A session closes after an hour with no turn, no queued input,
+  no background fork or delegated task, and no browser or terminal showing it. Its
+  conversation stays saved: click it to resume it. The session `clai2 --web`
+  started with never closes this way.
+- **Settings.** `/set` in one session applies to every live session, except `model`
+  and the `run.*` settings, which stay with the session that set them, and settings
+  a session's `.clai/settings.json` fixes.
+- **Read-only.** Only a session whose folder is gone, such as a removed worktree,
+  opens read-only. With `/web` from a terminal, so does a session saved in another
+  folder than the one CLAI started in.
+- **The terminal.** With `/web` from a terminal, the terminal shows one live session
+  at a time, and its toolbar shows `N live` while more than one is. `/resume ID` of a
+  session live in the browser shows that session in the terminal, even mid-turn,
+  instead of copying it; the session shown before keeps running.
+- **`/update` and `/reload`** restart CLAI, so `/update` runs only in the session
+  the terminal shows, or under `clai2 --web` in the session it started with, and
+  `/reload` only in the terminal. Elsewhere they refuse and say where to enter them.
+  They also refuse while another session runs a turn, saying how many run, so try
+  again when they finish. With `/web` from a terminal, CLAI restarts in the folder it
+  started in, so they refuse in a shown session that works in another folder.
+  `/reload` keeps the terminal's conversation but closes the other live sessions and
+  stops the web UI; run `/web` again to reopen it. `/update` brings the web UI back.
+- **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
+  every session.
+
 ## Plugins and integrations
 
 ### Plugins
@@ -2372,7 +2461,9 @@ server signs in only with `/mcp auth NAME`, never in the middle of a prompt. A
 repository's Claude Code-style `.mcp.json` (or `.clai/mcp_servers.json`) loads
 once you review it and run `/mcp trust accept`. See
 [Connect MCP servers](../PLUGINS.md#connect-mcp-servers) for storage, secrets, OAuth,
-and project trust. `/plugins disable mcp` removes the command and tools.
+and project trust. `/plugins disable mcp` removes the command and tools. In the
+web UI, bare `/mcp` opens the Settings window's MCP servers section, which lists
+the servers and runs the same form and subcommands in the page.
 
 ### Desktop notifications
 

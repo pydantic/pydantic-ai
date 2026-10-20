@@ -2,6 +2,7 @@
 
 import os
 import time
+from collections.abc import Callable
 
 import httpx2
 from anyio import to_thread
@@ -14,6 +15,7 @@ from pydantic_ai.models.github_copilot import GitHubCopilotModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials, GitHubCopilotOAuthFlow, GitHubCopilotProvider
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.models.profiles import parse_model
+from pydantic_clai2.plugins.menus import Dialogs
 
 ACCOUNT = 'github-copilot'
 
@@ -25,18 +27,32 @@ class Connection(BaseModel):
     issued_at: float = Field(ge=0, allow_inf_nan=False)
 
 
-async def login(*, console: Console, account: str = ACCOUNT) -> str:
+async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | None = None) -> str:
     """Display core's device challenge and save only a completed authorization.
 
-    `account` is `github-copilot` for the default profile, or `github-copilot@PROFILE`.
+    `account` is `github-copilot` for the default profile, or `github-copilot@PROFILE`. With `dialogs`,
+    the challenge shows on their waiting screen, which cancels the sign-in, instead of on `console`.
     """
     client_id = os.getenv('GITHUB_COPILOT_CLIENT_ID', '').strip() or 'Iv1.b507a08c87ecfe98'
     flow = GitHubCopilotOAuthFlow(client_id=client_id, scope='read:user')
-    authorization = await flow.start()
-    console.print(f'Open {authorization.verification_uri}', markup=False, highlight=False)
-    console.print(f'Enter code: {authorization.user_code}', markup=False, highlight=False)
-    console.print('Approve only the code shown here. Ctrl-C cancels. You can open the link on another device.')
-    credentials = await flow.wait_for_authorization()
+    if dialogs is None:
+        authorization = await flow.start()
+        console.print(f'Open {authorization.verification_uri}', markup=False, highlight=False)
+        console.print(f'Enter code: {authorization.user_code}', markup=False, highlight=False)
+        console.print('Approve only the code shown here. Ctrl-C cancels. You can open the link on another device.')
+        credentials = await flow.wait_for_authorization()
+    else:
+        authorized: list[GitHubCopilotCredentials] = []
+
+        async def authorize(show: Callable[[str], None]) -> None:
+            authorization = await flow.start()
+            show(f'Open {authorization.verification_uri} and enter code {authorization.user_code}')
+            authorized.append(await flow.wait_for_authorization())
+
+        description = 'Approve only the code shown here. You can open the link on another device.'
+        if not await dialogs.wait(title='Signing in to GitHub Copilot', description=description, task=authorize):
+            return 'GitHub Copilot sign-in cancelled.'
+        credentials = authorized[0]
     connection = Connection(credentials=credentials, issued_at=time.time())
     await to_thread.run_sync(lambda: save_codex_credentials(account=account, value=connection.model_dump_json()))
     path = credentials_path(account=account)

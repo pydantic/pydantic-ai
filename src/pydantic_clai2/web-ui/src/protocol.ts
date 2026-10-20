@@ -32,6 +32,8 @@ export interface Item {
   calls: SubCall[]
   /** A cell the user ran with `/monty`, rather than one the model wrote. */
   by_user: boolean
+  /** The IDs of a prompt's images, which the session's `images/ID` route serves. */
+  images: string[]
 }
 
 export interface Option {
@@ -56,7 +58,7 @@ export interface Choice {
 /** What a plugin's settings menu asks; which fields apply depends on `kind`. */
 export interface Dialog {
   id: string
-  kind: 'choose' | 'text' | 'confirm' | 'wait'
+  kind: 'choose' | 'text' | 'confirm' | 'wait' | 'view'
   title: string
   description: string
   options: Choice[]
@@ -65,10 +67,14 @@ export interface Dialog {
   placeholder: string
   initial: string
   secret: boolean
+  /** `text`: take text with line breaks, in a text area. */
+  multiline: boolean
   yes: string
   no: string
   /** `wait`: the latest text its task showed, such as a sign-in link. */
   shown: string
+  /** `view`: the read-only text to show; any answer closes it. */
+  text: string
 }
 
 export interface Questions {
@@ -89,6 +95,7 @@ export interface StatusInfo {
   context_tokens: number | null
   context_window: number | null
   cost: string | null
+  cost_is_lower_bound: boolean
   /** The turn's output so far, estimated from streamed characters. */
   streamed_tokens: number
   /** The last turn's reported output tokens, once it ends. */
@@ -107,6 +114,26 @@ export interface Usage {
   input_tokens: number
   output_tokens: number
   requests: number
+}
+
+/** Tokens, requests, and cost of one turn, or of all of them, as a `/usage` row shows them. */
+export interface TurnUsage {
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  /** In dollars, as `/cost` formats it; `null` when nothing could be priced. */
+  cost: string | null
+}
+
+/** What `/usage` and `/cost` report about the retained history. */
+export interface UsageReport {
+  turns: TurnUsage[]
+  total: TurnUsage
+  /** The models without price data, whose responses no cost counts. */
+  unpriced: string[]
+  unmeasured_requests: number
 }
 
 export interface Palette {
@@ -186,11 +213,51 @@ export interface OrchestratorState {
   /** Whether the `workspaces` plugin is on; the orchestrator runs only then. */
   enabled: boolean
   running: boolean
+  /** The model its next turn runs on: the saved default a new session starts with, not a session's own choice. */
+  model: string | null
   items: Item[]
   questions: Questions[]
 }
 
 export type OrchestratorEvent = ChatMessage | OrchestratorState
+
+/** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
+export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
+
+/** A session open in this CLAI, named by its conversation ID. */
+export interface LiveEntry {
+  id: string
+  state: LiveState
+  title: string | null
+  workspace: string
+}
+
+/** A message about one live session, sent only to the connections watching it. */
+export type SessionMessage = (
+  | ChatMessage
+  | { type: 'status'; status: StatusInfo }
+  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null; usage: UsageReport | null }
+  | { type: 'title'; title: string | null }
+  | { type: 'task'; task: TaskEntry }
+  | { type: 'task_event'; id: string; messages: ItemMessage[] }
+) & {
+  /**
+   * The session's conversation ID, as the sidebar and `live` name it. The server always sends it; it is optional here
+   * only because `reduce` also applies the orchestrator's chat messages, which have none.
+   */
+  session?: string
+}
+
+/** Sent over the WebSocket: the live sessions this page shows, replacing the ones it watched. */
+export interface WatchMessage {
+  type: 'watch'
+  sessions: string[]
+}
+
+/** What `POST /api/sessions/{id}/open` and `POST /api/sessions/new` answer: the live session's conversation ID. */
+export interface Opened {
+  id: string
+}
 
 export type ServerMessage =
   | {
@@ -211,21 +278,17 @@ export type ServerMessage =
       version: string
       update: UpdateInfo | null
     }
-  | ChatMessage
-  | { type: 'status'; status: StatusInfo }
+  | SessionMessage
   | { type: 'orchestrator'; message: OrchestratorEvent }
   | { type: 'dialog'; dialog: Dialog }
   | { type: 'dialog_shown'; id: string; text: string }
   | { type: 'dialog_closed'; id: string }
-  | { type: 'notice'; text: string; level: 'info' | 'error'; command: string | null }
-  | { type: 'title'; title: string | null }
   | { type: 'theme'; theme: ThemeInfo }
   | { type: 'sessions' }
   | { type: 'plugins' }
   | { type: 'settings' }
-  | { type: 'task'; task: TaskEntry }
-  | { type: 'task_event'; id: string; messages: ItemMessage[] }
   | { type: 'update'; update: UpdateInfo | null }
+  | { type: 'live'; sessions: LiveEntry[] }
 
 export type SessionState = 'ready' | 'running' | 'busy' | 'completed' | 'failed' | 'cancelled'
 
@@ -234,6 +297,7 @@ export interface SessionEntry {
   title: string
   workspace: string
   updated_at: string
+  /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
   state: SessionState
   messages: number
   model: string | null
@@ -343,6 +407,10 @@ export interface MenuField {
   note: string
   /** Choosing it runs an action, with dialogs, instead of editing a value. */
   action: boolean
+  /** What the action's button says; when empty, `Change…` for a row with a value or a secret, else `Open…`. */
+  button: string
+  /** Choosing it opens another menu, which `MenuTarget.path` reaches, instead of editing a value. */
+  menu: boolean
 }
 
 /** A workspace as the sidebar lists it; never its token. */

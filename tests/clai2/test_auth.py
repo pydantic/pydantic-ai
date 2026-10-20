@@ -26,6 +26,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import forget_connection
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -131,7 +132,8 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
 
 
 async def test_login_dispatches_copilot_by_short_and_provider_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def copilot(*, console: Console, account: str) -> str:
+    async def copilot(*, console: Console, account: str, dialogs: Dialogs | None) -> str:
+        assert dialogs is None
         return f'Copilot connected as {account}.'
 
     monkeypatch.setattr('pydantic_clai2.models.github_copilot.login', copilot)

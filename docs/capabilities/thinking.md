@@ -66,6 +66,8 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
+Many providers report how many of a response's output tokens were reasoning tokens. Pydantic AI reports that count as [`output_reasoning_tokens`][pydantic_ai.usage.RequestUsage.output_reasoning_tokens] on the response's usage, and sums it over the run in [`RunUsage`][pydantic_ai.usage.RunUsage]. It's included in `output_tokens`, and it's `0` when the model didn't reason or the provider doesn't report the count separately.
+
 ## Thinking in message history
 
 Pydantic AI sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model instead of dropping it. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself. The one profile value that opts out of sending it is `False` on [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts], which no shipped model sets.
@@ -130,7 +132,7 @@ agent = Agent(model, model_settings=settings)
 
 The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI raises its [default](../models/anthropic.md#model-settings) as needed to leave at least 4096 tokens beyond the budget.
 
-Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
+Pydantic AI reports how many thinking tokens Anthropic used as `output_reasoning_tokens`, and also in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
 ### Carried-over thinking
 

@@ -534,14 +534,16 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
 `Agent`, because the engine's `-m` overrides it. Writes go through safe outputs (for example the
-`safeoutputs_add_comment` tool). Install extra dependencies with a workflow `steps:` `pip install --user`.
+`safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
+`$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
+without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
 The provider key is a repository secret, never `engine.env`. A spec agent **cannot** use harness
 capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/step-persistence/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
 - https://pydantic.dev/docs/ai/harness/absurd/
 - https://pydantic.dev/docs/ai/harness/pgtask/

@@ -137,6 +137,17 @@ For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the cor
 
 In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
 
+Changing what the model sees from `before_model_request`:
+
+- Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
+- Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
+- State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
+- Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
+- Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
+- `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
+
+A request-only change that drops or alters content earlier requests sent moves the cached prefix, and on models with preserved thinking (Claude Opus 5.5, Sonnet 5.5, Fable 5.1) invalidates earlier reasoning. So enqueue reminders, request-scoped when one-off; never make them per-request copies.
+
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
 An `on_*_error` hook only covers its stage's core operation. `ModelRetry` raised by a `before_*`, `after_*`, or `wrap_*` hook therefore bypasses it. From a core operation, `ModelRetry` is passed to `on_tool_validate_error` and `on_output_validate_error`, but bypasses `on_model_request_error`, `on_tool_execute_error`, and `on_output_process_error` as control flow. `ToolFailed` bypasses the tool-validation and tool-execution error hooks; from the core model call or core output processing it is an ordinary exception passed to the corresponding error hook.

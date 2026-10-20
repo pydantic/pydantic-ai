@@ -101,8 +101,15 @@ def _deep_response(
     )
 
 
+class _NoDomainFiltersModel(FunctionModel):
+    """A model whose native web search ignores domain filters, as Gemini's does."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
 async def _tools_sent(
-    capability: AbstractCapability[object], *, native_web_search: bool
+    capability: AbstractCapability[object], *, native_web_search: bool, applies_domain_filters: bool = True
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -117,7 +124,8 @@ async def _tools_sent(
         return ModelResponse(parts=[TextPart('done')])
 
     supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
-    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    model_class = FunctionModel if applies_domain_filters else _NoDomainFiltersModel
+    model = model_class(respond, profile=ModelProfile(supported_native_tools=supported))
     await Agent(model, capabilities=[capability]).run('Search the web.')
     return sent[0]
 
@@ -543,6 +551,18 @@ class TestAgentSpec:
         tools, natives = await _tools_sent(ExaSearch(native=True, client=_FakeExaClient()), native_web_search=False)
         assert tools == ['web_search', 'get_page']
         assert natives == []
+
+    async def test_exa_search_is_the_fallback_where_native_search_cannot_apply_the_domain_filters(self) -> None:
+        capability = ExaSearch[object](native=True, include_domains=['a.dev'], client=_FakeExaClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_native_search_without_domain_filters_is_sent_where_it_cannot_apply_them(self) -> None:
+        capability = ExaSearch[object](native=True, client=_FakeExaClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['get_page']
+        assert natives == [WebSearchTool()]
 
     def test_native_search_gets_the_domain_filters(self) -> None:
         capability = ExaSearch[None](native=True, include_domains=['a.dev'], client=_FakeExaClient())

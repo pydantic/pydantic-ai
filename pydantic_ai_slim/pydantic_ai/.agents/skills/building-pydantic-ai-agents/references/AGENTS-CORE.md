@@ -232,12 +232,24 @@ Good defaults:
 - per-model settings only when the user actually needs them
 - `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
   retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
+  with an `UnsupportedSettingWarning`, so with one of those in the chain set it on the other candidates' `settings`
 
 The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
 `'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
 `FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
 cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
+When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
+
+```python
+import warnings
+
+from pydantic_ai import UsageLimitUnavailableWarning
+
+warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+```
+
 
 To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
 `timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by

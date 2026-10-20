@@ -52,8 +52,10 @@ from .exceptions import (
     ToolFailed,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageExtractionFailedWarning,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
 )
 from .format_prompt import format_as_xml
@@ -132,6 +134,7 @@ from .messages import (
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
@@ -250,6 +253,7 @@ __all__ = (
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
+    'UsageLimitUnavailableWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',
@@ -266,6 +270,7 @@ __all__ = (
     'SkipToolValidation',
     'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
+    'UnsupportedSettingWarning',
     'UsageLimitExceeded',
     'UserError',
     # messages
@@ -339,6 +344,7 @@ __all__ = (
     'ToolCallEvent',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolKind',
     'ToolResultEvent',
     'ToolReturn',
     'ToolReturnPart',

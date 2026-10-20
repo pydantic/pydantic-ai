@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -12,14 +13,14 @@ from typing import Any, Literal, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled, ToolOutput, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, ToolOutput, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AudioUrl,
@@ -69,7 +70,7 @@ from pydantic_ai.messages import (
     VideoUrl,
     sanitize_messages,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -4532,6 +4533,103 @@ async def test_adapter_dispatch_request_cancellation_token():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 metadata={'__pydantic_ai__': {'ui_message_id': 'bar'}},
             )
+        ]
+    )
+
+
+async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+    yield 'partial'
+    ctx = get_current_run_context()
+    assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+    ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+    await asyncio.Event().wait()
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def test_run_stream_native_timeout():
+    adapter = VercelAIAdapter(
+        Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+
+    with pytest.raises(RunTimedOut):
+        async for _ in adapter.run_stream_native(timeout=60):
+            pass
+
+
+async def test_adapter_dispatch_request_timeout():
+    """A run that outlives `timeout=` ends like a first-party cancellation: an `abort` chunk, and `on_cancel` gets the `RunTimedOut`."""
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+    cancelled: list[RunCancelled] = []
+
+    response = await VercelAIAdapter.dispatch_request(
+        request,
+        agent=Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        timeout=60,
+        on_cancel=cancelled.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if body:
+            chunks.append('[DONE]' if body == '[DONE]' else json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'partial', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'abort', 'reason': 'The agent run timed out.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                metadata={'__pydantic_ai__': {'ui_message_id': 'bar'}},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::_stream_then_time_out',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                state='interrupted',
+            ),
         ]
     )
 
@@ -11813,6 +11911,37 @@ def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tup
         )
         for message in messages
     ]
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `data-enqueued-messages` part at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6, manage_system_prompt=manage_system_prompt
+    )
+
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert 'Reminder' not in json.dumps(chunks)
 
 
 @pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
