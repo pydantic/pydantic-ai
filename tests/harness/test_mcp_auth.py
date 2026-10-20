@@ -43,7 +43,7 @@ def token_from_deps(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
-def no_tools(token: str) -> FunctionToolset[str | None]:
+def must_not_connect(token: str) -> FunctionToolset[str | None]:
     raise AssertionError('`oauth` must not connect')  # pragma: no cover
 
 
@@ -61,13 +61,13 @@ async def test_per_run_connection_connects_with_each_run_token() -> None:
 
 
 async def test_per_run_connection_rejects_oauth() -> None:
-    toolset = per_run_connection(token_from_deps, no_tools, id=None)
+    toolset = per_run_connection(token_from_deps, must_not_connect, id=None)
     with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
         await toolset.for_run(run_context('oauth'))
 
 
 async def test_per_run_connection_names_the_expected_token() -> None:
-    toolset = per_run_connection(token_from_deps, no_tools, id=None, expects='an access token')
+    toolset = per_run_connection(token_from_deps, must_not_connect, id=None, expects='an access token')
     with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
         await toolset.for_run(run_context('oauth'))
 
