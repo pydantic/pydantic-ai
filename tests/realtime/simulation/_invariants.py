@@ -474,7 +474,21 @@ class Checker:
             if call.read and response.status == 'completed' and not call.cancelled_by_server
         ]
         outputs = [truth.input(call.call_id) for call in calls]
-        return all(output is not None and self._input_resolved(output, by, seen) for output in outputs)
+        return all(
+            self._input_resolved(output, by, seen) if output is not None else self._round_cut_by_drop(response, by)
+            for output in outputs
+        )
+
+    def _round_cut_by_drop(self, response: TruthResponse, by: int) -> bool:
+        """Whether a drop after `response` started had settled its tool calls still running, by `by`.
+
+        Where a reconnect doesn't restore what was in flight, it interrupts the calls still running: their results
+        never go out, and nothing more is owed for them.
+        """
+        session = self.sim.session
+        assert session is not None
+        settled_by_drop = not session._connection.reconnect_restores_in_flight_state  # pyright: ignore[reportPrivateUsage]
+        return settled_by_drop and any(response.seq_start < loss <= by for loss in self.sim.truth.connection_losses)
 
     def _input_resolved(self, input_: TruthInput, by: int, seen: set[str]) -> bool:
         if (input_.refused_read is not None and input_.refused_read <= by) or input_.answer_lost:
