@@ -16,10 +16,11 @@ from typing import Any
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
+from pydantic_ai import RunContext, Tool
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
@@ -138,6 +139,15 @@ def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
 
 
+def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
+    return 'run_code', {'code': f'await look_up(topic={topic!r})'}
+
+
+def _forecast(city: str) -> str:
+    """Get the weather forecast for a city."""
+    return f'Sunny in {city}.'
+
+
 def _modal_sandbox() -> AbstractCapability[Any]:
     # Imported here, not at module level, so collecting this file never imports the Modal SDK.
     try:
@@ -199,14 +209,25 @@ FIXTURES: dict[str, Fixture] = {
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
     'CodeMode(dynamic_catalog=True)': (
-        lambda _: CodeMode(dynamic_catalog=True),
-        Scenario(look_up=lambda topic: ('run_code', {'code': f'await look_up(topic={topic!r})'})),
+        lambda _: [
+            CodeMode(dynamic_catalog=True),
+            ToolSearch(strategy='keywords'),
+            Toolset(FunctionToolset([Tool(_forecast, name='forecast', defer_loading=True)])),
+        ],
+        Scenario(
+            look_up=_run_look_up,
+            # Discover the deferred tool in the first run, then call it from code in the second.
+            state_calls=(
+                ('search_tools', {'queries': ['forecast']}),
+                ('run_code', {'code': "await forecast(city='Paris')"}),
+            ),
+        ),
     ),
 }
 """Non-default configurations worth their own case, keyed by a case name."""
 
 SCENARIOS: dict[str, Scenario] = {
-    'CodeMode': Scenario(look_up=lambda topic: ('run_code', {'code': f'await look_up(topic={topic!r})'})),
+    'CodeMode': Scenario(look_up=_run_look_up),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
@@ -256,12 +277,28 @@ def _no_default_id(block: str) -> tuple[Known, ...]:
 
 KNOWN: dict[str, tuple[Known, ...]] = {
     'AskUser': _no_default_id('When the task is ambiguous'),
-    'CodeMode(dynamic_catalog=True)': (Known('ids', f'{_ISSUES}8965', match='The following functions are available'),),
+    'CodeMode(dynamic_catalog=True)': (
+        Known('ids', f'{_ISSUES}8965', match='The following functions are available'),
+        # Discovering a deferred tool rewrites the catalog in the system prompt, and on Anthropic folds the
+        # tool into `run_code` by dropping its deferred declaration.
+        Known('prefix', f'{_ISSUES}8965', match='async def forecast'),
+        Known('prefix', f'{_ISSUES}8965', match='rewrote deferred-tools', providers=('anthropic',)),
+    ),
     'ConversationSearch': _no_default_id('A `search_conversation_history` tool'),
     'LogfireMCP': (Known('prefix', f'{_PULLS}10543', match='current UTC time is within the hour'),),
     'Macroscope': _no_default_id('You can run a local Macroscope code review'),
     'ManagedPrompt': _no_default_id('You answer questions about the news.'),
     'Memory': (Known('prefix', f'{_ISSUES}8996', match='<memory>'),),
+    # The summary takes the place of the standing system prompt's first block instead of joining history. On
+    # Responses the standing prompt is `instructions`, which the summary leaves alone.
+    'SummarizingCompaction': (
+        Known(
+            'prefix',
+            f'{_ISSUES}7289',
+            match='Summary of previous conversation',
+            providers=('anthropic', 'openai-chat'),
+        ),
+    ),
     'PlaywrightBrowser': _no_default_id('You have a real web browser powered by Playwright'),
     'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
 }

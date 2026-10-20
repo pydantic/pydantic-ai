@@ -159,6 +159,7 @@ ALLOWED: dict[str, Allowed] = {
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
         max_moves=4,
+        standing=True,
     ),
 }
 """Documented prefix movers, checked exactly."""
@@ -280,7 +281,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
             (),
-            Allowed('example'),
+            Allowed('example', standing=True),
             'fail',
             'moved the prefix 4 times, more than the 1 its `ALLOWED` entry permits',
             id='too-many-moves',
@@ -288,7 +289,15 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
             (),
-            Allowed('example', tail=True),
+            Allowed('example', max_moves=4),
+            'fail',
+            'may only rewrite history, but changed the settings, tools or system prompt',
+            id='standing-prefix',
+        ),
+        pytest.param(
+            Capability[Any](id='clock', instructions=_clock_instructions),
+            (),
+            Allowed('example', tail=True, standing=True),
             'fail',
             'may only replace the last block of each request',
             id='deep-tail',

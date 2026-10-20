@@ -26,7 +26,6 @@ import importlib
 import importlib.util
 import inspect
 import json
-import re
 import sys
 from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
@@ -48,7 +47,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 
-from .cassette_utils import PrefixBlock, canonical_prefix_blocks
+from .cassette_utils import PrefixBlock, anthropic_deferred_tool_blocks, canonical_prefix_blocks
 from .conftest import try_import
 
 Provider = Literal['anthropic', 'openai-responses', 'openai-chat']
@@ -420,12 +419,31 @@ class ConversationResult:
     parameters: list[ModelRequestParameters]
 
     def prefix_breaks(self) -> list[PrefixBreak]:
+        """Pairs whose later request doesn't start with the earlier one.
+
+        Anthropic leaves `defer_loading: true` tools out of its cache key, so `canonical_prefix_blocks` drops
+        them; their wire contract is still append-only in first-reveal order, so they're compared on their own.
+        """
         blocks = [_cache_blocks(body, self.provider) for body in self.conversation]
-        return [
+        breaks = [
             prefix_break
             for index, (earlier, later) in enumerate(zip(blocks, blocks[1:]), start=1)
             if (prefix_break := _first_divergence(index, earlier, later)) is not None
         ]
+        if self.provider == 'anthropic':
+            deferred = [
+                [
+                    ('deferred-tools', block)
+                    for block in anthropic_deferred_tool_blocks(_strip_cache_markers(json.loads(body)))
+                ]
+                for body in self.conversation
+            ]
+            breaks += [
+                prefix_break
+                for index, (earlier, later) in enumerate(zip(deferred, deferred[1:]), start=1)
+                if (prefix_break := _first_divergence(index, earlier, later)) is not None
+            ]
+        return sorted(breaks, key=lambda prefix_break: prefix_break.request_index)
 
     def unaddressable_instructions(self) -> list[str]:
         """Distinct instruction blocks the model saw that carry no `id`."""
@@ -494,6 +512,9 @@ class PrefixBreak:
     later: str
     in_tail: bool
     """Whether only the last block of the previous request changed: a request-only tail was dropped or replaced."""
+    in_history: bool
+    """Whether the change is in the conversation history, rather than the settings, tools, deferred tools or
+    standing system prompt (including leading system or developer messages) every request starts with."""
 
     def __str__(self) -> str:
         return (
@@ -570,7 +591,24 @@ def _first_divergence(index: int, earlier: list[PrefixBlock], later: list[Prefix
     after = later[block_index] if block_index < len(later) else ('-', '<missing>')
     section = before[0] if before[0] != '-' else after[0]
     before_text, after_text = _around_difference(before[1], after[1])
-    return PrefixBreak(index, section, block_index, before_text, after_text, in_tail=block_index == len(earlier) - 1)
+    standing = next(
+        (i for i, (level, block) in enumerate(earlier) if level == 'messages' and not _is_system_message(block)),
+        len(earlier),
+    )
+    return PrefixBreak(
+        index,
+        section,
+        block_index,
+        before_text,
+        after_text,
+        in_tail=block_index == len(earlier) - 1,
+        in_history=section == 'messages' and block_index >= standing,
+    )
+
+
+def _is_system_message(block: str) -> bool:
+    message = json.loads(block)
+    return is_str_dict(message) and message.get('role') in ('system', 'developer')
 
 
 def _around_difference(a: str, b: str, context: int = 100) -> tuple[str, str]:
@@ -618,6 +656,7 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
 
     Reads the source rather than an export list, so a new capability is a new case without anyone
     registering it, and rather than importing it, so collection never imports an integration's SDK.
+    Class definitions are parsed with `ast`, so multi-line and nested-generic bases are followed.
     A class is a capability when its bases lead to `AbstractCapability`, following base names across
     `pydantic_ai` and `packages`. It is public when it isn't `_`-prefixed and is importable under its name
     from its module path with the private segments dropped: `pydantic_ai.capabilities._tool_search.ToolSearch`
@@ -626,12 +665,12 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
     bases: dict[str, set[str]] = {}
     defined: dict[str, list[str]] = {}
     for package in ('pydantic_ai', *packages):
-        for module, source in _module_sources(package):
-            for match in _CLASS_STATEMENT.finditer(source):
-                name = match['name']
-                bases.setdefault(name, set()).update(_base_names(match['bases']))
-                if package in packages:
-                    defined.setdefault(module, []).append(name)
+        for module, tree in _module_trees(package):
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef):
+                    bases.setdefault(node.name, set()).update(_base_names(node))
+                    if package in packages:
+                        defined.setdefault(module, []).append(node.name)
 
     capabilities = {'AbstractCapability'}
     while new := {name for name, names in bases.items() if name not in capabilities and names & capabilities}:
@@ -643,34 +682,28 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
         exported = _exported_names(public_module) if public_module != module else set(names)
         for name in names:
             if name in capabilities and not name.startswith('_') and name in exported:
-                found[name] = CapabilityRef(name, module)
+                ref = CapabilityRef(name, module)
+                # Cases and table entries are keyed by class name, so two public capabilities sharing one
+                # would silently test only the second.
+                assert name not in found, f'two public capabilities are named `{name}`: {found[name].module}, {module}'
+                found[name] = ref
     return found
 
 
-_CLASS_STATEMENT = re.compile(r'^class\s+(?P<name>\w+)\s*\((?P<bases>[^)]*)\)\s*:', re.MULTILINE)
-"""A top-level class statement. A regex rather than `ast`, which takes most of a second over both packages."""
-
-
-def _module_sources(package: str) -> Iterator[tuple[str, str]]:
+def _module_trees(package: str) -> Iterator[tuple[str, ast.Module]]:
     spec = importlib.util.find_spec(package)
     assert spec is not None and spec.submodule_search_locations is not None
     root = Path(next(iter(spec.submodule_search_locations)))
     for path in sorted(root.rglob('*.py')):
         parts = path.relative_to(root).with_suffix('').parts
         module = '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts)))
-        yield module, path.read_text(encoding='utf-8')
+        yield module, ast.parse(path.read_text(encoding='utf-8'))
 
 
-def _base_names(bases: str) -> set[str]:
-    """The unqualified names of a class statement's bases, without their type arguments or keywords.
-
-    Only the base list goes through `ast` (parsing whole modules is what the regex avoids), so nested type
-    arguments like `AbstractCapability[dict[str, Any]]` resolve to `AbstractCapability`.
-    """
-    statement = ast.parse(f'class _({bases}): pass').body[0]
-    assert isinstance(statement, ast.ClassDef)
+def _base_names(node: ast.ClassDef) -> set[str]:
+    """The unqualified names of a class's bases, without their type arguments."""
     names: set[str] = set()
-    for base in statement.bases:
+    for base in node.bases:
         while isinstance(base, ast.Subscript):
             base = base.value
         names.add(ast.unparse(base).rsplit('.', 1)[-1])
@@ -745,7 +778,8 @@ class Known:
 class Allowed:
     """A documented prefix mover, checked exactly: it must move the prefix, and only as documented.
 
-    A compaction-style mover may rewrite the prefix at most `max_moves` times. A `tail` mover sends request-only
+    A compaction-style mover may rewrite history at most `max_moves` times, and must leave the settings, tools
+    and standing system prompt alone unless `standing` says it may change them. A `tail` mover sends request-only
     content at the end of each request (behind a cache breakpoint) and drops it from the next, so it may change
     the last block of every request and nothing before it.
     """
@@ -753,6 +787,8 @@ class Allowed:
     reason: str
     max_moves: int = 1
     tail: bool = False
+    standing: bool = False
+    """Whether it may change the standing prefix (settings, tools, the system prompt) too, not only history."""
     providers: tuple[Provider, ...] = PROVIDERS
     """The providers this mover applies to; on the others the capability must keep the prefix."""
 
@@ -773,6 +809,8 @@ def _violations(
             'no longer moves the prefix',
             [f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix'],
         )
+    elif not allowed.standing and (outside := [str(b) for b in breaks if not b.in_history]):
+        violations['prefix'] = ('may only rewrite history, but changed the settings, tools or system prompt', outside)
     elif allowed.tail:
         if deep := [str(b) for b in breaks if not b.in_tail]:
             violations['prefix'] = (
