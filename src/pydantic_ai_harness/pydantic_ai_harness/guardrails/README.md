@@ -268,7 +268,7 @@ OutputGuardrail(guard=must_cite_sources)
 
 ## Tool calls
 
-`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does.
+`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does. `result_guard` also sees the message of a tool that raised `ModelRetry` or `ToolFailed`, including inside `CodeMode`, because that text reaches the model too; a screened failure stays a failure. A retry raised by another capability's hook, or by a `ToolGuardrail` verdict, is not screened.
 
 ```python
 from pathlib import Path

@@ -227,8 +227,11 @@ class TestArgumentGuard:
     async def test_retry_asks_the_model_to_redo_the_call(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult.retry('narrow the query'))
 
-        with pytest.raises(ModelRetry, match='narrow the query'):
+        with pytest.raises(ModelRetry, match='narrow the query') as raised:
             await _guard_args(guard, {})
+
+        assert type(raised.value) is ModelRetry
+        assert raised.value == ModelRetry('narrow the query')
 
     async def test_retry_without_a_message_uses_the_default(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult(action='retry', message=''))
