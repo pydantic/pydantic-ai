@@ -254,7 +254,7 @@ class Checker:
         """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
         self._judged_truncations = 0
-        self._consumer_error_judged = False
+        self._judged_consumer_errors = 0
         self._codec_issues: list[ConformanceIssue] = []
 
     def attach(self, session: RealtimeSession) -> None:
@@ -339,10 +339,13 @@ class Checker:
             for operation in judged
             if operation.error is not None and not _expected_error(operation.error)
         ]
-        if (error := sim.consumer_error) is not None and not self._consumer_error_judged:
-            self._consumer_error_judged = True
-            if not _expected_error(error):
-                unexpected.append((f'iterating the session raised {error!r}', {'operation': 'iterate'}))
+        errors = sim.consumer_errors[self._judged_consumer_errors :]
+        self._judged_consumer_errors = len(sim.consumer_errors)
+        unexpected += [
+            (f'iterating the session raised {error!r}', {'operation': 'iterate'})
+            for error in errors
+            if not _expected_error(error)
+        ]
         self.report('api.unexpected_error', unexpected)
 
     def _removal_allowed(self, message: ModelMessage) -> bool:  # pragma: lax no cover (the session core never removes)
@@ -518,9 +521,12 @@ class Checker:
             # Every connection was lost and none replaced (GPT-Live doesn't reconnect): the session is over.
             or len(truth.connection_losses) >= truth.connections
             or 'error' in sim.tools.settled.values()
+            # A failure raised from `async for` (a usage limit a tool's result would pass, a tool result that failed
+            # to send) ends the exchange in progress, though the session goes on receiving.
+            or bool(sim.consumer_errors)
             or sim.receive_ended
         ):
-            # The session ended, lost state to a drop, or a tool failure ended the exchange: returning is right.
+            # The session ended, lost state to a drop, or a failure ended the exchange: returning is right.
             return []
         context = {'waiter': waiter.index, 'started': waiter.started}
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...

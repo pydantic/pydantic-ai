@@ -189,7 +189,8 @@ class Simulation(ABC):
         self.operations: list[Operation] = []
         self.waiters: list[Waiter] = []
         self.events: list[RealtimeEvent] = []
-        self.consumer_error: BaseException | None = None
+        self.consumer_errors: list[BaseException] = []
+        """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -297,15 +298,37 @@ class Simulation(ABC):
         return agent
 
     async def _consume(self) -> None:
-        assert self.session is not None
+        """Iterate the session as an app that reports a failure and keeps listening does, until receiving ends.
+
+        A tool that raised, or a usage limit tripped by a tool's result, is raised from `async for` while the session
+        goes on receiving: iterating again picks the conversation up where it was.
+        """
+        session = self.session
+        assert session is not None
         try:
-            async for event in self.session:
-                self.events.append(event)
-        except BaseException as e:
-            self.consumer_error = e
+            while True:
+                try:
+                    async for event in session:
+                        self.events.append(event)
+                    return
+                except BaseException as e:
+                    self.consumer_errors.append(e)
+                    if isinstance(e, asyncio.CancelledError) or not self.session_receiving:
+                        return
         finally:
             self.receive_ended = True
             self.receive_ended_at = self._now()
+
+    @property
+    def consumer_error(self) -> BaseException | None:
+        """The latest failure iterating the session raised: the one that ended it, once receiving has ended."""
+        return self.consumer_errors[-1] if self.consumer_errors else None
+
+    @property
+    def session_receiving(self) -> bool:
+        """Whether the session is still reading the provider."""
+        session = self.session
+        return session is not None and not (session._pump_finished or session._receive_ending)  # pyright: ignore[reportPrivateUsage]
 
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.

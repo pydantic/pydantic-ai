@@ -94,24 +94,6 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
 )
 
 
-LOST_RESPONSE_RESERVATION = Finding(
-    id='SIM-1',
-    title=(
-        'a reply lost with a dropped connection keeps its reservation: the reconnect does not ask for it again (it '
-        'had started, or the provider resumes without it) and the session does not settle it, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    # Fixed for Gemini and GPT-Live by their lifecycle tracker: a drop loses every reply still owed.
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        any(response.lost and response.answers for response in sim.truth.responses.values())
-        or any(input_.answer_lost for input_ in sim.truth.inputs)
-    ),
-)
-
-
 def _xai_push_to_talk(sim: Simulation) -> bool:
     options = getattr(sim, 'openai', None)
     return options is not None and options.dialect == 'xai' and options.turn_detection == 'manual'
@@ -348,28 +330,20 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
-def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
-
-    from ._invariants import SimulatedToolError
-
-    parked = (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
-    errors = [sim.consumer_error, *(operation.error for operation in sim.operations)]
-    return 'error' in sim.tools.settled.values() or any(isinstance(error, parked) for error in errors)
-
-
-PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
+LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
     id='SIM-15',
     title=(
-        'the session ends on a parked error (a tool that raised, or a tool result over `request_limit`) while '
-        'another request is still owed (deferred behind the tool round), so `wait_for_reply()` hangs: the part '
-        'of OR8 that #8765 left'
+        'on GPT-Live, a tool that raises leaves the rest of its delegated round owed: the results of its siblings, '
+        'sent after the failure, each ask for a reply, but the backend waits for every call in the round and the '
+        "failed one's output never comes, so `wait_for_reply()` hangs (on the OpenAI protocol, a failed call's "
+        'siblings ask for no reply; the rest of SIM-15 was a simulator that stopped reading at the first error the '
+        'iterator raised)'
     ),
-    tracked_by='every reply reservation settled when the session parks an error; found by this simulator',
-    evidence='recorded',
+    tracked_by='the GPT-Live reply obligations rewrite (#10668); found by this simulator',
+    evidence='simulated',
     codes=frozenset({'wait.hang'}),
-    providers=ALL,
-    matches=_parked_error,
+    providers=frozenset({'gpt-live'}),
+    matches=lambda sim, violation: 'error' in sim.tools.settled.values(),
 )
 
 
@@ -479,16 +453,7 @@ UNACKNOWLEDGED_COMMIT_UNDER_VAD = Finding(
 
 
 def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.realtime import RealtimeError
-
-    if violation.code == 'send.failed_across_reconnect':
-        return violation.context.get('operation') != 'send_audio'
-    error = sim.consumer_error
-    return (
-        isinstance(error, RealtimeError)
-        and error.message.startswith('Realtime connection failed while sending')
-        and sim.truth.connections > 1
-    )
+    return violation.context.get('operation') != 'send_audio'
 
 
 def _request_deferred_behind_an_answer_to_speech(sim: Simulation) -> bool:
@@ -532,13 +497,12 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
         'a send other than audio (a typed turn, context, an image, `clear_audio`) that hits the dropped socket raises '
-        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else. '
-        'When it is a tool result the session sends, the error ends the event stream over a re-dialed connection, '
-        'and a reply asked for afterwards is waited on forever'
+        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else '
+        '(a tool result the session sends that way is raised from `async for`, and the session goes on)'
     ),
     tracked_by='an ordered outbox that holds sends across a re-dial (#8806 covered audio only)',
     evidence='live-stress',
-    codes=frozenset({'send.failed_across_reconnect', 'wait.hang'}),
+    codes=frozenset({'send.failed_across_reconnect'}),
     providers=OPENAI_PROTOCOL | GEMINI,
     matches=_send_failed_across_reconnect,
 )
@@ -669,13 +633,11 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        PARKED_ERROR_LEAVES_REQUEST_OWED,
+        LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
         CUT_OFF_TURN_COMPLETE,
-        # The general reservation leaks last: a more specific finding explains a hang better.
-        LOST_RESPONSE_RESERVATION,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
