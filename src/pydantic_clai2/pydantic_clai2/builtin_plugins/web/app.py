@@ -43,7 +43,6 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     WorkspaceOpened,
     WorkspacesInfo,
     dump,
-    find_image,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
@@ -335,9 +334,9 @@ def _images(app: FastAPI, service: WebService) -> None:
     """
 
     async def image(image_id: str, conversation_id: str | None = None) -> Response:
-        images = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).images()
-        # Off the loop: hashing every image of a long conversation would stall every stream meanwhile.
-        found = await to_thread.run_sync(find_image, images, image_id)
+        channel = _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+        # On the loop: the session hashed each image once already, when its transcript listed it.
+        found = channel.image(image_id)
         if found is None:
             raise HTTPException(status_code=404, detail='No such image in this session.')
         # An ID is the digest of the bytes, so they never change.

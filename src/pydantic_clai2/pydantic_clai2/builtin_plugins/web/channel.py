@@ -13,6 +13,7 @@ from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     EventTranslator,
+    ImageIds,
     ItemAdded,
     ItemLog,
     Notice,
@@ -77,6 +78,7 @@ class SessionChannel:
         """The running turn's usage, as its run context reports it; `None` between turns."""
         self._prompt_images: list[BinaryContent] = []
         """The last prompt's images, which its run may not have added to the conversation yet."""
+        self._image_ids = ImageIds()
 
     @property
     def id(self) -> str:
@@ -94,7 +96,7 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages)
+        items = history_items(conversation.messages, image_ids=self._image_ids)
         if self.running:
             items += self._turn.items.values()
         service = self.service
@@ -116,9 +118,11 @@ class SessionChannel:
             update=service.update,
         )
 
-    def images(self) -> list[BinaryContent]:
-        """The images the transcript shows: the last prompt's, and those of the conversation's prompts."""
-        return [*self._prompt_images, *history_images(self.session.conversation.messages)]
+    def image(self, image_id: str) -> BinaryContent | None:
+        """The image the transcript lists as `image_id`: the last prompt's, or one of the conversation's prompts."""
+        return self._image_ids.find(
+            [*self._prompt_images, *history_images(self.session.conversation.messages)], image_id
+        )
 
     def status(self) -> StatusInfo:
         status = self.session.status
@@ -177,7 +181,7 @@ class SessionChannel:
         if prompt is not None:
             part = UserPromptPart(prompt)
             self._prompt_images = user_images(part)
-            item = user_item(part, id=f'prompt{time.monotonic_ns()}')
+            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids)
         self.publish(TurnStarted(item=item))
         self.publish_status()
 

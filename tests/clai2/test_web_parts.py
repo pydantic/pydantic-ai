@@ -56,6 +56,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     Diff,
     DiffAdded,
     EventTranslator,
+    ImageIds,
     Item,
     ItemAdded,
     ItemLog,
@@ -282,11 +283,17 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert (items[0].text, items[0].images) == ('Look\n[BinaryContent]', [hashlib.sha256(b'png').hexdigest()])
-    image_only = UserPromptPart(['', BinaryContent(b'png', media_type='image/png')])
-    [alone] = history_items([ModelRequest(parts=[image_only])])
-    assert (alone.text, alone.images) == ('', items[0].images), 'a prompt of images alone'
-    assert history_items([ModelRequest(parts=[UserPromptPart('plain')])])[0].images == []
+    assert (items[0].text, items[0].images) == ('Look\n[image]\n[BinaryContent]', []), 'a preview serves no images'
+    image = BinaryContent(b'png', media_type='image/png')
+    image_only = ModelRequest(parts=[UserPromptPart(['', image])])
+    assert history_items([image_only])[0].text == '[image]', 'a prompt of images alone'
+    # A live session lists its images by ID, which it serves, rather than naming them.
+    ids = ImageIds()
+    [listed] = history_items([image_only], image_ids=ids)
+    assert (listed.text, listed.images) == ('', [hashlib.sha256(b'png').hexdigest()])
+    assert history_items([ModelRequest(parts=[UserPromptPart('plain')])], image_ids=ids)[0].images == []
+    assert ids.find([image], listed.images[0]) is image
+    assert ids.find([], listed.images[0]) is None, 'not once the session no longer holds it'
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40

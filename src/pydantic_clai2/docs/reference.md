@@ -1054,6 +1054,8 @@ not read, such as HEIC or SVG, into PNG when the browser can draw it. The images
 prompt, or alone, and CLAI checks and converts them to PNG with the same limits as above; a photo
 can grow severalfold as PNG, so send fewer at a time if the 32 MiB limit refuses them. Unsent images stay with each session's draft until you reload the page.
 The transcript shows each sent image as a thumbnail in your message, also after a reload or `/resume`.
+The preview of a saved session that is not open, and a delegated task's transcript, show `[image]`
+instead.
 
 Pillow is a CLAI dependency, for the terminal and the web UI, not a harness one; see the CLAI dependency boundary in
 [#875](https://github.com/pydantic/pydantic-ai-harness/issues/875).
