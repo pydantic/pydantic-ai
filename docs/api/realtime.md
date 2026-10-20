@@ -150,7 +150,12 @@ and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
 turns, and inputs (as the OpenAI Realtime API does) is best translated into lifecycle events directly. One that
 identifies none of them (as Gemini Live and OpenAI GPT-Live don't) can hand each input it sends and each
 provider message it reads to an [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle], which
-works the lifecycle out from their order. Here, a reply to a text turn is a response that answers it:
+works the lifecycle out from their order. Either way, a connection that names the output items its codec events
+stream (their `item_id`) can say more about one:
+[`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about it on
+the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] reports how much of it the
+listener heard, which can come after its response ended and revises the copy history recorded. Here, a reply to a
+text turn is a response that answers it:
 
 ```python
 import asyncio
