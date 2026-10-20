@@ -124,7 +124,49 @@ agent = Agent(
 
 [`ToolCallJudge`](tool-call-judge.md) and `ApprovalReviewer` ask the same kind of question at different points, and in opposite directions. A judge can only narrow what runs: its `yes` blocks a call. A reviewer can only widen what runs without a person: its `no` approves a call.
 
-Both can apply to one call. A call the reviewer approves is executed, and a judge on the same tool is asked then, about the validated arguments; the judge can still block it. A judge with `on_uncertain='ask'` raises an approval request, and that request reaches the reviewer like any other. Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
+Together they sort every call into blocked, run, or sent to a person. Let the judge block what must never run and escalate what it cannot settle with `on_uncertain='ask'`, and let the reviewer approve the escalations that are safe enough to run unattended:
+
+```python {names="defined"}
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
+
+agent = Agent(
+    '{{ anthropic:xlarge }}',
+    capabilities=[
+        ToolCallJudge(
+            '{{ anthropic:small }}',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data outside the project directory?',
+            on_uncertain='ask',
+        ),
+        ApprovalReviewer(
+            '{{ anthropic:small }}',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data, reach the network, or expose secrets?',
+        ),
+    ],
+    output_type=[str, DeferredToolRequests],
+)
+
+
+@agent.tool_plain
+def run_shell(command: str) -> str:
+    return f'Would run: {command}'
+```
+
+| Judge | Reviewer | What happens |
+|---|---|---|
+| `no` | not asked | the call runs |
+| `yes` | not asked | the call is blocked |
+| `unsure` or failed | `no` | the call is approved, and the judge is asked again before it runs |
+| `unsure` or failed | `yes`, `unsure`, or failed | the call is left for the person |
+
+`run_shell` is not registered with `requires_approval=True`, so the judge's escalations are the only approval requests the reviewer sees for it. On a tool that also requires approval, the reviewer answers those requests too, under the same `question`.
+
+A call the reviewer approves is judged again, like any approved call ([working with human approval](tool-call-judge.md#working-with-human-approval)): a `yes` still blocks it, and an `unsure` now lets it run. An escalated call that runs costs two judgements and one review.
+
+Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
 
 ## What the reviewer sees
 
