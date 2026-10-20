@@ -2481,14 +2481,15 @@ def agent_spans() -> Iterator[InMemorySpanExporter]:
 
 def _span_outcomes(exporter: InMemorySpanExporter) -> list[tuple[object, str, object]]:
     """Each span's GenAI operation, status and `error.type`, independent of agent and model names."""
-    return sorted(
+    outcomes = [
         (
             (span.attributes or {}).get('gen_ai.operation.name'),
             span.status.status_code.name,
             (span.attributes or {}).get('error.type'),
         )
         for span in exporter.get_finished_spans()
-    )
+    ]
+    return sorted(outcomes, key=repr)
 
 
 class _ClockSkippingLoop(asyncio.SelectorEventLoop):
@@ -2551,12 +2552,35 @@ def test_subagent_timeout_marks_the_spans_it_cuts_off(
     assert ('gen_ai.usage.input_tokens' in (cut_off_chat.attributes or {})) == bool(chunks_before_cutoff)
 
 
-def test_run_timeout_marks_the_spans_it_cuts_off(agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ('stream_chunks', 'expected'),
+    [
+        # pydantic-ai records the cancelled tool span as an error itself.
+        pytest.param(
+            None,
+            [('chat', 'UNSET', None), ('execute_tool', 'ERROR', None), ('invoke_agent', 'ERROR', 'timeout')],
+            id='in-tool',
+        ),
+        pytest.param(0, [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')], id='before-first-chunk'),
+        pytest.param(1, [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')], id='after-first-chunk'),
+    ],
+)
+def test_run_timeout_marks_the_spans_it_cuts_off(
+    stream_chunks: int | None,
+    expected: list[tuple[str, str, str | None]],
+    agent_spans: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+):
     async def hang() -> None:
         await _skip_clock_and_hang(60)
 
     async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
-        yield {0: DeltaToolCall(name='hang', json_args='{}')}
+        if stream_chunks is None:
+            yield {0: DeltaToolCall(name='hang', json_args='{}')}
+        else:
+            for _ in range(stream_chunks):
+                yield 'partial'
+            await _skip_clock_and_hang(60)
 
     monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '3')  # a 60s run budget
     with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
@@ -2566,31 +2590,20 @@ def test_run_timeout_marks_the_spans_it_cuts_off(agent_spans: InMemorySpanExport
             )
         )
     assert rc == 1
-    # pydantic-ai records the cancelled tool span as an error itself.
-    assert _span_outcomes(agent_spans) == [
-        ('chat', 'UNSET', None),
-        ('execute_tool', 'ERROR', None),
-        ('invoke_agent', 'ERROR', 'timeout'),
-    ]
+    assert _span_outcomes(agent_spans) == expected
 
 
-def test_a_failed_stream_is_not_marked_as_timed_out(agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch):
-    """pydantic-ai cancels a request whose stream failed, which no wall-clock cap caused."""
+def test_a_failed_stream_is_not_marked_as_timed_out(agent_spans: InMemorySpanExporter):
+    """pydantic-ai cancels a request whose stream failed, under a run cap that has not expired."""
 
     async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
         yield 'partial'
         raise ModelHTTPError(529, 'glm-5.3-flash')
 
-    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
     with redirect_stdout(io.StringIO()):
         rc = asyncio.run(
-            shim.run(
-                prompt='review the PR',
-                model=FunctionModel(stream_function=_stream),
-                label='test-model',
-                claude_code_toolset=FunctionToolset[object](),
-                mcp_servers=[],
-                session_id='stream-failure',
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p', FunctionModel(stream_function=_stream), 'lbl', FunctionToolset[object](), [], 'stream-failure'
             )
         )
     assert rc == 1
