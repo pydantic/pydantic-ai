@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
     from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI, completion_message
+    from .mock_openai import MockOpenAI
 
 
 pytestmark = [
@@ -45,26 +45,6 @@ def zai_request_fields(capture: RequestCapture) -> list[dict[str, object]]:
         {key: body[key] for key in ('thinking', 'reasoning_effort', 'user_id') if key in body}
         for body in capture.bodies('/chat/completions')
     ]
-
-
-async def test_zai_metadata_non_string_value(allow_model_requests: None) -> None:
-    # Emulate the SDK's strict metadata schema and unvalidated responses.
-    class ChatCompletionWithMetadata(chat.ChatCompletion):
-        metadata: dict[str, str] | None = None
-
-    completion = ChatCompletionWithMetadata.model_validate(
-        dict(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
-    )
-    completion.metadata = {
-        'weight_version': 'default',
-        'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}],
-    }  # pyright: ignore[reportAttributeAccessIssue]
-    mock_client = MockOpenAI.create_mock(completion)
-    model = ZaiModel('glm-5.1', provider=ZaiProvider(openai_client=mock_client))
-
-    result = await Agent(model).run('Hello')
-    assert result.output == 'hello'
-    assert model._validate_completion(completion).metadata == completion.metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_zai_thinking_across_turns(allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture):

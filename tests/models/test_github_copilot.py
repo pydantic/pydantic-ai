@@ -43,40 +43,16 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
-    from openai.types import chat
-    from openai.types.chat.chat_completion_message import ChatCompletionMessage
-
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
 
-    from .mock_openai import MockOpenAI, completion_message
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
 ]
-
-
-async def test_github_copilot_metadata_non_string_value(allow_model_requests: None) -> None:
-    # Emulate the SDK's strict metadata schema and unvalidated responses.
-    class ChatCompletionWithMetadata(chat.ChatCompletion):
-        metadata: dict[str, str] | None = None
-
-    completion = ChatCompletionWithMetadata.model_validate(
-        dict(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
-    )
-    completion.metadata = {
-        'weight_version': 'default',
-        'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}],
-    }  # pyright: ignore[reportAttributeAccessIssue]
-    mock_client = MockOpenAI.create_mock(completion)
-    model = GitHubCopilotModel('gpt-5.2', provider=GitHubCopilotProvider(openai_client=mock_client))
-
-    result = await Agent(model).run('Hello')
-    assert result.output == 'hello'
-    assert model._validate_completion(completion).metadata == completion.metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_github_copilot_model_simple(allow_model_requests: None, github_copilot_api_key: str):

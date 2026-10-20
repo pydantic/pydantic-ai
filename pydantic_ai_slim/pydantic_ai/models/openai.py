@@ -382,7 +382,7 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZ
 
 
 class _ChatCompletion(chat.ChatCompletion):
-    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+    """Relaxes validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
     model_config = {'title': 'ChatCompletion'}
 

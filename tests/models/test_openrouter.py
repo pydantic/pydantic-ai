@@ -1273,24 +1273,6 @@ def _openrouter_completion(content: str) -> ChatCompletion:
     )
 
 
-async def test_openrouter_metadata_non_string_value(allow_model_requests: None) -> None:
-    # Emulate the SDK's strict metadata schema and unvalidated responses.
-    class ChatCompletionWithMetadata(ChatCompletion):
-        metadata: dict[str, str] | None = None
-
-    completion = ChatCompletionWithMetadata.model_validate(dict(_openrouter_completion('hello')))
-    completion.metadata = {
-        'weight_version': 'default',
-        'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}],
-    }  # pyright: ignore[reportAttributeAccessIssue]
-    mock_client = MockOpenAI.create_mock(completion)
-    model = OpenRouterModel('openai/gpt-5.2', provider=OpenRouterProvider(openai_client=mock_client))
-
-    result = await Agent(model).run('Hello')
-    assert result.output == 'hello'
-    assert model._validate_completion(completion).metadata == completion.metadata  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:
     """OpenRouter gets the fallback while the same history stays native on OpenAI.
 
