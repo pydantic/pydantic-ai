@@ -646,7 +646,12 @@ async def test_text_is_sent_as_context_not_a_user_turn() -> None:
 
     assert sent == snapshot(
         [
-            {'type': 'session.commentary.append', 'delegation_id': None, 'content': 'Say this out loud.'},
+            {
+                'type': 'session.commentary.append',
+                'event_id': 'pydantic_ai.commentary.0',
+                'delegation_id': None,
+                'content': 'Say this out loud.',
+            },
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
         ]
     )
@@ -1123,7 +1128,7 @@ def test_unknown_events_are_ignored() -> None:
 
 def test_events_the_connection_does_not_act_on_are_ignored_even_if_malformed() -> None:
     """An acknowledgement or notice changes nothing the session has said or heard, whatever its shape."""
-    assert _connection()._map_frame('{"type": "session.commentary.appended"}') == []  # pyright: ignore[reportPrivateUsage]
+    assert _connection()._map_frame('{"type": "session.thinking.appended"}') == []  # pyright: ignore[reportPrivateUsage]
     # A `type` that isn't a string names no event at all.
     assert _connection()._map_frame('{"type": []}') == []  # pyright: ignore[reportPrivateUsage]
 

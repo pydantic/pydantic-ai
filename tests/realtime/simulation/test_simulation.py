@@ -276,8 +276,13 @@ def test_turn_committed_by_hand_under_server_vad_is_filed_where_the_provider_put
     run_clean(OpenAISimulation(), scenario)
 
 
-@known('SIM-13')
-def test_known_gemini_cut_off_tool_turn_ends_the_wait_early() -> None:
+def test_gemini_cut_off_tool_turn_leaves_the_wait_to_the_reply() -> None:
+    """SIM-13: a typed turn cuts off a turn waiting on tool results, whose calls Gemini cancels.
+
+    The wait is owed the reply to the typed turn, which the next turn gives, not the cut-off one (seen live on
+    `gemini-3.1-flash-live-preview`: `tool_call_cancellation`, `interrupted`, `turn_complete`, then a new turn).
+    """
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(deliver=False)
@@ -285,7 +290,7 @@ def test_known_gemini_cut_off_tool_turn_ends_the_wait_early() -> None:
         sim.wait_for_reply()
         sim.settle()
 
-    reproduce('SIM-13', GeminiSimulation(), scenario)
+    run_accepting(GeminiSimulation(behavior=GeminiBehavior(text_cuts_off_reply=True)), scenario, 'SIM-39')
 
 
 def async_gemini() -> GeminiSimulation:
@@ -487,9 +492,11 @@ def test_known_live_late_delegated_call_lands_in_the_next_reply() -> None:
     reproduce('SIM-18', LiveSimulation(), scenario)
 
 
-@known('SIM-13')
-def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
-    """Two spoken turns the model hadn't started answering, then a typed one that cuts them off."""
+def test_gemini_cut_off_unstarted_turn_leaves_the_wait_to_the_reply() -> None:
+    """SIM-13: two spoken turns the model hadn't started answering, then a typed one that cuts them off.
+
+    The cut-off turn said nothing, so it answers nothing: the typed turn's reply is the next turn.
+    """
 
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_audio()
@@ -500,7 +507,7 @@ def test_known_gemini_cut_off_unstarted_turn_ends_the_wait_early() -> None:
         sim.wait_for_reply()
         sim.settle()
 
-    reproduce('SIM-13', GeminiSimulation(), scenario)
+    run_accepting(GeminiSimulation(behavior=GeminiBehavior(text_cuts_off_reply=True)), scenario, 'SIM-39')
 
 
 def test_gemini_async_batch_of_three_is_answered_once() -> None:
@@ -1504,15 +1511,59 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
-@known('8763c #3')
-def test_known_reply_already_under_way_takes_a_turns_reservation() -> None:
+def test_live_text_sent_as_a_delegation_starts_is_answered_by_its_reply() -> None:
+    """8763c #3 on GPT-Live: text sent while a delegation the client hasn't read yet opens the reply.
+
+    Live speaks to text in the reply under way (seen live, in every run), so that reply answers it, as the client
+    takes it to.
+    """
+
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate(deliver=False)
         sim.send_text()
-        sim.wait_for_reply()
+        sim.wait_for_reply(ticks=0)
+        sim.backend_finish()
+        sim.speak()
         sim.settle()
 
-    reproduce('8763c #3', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
+
+
+def test_live_text_sent_while_a_reply_goes_on_is_answered_by_it() -> None:
+    """Text placed on the timeline mid-reply is answered by that reply, which goes on to speak to it (seen live)."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_text()
+        sim.wait_for_reply(ticks=0)
+        sim.speak()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+def test_text_sent_as_server_vad_starts_a_reply_gets_its_own(dialect: Dialect) -> None:
+    """8763c #3 on the OpenAI protocol: text sent just as server VAD starts a reply of its own.
+
+    The reply started before the text joined the conversation, so it doesn't answer it. OpenAI refuses the request
+    (after that reply is done) and the connection asks again; xAI cancels its own reply for ours (both seen live).
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply(ticks=0)
+        # OpenAI's own reply, then ours; xAI's own reply is cancelled for ours.
+        for _ in range(1 if dialect == 'xai' else 2):
+            sim.speak()
+            sim.finish()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect=dialect)), scenario)
 
 
 # --- baseline conversations -----------------------------------------------------------------------
@@ -1827,6 +1878,12 @@ def test_baseline_live_conversation() -> None:
 
 
 # --- fault and behavior scenarios ---------------------------------------------------------------
+
+
+def run_accepting(sim: Simulation, scenario: Callable[[Any], object], *accepted: str) -> None:
+    """Run a scenario that may hit no violation but the accepted limitations named, then hang up and check it all again."""
+    run_tolerant(sim, scenario)
+    assert {finding_id for finding_id, _ in sim.checker.known_hits} <= set(accepted), sim.checker.known_hits
 
 
 def run_tolerant(sim: Simulation, scenario: Callable[[Any], object]) -> None:
@@ -2411,33 +2468,36 @@ def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
     )
 
 
-def test_scenario_live_delegation_ends_the_wait_on_a_tool_round() -> None:
-    """8763c #3: a delegation the model starts on its own ends a wait owed the tool round's answer."""
-    with LiveSimulation(strict=False) as s:
-        s.delegate(deliver=False)
-        s.backend_call(deliver=False)
-        s.wait_for_reply()
-        s.advance_time(0.1)
-        s.wait_for_reply()
-        s.backend_finish(deliver=False)
-        s.delegate(deliver=False)
-        s.settle()
-        assert ('8763c #3', 'wait.early') in s.checker.known_hits
+@known('8763c #3')
+def test_known_live_delegation_ends_the_wait_on_a_tool_round() -> None:
+    """A delegation the model starts on its own ends a wait owed the tool round's answer."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_call(deliver=False)
+        sim.wait_for_reply()
+        sim.advance_time(0.1)
+        sim.wait_for_reply()
+        sim.backend_finish(deliver=False)
+        sim.delegate(deliver=False)
+        sim.settle()
+
+    reproduce('8763c #3', LiveSimulation(), scenario)
 
 
-def test_scenario_a_provider_reply_before_any_metadata_echo_is_accepted() -> None:
-    """Before the server has echoed any request metadata, a server VAD reply read while our request is outstanding
-    is taken for its answer: an accepted limitation of the lifecycle tracker's inference."""
-    sim = OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai'))
-    sim.strict = False
-    with sim as s:
-        s.send_audio()
-        s.speech_start(deliver=False)
-        s.speech_stop(deliver=False)
-        s.finish(deliver=False)
-        s.send_text(respond=True)
-        s.settle()
-        assert ('SIM-24', 'history.order') in s.checker.known_hits
+def test_scenario_a_provider_reply_before_our_item_is_added_is_not_ours() -> None:
+    """SIM-24, for a request with an item of its own: a server VAD reply that starts before the server adds our
+    item can't be the one our `response.create` asks for, metadata echoed or not."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.speech_stop(deliver=False)
+        sim.finish(deliver=False)
+        sim.send_text(respond=True)
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
 
 
 def test_scenario_a_call_the_session_refuses_over_a_limit_is_left_out() -> None:
@@ -2817,3 +2877,17 @@ def test_elevenlabs_agents_parallel_tool_calls_are_one_response() -> None:
         sim.report_usage()
 
     run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_scenario_vertex_cut_off_reply_is_taken_for_the_text_that_cut_it() -> None:
+    """8763c #3 on Vertex's `gemini-live-2.5-flash`: it cuts a reply off for text, but reports no speech, so the cut-off
+    reply can't be told from one the user spoke over: it keeps answering the text, and the wait ends with it."""
+    with GeminiSimulation(strict=False, behavior=GeminiBehavior(closes_tool_turn_separately=True)) as sim:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        assert '8763c #3' in {finding_id for finding_id, _ in sim.checker.known_hits}

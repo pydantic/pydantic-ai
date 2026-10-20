@@ -44,6 +44,7 @@ from ._lifecycle import (
     UserTurnStarted,
 )
 from ._openai_protocol import (
+    ACTIVE_RESPONSE_ERROR_CODE,
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
@@ -157,11 +158,10 @@ class OpenAILifecycle:
         """Our tool outputs awaiting their `conversation.item.added`, by call id."""
         self._carried_over: set[InputId] = set()
         """Inputs an old socket never acknowledged, which join the conversation once a reconnect succeeds."""
+        self._items_acknowledged = False
+        """Whether the server reports the items it adds (`conversation.item.added`), as every recorded one does."""
         self._idle_items: set[str] = set()
         """Audio items the server committed for an idle timeout: a nudge to the model, not a user turn."""
-        self._refused_while_active: tuple[InputId, ...] = ()
-        """Inputs whose request the provider refused because a response it started on its own was active, which
-        answers them instead, once it is reported started."""
         self._untranscribed: set[str] = set()
         """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
@@ -290,10 +290,14 @@ class OpenAILifecycle:
             self._requests = {
                 event_id: request for event_id, request in self._requests.items() if not set(request[0]) & set(answers)
             }
-        elif outstanding is not None and not (
-            # Once the server echoes metadata, a response without ours is not the one ours asked for, unless
-            # ours carried none.
-            self._metadata_echoed and self._requests.get(outstanding[0], ((), True))[1]
+        elif (
+            outstanding is not None
+            and not (
+                # Once the server echoes metadata, a response without ours is not the one ours asked for, unless
+                # ours carried none.
+                self._metadata_echoed and self._requests.get(outstanding[0], ((), True))[1]
+            )
+            and not self._unacknowledged(outstanding[1])
         ):
             event_id, answers = outstanding
             basis = 'inferred'
@@ -302,20 +306,25 @@ class OpenAILifecycle:
             answers = ()
         user_turn_id = None
         if not answers:
-            # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it
-            # just committed, and to the inputs whose request it refused because it was starting this one.
+            # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it just
+            # committed.
             user_turn_id, self._unclaimed_turn = self._unclaimed_turn, None
-            if self._refused_while_active:
-                answers, basis = self._refused_while_active, 'inferred'
-                self._refused_while_active = ()
-        events = self._refusals_unanswered()
-        events.append(self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id))
-        return events
+        return [self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id)]
 
-    def _refusals_unanswered(self) -> list[LifecycleEvent]:
-        """The inputs refused for a response the provider started on its own, which the next one wasn't after all."""
-        refused, self._refused_while_active = self._settle(self._refused_while_active), ()
-        return [ResponseRequestRefused(input_ids=refused)] if refused else []
+    def _unacknowledged(self, answers: Sequence[InputId]) -> bool:
+        """Whether an item of ours that a request answers isn't in the conversation yet, on a server that says so.
+
+        The server adds an item before it starts the response a later `response.create` asks for, so a response
+        that starts before it is none of that request's: one the provider started on its own (server VAD).
+        """
+        if not self._items_acknowledged:
+            return False
+        waiting = {*self._messages, *self._tool_outputs.values()}
+        return any(input_id in waiting for input_id in answers)
+
+    def request_outstanding(self, event_id: str) -> bool:
+        """Whether a `response.create` of ours is neither started nor refused yet."""
+        return event_id in self._requests
 
     def response_done(
         self,
@@ -467,6 +476,7 @@ class OpenAILifecycle:
 
     def item_added(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """An item joined the conversation: if it is one of our inputs, that input is placed here."""
+        self._items_acknowledged = True
         item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
         if item.type == 'function_call_output' and item.call_id is not None:
             input_id = self._tool_outputs.pop(item.call_id, None)
@@ -505,14 +515,18 @@ class OpenAILifecycle:
                 self._messages.remove(rejected.input_index)
         if error.event_id is None or (request := self._requests.pop(error.event_id, None)) is None:
             return []
-        if error.code == 'conversation_already_has_active_response' and not self._open:
-            # Refused because the provider already started a response of its own, reported next: that one
-            # answers these inputs, which reached the conversation before it.
-            self._refused_while_active = (*self._refused_while_active, *request[0])
+        if error.code == ACTIVE_RESPONSE_ERROR_CODE:
+            # Refused only for the moment, as a response the provider started on its own was under way: the
+            # connection asks again once it's over, or gives up on it (`requests_refused`).
             return []
         return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(request[0])) else []
 
     # --- the connection's own transitions ----------------------------------------------------------
+
+    def requests_refused(self, answers: Sequence[InputId]) -> None:
+        """The connection gave up asking for a response for `answers`, which the provider kept refusing."""
+        if refused := self._settle(answers):
+            self._pending.append(ResponseRequestRefused(input_ids=refused))
 
     def requests_dropped(self, answers: Sequence[InputId]) -> None:
         """The connection dropped requests it was holding, so nothing will answer `answers`."""
@@ -544,7 +558,6 @@ class OpenAILifecycle:
         self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(self._carried_over))
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
-        self._pending.extend(self._refusals_unanswered())
         # Whatever the connection still thought of it, a request the old socket neither started nor
         # refused, and that isn't asked for again, will never be answered.
         self.requests_dropped(
@@ -564,7 +577,6 @@ class OpenAILifecycle:
         )
         self._requests.clear()
         self._carried_over.clear()
-        self._pending.extend(self._refusals_unanswered())
         self._lose_everything_open()
 
     def _lose_everything_open(self) -> None:
