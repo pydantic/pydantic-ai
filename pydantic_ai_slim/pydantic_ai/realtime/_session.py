@@ -893,8 +893,9 @@ class RealtimeSession:
         detaches, and the browser's call stays up: use
         [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] to end it.
 
-        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
-        tool — unless it was already raised by event iteration or an outbound session method.
+        Raises a failure that hasn't been delivered yet: whatever ended the session (a provider hangup,
+        an exceeded `usage_limits`), or a failed tool that nothing was iterating to receive. A failure
+        already raised by event iteration or an outbound session method is not raised again.
         """
         if not self._entered:
             return
