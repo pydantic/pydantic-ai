@@ -46,7 +46,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
-from pydantic_clai2.ui.prompt.image_input import decode_image
+from pydantic_clai2.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -279,7 +279,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     async def send(body: PromptInput, conversation_id: str | None = None) -> Entered:
         channel = session(conversation_id)
         # Off the loop: decoding a large image would stall every stream meanwhile.
-        images = await _wait(to_thread.run_sync(lambda: [decode_image(data) for data in body.images]))
+        images = await _wait(to_thread.run_sync(decode_images, body.images)) if body.images else []
         return Entered(menu=_run(lambda: channel.send(body.text, images=images)))
 
     async def interrupt(conversation_id: str | None = None) -> Interrupted:

@@ -112,6 +112,18 @@ export function App() {
     [shown],
   )
   const composer = useRef<ComposerHandle>(null)
+  // A file dropped beside the composer must not open in the tab, losing every session's draft.
+  useEffect(() => {
+    const guard = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes('Files')) event.preventDefault()
+    }
+    window.addEventListener('dragover', guard)
+    window.addEventListener('drop', guard)
+    return () => {
+      window.removeEventListener('dragover', guard)
+      window.removeEventListener('drop', guard)
+    }
+  }, [])
   const sidebarRef = useRef<SidebarHandle>(null)
   const socket = useRef<Socket | null>(null)
   // What a new connection watches again, read when it opens.

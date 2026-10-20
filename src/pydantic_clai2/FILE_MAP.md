@@ -88,6 +88,8 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
+| `image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of uploaded bytes; no terminal imports |
+| `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, and the paste key bindings |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
@@ -134,7 +136,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `builtin_plugins/web/session_tools.py` | the orchestrator's session tools over `host.sessions`: `sessions_find` (every project's saved sessions as a table, grouped by `placements`), `sessions_archive` and `sessions_unarchive`, each publishing `SessionsChanged`; no session tool deletes a session or removes a worktree. Imported lazily by `orchestrator.py` |
 | `builtin_plugins/web/workspaces.py` | the sidebar's Workspaces section: `GET /api/workspaces` (no tokens) and `POST /api/workspaces/ID/open` (the workspace's address with its token, for this page only); `web-ui/src/components/WorkspacesSection.tsx` draws it |
 | `web-ui/` (beside the package) | the React and TypeScript source of the browser UI, built with Vite |
-| `web-ui/src/attachments.ts` | images pasted or dropped into the composer: read as `data:` URLs for the thumbnails and sent base64-encoded with the prompt; the page holds them per session beside the draft |
+| `web-ui/src/attachments.ts` | images pasted or dropped into the composer: read as `data:` URLs for the thumbnails (scaled to 2048 pixels, or drawn as PNG when the server cannot read their format) and sent base64-encoded with the prompt; the page holds them per session beside the draft |
 | `web-ui/src/components/CommandPalette.tsx` | the command palette (Cmd/Ctrl+Shift+P, or bare `/help`): every command `host.complete('/')` offers, filtered; Enter runs the bare command as the composer would, one needing arguments goes to the composer |
 | `web-ui/src/components/UsageCard.tsx` | `/usage` and `/cost` results as a card, from the `UsageReport` on their `Notice` |
 | `web-ui/src/components/SettingsWindow.tsx`, `CommandMenu.tsx` | the Settings window (sections by `#settings/ID`: General is `/set`'s declared menu, Plugins the plugins panel, Keys & accounts the menus `/keys` and `/accounts` declare, MCP servers `/mcp`'s) and the dialog for another bare command's declared menu (`Command.menu`, read through `PluginHost.command_menu` and `/api/commands/NAME/fields`), both drawn by `MenuForm.tsx`; add a section to `SECTIONS`, not a second window |

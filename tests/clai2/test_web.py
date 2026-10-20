@@ -78,11 +78,11 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.image_codec import decode_images
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
 from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
-from pydantic_clai2.ui.prompt.image_input import decode_image
 from pydantic_clai2.ui.rendering import theme as terminal_theme
 from tests.clai2.test_session_browser import git, repository
 from tests.clai2.test_tasks import task
@@ -454,7 +454,8 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
         assert [item.text for item in started_items if item] == ['first', 'what is this?\n[image]', '[image]']
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
-    assert prompts == ['first', ['what is this?', decode_image(png('red'))], ['', decode_image(png('blue'))]]
+    red, blue = decode_images([png('red'), png('blue')])
+    assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
     assert web_.shell.images.pending == {}, 'sent images are let go'
 
 

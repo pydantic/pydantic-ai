@@ -960,8 +960,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """
         self.terminal = terminal
         previous, self.images = self.images, terminal.images if terminal is not None else ImageInput()
-        # Queued prompts keep their images as their text moves between the editor and the inbox.
+        # Queued prompts, and the one rejected for retry, keep their images as the terminal moves.
         self.images.pending.update(previous.pending)
+        self.images.retry_text = self.images.retry_text or previous.retry_text
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id

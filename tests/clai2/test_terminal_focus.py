@@ -459,6 +459,7 @@ async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
     desk.agents['b'] = blocked('b', started, release, calls)
     home, terminal = desk.home, desk.terminal
     red, blue = BinaryContent(b'red', media_type='image/png'), BinaryContent(b'blue', media_type='image/png')
+    green = BinaryContent(b'green', media_type='image/png')
 
     async def body() -> None:
         b = await desk.live.new(workspace=desk.folder('b'))
@@ -475,8 +476,12 @@ async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
         # Home's in the terminal's editor, B's in its inbox; then the resume browser, open over the turn, shows B.
         home.send_input('home look', images=[red])
         b.send_input('b look', images=[blue])
+        # As a prompt rejected for want of a model keeps its images for the retry.
+        rejected = f'retry {home.images.attach([green])}'
+        home.images.retry_text = rejected
         home.send_input('/resume')
         await until(desk.live, lambda: terminal.shown is other)
+        assert home.images.retry_text == rejected and home.images.resolve(rejected)[1] == [green]
         release['home'].set()
         release['b'].set()
         await until(desk.live, lambda: calls == {'home': 2, 'b': 2} and home.idle and other.idle)
