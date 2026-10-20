@@ -12,7 +12,7 @@ import functools
 import re
 import threading
 import warnings as _warnings
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
@@ -26,7 +26,16 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pydantic_core import SchemaValidator, core_schema
-from pydantic_monty import NOT_HANDLED, AsyncFutureSnapshot, AsyncMonty, MountDir, OSAccess, OsFunction
+from pydantic_monty import (
+    NOT_HANDLED,
+    AsyncFutureSnapshot,
+    AsyncMonty,
+    AsyncSnapshot,
+    MontyComplete,
+    MountDir,
+    OSAccess,
+    OsFunction,
+)
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -75,6 +84,7 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
+from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
@@ -2417,6 +2427,39 @@ class TestCodeMode:
             await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
 
         assert sorted(pinged) == [0, 1]
+
+    @pytest.mark.parametrize('failure', ['worker-crash', 'host-error', 'sandbox-panic'])
+    async def test_tool_calls_limit_survives_execution_failure(
+        self, monkeypatch: pytest.MonkeyPatch, failure: str
+    ) -> None:
+        class PanicException(BaseException):
+            """Match the pyo3 panic class recognized by `is_sandbox_panic`."""
+
+        errors: dict[str, BaseException] = {
+            'worker-crash': ValueError('worker crash'),
+            'host-error': RuntimeError('host failure'),
+            'sandbox-panic': PanicException('sandbox panic'),
+        }
+        # The native crash exception cannot be constructed from Python. Inject it after a real
+        # feed so the snippet catches the refusal before the worker or host binding fails.
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', ValueError)
+        original_run = MontyExecutor.run
+
+        async def fail_after_feed(
+            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
+        ) -> MontyComplete:
+            await original_run(self, feed_start)
+            raise errors[failure]
+
+        monkeypatch.setattr(MontyExecutor, 'run', fail_after_feed)
+        agent, pinged = self._ping_agent('try:\n    await ping(n=0)\nexcept Exception:\n    pass')
+        usage = RunUsage()
+
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 1 (tool_calls=2)')):
+            await agent.run('go', usage=usage, usage_limits=UsageLimits(tool_calls_limit=1))
+
+        assert pinged == []
+        assert usage.tool_calls == 0
 
     @pytest.mark.parametrize(
         'code',

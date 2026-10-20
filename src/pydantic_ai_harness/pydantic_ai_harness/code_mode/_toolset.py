@@ -1331,6 +1331,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # worker transparently. Reset so the retry starts from a fresh,
             # type-checked session.
             await run_state.reset()
+            if execution.usage_limit_exceeded is not None:
+                raise execution.usage_limit_exceeded
             raise ModelRetry(
                 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
                 f'{started_calls()}'
@@ -1342,6 +1344,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # chain is dropped once the retry becomes a prompt part, so this message is the only
             # record of what failed for both the model and the transcript.
             await run_state.reset()
+            if execution.usage_limit_exceeded is not None:
+                raise execution.usage_limit_exceeded
             error_text = f'{type(e).__name__}: {e}'
             if self.monty_sandbox_url is not None:
                 # A dial failure quotes the configured URL, which may carry credentials in its
@@ -1360,6 +1364,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # The panic aborts the VM mid-execution, so the REPL's accumulated state cannot
             # be trusted; drop it so the retry starts from a fresh, type-checked session.
             await run_state.reset()
+            if execution.usage_limit_exceeded is not None:
+                raise execution.usage_limit_exceeded
             raise ModelRetry(
                 'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
                 f'{started_calls()}'
