@@ -155,3 +155,7 @@ jobs:
                       row[field] = value if value is None or isinstance(value, (int, float, bool)) else 'invalid_type'
               print(json.dumps(row, allow_nan=False))
           PYTHON
+          python3 .github/scripts/agent_provider_health.py monitor \
+            --repository "$GITHUB_REPOSITORY" \
+            --recover-issue "$ISSUE_NUMBER" \
+            --dry-run
