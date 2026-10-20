@@ -20,10 +20,9 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
-from pydantic_ai_harness.daytona_sandbox._backend import _close_sdk_client  # pyright: ignore[reportPrivateUsage]
 
 from .._tool_calls import call_tools
-from .fake_daytona import FakeDaytona, FakeEventDispatcher
+from .fake_daytona import FakeDaytona
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
 
@@ -234,70 +233,6 @@ async def test_cancelled_run_closes_owned_client_mid_command(fake_daytona: FakeD
         await task
     assert fake_daytona.closed_clients == 1
     assert sandbox.process_sessions == set()
-
-
-async def test_client_close_falls_back_when_sdk_internals_are_missing() -> None:
-    """A Daytona SDK release without the private event attributes still gets its public close."""
-
-    class ClientWithoutEvents:
-        closed = False
-
-        async def close(self) -> None:
-            self.closed = True
-
-    client = ClientWithoutEvents()
-    await _close_sdk_client(client)  # pyright: ignore[reportArgumentType]
-    assert client.closed
-
-
-async def test_client_close_proceeds_when_the_sdk_already_cancelled_its_event_connection(
-    fake_daytona: FakeDaytona,
-) -> None:
-    fake_daytona.connect_gate = asyncio.Event()
-    client = fake_daytona.client()
-    assert isinstance(client._event_dispatcher, FakeEventDispatcher)  # pyright: ignore[reportPrivateUsage]
-    client._event_dispatcher.task.cancel()  # pyright: ignore[reportPrivateUsage]
-    await _close_sdk_client(client)  # pyright: ignore[reportArgumentType]
-    assert fake_daytona.closed_clients == 1
-
-
-@pytest.mark.parametrize('handshake_fails', [False, True])
-async def test_run_waits_for_sdk_event_connection_before_closing_client(
-    fake_daytona: FakeDaytona, handshake_fails: bool
-) -> None:
-    fake_daytona.connect_gate = asyncio.Event()
-    # A failed handshake still needs the client closed.
-    fake_daytona.failed_event_session = handshake_fails
-    agent = Agent(
-        TestModel(call_tools=['_touch']), deps_type=type(None), tools=[_touch], capabilities=[DaytonaSandbox()]
-    )
-    task = asyncio.create_task(agent.run('go'))
-    try:
-        with anyio.fail_after(10):
-            await fake_daytona.connect_awaited.wait()
-        assert not task.done()
-        assert fake_daytona.closed_clients == 0
-        fake_daytona.connect_gate.set()
-        await task
-    finally:
-        fake_daytona.connect_gate.set()
-    # The SDK's close cancels an in-flight event connection without awaiting it;
-    # it may already own an engineio aiohttp session that disconnect cannot close.
-    assert fake_daytona.leaked_sessions == 0
-    assert fake_daytona.closed_clients == 1
-
-
-async def test_an_event_connection_that_never_settles_does_not_hold_up_close(
-    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.daytona_sandbox._backend._EVENT_CONNECT_GRACE', 0.05)
-    fake_daytona.connect_gate = asyncio.Event()
-    backend = DaytonaSandboxBackend()
-    await backend.get_sandbox()
-    with anyio.fail_after(5):
-        await backend.aclose()
-    assert caplog.messages == ['Daytona event connection did not settle before client close.']
-    assert fake_daytona.closed_clients == 1
 
 
 async def test_run_closes_the_client_it_opened_and_the_result_workspace_reopens(fake_daytona: FakeDaytona) -> None:

@@ -517,9 +517,6 @@ class FakeClient:
     def __init__(self, owner: FakeDaytona) -> None:
         self.owner = owner
         self.closed = False
-        self._event_dispatcher: object | None = None
-        if owner.connect_gate is not None:
-            self._event_dispatcher = FakeEventDispatcher(owner)
 
     async def create(self, params: CreateParams, *, timeout: float = 60) -> FakeSandbox:
         if self.owner.create_error is not None:
@@ -554,47 +551,8 @@ class FakeClient:
             await self.owner.close_gate.wait()
         if (error := next(self.owner.close_errors, None)) is not None:
             raise error
-        if self.owner.connect_gate is not None:
-            dispatcher = self._event_dispatcher
-            assert isinstance(dispatcher, FakeEventDispatcher)
-            self.owner.leaked_sessions += int(not dispatcher.task.done())
-            self.owner.leaked_sessions += int(self.owner.failed_event_session)
-            dispatcher.task.cancel()
         self.closed = True
         self.owner.closed_clients += 1
-
-
-class FakeEventDispatcher:
-    def __init__(self, owner: FakeDaytona) -> None:
-        async def connect() -> None:
-            assert owner.connect_gate is not None
-            await owner.connect_gate.wait()
-            if owner.failed_event_session:
-                raise ConnectionError('event socket handshake failed')
-
-        self.owner = owner
-        self.task = asyncio.create_task(connect())
-        self._sio = FakeSocket(owner)
-
-    @property
-    def _connect_task(self) -> asyncio.Task[None]:
-        # The backend reads this private SDK attribute only to wait for the connection before closing.
-        self.owner.connect_awaited.set()
-        return self.task
-
-
-class FakeSocket:
-    def __init__(self, owner: FakeDaytona) -> None:
-        self.eio = FakeEngine(owner)
-
-
-class FakeEngine:
-    def __init__(self, owner: FakeDaytona) -> None:
-        self.owner = owner
-
-    async def disconnect(self) -> None:
-        if self.owner.failed_event_session:
-            self.owner.leaked_sessions -= 1
 
 
 class FakeDaytona:
@@ -610,11 +568,6 @@ class FakeDaytona:
         # Raised by successive `close` calls; closing succeeds once it is exhausted.
         self.close_errors: Iterator[Exception] = iter(())
         self.close_gate: asyncio.Event | None = None
-        self.connect_gate: asyncio.Event | None = None
-        # Set once a client close starts waiting for the SDK's event connection to settle.
-        self.connect_awaited = asyncio.Event()
-        self.leaked_sessions = 0
-        self.failed_event_session = False
         self.get_gate: asyncio.Event | None = None
         self.get_error: Exception | None = None
         # What constructing `AsyncDaytona()` raises, e.g. for a missing API key.

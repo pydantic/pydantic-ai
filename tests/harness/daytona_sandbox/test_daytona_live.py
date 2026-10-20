@@ -35,7 +35,6 @@ from pytest_examples import CodeExample
 from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
-from pydantic_ai_harness.daytona_sandbox._backend import _close_sdk_client  # pyright: ignore[reportPrivateUsage]
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
@@ -59,8 +58,7 @@ async def client() -> AsyncIterator[daytona.AsyncDaytona]:
     try:
         yield client
     finally:
-        # The SDK's own close can leave its event socket's aiohttp session open; the backend's close does not.
-        await _close_sdk_client(client)
+        await client.close()
     # aiohttp closes SSL transports on the next loop ticks after ClientSession.close().
     # Let them finish before pytest tears down this module's event loop.
     await asyncio.sleep(0.25)
