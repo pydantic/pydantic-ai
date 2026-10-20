@@ -442,18 +442,38 @@ def _repeats_at(pattern: str, index: int) -> bool:
     return high is None or not high or int(high) > 1
 
 
+_VERBOSE_FLAG = re.compile(r'\(\?[a-zA-Z]*x')
+"""An inline verbose flag, global (`(?x)`) or scoped (`(?x:...)`)."""
+
+
+def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
+    """The index of the next character at or after `index` that verbose mode does not ignore."""
+    while verbose and index < len(pattern):
+        if pattern[index].isspace():
+            index += 1
+        elif pattern[index] == '#':
+            end = pattern.find('\n', index)
+            index = len(pattern) if end < 0 else end + 1
+        else:
+            break
+    return index
+
+
 def _has_nested_quantifier(pattern: str) -> bool:
     """Whether a repeated group itself contains a repetition, as `(a+)+` and `(.*a){12}` do.
 
     That shape can make a backtracking engine such as Python's `re` take exponential or high
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
     This is a heuristic for the common shape: it also refuses some harmless patterns, such as
-    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`.
+    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. With a verbose flag
+    anywhere in it, the whole pattern is scanned as verbose, so whitespace or a comment between a
+    group and its quantifier cannot hide the nesting.
     """
+    verbose = _VERBOSE_FLAG.search(pattern) is not None
     enclosing: list[bool] = []
     repeats = False  # whether the innermost open group repeats anything so far
     index = 0
-    while index < len(pattern):
+    while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
         char = pattern[index]
         if char == '\\':
             index += 2
@@ -469,7 +489,7 @@ def _has_nested_quantifier(pattern: str) -> bool:
             enclosing.append(repeats)
             repeats = False
         elif char == ')' and enclosing:  # a verbose-mode comment can hold an unmatched `)`
-            if repeats and _repeats_at(pattern, index + 1):
+            if repeats and _repeats_at(pattern, _skip_insignificant(pattern, index + 1, verbose)):
                 return True
             repeats = enclosing.pop() or repeats
         elif _repeats_at(pattern, index):
