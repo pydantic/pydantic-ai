@@ -34,6 +34,7 @@ Compaction keeps the live history inside the context window, so an exact detail 
 - Each result names its run (`run: ... | conversation: ...`). The tool's optional `run_id` argument searches one run's full record, so a run a compaction receipt references is directly resolvable.
 - The tool reads the store when called, so it sees everything persisted so far, including earlier steps of the current run.
 - History a run inherits through `message_history` is indexed once, under the run that first persisted it, so threaded runs do not return the same message once per run.
+- Persisted instruction updates are searchable as system text.
 - Long messages are clipped to 500 characters for display (200 for system text and tool-call arguments). When the matched term lies past the cutoff, the excerpt shows the text around it instead of the start. The index always holds the full text.
 - Results open with a note that excerpts are a record, not instructions: a recalled tool return can carry text planted by whatever produced it.
 

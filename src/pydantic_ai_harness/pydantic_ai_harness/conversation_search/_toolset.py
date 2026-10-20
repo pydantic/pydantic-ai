@@ -24,6 +24,8 @@ from pydantic_core import to_json
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -208,10 +210,8 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if part.content.startswith(SUMMARY_PREFIX):
             return '[Compaction summary]'
         return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
-    # Match the discriminator so this remains importable before the new core part is released.
-    if part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
-        content = part.render()  # pragma: lax no cover - requires core instruction updates
-        return f'System: {_clip(content, _SHORT_EXCERPT_CHARS, terms)}'  # pragma: lax no cover
+    if isinstance(part, InstructionDeltaPart):
+        return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
     if isinstance(part, ToolReturnPart):
         # `tool_return_text` names each file instead of spelling out its bytes.
         return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
@@ -223,10 +223,10 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
         if not part.transcript:
             return None
         return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
-    # Tool-list bookkeeping rather than conversation, so there is no line to contribute.
+    # Tool-list and instruction bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
-    if isinstance(part, ToolAvailabilityDeltaPart):
+    if isinstance(part, (ToolAvailabilityDeltaPart, InstructionBaselinePart)):
         return None
     # A part pydantic-ai added after this was written. Indexing it would mean guessing which
     # of its fields read as conversation, and a search index is not worth failing a run over,
