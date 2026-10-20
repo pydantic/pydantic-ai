@@ -100,7 +100,7 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     """Maximum number of matching excerpts the search tool returns. Must be non-negative."""
 
     context_lines: int = 5
-    """Number of surrounding lines shown around each search match. Must be non-negative."""
+    """Number of surrounding messages shown around each search match, within the match's run. Must be non-negative."""
 
     bm25_k1: float = 1.5
     """BM25 term-frequency saturation, non-negative. This capability's default; Lucene's

@@ -20,6 +20,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
 
+from pydantic_core import to_json
+
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
@@ -176,14 +178,23 @@ def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
     focus = next((match for match in _TOKENIZE_RE.finditer(text) if match.group().lower() in terms), None)
     if focus is None or focus.end() <= limit:
         return text[:limit] + '...'
-    start = max(0, focus.start() - limit // 2)
+    # Pull the window back near the end so a late term still gets the full `limit` of context.
+    start = max(0, min(focus.start() - limit // 2, len(text) - limit))
     end = start + limit
     return ('...' if start else '') + text[start:end] + ('...' if end < len(text) else '')
 
 
 def _retry_text(part: RetryPromptPart) -> str:
-    """A retry prompt as text: the plain message, or core's rendering of a validation-error list."""
-    return part.content if isinstance(part.content, str) else part.model_response()
+    """A retry prompt as text: the plain message, or its validation errors as compact JSON.
+
+    `RetryPromptPart.model_response()` would add a code fence and core's closing instruction to
+    the model, which neither helps a search nor belongs in an excerpt framed as a record. `ctx`
+    is dropped as core drops it.
+    """
+    if isinstance(part.content, str):
+        return part.content
+    errors = [{key: value for key, value in error.items() if key != 'ctx'} for error in part.content]
+    return f'{len(errors)} validation error(s): {to_json(errors, fallback=str).decode()}'
 
 
 def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None) -> str | None:
