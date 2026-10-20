@@ -92,7 +92,7 @@ which per-conversation overrides are permitted. Every
 response.
 
 That LLM doesn't always answer. When it errors, returns nothing or an invalid tool call, or goes quiet for longer
-than the agent's `prompt.cascade_timeout_seconds` (4 seconds by default), ElevenLabs answers the turn with a backup
+than the agent's `prompt.cascade_timeout_seconds` (4 seconds by default; in [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models), ElevenLabs sets this wait itself), ElevenLabs answers the turn with a backup
 LLM from its fallback cascade. The response's `model_name` is still the agent id: only a `context_usage` report
 (see [Usage and cost](#usage-and-cost)) names the LLM, and it isn't tied to a response. The conversations API reports
 the answering LLM afterwards, per message, as `producing_llm`. To turn the cascade off, set the agent's `prompt.backup_llm_config` to `{"preference": "disabled"}`.
@@ -305,6 +305,7 @@ itself closes has none), and the live connection has it as
   and placeholders like `[Your Name]` stay in the text. Set `elevenlabs_agents_strip_audio_tags=False` to keep the
   transcript as ElevenLabs sends it (`[laughs] Hi there.`). To keep the LLM from writing tags in the first place,
   turn off expressive mode on the agent (`tts.expressive_mode: false`), which also gives up the expressive delivery.
+  This works only in Custom voice mode: in [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models), ElevenLabs manages expressive mode itself.
 - A barge-in on a response still being generated ends it with the transcript cut down to what the
   user heard (or, when ElevenLabs sends a correction instead, with the cut-down text in
   `provider_details['corrected_agent_response']`). One on a response already delivered keeps its full
