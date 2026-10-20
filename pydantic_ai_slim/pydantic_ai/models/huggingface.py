@@ -158,6 +158,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset(
+        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+    )
+
     _model_name: str = field(repr=False)
     _provider: Provider[AsyncInferenceClient] = field(repr=False)
 

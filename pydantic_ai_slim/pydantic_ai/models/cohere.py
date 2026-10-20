@@ -126,6 +126,10 @@ class CohereModel(Model[AsyncClientV2]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+    )
+
     _model_name: CohereModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
 
