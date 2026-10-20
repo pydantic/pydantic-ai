@@ -270,30 +270,48 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-_NO_DEFAULT_ID = (Known('ids', f'{_ISSUES}7237 (no default `id`)', 'instruction:anonymous'),)
+_NO_DEFAULT_ID = (Known('ids', f'{_ISSUES}7237 (no default `id`)', 'instructions', 'instruction:anonymous@1'),)
 """A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
 
+
+_MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
+    'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
+    'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
+}
+"""How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
 
 KNOWN: dict[str, tuple[Known, ...]] = {
     'AskUser': _NO_DEFAULT_ID,
     'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instruction:anonymous'),
+        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
         # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
         # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function once something has been discovered.
-        Known('prefix', f'{_ISSUES}8965', 'instruction:anonymous'),
-        Known('prefix', f'{_ISSUES}8965', 'tool:forecast', providers=('anthropic', 'openai-responses')),
-        Known('prefix', f'{_ISSUES}8965', 'tool:tool_search', providers=('openai-responses',)),
+        # swapped for the local `search_tools` function, which moves `run_code` up.
+        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
+        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
+        *(
+            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
+            for name in ('forecast', 'tool_search', 'run_code')
+        ),
     ),
     'ConversationSearch': _NO_DEFAULT_ID,
     'Macroscope': _NO_DEFAULT_ID,
     'ManagedPrompt': _NO_DEFAULT_ID,
-    # Added to the turn's user prompt on the write, moved to the next turn's, then grown by the second write.
-    'Memory': (Known('prefix', f'{_ISSUES}8996', 'user-prompt', count=3),),
+    # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
+    # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
+    # every later message back a position.
+    'Memory': (
+        Known('prefix', f'{_ISSUES}8996', 'messages', 'user-prompt', count=3, providers=('anthropic',)),
+        *(
+            Known('prefix', f'{_ISSUES}8996', 'messages', identity, count=count, providers=(provider,))
+            for provider, counts in _MEMORY_OPENAI_MOVES.items()
+            for identity, count in counts.items()
+        ),
+    ),
     # The summary takes the place of the agent's instructions in the standing system prompt instead of joining
     # history. On Responses the standing prompt is `instructions`, which the summary leaves alone.
     'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system-prompt', providers=('anthropic', 'openai-chat')),
+        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('anthropic', 'openai-chat')),
     ),
     'PlaywrightBrowser': _NO_DEFAULT_ID,
     'PydanticAIDocs': _NO_DEFAULT_ID,
@@ -302,29 +320,37 @@ KNOWN: dict[str, tuple[Known, ...]] = {
 
 _COMPACTION = 'Compaction rewrites history by design, once per time its threshold is crossed'
 
+_HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messages', 'tool-return'))
+"""Every kind of history part, for compaction, which may rewrite any of them (but not the system prompt or tools)."""
+
 ALLOWED: dict[str, Allowed] = {
-    'ClearToolResults': Allowed(_COMPACTION),
+    'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
     'DeduplicateFileReads': Allowed(
-        'Clears superseded file reads in place, as documented, when the model reads a file again'
+        'Clears superseded file reads in place, as documented, when the model reads a file again',
+        (('messages', 'tool-return'),),
     ),
-    'SlidingWindowCompaction': Allowed(_COMPACTION),
-    'SummarizingCompaction': Allowed(_COMPACTION),
+    'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
+    'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
     # `keep_pairs`: one on the third request and one on the fifth.
-    'TieredCompaction': Allowed(_COMPACTION, max_moves=2),
+    'TieredCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'Planning': Allowed(
         f'Request-only plan reminder at the end of each request, behind a cache breakpoint ({_PULLS}10257)',
+        # Anthropic adds it to the last tool result message; the OpenAI APIs send it as a user message.
+        (('messages', 'tool-return'), ('messages', 'user-prompt')),
         tail=True,
     ),
     'WarnNearLimits': Allowed(
         f'Request-scoped system prompt ({_PULLS}10561): sent for one request, then left out. Anthropic clears it '
         'natively with `clear_at`; elsewhere it is a request-only tail',
+        (('messages', 'system-prompt'),),
         tail=True,
         providers=('openai-responses', 'openai-chat'),
     ),
     'SystemReminders': Allowed(
         f'Request-only reminders at the end of each request, behind a cache breakpoint; moving to '
         f'request-scoped system prompts in {_PULLS}9712',
+        (('messages', 'user-prompt'), ('messages', 'tool-return')),
         tail=True,
     ),
 }

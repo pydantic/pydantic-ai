@@ -31,7 +31,6 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, M
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
@@ -420,12 +419,14 @@ class ConversationResult:
     parameters: list[ModelRequestParameters]
 
     def changes(self) -> list[Change]:
-        """Every way a request fails to start with the previous one, one entry per changed block.
+        """Every block of a request that the next request doesn't repeat at the same position.
 
-        Each section is compared on its own, and every block that changed, went missing or was inserted before
-        the end counts, so an expected change can't hide another one in the same request. Anthropic leaves
-        `defer_loading: true` tools out of its cache key, so `canonical_prefix_blocks` drops them; their wire
-        contract is still append-only in first-reveal order, so they're a section of their own.
+        Each section must start with the previous request's blocks exactly, with new blocks only after them.
+        From the first position that differs (or that the later request doesn't have), every differing position
+        is a change, so an expected change can't hide another one in the same request: a block inserted ahead
+        of earlier ones shows as each earlier block it displaced. Anthropic leaves `defer_loading: true` tools
+        out of its cache key, so `canonical_prefix_blocks` drops them; their wire contract is still append-only
+        in first-reveal order, so they're a section of their own.
         """
         blocks = [_cache_blocks(body, self.provider) for body in self.conversation]
         # Without recorded parameters (a hand-built result), instruction changes can't be told apart.
@@ -436,14 +437,17 @@ class ConversationResult:
             for change in _changes(index, earlier, later, parameters[index - 1], parameters[index])
         ]
 
-    def unaddressable_instructions(self) -> list[str]:
-        """Distinct instruction blocks the model saw that carry no `id`."""
-        seen: dict[str, None] = {}
+    def unaddressable_instructions(self) -> dict[str, str]:
+        """Instruction parts the model saw without an `id`, by identity (their position), with their text.
+
+        Identified by position, not text, so two parts with the same content are two violations.
+        """
+        found: dict[str, str] = {}
         for parameters in self.parameters:
-            for part in parameters.instruction_parts or ():
+            for position, part in enumerate(parameters.instruction_parts or ()):
                 if part.id is None and part.content.strip():
-                    seen.setdefault(_shorten(part.content, 120))
-        return list(seen)
+                    found.setdefault(f'instruction:anonymous@{position}', _shorten(part.content, 120))
+        return found
 
     def nondeterministic_projection(self) -> list[Change] | None:
         """How the same request built twice from the same history differs, or `None` if the bytes are identical."""
@@ -452,7 +456,7 @@ class ConversationResult:
             return None
         earlier, later = (_cache_blocks(body, self.provider) for body in (first, second))
         return _changes(1, earlier, later, None, None) or [
-            Change(1, 'request', 0, 'request', *_around_difference(first.decode(), second.decode()), False, False)
+            Change(1, 'request', 0, 'request', *_around_difference(first.decode(), second.decode()), in_tail=False)
         ]
 
 
@@ -498,28 +502,27 @@ async def run_conversation(
 
 @dataclass(frozen=True)
 class Change:
-    """A block of request `request_index - 1` that request `request_index` rewrote, dropped or moved."""
+    """A position in a section of request `request_index - 1` that request `request_index` doesn't repeat."""
 
     request_index: int
     section: str
+    """`settings`, `tools`, `system` (with any leading system or developer messages), `messages`,
+    `deferred-tools`, or `request` when the bytes differ outside them."""
     block_index: int
-    """The block's index within its section of the earlier request."""
+    """The position within the section of the earlier request."""
     identity: str
-    """What changed, from structure rather than text: `instruction:<id>` (`instruction:anonymous` for a part
-    without one) when an instruction part changed, `system-prompt` for the rest of the standing system prompt,
-    `tool:<name>`, `setting:<field>`, or the history part's kind (`user-prompt`, `tool-return`,
-    `model-response`, `system-prompt`)."""
+    """What changed, from structure rather than text: in `system`, the ids of the instruction parts that changed
+    (`instruction:<id>`, or `instruction:anonymous@<position>` for a part without one), or `system-prompt` when
+    none did; `tool:<name>`; `setting:<field>`; in `messages`, the earlier part's kind (`user-prompt`,
+    `tool-return`, `model-response`, `system-prompt`)."""
     earlier: str
     later: str
     in_tail: bool
-    """Whether it's the last block of the previous request: a request-only tail was dropped or replaced."""
-    in_history: bool
-    """Whether it's in the conversation history, rather than the settings, tools, deferred tools or standing
-    system prompt (including leading system or developer messages) every request starts with."""
+    """Whether it's the last message of the previous request: a request-only tail was dropped or replaced."""
 
     def __str__(self) -> str:
         return (
-            f'request {self.request_index} rewrote {self.section} block {self.block_index} ({self.identity}) of '
+            f'request {self.request_index} changed {self.section} block {self.block_index} ({self.identity}) of '
             f'request {self.request_index - 1}:\n    before: {self.earlier}\n    after:  {self.later}'
         )
 
@@ -589,7 +592,13 @@ def _cache_blocks(body: bytes, provider: Provider) -> list[PrefixBlock]:
     deferred = (
         [('deferred-tools', tool) for tool in anthropic_deferred_tool_blocks(parsed)] if provider == 'anthropic' else []
     )
-    return [('settings', json.dumps(settings)), *canonical[1], *deferred]
+    blocks: list[PrefixBlock] = [('settings', json.dumps(settings))]
+    # Leading system or developer messages are the standing system prompt on the APIs that send it as messages.
+    standing = True
+    for level, block in canonical[1]:
+        standing = standing and (level != 'messages' or _is_system_message(block))
+        blocks.append(('system' if level == 'messages' and standing else level, block))
+    return [*blocks, *deferred]
 
 
 def _changes(
@@ -600,78 +609,50 @@ def _changes(
     later_parameters: ModelRequestParameters | None,
 ) -> list[Change]:
     changes: list[Change] = []
-    instructions = _changed_instructions(earlier_parameters, later_parameters)
-    for section in dict.fromkeys(level for level, _ in [*earlier, *later]):
+    instructions = ', '.join(_changed_instructions(earlier_parameters, later_parameters)) or 'system-prompt'
+    for section in dict.fromkeys(level for level, _ in earlier):
         before = [block for level, block in earlier if level == section]
         after = [block for level, block in later if level == section]
-        if after[: len(before)] == before:
-            continue
-        # Leading system or developer messages are the standing system prompt on the APIs that send it as messages.
-        standing = (
-            next((i for i, block in enumerate(before) if not _is_system_message(block)), len(before))
-            if section == 'messages'
-            else 0
-        )
-        # Report the fewest blocks that explain the difference: each earlier block rewritten or dropped, and for
-        # content inserted ahead of earlier blocks, whichever is smaller: the inserted blocks, or the earlier
-        # blocks it pushed back (a block that moved to the end looks like everything after it being inserted).
-        # Blocks shifted only because an earlier block was rewritten or dropped aren't counted again.
-        opcodes = SequenceMatcher(None, before, after, autojunk=False).get_opcodes()
-        for position, (tag, i1, i2, j1, j2) in enumerate(opcodes):
-            reported: list[tuple[int, str, str]] = []
-            if tag in ('replace', 'delete'):
-                reported = [
-                    (i, before[i], after[j1 + i - i1] if tag == 'replace' and j1 + i - i1 < j2 else '<missing>')
-                    for i in range(i1, i2)
-                ]
-            elif tag == 'insert' and i1 < len(before):
-                # Something after the insertion point covers the rest of the earlier blocks.
-                following = opcodes[position + 1]
-                shifted = range(following[1], following[2]) if following[0] == 'equal' else range(0)
-                if len(shifted) < j2 - j1:
-                    reported = [(i, before[i], f'<moved to {section} block {i + j2 - j1}>') for i in shifted]
-                else:
-                    reported = [(i1, '<missing>', after[j]) for j in range(j1, j2)]
-            for i, old, new in reported:
-                if section == 'system' or (section == 'messages' and i < standing):
-                    identity = ', '.join(instructions) or 'system-prompt'
-                else:
-                    block = new if old == '<missing>' else old
-                    identity = _block_identity(section, block, new if new.startswith('{') else block)
-                changes.append(
-                    Change(
-                        index,
-                        section,
-                        i,
-                        identity,
-                        *_around_difference(old, new),
-                        in_tail=section == 'messages' and i == len(before) - 1,
-                        in_history=section == 'messages' and i >= standing,
-                    )
+        for i, old in enumerate(before):
+            new = after[i] if i < len(after) else '<missing>'
+            if new == old:
+                continue
+            identity = instructions if section == 'system' else _block_identity(section, old, new)
+            changes.append(
+                Change(
+                    index,
+                    section,
+                    i,
+                    identity,
+                    *_around_difference(old, new),
+                    in_tail=section == 'messages' and i == len(before) - 1,
                 )
+            )
     return changes
 
 
 def _changed_instructions(earlier: ModelRequestParameters | None, later: ModelRequestParameters | None) -> list[str]:
-    """The instruction parts whose content differs between two requests, by id."""
+    """The instruction parts whose content differs between two requests: by id, or by position without one."""
     if earlier is None or later is None:
         return []
 
-    def by_id(parameters: ModelRequestParameters) -> dict[str, list[str]]:
-        parts: dict[str, list[str]] = {}
-        for part in parameters.instruction_parts or ():
-            parts.setdefault(f'instruction:{part.id or "anonymous"}', []).append(part.content)
-        return parts
+    def by_identity(parameters: ModelRequestParameters) -> dict[str, str]:
+        return {
+            f'instruction:{part.id}' if part.id is not None else f'instruction:anonymous@{position}': part.content
+            for position, part in enumerate(parameters.instruction_parts or ())
+        }
 
-    before, after = by_id(earlier), by_id(later)
+    before, after = by_identity(earlier), by_identity(later)
     return sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
 
 
 def _block_identity(section: str, block: str, other: str) -> str:
     """What a changed block is, from its structure: a tool's name, a setting's field, or a history part's kind."""
-    value, other_value = json.loads(block), json.loads(other)
-    assert is_str_dict(value) and is_str_dict(other_value), f'expected JSON objects, got {block!r}, {other!r}'
+    value = json.loads(block)
+    assert is_str_dict(value), f'expected a JSON object, got {block!r}'
     if section == 'settings':
+        other_value = json.loads(other)
+        assert is_str_dict(other_value), f'expected a JSON object, got {other!r}'
         keys = sorted(value.keys() | other_value.keys())
         return ', '.join(f'setting:{key}' for key in keys if value.get(key) != other_value.get(key))
     if section in ('tools', 'deferred-tools'):
@@ -852,14 +833,15 @@ Check = Literal['prefix', 'ids', 'determinism']
 class Known:
     """Expected failures of one check, linked to the issue or PR that fixes them.
 
-    An entry explains exactly `count` violations of `check` with the structural `identity` (see
-    `Change.identity`; `instruction:anonymous` for the `ids` check), on each of `providers`. Matching never reads
-    the model-visible text, which untrusted content can imitate. One violation more or fewer fails the test, so
-    a known break can't absorb a new one.
+    An entry explains exactly `count` violations of `check` in `section` with the structural `identity` (see
+    `Change.identity`; the `ids` check uses section `instructions` and `instruction:anonymous@<position>`), on
+    each of `providers`. Matching never reads model-visible text, which untrusted content can imitate. One
+    violation more or fewer fails the test, so a known break can't absorb a new one.
     """
 
     check: Check
     issue: str
+    section: str
     identity: str
     count: int = 1
     providers: tuple[Provider, ...] = PROVIDERS
@@ -869,29 +851,29 @@ class Known:
 class Allowed:
     """A documented prefix mover, checked exactly: it must move the prefix, and only as documented.
 
-    A compaction-style mover may rewrite history at most `max_moves` times, and must leave the settings, tools
-    and standing system prompt alone unless `standing` says it may change them. A `tail` mover sends request-only
-    content at the end of each request (behind a cache breakpoint) and drops it from the next, so it may change
-    the last block of every request and nothing before it.
+    Every change must be one of `changes`, named by `(section, identity)` like `Change`: there are no
+    whole-section wildcards, so an allowed move can't carry an unrelated one along. A compaction-style mover may
+    change the prefix in at most `max_moves` requests. A `tail` mover sends request-only content at the end of
+    each request (behind a cache breakpoint) and drops it from the next, so it may change only the last message.
     """
 
     reason: str
+    changes: tuple[tuple[str, str], ...]
     max_moves: int = 1
     tail: bool = False
-    standing: bool = False
-    """Whether it may change the standing prefix (settings, tools, the system prompt) too, not only history."""
     providers: tuple[Provider, ...] = PROVIDERS
     """The providers this mover applies to; on the others the capability must keep the prefix."""
 
 
 @dataclass(frozen=True)
 class Violation:
+    section: str
     identity: str
     report: str
 
 
-def _change_violations(changes: Sequence[Change]) -> list[Violation]:
-    return [Violation(change.identity, str(change)) for change in changes]
+def _change_violations(changes: Sequence[Change], prefix: str = '') -> list[Violation]:
+    return [Violation(change.section, change.identity, f'{prefix}{change}') for change in changes]
 
 
 def _violations(
@@ -906,20 +888,20 @@ def _violations(
     if allowed is None:
         prefix = _change_violations(changes)
     elif not changes:
-        prefix = [Violation('allowed', f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix')]
+        prefix = [
+            Violation('-', 'allowed', f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix')
+        ]
     else:
-        # Each rule applies to each change on its own, so an allowed move can't carry another one along.
-        for change in changes:
-            if not allowed.standing and not change.in_history:
-                prefix.append(Violation(change.identity, f'may only rewrite history, but {change}'))
-            elif allowed.tail and not change.in_tail:
-                prefix.append(
-                    Violation(change.identity, f'may only replace the last block of each request, but {change}')
-                )
-        moves = len({change.request_index for change in changes})
-        if not allowed.tail and moves > allowed.max_moves:
+        # Each change is checked on its own, so an allowed move can't carry another one along.
+        outside = [change for change in changes if (change.section, change.identity) not in allowed.changes]
+        prefix += _change_violations(outside, 'is not one of the changes its `ALLOWED` entry permits: ')
+        if allowed.tail:
+            deep = [change for change in changes if not change.in_tail and change not in outside]
+            prefix += _change_violations(deep, 'may only replace the last message of each request, but ')
+        elif (moves := len({change.request_index for change in changes})) > allowed.max_moves:
             prefix.append(
                 Violation(
+                    '-',
                     'allowed',
                     f'moved the prefix in {moves} requests, more than the {allowed.max_moves} its `ALLOWED` entry permits',
                 )
@@ -929,7 +911,7 @@ def _violations(
     if check_ids and (unaddressable := result.unaddressable_instructions()):
         violations['ids'] = (
             'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
-            [Violation('instruction:anonymous', block) for block in unaddressable],
+            [Violation('instructions', identity, f'{identity}: {text}') for identity, text in unaddressable.items()],
         )
     if (differences := result.nondeterministic_projection()) is not None:
         violations['determinism'] = (
@@ -962,7 +944,9 @@ def check_conversation(
                 (
                     i
                     for i, k in enumerate(applicable)
-                    if k.check == check and k.identity == item.identity and uses[i] < k.count
+                    if k.check == check
+                    and (k.section, k.identity) == (item.section, item.identity)
+                    and uses[i] < k.count
                 ),
                 None,
             )

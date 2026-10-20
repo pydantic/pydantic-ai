@@ -46,8 +46,8 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
-from pydantic_ai.models import Model, ModelSelectionContext
+from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.tools import ToolDefinition
@@ -149,7 +149,7 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
 
 KNOWN: dict[str, tuple[Known, ...]] = {
     'agent:dynamic_system_prompt': (
-        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system-prompt'),
+        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
     ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
@@ -158,8 +158,9 @@ ALLOWED: dict[str, Allowed] = {
     'agent:dynamic_instructions': Allowed(
         'docs/agent.md: dynamic instructions are re-rendered for every request, after the static ones and outside '
         'the cached prefix; append mode is #8188',
+        # The `@agent.instructions` part, which has no id of its own, after the agent's static instructions.
+        (('system', 'instruction:anonymous@1'),),
         max_moves=4,
-        standing=True,
     ),
 }
 """Documented prefix movers, checked exactly."""
@@ -251,7 +252,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(Capability[Any](instructions='Answer briefly.'), (), None, 'fail', 'without an `id`', id='ids'),
         pytest.param(
             Capability[Any](id='random', instructions=_random_instructions),
-            (Known('prefix', 'example', 'instruction:capability:random', count=4),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:random', count=4),),
             None,
             'fail',
             'built the same request twice from the same history with different bytes',
@@ -261,7 +262,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
             CombinedCapability[Any](
                 [Capability(id='clock', instructions=_clock_instructions), PrepareTools(_clock_tool_descriptions)]
             ),
-            (Known('prefix', 'example', 'instruction:capability:clock', count=4),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:clock', count=4),),
             None,
             'fail',
             'As of',
@@ -269,9 +270,19 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         ),
         pytest.param(
             CombinedCapability[Any](
+                [Capability(id='clock', instructions=_clock_instructions), PrepareTools(_clock_tool_descriptions)]
+            ),
+            (),
+            Allowed('example', (('system', 'instruction:capability:clock'),), max_moves=4),
+            'fail',
+            'is not one of the changes its `ALLOWED` entry permits: request 1 changed tools',
+            id='allowed-does-not-cover-another',
+        ),
+        pytest.param(
+            CombinedCapability[Any](
                 [Capability(id='clock', instructions=_clock_instructions), ProcessHistory(_stamp_first_prompt)]
             ),
-            (Known('prefix', 'example', 'instruction:capability:clock', count=4),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:clock', count=4),),
             None,
             'fail',
             '(user-prompt)',
@@ -279,15 +290,15 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         ),
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
-            (Known('prefix', 'example', 'instruction:capability:clock'),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:clock'),),
             None,
             'fail',
-            'request 2 rewrote system',
+            'request 2 changed system',
             id='known-explains-only-its-count',
         ),
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
-            (Known('prefix', 'example', 'instruction:capability:clock', count=4),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:clock', count=4),),
             None,
             'xfail',
             'known: [prefix] example',
@@ -295,7 +306,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         ),
         pytest.param(
             Capability[Any](instructions='Answer briefly.', id='static'),
-            (Known('prefix', 'example', 'instruction:capability:static'),),
+            (Known('prefix', 'example', 'system', 'instruction:capability:static'),),
             None,
             'fail',
             'no longer fails these checks as expected',
@@ -304,7 +315,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(
             Capability[Any](instructions='Answer briefly.', id='static'),
             (),
-            Allowed('example'),
+            Allowed('example', (('system', 'instruction:capability:static'),)),
             'fail',
             'is listed in `ALLOWED` (example) but no longer moves the prefix',
             id='stale-allowed',
@@ -312,7 +323,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
             (),
-            Allowed('example', standing=True),
+            Allowed('example', (('system', 'instruction:capability:clock'),)),
             'fail',
             'moved the prefix in 4 requests, more than the 1 its `ALLOWED` entry permits',
             id='too-many-moves',
@@ -320,17 +331,17 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
             (),
-            Allowed('example', max_moves=4),
+            Allowed('example', (('messages', 'user-prompt'),), max_moves=4),
             'fail',
-            'may only rewrite history, but request 1 rewrote system',
+            'is not one of the changes its `ALLOWED` entry permits: request 1 changed system',
             id='standing-prefix',
         ),
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
             (),
-            Allowed('example', tail=True, standing=True),
+            Allowed('example', (('system', 'instruction:capability:clock'),), tail=True),
             'fail',
-            'may only replace the last block of each request',
+            'may only replace the last message of each request',
             id='deep-tail',
         ),
     ],
@@ -450,16 +461,45 @@ def test_changes_are_named_by_structure():
         return [change.identity for change in ConversationResult('openai-chat', list(bodies), (b'', b''), []).changes()]
 
     assert identities(body('auto', ['Hi']), body('none', ['Hi'])) == ['setting:tool_choice']
-    # Inserting ahead of earlier history counts once, for the inserted block, not for every block it pushed back.
-    assert identities(body('auto', ['Hi', 'There', 'Now']), body('auto', ['Hi', 'Hey', 'There', 'Now'])) == [
-        'user-prompt'
-    ]
-    # ...and a block moved behind new ones counts once for the moved block, not once per block put before it.
-    moved = ConversationResult(
-        'openai-chat', [body('auto', ['Hi', 'Memo']), body('auto', ['Hi', 'A', 'B', 'Memo'])], (b'', b''), []
+    # A block inserted ahead of earlier ones shows as each earlier block it displaced, by position.
+    displaced = ConversationResult(
+        'openai-chat',
+        [body('auto', ['Hi', 'There', 'Now']), body('auto', ['Hi', 'Hey', 'There', 'Now'])],
+        (b'', b''),
+        [],
     ).changes()
-    assert [(change.block_index, change.later) for change in moved] == [(1, '<moved to messages block 3>')]
+    assert [(change.block_index, change.identity) for change in displaced] == [(1, 'user-prompt'), (2, 'user-prompt')]
 
     replays = (body('auto', ['Hi']), body('auto', ['Hi'], max_tokens=200))
     changes = ConversationResult('openai-chat', [], replays, []).nondeterministic_projection()
     assert [change.identity for change in changes or ()] == ['request']
+
+
+def test_a_known_rewrite_does_not_cover_an_adjacent_insertion():
+    """A rewrite and an insertion right after it are two changes, so an entry for one leaves the other failing.
+
+    A unit test of the comparator on hand-built requests: index by index, the inserted message shows as the
+    earlier message it displaced.
+    """
+
+    def body(messages: list[str]) -> bytes:
+        return json.dumps(
+            {'model': 'gpt-5.6-sol', 'messages': [{'role': 'user', 'content': m} for m in messages]}
+        ).encode()
+
+    result = ConversationResult('openai-chat', [body(['A', 'B', 'C']), body(['A', 'B2', 'X', 'C'])], (b'', b''), [])
+    assert [change.block_index for change in result.changes()] == [1, 2]
+    with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 changed messages block 2 (user-prompt)')):
+        check_conversation('example', result, known=(Known('prefix', 'example', 'messages', 'user-prompt'),))
+
+
+def test_identical_anonymous_instructions_are_two_violations():
+    """Instruction parts without an `id` are told apart by position, so two with the same text are two violations."""
+    parameters = ModelRequestParameters(instruction_parts=[InstructionPart('Be brief.'), InstructionPart('Be brief.')])
+    body = json.dumps({'model': 'gpt-5.6-sol', 'messages': [{'role': 'user', 'content': 'Hi'}]}).encode()
+    result = ConversationResult('openai-chat', [body], (body, body), [parameters])
+    assert list(result.unaddressable_instructions()) == ['instruction:anonymous@0', 'instruction:anonymous@1']
+    with pytest.raises(pytest.fail.Exception, match=re.escape('instruction:anonymous@1: Be brief.')):
+        check_conversation(
+            'example', result, known=(Known('ids', 'example', 'instructions', 'instruction:anonymous@0'),)
+        )
