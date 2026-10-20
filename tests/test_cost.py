@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -185,6 +186,71 @@ async def test_cost_matches_response_price(allow_model_requests: None, stream: b
     assert usage.cost == snapshot(Decimal('0.00075'))
 
 
+_TIER_UPDATE = {'created': 1791849600, 'model': 'gpt-6.1-sol'}  # 2026-10-13, after genai-prices' tier rates start
+
+
+@requires_openai
+@pytest.mark.parametrize('stream', [False, True])
+async def test_cost_uses_openai_service_tier(allow_model_requests: None, stream: bool):
+    """The service tier OpenAI reports selects its tier rates, here priority instead of standard."""
+    update = {**_TIER_UPDATE, 'service_tier': 'priority'}
+    if stream:
+        client = MockOpenAI.create_mock_stream([chunk.model_copy(update=update) for chunk in _chunks()])
+    else:
+        client = MockOpenAI.create_mock(_completion().model_copy(update=update))
+    agent = Agent(OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=client)))
+
+    if stream:
+        async with agent.run_stream('hello') as result:
+            await result.get_output()
+            usage = result.usage
+            messages = result.all_messages()
+    else:
+        run_result = await agent.run('hello')
+        usage = run_result.usage
+        messages = run_result.all_messages()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert usage.cost == response.cost().total_price
+    # 100 input tokens at $4/MTok + 50 output tokens at $20/MTok; standard would be $0.0007.
+    assert usage.cost == snapshot(Decimal('0.0014'))
+
+
+@requires_openai
+async def test_cost_service_tier_without_tier_rates_is_standard(allow_model_requests: None):
+    """A tier genai-prices has no rates for (OpenAI's `scale`) is priced at standard rates, without warning."""
+    completion = _completion().model_copy(update={**_TIER_UPDATE, 'service_tier': 'scale'})
+    agent = Agent(
+        OpenAIChatModel('gpt-6.1-sol', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+    )
+    result = await agent.run('hello')
+    # 100 input tokens at $2/MTok + 50 output tokens at $10/MTok.
+    assert result.usage.cost == snapshot(Decimal('0.0007'))
+
+
+def test_service_tier_only_changes_openai_prices():
+    """Each response's recorded tier is passed along; where genai-prices has no tier rates it's ignored, silently."""
+    timestamp = datetime(2026, 10, 13, tzinfo=UTC)
+    prices: dict[str, Decimal] = {}
+    # Google records its tier too (e.g. `standard`), but genai-prices only has OpenAI tier rates.
+    for provider_name, model_name, service_tier in [
+        ('openai', 'gpt-6.1-sol', 'priority'),
+        ('google', 'gemini-2.5-flash', 'standard'),
+    ]:
+        response = ModelResponse(
+            parts=[],
+            usage=RequestUsage(input_tokens=100_000),
+            model_name=model_name,
+            provider_name=provider_name,
+            provider_details={'service_tier': service_tier},
+            timestamp=timestamp,
+        )
+        prices[provider_name] = response.cost().total_price
+    # OpenAI at its $4/MTok priority rate (standard is $2); Gemini at its standard rate.
+    assert prices == snapshot({'openai': Decimal('0.4'), 'google': Decimal('0.03')})
+
+
 async def test_cost_is_silent_for_unpriceable_model(allow_model_requests: None):
     """`TestModel` isn't in `genai-prices`, so cost stays unknown and no warning is emitted."""
     agent = Agent(TestModel())
@@ -278,6 +344,33 @@ def test_run_usage_subtraction():
     unchanged = before - before
     assert unchanged.details == {'cached': 0, 'custom_units': 0}
     assert (RunUsage() - before).details['custom_units'] == -2
+
+
+def test_run_usage_subtraction_keeps_every_counter():
+    """Subtraction keeps every numeric counter, declared or extracted by genai-prices, the same as `incr` does."""
+    before = RunUsage(cache_write_tokens=4, cache_write_1h_tokens=3, output_reasoning_tokens=1, web_searches=1)
+    after = RunUsage(
+        cache_write_tokens=15,
+        cache_write_1h_tokens=11,
+        output_reasoning_tokens=5,
+        web_searches=3,
+        provider_note='kept',
+    )
+
+    delta = after - before
+
+    assert delta == RunUsage(
+        cache_write_tokens=11,
+        cache_write_1h_tokens=8,
+        output_reasoning_tokens=4,
+        web_searches=2,
+        provider_note='kept',
+    )
+    # A counter only the baseline has comes out negative, like a declared one would.
+    assert getattr(RunUsage() - before, 'web_searches', 0) == -1
+    # The operands are left as they were.
+    assert after.cache_write_1h_tokens == 11
+    assert before.details == {}
 
 
 def test_model_response_cost_requires_model_name():

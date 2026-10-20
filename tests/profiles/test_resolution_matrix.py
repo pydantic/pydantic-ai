@@ -118,6 +118,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_inline_system_prompts': False,
+    'supports_request_scoped_system_prompts': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': dedent(
         """
@@ -137,6 +138,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_forced_tool_choice': True,
     'supports_forced_tool_choice_with_thinking': True,
     'thinking_tags': ('<think>', '</think>'),
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     # OpenAIModelProfile subclass defaults
@@ -217,6 +219,7 @@ def test_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -248,6 +251,7 @@ def test_anthropic_claude_opus_4_7():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
@@ -284,6 +288,7 @@ def test_anthropic_claude_haiku_4_5():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -311,6 +316,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -353,6 +359,16 @@ def test_openai_gpt_5_4():
             'supported_cache_retentions': (),
         }
     )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
+def test_openai_gpt_5_4_nano(model_name: str):
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
+    assert expected is not None
+    expected['supported_native_tools'] -= {ToolSearchTool}
+    assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -755,14 +771,16 @@ def test_xai_grok_3_mini():
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
-    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot({'tool_call_id_length': 9, 'supports_inline_system_prompts': True})
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_small_latest():
     """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
     profile = MistralProvider.model_profile('mistral-small-latest')
-    assert _normalize(profile) == snapshot({'supports_thinking': True, 'supports_inline_system_prompts': True})
+    assert _normalize(profile) == snapshot(
+        {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+    )
 
 
 @pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
@@ -835,7 +853,9 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
@@ -908,7 +928,9 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -944,7 +966,9 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_adaptive_thinking': False,
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'forced_tool_choice_disables_thinking': True,
@@ -964,6 +988,7 @@ def test_bedrock_mistral_large():
     profile = BedrockProvider.model_profile('mistral.mistral-large-2407-v1:0')
     assert _normalize(profile) == snapshot(
         {
+            'tool_call_id_length': 9,
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_format': 'json',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -1149,6 +1174,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -1302,12 +1328,37 @@ def test_openrouter_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_zai_glm_5_3():
+    """OpenRouter inlines GLM-5.3 schemas while retaining its own reasoning settings."""
+    profile = OpenRouterProvider.model_profile('z-ai/glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
             'supports_cache': False,
             'supported_cache_retentions': (),
             'openrouter_supports_cache_control': False,
@@ -1359,6 +1410,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,
@@ -1642,6 +1694,7 @@ def test_azure_mistral_prefix():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1655,6 +1708,7 @@ def test_azure_mistral_small_latest():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1668,6 +1722,7 @@ def test_azure_ministral_3b():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
         }
@@ -1681,6 +1736,7 @@ def test_azure_magistral_small_latest():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
@@ -1997,6 +2053,7 @@ def test_litellm_magistral():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
             'supports_thinking': True,
             'thinking_always_enabled': True,
         }
@@ -2018,6 +2075,7 @@ def test_litellm_mistral_small_latest():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'tool_call_id_length': 9,
         }
     )
 
@@ -2087,6 +2145,7 @@ def test_anthropic_unknown_model_returns_some_profile():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -2229,6 +2288,7 @@ def test_vercel_anthropic_claude_sonnet():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -2348,6 +2408,7 @@ def test_heroku_returns_openai_transformer():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'forced_tool_choice_disables_thinking': True,

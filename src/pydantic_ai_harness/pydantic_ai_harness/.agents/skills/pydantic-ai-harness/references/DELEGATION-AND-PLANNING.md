@@ -155,8 +155,9 @@ Gotchas:
 - Children receive the parent's `deps` (same `AgentDepsT`) and run in the parent's workspace.
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
-- Timeout, own-budget exhaustion, and `max_calls` exhaustion are soft: a steering message comes back as
-  the tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+- Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
+  `DeferredToolRequests` (the parent cannot resume it) are soft: a steering message comes back as the
+  tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
@@ -228,7 +229,8 @@ Gotchas:
   `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
-  `RuntimeError` in the script; uncaught, the whole script retries.
+  `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with
+  `DeferredToolRequests` is a failure too, and the catalog leaves that type out of its signature.
 - Past `max_agent_calls` a call raises in the script, and whatever the script does next (even a
   `try`/`except` that finishes), `run_workflow` returns `{'error': '...exhausted its sub-agent call
   budget...', 'last_error': ..., 'completed': [...]}`; later calls in that run are refused.
@@ -291,6 +293,13 @@ Gotchas:
 
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
+
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata. `ToolReturn.metadata` is discarded.
 
 ```python
 import asyncio

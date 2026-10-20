@@ -12,11 +12,15 @@ from .._instructions import AgentInstructions, normalize_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
-from ..messages import InstructionPart
+from ..messages import InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
     GenerateToolJsonSchema,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
     SystemPromptFunc,
     Tool,
     ToolDefinition,
@@ -170,6 +174,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -178,6 +205,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -200,6 +228,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -267,6 +296,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -295,6 +327,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -315,6 +348,29 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         description: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
+        schema_generator: type[GenerateJsonSchema] | None = None,
+        strict: bool | None = None,
+        sequential: bool | None = None,
+        requires_approval: bool | None = None,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool | None = None,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
         args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
         docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
@@ -323,6 +379,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -345,6 +402,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
@@ -413,6 +471,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
@@ -442,6 +503,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
+                tool_kind=tool_kind,
                 timeout=timeout,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
@@ -498,6 +560,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         requires_approval: bool | None = None,
         defer_loading: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:
@@ -546,6 +609,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 If `None`, the default value is determined by the toolset. If provided, it will be merged with the toolset's metadata.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
@@ -583,6 +649,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,
+            tool_kind=tool_kind,
             timeout=timeout,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
@@ -629,11 +696,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
             if max_retries is None:
                 max_retries = ctx.max_retries
+            # `retries` is keyed by the name the model calls the tool by, computed here by applying
+            # the layers `PrefixedToolset` and `RenamedToolset` pushed, innermost first, the way they
+            # name the tools they list. That name is wrong when the tool's own `prepare` renames it,
+            # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
+            # nested inside or around them, whether or not it calls `super().get_tools()`. If it
+            # then names an unrelated tool, `prepare` reads that tool's count.
+            exposed = original_name
+            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
+                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
             run_context = replace(
                 ctx,
                 tool_name=original_name,
-                retry=ctx.retries.get(original_name, 0),
+                retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
+                _tool_name_path=(),
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

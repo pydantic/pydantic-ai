@@ -362,6 +362,9 @@ async def test_an_image_is_described_by_the_backend(
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
+        # The reply the image asked for is over: nothing is owed any more.
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None and not core.wait_tokens()
 
     spoken = ' '.join(
         part.transcript or ''
@@ -446,6 +449,57 @@ async def test_the_backend_searches_the_web(
         'What number did you just give me? Answer with digits only.', message_history=messages
     )
     assert '936' in follow_up.output
+
+
+async def test_the_backend_summarizes_its_reasoning(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`reasoning_summary` reaches the backend, which accepts it and summarizes its reasoning.
+
+    The reasoning recorded ahead of each search then reads as the summary, as on a direct Responses run
+    that requests one.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_delegation={'reasoning_summary': 'auto'}, openai_live_turn_silence_ms=1000
+        ),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    # The summary is requested next to the backend's other settings.
+    assert _session_starts(cassette)[0]['delegation']['responses']['reasoning'] == snapshot({'summary': 'auto'})
+    # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
+    # Curly apostrophes are straightened, since pre-commit would rewrite them in the snapshot below.
+    thinking = [part.content.replace('\u2019', "'") for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking == snapshot(
+        [
+            """\
+**Searching for Amsterdam population**
+
+I need to check Wikipedia specifically for the current population of Amsterdam. There's a bit of ambiguity about whether I'm looking for the city or the municipality, which makes it a little tricky. I'm thinking the population is likely around 933,680 as of January 2025, but I need to confirm that by searching. Let's go ahead and get that information to be sure!\
+""",
+            '',
+            '',
+            '',
+        ]
+    )
 
 
 async def test_an_image_a_tool_returns_reaches_the_backend(

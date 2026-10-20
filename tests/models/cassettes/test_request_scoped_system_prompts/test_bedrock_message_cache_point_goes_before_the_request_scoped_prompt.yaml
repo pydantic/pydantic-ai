@@ -1,0 +1,179 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 73241d94-c862-426a-ad59-a8260750b162
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "914"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Weather in Paris and Oslo?
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: call_1
+              name: get_weather
+              input:
+                city: Paris
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_1
+              content:
+              - text: "Paris: 18C"
+              status: success
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: call_2
+              name: get_weather
+              input:
+                city: Oslo
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_2
+              content:
+              - text: "Oslo: 18C"
+              status: success
+          - cachePoint:
+              type: default
+          - text: <system>Reminder 2.</system>
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+                  properties:
+                    city:
+                      type: string
+                  required:
+                  - city
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "554"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1054
+        output:
+          message:
+            content:
+            - text: |-
+                Here's the weather information you requested:
+
+                - **Paris**: 18°C
+                - **Oslo**: 18°C
+
+                Both cities have the same temperature at the moment. Is there anything else you'd like to know about the weather?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 708
+          outputTokens: 53
+          serverToolUsage: {}
+          totalTokens: 761
+  recorded_at: 2026-10-16T18:18:49.184131+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 39c3721b-a3dd-4e80-9e67-aa9465063f19
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "327"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: <system>Reminder.</system>
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+                  properties:
+                    city:
+                      type: string
+                  required:
+                  - city
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "661"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1147
+        output:
+          message:
+            content:
+            - text: |-
+                I'm ready to help! I have access to a weather tool that can provide current weather information for any city.
+
+                How can I assist you today? For example, I can:
+                - Check the weather for a specific city
+                - Answer questions about weather conditions
+                - Help with other information or tasks
+
+                What would you like to know?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 554
+          outputTokens: 72
+          serverToolUsage: {}
+          totalTokens: 626
+  recorded_at: 2026-10-16T18:18:50.398204+00:00

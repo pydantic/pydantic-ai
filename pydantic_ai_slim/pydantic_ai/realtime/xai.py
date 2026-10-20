@@ -230,7 +230,8 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     `.completed` snapshots.
     The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
     events, so the connection can report the provider's `conversation.id`. Finally, xAI's `max_duration`
-    error ends the conversation, so it is reported as non-recoverable.
+    error ends the conversation, so it is reported as non-recoverable; a connection with a reconnect policy
+    reports it as recoverable instead, since its reconnect starts a new conversation.
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
@@ -253,8 +254,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         # supersedes, and a revised turn would end up saying everything twice.
         event = replace(event, cumulative=True)
     elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration':
-        # xAI ends a conversation that runs past its maximum duration, so this one error is not one
-        # the session can carry on from: resuming the conversation would only run into the same limit.
+        # xAI ends a conversation that runs past its maximum duration, so the session can't carry on in it.
         event = replace(event, recoverable=False)
     return event
 
@@ -313,9 +313,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # joins the conversation (checked live). Nothing below applies with turn detection on.
         self._manual_turns = manual_turns
         self._commit_held = False
-        self._audio_commit_listener: Callable[[], None] | None = None
-        # Whether the listener heard about the held commit already, which a reconnect sends again.
-        self._commit_announced = False
         # Whether xAI heard speech in the audio it has since the last commit. It doesn't answer a commit of
         # silence at all (checked live), so without speech the commit goes out with a `response.create`.
         self._speech_detected = False
@@ -386,9 +383,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the held commit, and the audio it covers, with the request for a response."""
         # Marked first, so audio sent meanwhile is kept back until the reply ends rather than joining the turn.
         self._response_active = True
-        if not self._commit_announced:
-            self._commit_announced = True
-            self._announce_commit()
         # Each frame leaves the held audio only as it goes out, and the commit stays held until it's sent, so
         # a connection that drops midway still has the whole turn to send again after the reconnect.
         while self._held_audio_committed:
@@ -413,13 +407,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         await super()._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': event_id})
         self._release_commit()
 
-    def _announce_commit(self) -> None:
-        """Tell the listener audio is being committed, before anything goes out that xAI could answer first."""
-        if self._audio_commit_listener is not None:
-            self._audio_commit_listener()
-
     def _release_commit(self) -> None:
-        self._commit_held = self._commit_announced = False
+        self._commit_held = False
         self._sent_audio.clear()
         # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
         self._audio_is_latest_input = True
@@ -428,13 +417,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the audio kept back behind a reply that has ended, until a new commit is held or a reply starts."""
         while self._held_audio and not self._commit_held and not self._response_active:
             await self._send_audio(self._held_audio.pop(0))
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        return self._manual_turns
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        self._audio_commit_listener = listener
 
     @property
     def _response_request_dropped(self) -> bool:
@@ -458,7 +440,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # Audio still in the buffer is committed by the request, and answered by its response.
         sent_before: list[InputId] | None = None
         if self._audio_uncommitted:
-            self._announce_commit()
             # Whatever went out before the request joins the conversation ahead of the turn it commits.
             sent_before = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
@@ -483,6 +464,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
     async def _decode_frame(self, raw: str) -> _DecodedFrame:
         events = await super()._decode_frame(raw)
+        if any(_is_recoverable_max_duration(event) for event in events.codec):
+            # Nothing more goes out on this socket: the re-dial replaces it.
+            events.redial = 'the conversation reached its maximum duration'
+            return events
         if self._held_audio and not self._commit_held and not self._response_active:
             await self._send_held_audio()
         return events
@@ -548,7 +533,16 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         event = map_event(data)
         if isinstance(event, ConversationCreated):
             self._conversation_id = event.conversation_id
+        elif isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and self._can_reconnect:
+            # The connection re-dials right away, without waiting for xAI to close the socket, and the new
+            # conversation gets the history replayed into it, so the session carries on there.
+            event = replace(event, recoverable=True)
         return event
+
+
+def _is_recoverable_max_duration(event: RealtimeCodecEvent) -> bool:
+    """Whether the connection reported xAI's `max_duration` error as one its re-dial recovers from."""
+    return isinstance(event, RealtimeSessionErrorEvent) and event.type == 'max_duration' and event.recoverable
 
 
 @dataclass(init=False)

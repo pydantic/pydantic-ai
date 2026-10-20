@@ -125,6 +125,21 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    supports_request_scoped_system_prompts: bool
+    """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
+
+    A [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] part applies to one model request.
+    When this is `True`, the model adapter sends every such part in the history, and the API stops
+    rendering each one once a later request exists, as Anthropic's `clear_at: 'next_user_message'` does.
+    Sending it unchanged keeps the cached prefix and any reasoning bound to it valid. When `False`,
+    `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
+    renders like any other mid-conversation `SystemPromptPart` while it's current.
+
+    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
+    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
+    request-scoped part render as a lasting system prompt on every later request.
+    """
+
     default_structured_output_mode: StructuredOutputMode
     """The default structured output mode to use for the model. Default: `'tool'`."""
 
@@ -151,9 +166,14 @@ class ModelProfile(TypedDict, total=False):
     supports_auto_cache: bool
     """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
-    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
-    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
@@ -241,6 +261,29 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    mimics_assistant_message_formatting: bool
+    """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
+
+    A model with this quirk reads the assistant turns of the history as examples of how it is supposed to
+    write, so replaying another model's reasoning as assistant text teaches it to emit those tags in the
+    answers the user reads — and once that answer is persisted, the next turn reinforces it.
+
+    When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
+    rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
+    stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
+    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
+    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
+    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+
+    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
+    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
+    https://github.com/pydantic/pydantic-ai/issues/7419.
+
+    Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
+    them: it has to land in front of whatever that provider renders next out of the same request — an
+    Anthropic `system` entry, for one — which has no message-level existence to insert before.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
@@ -259,6 +302,18 @@ class ModelProfile(TypedDict, total=False):
     When no profile layer sets this, `Model.profile` fills it in from
     [genai-prices](https://github.com/pydantic/genai-prices) data if the model is known there.
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
+    """
+
+    tool_call_id_length: int | None
+    """The exact length of the ASCII-alphanumeric tool call IDs the model accepts. Default: `None` (any ID).
+
+    Some models only accept tool call IDs of exactly this many `a-z`, `A-Z` and `0-9` characters, and reject
+    a history whose IDs came from another provider (OpenAI's `call_...`, Anthropic's `toolu_...`) or were
+    generated by Pydantic AI (`pyd_ai_...`). When set, `Model.prepare_messages` replaces every function tool
+    call ID that doesn't fit with a hash of it that does, and leaves IDs that already fit unchanged. The
+    calls, their results and the `<tool_result>` tags that reference them keep pairing up, and since the
+    replacement depends only on the history, the same history is sent as the same bytes on every request.
+    Only the outgoing copy changes: stored message history keeps the original IDs.
     """
 
     tool_deferral_mode: ToolDeferralMode | None
@@ -379,9 +434,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
+    'tool_call_id_length': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

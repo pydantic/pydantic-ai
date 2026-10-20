@@ -44,7 +44,7 @@ Construct an `Agent` with `CodeMode()` in its `capabilities`, then register tool
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -117,7 +117,7 @@ def fetch(url: str) -> str:
 search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     toolsets=[search_tools],
     capabilities=[CodeMode(tools={'code_mode': True})],
 )
@@ -262,7 +262,7 @@ class InMemoryReplStore:
             self.states[key] = state
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
 ```
 
 - A run that never calls `run_code` neither loads nor saves.
@@ -285,7 +285,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(eager=True)],
 )
 ```
@@ -373,7 +373,7 @@ def lookup_year(*, title: str) -> int | None:
 
 code_mode = CodeMode(speculate=['lookup_author', 'lookup_year'])
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[code_mode],
     tools=[lookup_author, lookup_year],
 )
@@ -408,7 +408,7 @@ def search(query: str) -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(speculate='declared')],
     tools=[Tool(search, metadata={'read_only': True})],
 )
@@ -513,7 +513,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
 )
 ```
@@ -548,7 +548,7 @@ from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='coding-agent',
     capabilities=[CodeMode(), TemporalDurability()],
 )
@@ -595,7 +595,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -608,11 +608,49 @@ result = agent.run_sync("What's the weather in Paris?")
 
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             metadata = part.metadata or {}
             tool_calls = metadata['tool_calls']    # dict[str, ToolCallPart]
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
+
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](../tools-advanced.md#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
 ## In practice
 
@@ -641,7 +679,7 @@ from pydantic_ai_harness import CodeMode
 
 # The agent can read /work/data.csv and write /work/summary.md back to the host:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(mount=MountDir(virtual_path='/work', host_path='/tmp/agent-workspace', mode='read-write'))],
 )
 ```
@@ -659,7 +697,7 @@ from pydantic_ai_harness import CodeMode
 
 # Give the agent a fixed set of environment values:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))],
 )
 ```
@@ -683,7 +721,7 @@ def my_os(*, name, args, kwargs, **_):
     return NOT_HANDLED
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(os_access=my_os)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(os_access=my_os)])
 ```
 
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
@@ -719,7 +757,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - CodeMode: {}
 ```

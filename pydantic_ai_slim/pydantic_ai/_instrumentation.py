@@ -21,6 +21,7 @@ from pydantic_core import PydanticSerializationError, to_json
 from pydantic_graph._utils import get_traceparent
 
 from ._genai_prices import best_effort_price
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
 if TYPE_CHECKING:
     from typing import Self
@@ -278,6 +279,7 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
 
 def _redact_binary_content(value: Any, active: set[int]) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai._mcp_apps import redact_mcp_app_binary
     from pydantic_ai.messages import BinaryContent, ToolReturn
 
     identity = id(value)
@@ -303,7 +305,7 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             return {
                 'return_value': _redact_binary_content(value.return_value, active),
                 'content': _redact_binary_content(value.content, active),
-                'metadata': _redact_binary_content(value.metadata, active),
+                'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
                 # Tool names, so never binary.
                 'tools': value.tools,
                 'kind': value.kind,
@@ -610,6 +612,7 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_api_url=response.provider_url,
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
+        price_context=response.provider_details,
     )
 
 
@@ -637,9 +640,11 @@ class _FinishModelRequestSpan(Protocol):
 def _prepare_model_request_span_context(
     settings: InstrumentationSettings, request_context: ModelRequestContext
 ) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
-    prepared_settings, prepared_parameters = request_context.model.prepare_request(
-        request_context.model_settings, request_context.model_request_parameters
-    )
+    # The model warns about ignored settings when it prepares the request to send it.
+    with suppress_unsupported_setting_warnings():
+        prepared_settings, prepared_parameters = request_context.model.prepare_request(
+            request_context.model_settings, request_context.model_request_parameters
+        )
     prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
     attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
     json_schema_properties: dict[str, dict[str, str]] = {}

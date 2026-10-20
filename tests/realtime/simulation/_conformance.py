@@ -20,7 +20,11 @@ would get wrong if an adapter broke it:
 The three rules keyed on response ids (`content_after_terminal`, `duplicate_terminal`,
 `overlapping_responses`) only apply to the OpenAI-protocol adapters, which report the provider's response
 ids. Gemini Live and GPT-Live have none, so for them those rules never fire; their turn boundaries are
-checked by the simulator's invariants against the fake server's ground truth instead.
+checked by the simulator's invariants against the fake server's ground truth instead. They don't apply to a
+stream whose connection brackets each response by id with lifecycle events either (`brackets_responses`):
+the session then assembles each response apart, so responses can overlap (the `response.done` of a reply the
+user barged in on can come after the next reply started), and the connection marks what trails a terminal
+stale. The lifecycle rules below hold such a connection to its brackets instead.
 
 A connection on the second version of the lifecycle contract (`_lifecycle.py`) is also held to the rules
 its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker(lifecycle=True)`):
@@ -45,13 +49,14 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
+    InputLost,
     LifecycleEvent,
     OutputItemDetails,
     ResponseEnded,
+    ResponseRequestRefused,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
@@ -81,6 +86,9 @@ class LifecycleChecker:
     """
 
     lifecycle: bool = False
+    brackets_responses: bool = False
+    """Whether the connection brackets each response by id with lifecycle events, so the codec rules keyed on
+    response ids don't apply to its codec stream (see the module docstring)."""
     inputs_sent: Callable[[], int] | None = None
     """How many inputs the connection has been sent so far, for `lifecycle.unknown_answer`."""
     issues: list[ConformanceIssue] = field(default_factory=list[ConformanceIssue])
@@ -91,6 +99,9 @@ class LifecycleChecker:
     _fatal: bool = False
     _started: set[str] = field(default_factory=set[str])
     _open_responses: set[str] = field(default_factory=set[str])
+    _made_up_ids: set[str] = field(default_factory=set[str])
+    """Responses the lifecycle named itself (`ResponseStarted.provider_id=False`), for a protocol that names them
+    only in their terminal."""
     _responses_ended: set[str] = field(default_factory=set[str])
     _settled_inputs: set[int] = field(default_factory=set[int])
     _added_inputs: set[int] = field(default_factory=set[int])
@@ -106,7 +117,7 @@ class LifecycleChecker:
         def issue(code: str, detail: str) -> None:
             found.append(ConformanceIssue(code, detail, position))
 
-        if isinstance(event, LIFECYCLE_EVENT_TYPES):
+        if isinstance(event, LifecycleEvent):
             self._feed_lifecycle(event, issue)
         elif self.lifecycle:
             # The codec rules are checked on the codec stream; this one carries the same events, minus stale ones.
@@ -118,6 +129,14 @@ class LifecycleChecker:
 
     def _feed_lifecycle_content(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
         response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
+        if (
+            isinstance(event, ResponseDone)
+            and response_id not in self._open_responses
+            and not self._open_responses.isdisjoint(self._made_up_ids)
+        ):
+            # The terminal names the response under way, which the lifecycle had to make an id up for (ElevenLabs
+            # names a reply only in its last frame): the session records the name it reports.
+            return
         if response_id is not None and response_id not in self._open_responses:
             issue('lifecycle.content_outside_response', f'{type(event).__name__} for {response_id!r} outside it')
 
@@ -136,7 +155,7 @@ class LifecycleChecker:
             unknown = [call_id for call_id in event.tool_call_ids if call_id not in self._tool_calls]
             if unknown:
                 issue('codec.unknown_cancellation', f'cancellation of calls never reported: {unknown}')
-        response_id = _content_response_id(event)
+        response_id = None if self.brackets_responses else _content_response_id(event)
         if response_id is not None and response_id in self._ended:
             issue('codec.content_after_terminal', f'{type(event).__name__} for {response_id!r} after its ResponseDone')
         elif response_id is not None:
@@ -144,7 +163,7 @@ class LifecycleChecker:
                 issue('codec.overlapping_responses', f'content for {response_id!r} while {self._open!r} is still open')
             # A response's usage comes with its terminal: a function-call-only response has no `ResponseDone`.
             self._open = None if isinstance(event, SessionUsage) else response_id
-        if isinstance(event, ResponseDone) and event.provider_response_id is not None:
+        if isinstance(event, ResponseDone) and event.provider_response_id is not None and not self.brackets_responses:
             if event.provider_response_id in self._ended:
                 issue('codec.duplicate_terminal', f'second ResponseDone for {event.provider_response_id!r}')
             self._ended.add(event.provider_response_id)
@@ -159,6 +178,8 @@ class LifecycleChecker:
                 issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
             self._started.add(event.response_id)
             self._open_responses.add(event.response_id)
+            if not event.provider_id:
+                self._made_up_ids.add(event.response_id)
             sent = self.inputs_sent() if self.inputs_sent is not None else 0
             if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
                 issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
@@ -170,7 +191,7 @@ class LifecycleChecker:
                 issue('lifecycle.end_without_start', f'{event.response_id!r} ended without starting')
             self._open_responses.discard(event.response_id)
             self._responses_ended.add(event.response_id)
-        elif isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnDiscarded)):
+        elif isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnClosed)):
             self._feed_turn(event, issue)
         elif isinstance(event, InputAdded):
             if event.input_id in self._added_inputs:
@@ -180,10 +201,11 @@ class LifecycleChecker:
             if event.response_id not in self._open_responses:
                 issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
         else:
+            assert isinstance(event, (InputLost, ResponseRequestRefused)), f'unknown lifecycle event {event!r}'
             self._settle(event.input_ids, issue)
 
     def _feed_turn(
-        self, event: UserTurnStarted | UserTurnEnded | UserTurnDiscarded, issue: Callable[[str, str], None]
+        self, event: UserTurnStarted | UserTurnEnded | UserTurnClosed, issue: Callable[[str, str], None]
     ) -> None:
         if isinstance(event, UserTurnStarted):
             if event.turn_id in self._turns:
@@ -196,9 +218,9 @@ class LifecycleChecker:
             self._open_turns.discard(event.turn_id)
             self._joined_turns.add(event.turn_id)
         else:
-            # A turn can be discarded once it joined, too: it just gets no more audio.
+            # A turn can be closed once it joined, too: it just gets no more audio or transcript.
             if event.turn_id not in self._open_turns and event.turn_id not in self._joined_turns:
-                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} discarded without starting')
+                issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} closed without starting')
             self._open_turns.discard(event.turn_id)
             self._joined_turns.discard(event.turn_id)
 
