@@ -215,7 +215,8 @@ History records each of those replies the same way as one cut off while it was b
 interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
 edited: a later snapshot holds an interrupted copy at the same position (see
 [History](history.md#transcription-and-history-edge-cases)). The transcript stays what the model
-generated, as providers don't report which words were heard. The
+generated, as most providers don't report which words were heard. ElevenLabs does, and with it the
+transcript becomes what was heard (see [ElevenLabs](elevenlabs.md#provider-specific-quirks)). The
 [readable interruption note](history.md#handing-off-to-a-text-agent) is what tells a later model where the
 listener stopped.
 

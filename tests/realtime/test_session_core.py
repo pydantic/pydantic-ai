@@ -60,6 +60,7 @@ from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -249,6 +250,35 @@ def test_a_cut_of_a_response_still_under_way_lands_once_it_is_recorded() -> None
     assert summary(session_core.all_messages()) == snapshot(
         ['r1 [assistant:First item.@40, assistant:Second item.@0] interrupted stop']
     )
+
+
+def test_a_provider_reported_cut_records_what_was_heard() -> None:
+    """A provider that says which words were heard (ElevenLabs) cuts the transcript down to them.
+
+    The provider's text stays on the part, and an item heard not at all keeps no transcript. A cut of a response
+    still under way lands once it is recorded, the latest words reported and the shortest hearing winning.
+    """
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'First item.', 'item_a'),
+        said('r1', 'Second item.', 'item_b'),
+        OutputItemCut(item_id='item_a', heard_transcript='First...', heard_ms=300),
+        OutputItemCut(item_id='item_a', heard_transcript='Fir...', heard_ms=500),
+        ended('r1'),
+    )
+    before = session_core.all_messages()
+    feed(session_core, OutputItemCut(item_id='item_b', heard_transcript=''))
+    after = session_core.all_messages()
+    assert summary(before) == snapshot(['r1 [assistant:Fir...@300, assistant:Second item.] interrupted stop'])
+    assert summary(after) == snapshot(['r1 [assistant:Fir...@300, assistant:None] interrupted stop'])
+    assert [part.provider_details for part in after[0].parts if isinstance(part, SpeechPart)] == snapshot(
+        [{'original_transcript': 'First item.'}, {'original_transcript': 'Second item.'}]
+    )
+
+    # Reporting the same again changes nothing.
+    feed(session_core, OutputItemCut(item_id='item_b', heard_transcript=''), OutputItemCut(item_id='item_a'))
+    assert session_core.all_messages()[0] is after[0]
 
 
 def test_only_the_latest_output_items_can_be_cut_off() -> None:

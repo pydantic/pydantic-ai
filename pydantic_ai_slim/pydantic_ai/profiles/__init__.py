@@ -271,9 +271,9 @@ class ModelProfile(TypedDict, total=False):
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
     rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
     stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
-    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
-    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
-    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
 
     This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
     OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in

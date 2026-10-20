@@ -36,6 +36,7 @@ its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker
 - `lifecycle.unknown_answer`: a response answers an input the connection was never sent;
 - `lifecycle.input_settled_twice`: an input is answered, refused, or lost more than once;
 - `lifecycle.input_added_twice`: an input joins the conversation twice;
+- `lifecycle.cut_of_unknown_item`: an `OutputItemCut` names an output item no content named;
 - `lifecycle.turn_started_twice` / `lifecycle.turn_end_without_start`: a spoken turn isn't bracketed by
   one start and one end (or discard);
 - `lifecycle.unended_at_close` / `lifecycle.turn_unended_at_close`: the stream ended with a response or
@@ -52,6 +53,7 @@ from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -108,6 +110,8 @@ class LifecycleChecker:
     _turns: set[str] = field(default_factory=set[str])
     _open_turns: set[str] = field(default_factory=set[str])
     _joined_turns: set[str] = field(default_factory=set[str])
+    _items: set[str] = field(default_factory=set[str])
+    """The output items content named, for `lifecycle.cut_of_unknown_item`."""
 
     def feed(self, event: RealtimeCodecEvent | LifecycleEvent) -> list[ConformanceIssue]:
         position = self.events
@@ -128,6 +132,8 @@ class LifecycleChecker:
         return found
 
     def _feed_lifecycle_content(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
+        if isinstance(event, (AudioDelta, OutputTranscript)) and event.item_id is not None:
+            self._items.add(event.item_id)
         response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
         if (
             isinstance(event, ResponseDone)
@@ -197,6 +203,10 @@ class LifecycleChecker:
             if event.input_id in self._added_inputs:
                 issue('lifecycle.input_added_twice', f'input {event.input_id} joined the conversation twice')
             self._added_inputs.add(event.input_id)
+        elif isinstance(event, OutputItemCut):
+            # (A cut can come after its response ended: generation outruns playback.)
+            if event.item_id not in self._items:
+                issue('lifecycle.cut_of_unknown_item', f'cut of output item {event.item_id!r} no content named')
         elif isinstance(event, OutputItemDetails):
             if event.response_id not in self._open_responses:
                 issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
