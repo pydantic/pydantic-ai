@@ -169,7 +169,8 @@ class TestCreate:
             f'Could not start E2B sandbox: {message}'
             + (' Hobby plans allow at most 3600 seconds; pass `E2BSandbox(sandbox_timeout=3600)`.' if advice else '')
         )
-        # Only the lifetime refusal ends the run; a 400 wrapping an i/o timeout stays retryable.
+        # Only the lifetime refusal ends the run as unavailable; a 400 wrapping an i/o timeout is an
+        # operation failure, which a tool reports to the model.
         assert type(exc.value) is (WorkspaceUnavailableError if advice else WorkspaceError)
         assert exc.value.__cause__ is error
 
@@ -679,11 +680,12 @@ class TestWorkingDir:
     async def test_the_probe_carries_a_deadline(self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
         # The probe is a command like any other, so it is bounded and killed rather than left
         # to hang a run that only wanted to resolve a path.
+        # The error names what timed out, not a command the caller never ran.
         monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
         fake_e2b.command_hangs = True
         backend = await started()
         with anyio.fail_after(5):
-            with pytest.raises(WorkspaceTimeoutError):
+            with pytest.raises(WorkspaceTimeoutError, match='Could not determine the working directory'):
                 await backend.working_dir()
 
     @pytest.mark.parametrize(
@@ -1121,6 +1123,17 @@ async def test_created_sandbox_id_is_logged_and_attached_one_is_not(
     assert [record.getMessage() for record in caplog.records if record.levelname == 'INFO'] == [
         f'Created E2B sandbox {created_ref.id}'
     ]
+
+
+async def test_a_stalled_fifo_probe_names_the_read(fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The probe's deadline is internal: a bare 'Command timed out' would describe a command the caller never ran.
+    monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
+    backend = await started()
+    await backend.write_bytes('/file', b'data')
+    fake_e2b.command_hangs = True
+    with anyio.fail_after(5):
+        with pytest.raises(WorkspaceTimeoutError, match="Could not read '/file': the E2B sandbox did not answer"):
+            await backend.read_bytes('/file')
 
 
 def _path_without_ps(tmp_path: Path) -> str:

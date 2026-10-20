@@ -56,6 +56,8 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             )
         check_integer('sandbox_timeout', self.sandbox_timeout)
         check_working_dir(self.working_dir)
+        if self.env is not None and any(type(k) is not str or type(v) is not str for k, v in self.env.items()):
+            raise UserError('env keys and values must be strings.')
 
     def backend(self, ref: WorkspaceRef) -> E2BSandboxBackend:
         """Attach lazily to an existing E2B sandbox."""
