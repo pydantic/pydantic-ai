@@ -377,13 +377,11 @@ def _web_citation_agent(
         )
         tool = WebSearchTool(max_uses=1)
     elif case.provider == 'anthropic-web-fetch':
-        # Web Fetch only returns citations when asked, which `include_citations` does.
+        # Web Fetch only returns citations when asked.
         model = AnthropicModel(
-            'claude-sonnet-4-5',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=ModelSettings(max_tokens=4096, include_citations=True),
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
-        tool = WebFetchTool(max_uses=1)
+        tool = WebFetchTool(max_uses=1, enable_citations=True)
         # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
         # the cited ranges that tie a citation to the fetched page.
         prompt = (
