@@ -523,9 +523,8 @@ def _strip_cache_markers(body: dict[str, Any]) -> dict[str, Any]:
     return stripped
 
 
-def _strip_item(item: Any, depth: int = 0) -> Any:
-    if not is_str_dict(item):
-        return item
+def _strip_item(item: Any, depth: int = 0) -> dict[str, Any]:
+    assert is_str_dict(item), f'expected a JSON object, got {item!r}'
     stripped = {key: value for key, value in item.items() if key not in _CACHE_MARKERS}
     for key in ('content', 'output'):
         if depth < 2 and isinstance(parts := stripped.get(key), list):
