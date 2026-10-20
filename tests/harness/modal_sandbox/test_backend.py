@@ -747,6 +747,26 @@ class TestCreate:
         assert await backend.get_sandbox() is fake_modal.sandboxes[0]
         assert fake_modal.owned_creates == 1
 
+    async def test_a_create_that_outlives_every_caller_is_logged(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The cancelled caller's cleanup ran while `ref` was still `None`; only the log names the sandbox.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            with anyio.move_on_after(0.05):
+                await backend.run(['true'])
+            assert fake_modal.create_started
+            assert backend.ref is None
+            fake_modal.create_gate.set()
+            with anyio.fail_after(5):
+                while backend.ref is None:
+                    await anyio.sleep(0)
+        assert [record.getMessage() for record in caplog.records] == [
+            'Created Modal sandbox sb-owned after every caller waiting for it was cancelled; it keeps running '
+            'until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(...)`'
+        ]
+
     @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
     async def test_ref_is_recorded_by_the_first_operation(self, fake_modal: FakeModal, operation: str) -> None:
         backend = ModalSandboxBackend()
@@ -989,6 +1009,22 @@ class TestFilesystem:
             ('pkg', '/srv/pkg', True, None),
         ]
 
+    async def test_reads_refuse_anything_but_a_regular_file(self, fake_modal: FakeModal, tmp_path: Path) -> None:
+        # A device can stream without end into this process, like a FIFO can block it; the local
+        # backend refuses both, and so does this one. A link to one is refused too.
+        fake_modal.host_root = tmp_path
+        (tmp_path / 'data.txt').write_bytes(b'body')
+        (tmp_path / 'device').symlink_to('/dev/null')
+        backend = ModalSandboxBackend()
+        for path in ('/dev/null', str(tmp_path / 'device')):
+            with pytest.raises(OSError, match='Not a regular file in the Modal sandbox'):
+                await backend.read_bytes(path)
+        assert await backend.read_bytes(str(tmp_path / 'data.txt')) == b'body'
+        with pytest.raises(FileNotFoundError):
+            await backend.read_bytes(str(tmp_path / 'missing'))
+        with pytest.raises(IsADirectoryError):
+            await backend.read_bytes(str(tmp_path))
+
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:
@@ -1177,7 +1213,7 @@ class TestFilesystem:
         await fake_modal.sandboxes[0].terminate.aio()
         with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
             await backend.read_bytes('/x')
-        assert fake_modal.sandboxes[0].exec_calls  # the FIFO probe detects shutdown before the SDK read
+        assert fake_modal.sandboxes[0].exec_calls  # the file-kind probe detects shutdown before the SDK read
 
     async def test_a_wrapped_auth_failure_is_terminal(self, fake_modal: FakeModal) -> None:
         backend = await started()
