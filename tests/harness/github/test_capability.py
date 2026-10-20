@@ -20,6 +20,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
@@ -52,7 +53,7 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
@@ -88,8 +89,11 @@ class TestGitHub:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [
-            (False, '{"read_resource":"read","write_resource":"written","unmarked_resource":"unmarked"}'),
-            (True, '{"read_resource":"read"}'),
+            (
+                False,
+                '{"github_read_resource":"read","github_write_resource":"written","github_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"github_read_resource":"read"}'),
         ],
     )
     async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
@@ -130,7 +134,7 @@ class TestGitHub:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: GitHub[str | None]) -> None:
-        assert capability.get_toolset().id == 'work-github'
+        assert only_leaf(capability.get_toolset()).id == 'work-github'
 
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[GitHub(client=server, defer_loading=True)])
@@ -154,8 +158,7 @@ class TestGitHub:
         self, capability: GitHub[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:

@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai_harness._mcp import credential, one_connection, prefixed_toolset, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -31,6 +31,12 @@ class Slack(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Use Slack messages, channels, and canvases.'
+    tool_prefix: str | None = None
+    """Prepended with `_` to the server's tool names, as in `work_slack_send_message`.
+
+    Unset, the server's names are kept, since they already start with the service, as in `slack_send_message`.
+    Give two instances distinct prefixes to use both.
+    """
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A Slack user token or a function of the run context that returns one.
 
@@ -65,8 +71,8 @@ class Slack(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
-            return read_only_toolset(toolset)
-        return toolset
+            toolset = read_only_toolset(toolset)
+        return prefixed_toolset(toolset, self.tool_prefix)
 
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
         auth = self.auth(ctx) if callable(self.auth) else self.auth
