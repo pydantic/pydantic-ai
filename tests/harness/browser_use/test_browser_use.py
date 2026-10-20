@@ -109,6 +109,12 @@ class _Facts(BaseModel):
     price_usd: int
 
 
+class _Pins(BaseModel):
+    owner: str
+    pins: list[int]
+    active: bool
+
+
 class _Typed(BaseModel):
     """Action parameters browser-use fills secret placeholders into."""
 
@@ -1372,6 +1378,22 @@ class TestSensitiveDataSafety:
 
         assert json.loads(result) == {'name': '<secret>x_password</secret>', 'price_usd': 1}
 
+    async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """A secret that is a number in the schema output becomes a placeholder string, not broken JSON."""
+        pins = _Pins(owner='me', pins=[1234, 5678], active=True)
+        history = _FakeHistory(result=pins.model_dump_json(), success=True, structured=pins)
+        capability = BrowserUse[None](
+            output_schema=_Pins,
+            sensitive_data={'https://safe.example': {'x_pin': '1234'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
+
     @pytest.mark.parametrize('secret', ['hunter2', 'sk-' + 'A1b2C3d4' * 8, 'it\'s "quoted"'])
     async def test_secret_values_are_redacted_from_a_schema_retry(
         self, kill_calls: list[BrowserSession], secret: str
@@ -1890,6 +1912,53 @@ class TestLocalFileNavigation:
         """At 100 entries browser-use converts the list to a set, which no normalized entry matches."""
         with pytest.raises(ValueError, match='by exact hostname only'):
             BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(50)])
+
+    @pytest.mark.parametrize(('entries', 'block_ip_addresses'), [(97, False), (94, True)])
+    def test_a_prohibited_list_browser_use_would_match_by_exact_hostname_is_rejected(
+        self, entries: int, block_ip_addresses: bool
+    ) -> None:
+        """At 100 entries, the harness's own rules included, browser-use would drop every glob, `file://` too."""
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(entries)])
+        with pytest.raises(ValueError, match='by exact hostname only'):
+            BrowserUse[None](browser_profile=profile, block_ip_addresses=block_ip_addresses)
+
+    async def test_a_prohibited_list_below_the_threshold_still_refuses_files(self) -> None:
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(96)])
+        factory = _success_factory()
+        await (
+            BrowserUse[None](browser_profile=profile, block_ip_addresses=False, browser_agent=factory)
+            .get_toolset()
+            .browse_web(_ctx(), 'task')
+        )
+        session = factory.requests[0].browser_session
+
+        assert await self._navigation_allowed(session, 'FILE://localhost/etc/passwd') is False
+        assert await self._navigation_allowed(session, 'https://site1.com/') is False
+
+    def test_an_allowlist_makes_a_large_prohibited_list_irrelevant(self) -> None:
+        """browser-use ignores the prohibited list once an allowlist is set."""
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(120)])
+        BrowserUse[None](browser_profile=profile, allowed_domains=['example.com'])
+
+    async def test_a_directly_built_toolset_rejects_a_large_prohibited_list(self) -> None:
+        toolset = BrowserUseToolset[None](
+            browser_agent=_success_factory(),
+            llm=None,
+            browser_profile=BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(100)]),
+            allowed_domains=None,
+            block_ip_addresses=False,
+            headless=None,
+            max_steps=10,
+            use_vision=True,
+            output_schema=None,
+            sensitive_data=None,
+            extend_system_message=None,
+            settings=BrowserAgentSettings(),
+            session_scope='call',
+            cdp_url=None,
+        )
+        with pytest.raises(ValueError, match='by exact hostname only'):
+            await toolset.browse_web(_ctx(), 'task')
 
     async def test_a_narrowed_scheme_glob_gets_a_path_boundary(self, kill_calls: list[BrowserSession]) -> None:
         """Narrowing `*://host` to `http`/`https` must not leave a bare prefix that matches `host.attacker.test`.

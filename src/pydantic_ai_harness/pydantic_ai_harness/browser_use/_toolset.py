@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 import anyio
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -195,6 +195,31 @@ def _exclude_localhost_allowlist_entries(allowed_domains: list[str]) -> list[str
     if allowed_domains and not filtered:
         raise ValueError('An `allowed_domains` entry that permits only localhost requires `block_ip_addresses=False`.')
     return filtered
+
+
+def _session_prohibited_domains(
+    prohibited_domains: list[str] | set[str] | None,
+    *,
+    block_ip_addresses: bool,
+    allowed_domains: list[str] | set[str] | None,
+) -> list[str]:
+    """The profile's prohibited patterns plus the harness's `file://` and, when blocking IPs, localhost rules.
+
+    browser-use matches a prohibited list of `DOMAIN_OPTIMIZATION_THRESHOLD` or more entries
+    (which it converts to a set) by exact hostname only, which would disable those rules, so
+    such a list is rejected. An allowlist replaces the prohibited list in browser-use's
+    navigation guard, so the size only matters without one.
+    """
+    merged = list(prohibited_domains or ())
+    rules = [*_LOCAL_FILE_PATTERNS, *(_LOCALHOST_PATTERNS if block_ip_addresses else ())]
+    merged.extend(rule for rule in rules if rule not in merged)
+    if not allowed_domains and len(merged) >= DOMAIN_OPTIMIZATION_THRESHOLD:
+        raise ValueError(
+            f"`prohibited_domains` grows to {len(merged)} entries with the harness's own rules, but browser-use "
+            f'matches a list of {DOMAIN_OPTIMIZATION_THRESHOLD} or more entries by exact hostname only, which would '
+            'disable the `file://` and localhost rules. Use fewer entries, or set `allowed_domains`.'
+        )
+    return merged
 
 
 def _secret_scope(pattern: str) -> str:
@@ -607,13 +632,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         headless = self._headless
         if headless is None and self._browser_profile is None:
             headless = True
-        browser_profile = self._browser_profile
-        if browser_profile is None:
-            browser_profile = BrowserProfile(prohibited_domains=_LOCAL_FILE_PATTERNS)
-        else:
-            prohibited_domains = list(browser_profile.prohibited_domains or ())
-            prohibited_domains.extend(pattern for pattern in _LOCAL_FILE_PATTERNS if pattern not in prohibited_domains)
-            browser_profile = browser_profile.model_copy(update={'prohibited_domains': prohibited_domains})
+        browser_profile = self._browser_profile if self._browser_profile is not None else BrowserProfile()
         # `BrowserSession` lets a non-`None` `allowed_domains` replace the profile's own
         # list, so the profile allowlist only reaches the navigation guard when the
         # direct one is absent. Normalization also runs in `BrowserUse.__post_init__`,
@@ -624,18 +643,19 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         )
         if allowed_domains is not None:
             allowed_domains = _normalize_allowed_domains(allowed_domains)
-        if self._sensitive_data is not None:
-            browser_profile = browser_profile.model_copy(update={'cross_origin_iframes': False})
-        if self._block_ip_addresses:
-            if allowed_domains is not None:
+            if self._block_ip_addresses:
                 allowed_domains = _exclude_localhost_allowlist_entries(allowed_domains)
-            prohibited_domains = list(browser_profile.prohibited_domains or ())
-            prohibited_domains.extend(pattern for pattern in _LOCALHOST_PATTERNS if pattern not in prohibited_domains)
-            browser_profile = browser_profile.model_copy(
-                update={'block_ip_addresses': True, 'prohibited_domains': prohibited_domains}
-            )
-        else:
-            browser_profile = browser_profile.model_copy(update={'block_ip_addresses': False})
+        update: dict[str, object] = {
+            'block_ip_addresses': self._block_ip_addresses,
+            'prohibited_domains': _session_prohibited_domains(
+                browser_profile.prohibited_domains,
+                block_ip_addresses=self._block_ip_addresses,
+                allowed_domains=allowed_domains,
+            ),
+        }
+        if self._sensitive_data is not None:
+            update['cross_origin_iframes'] = False
+        browser_profile = browser_profile.model_copy(update=update)
         return BrowserSession(
             cdp_url=self._cdp_url,
             browser_profile=browser_profile,
@@ -668,7 +688,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """The tool result for a finished run: text, schema JSON, or a failure report."""
         result = history.final_result()
         if result is None:
-            step_errors = [error for error in history.errors() if error]
+            step_errors = [self._redact(error) for error in history.errors() if error]
             detail = '; '.join(step_errors) if step_errors else 'no further details'
             return f'The browser agent stopped without producing a result ({detail}).'
         answer = self._render_answer(result, history)
@@ -681,15 +701,16 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         rejection = _judge_rejection(history)
         if rejection is not None:
             return (
-                f"The browser agent reported success, but browser-use's judge rejected the result ({rejection}). "
+                f"The browser agent reported success, but browser-use's judge rejected the result "
+                f'({self._redact(rejection)}). '
                 f'Its final result: {answer}'
             )
         return answer
 
     def _render_answer(self, result: str, history: BrowserAgentHistory) -> str:
-        """The answer itself: schema JSON when one is configured, otherwise the agent's own text."""
+        """The answer itself, redacted: schema JSON when one is configured, otherwise the agent's own text."""
         if self._output_schema is None:
-            return result
+            return self._redact(result)
         try:
             structured = history.structured_output
         except ValidationError as error:
@@ -711,7 +732,14 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # A `None` here is unreachable with browser-use's own history, which parses whenever there
         # is a final result and a schema -- both already true. Only a custom factory's history can
         # land here, and its prose is a better answer than an invented failure.
-        return structured.model_dump_json() if structured is not None else result
+        if structured is None:
+            return self._redact(result)
+        if self._secret_pattern is None:
+            return structured.model_dump_json()
+        # Redacted value by value rather than as text, so the result stays valid JSON.
+        return json.dumps(
+            self._redact_json(structured.model_dump(mode='json')), ensure_ascii=False, separators=(',', ':')
+        )
 
     async def browse_web(self, ctx: RunContext[AgentDepsT], task: str) -> str:
         """Have an autonomous browser agent carry out a web task and return its result.
@@ -733,7 +761,19 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         else:
             await self._retry_pending_cleanup()
             history = await self._run_in_shared_session(task, llm)
-        return self._redact(self._render_result(history))
+        return self._render_result(history)
+
+    def _redact_json(self, value: JsonValue) -> JsonValue:
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        if isinstance(value, dict):
+            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._redact_json(item) for item in value]
+        if isinstance(value, str):
+            return self._redact(value)
+        text = json.dumps(value)
+        redacted = self._redact(text)
+        return value if redacted == text else redacted
 
     def _redact(self, text: str) -> str:
         """Replace each configured secret value in tool output with its placeholder.
