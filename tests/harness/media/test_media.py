@@ -1127,6 +1127,15 @@ class TestExternalizeRestoreWalker:
             '__harness_external_marker_format__': 'v0',
         }
         assert await restore_media(stamped_by_caller, media_store=store) == stamped_by_caller
+        not_a_mapping = {'__harness_external_literal__': ['caller'], '__harness_external_marker_format__': 'literal-v1'}
+        assert await restore_media(not_a_mapping, media_store=store) == not_a_mapping
+
+    async def test_unsupported_literal_format_raises(self, tmp_path: Path) -> None:
+        """A wrapper from a later format version fails loudly instead of restoring as caller data."""
+        store = DiskMediaStore(tmp_path)
+        wrapper = {'__harness_external_literal__': {'k': 'v'}, '__harness_external_marker_format__': 'literal-v2'}
+        with pytest.raises(ValueError, match='unsupported format'):
+            await restore_media(wrapper, media_store=store)
 
     async def test_pre_stamp_marker_keeps_a_caller_urlsafe_field(self, tmp_path: Path) -> None:
         """A marker written before the URL-safe stamp keeps a caller field of that name and the standard alphabet."""

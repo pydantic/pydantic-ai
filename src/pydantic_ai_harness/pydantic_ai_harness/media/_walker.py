@@ -70,7 +70,8 @@ _URLSAFE_STAMP = 'base64-urlsafe-v1'
 # stamped under `_MARKER_FORMAT` so a dict a snapshot from before the wrapper
 # stored under `_LITERAL_KEY` alone is not unwrapped.
 _LITERAL_KEY = '__harness_external_literal__'
-_LITERAL_FORMAT = 'literal-v1'
+_LITERAL_FORMAT_PREFIX = 'literal-v'
+_LITERAL_FORMAT = f'{_LITERAL_FORMAT_PREFIX}1'
 # Version stamps this format issues. The prefix is what tells a stamp we wrote
 # apart from a caller-owned `_MARKER_FORMAT` value, so only a stamp inside the
 # namespace makes the version check apply at all.
@@ -168,11 +169,20 @@ def _is_external_marker(node: dict[str, object]) -> bool:
 
 
 def _literal_payload(node: dict[str, object]) -> dict[str, object] | None:
-    """The caller dict inside a literal wrapper, or `None` if `node` is not one."""
-    if node.keys() != {_LITERAL_KEY, _MARKER_FORMAT} or node[_MARKER_FORMAT] != _LITERAL_FORMAT:
+    """The caller dict inside a literal wrapper, or `None` if `node` is not one.
+
+    A wrapper stamped with a later version of this format raises rather than
+    passing through as caller data, the same gate the escaped-keys stamp has.
+    """
+    if node.keys() != {_LITERAL_KEY, _MARKER_FORMAT}:
         return None
+    stamp = node[_MARKER_FORMAT]
     payload = node[_LITERAL_KEY]
-    return payload if _is_json_dict(payload) else None
+    if not isinstance(stamp, str) or not stamp.startswith(_LITERAL_FORMAT_PREFIX) or not _is_json_dict(payload):
+        return None
+    if stamp != _LITERAL_FORMAT:
+        raise ValueError(f'externalized media literal wrapper has an unsupported format: {stamp!r}')
+    return payload
 
 
 def _is_json_scalar(node: object) -> bool:
