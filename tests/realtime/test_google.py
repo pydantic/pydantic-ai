@@ -1362,6 +1362,48 @@ async def test_send_tool_result_async_scheduling(
     )
 
 
+@pytest.mark.parametrize(
+    ('async_tool_calls', 'supports_scheduling', 'talks_through'),
+    [
+        (False, False, False),
+        (False, True, False),
+        # `gemini-3.8-live-extended-thinking`: asynchronous, but it ends what it says before the call and answers
+        # after the result, so its call ends its response as a blocking one does.
+        (True, False, False),
+        # The native-audio models and `gemini-3.8-live`, which keep talking in the turn that made the call.
+        (True, True, True),
+    ],
+)
+def test_map_tool_call_that_the_model_talks_through(
+    async_tool_calls: bool, supports_scheduling: bool, talks_through: bool
+) -> None:
+    """An asynchronous call the model keeps talking past is flagged so, and promises no usage to close its response.
+
+    A unit test: the recorded extended-thinking exchange (`test_extended_thinking_async_tool_round`) records the same
+    history either way, as nothing is said between its call and its result.
+    """
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()),
+        profile=GoogleRealtimeModelProfile(google_supports_async_tool_call_scheduling=supports_scheduling),
+        async_tool_calls=async_tool_calls,
+    )
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    call = ToolCall(
+        tool_call_id='c1',
+        tool_name='get_weather',
+        args='{}',
+        response_usage_follows=not talks_through,
+        runs_asynchronously=talks_through,
+    )
+    assert events == ([call] if talks_through else [call, SessionUsage(usage=RequestUsage())])
+
+
 def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', name: str = 'inspect') -> None:
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(

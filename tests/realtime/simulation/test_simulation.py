@@ -298,11 +298,10 @@ def async_gemini() -> GeminiSimulation:
     return GeminiSimulation(behavior=GeminiBehavior(async_tool_calls=True))
 
 
-@known('8760')
-def test_known_gemini_async_filler_recorded_after_the_result() -> None:
+def test_gemini_async_filler_recorded_before_the_result() -> None:
     """S0: the model narrates after the call and finishes; the result then cuts in, and the model answers.
 
-    Expected: `[call, filler] {return} [answer]`. Recorded: `[call] {return} [filler] [answer]`.
+    Recorded `[call, filler] {return} [answer]`, as it was said (it was `[call] {return} [filler] [answer]`).
     """
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -312,11 +311,10 @@ def test_known_gemini_async_filler_recorded_after_the_result() -> None:
         sim.finish()
         sim.settle()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
-@known('8760')
-def test_known_gemini_async_result_cuts_into_speech() -> None:
+def test_gemini_async_result_cuts_into_speech() -> None:
     """S2: the result arrives while the model is still narrating; what it said before belongs to the call."""
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -326,7 +324,7 @@ def test_known_gemini_async_result_cuts_into_speech() -> None:
         sim.finish_tool()
         sim.settle()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
 def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
@@ -450,14 +448,15 @@ def test_extended_thinking_parallel_calls_are_answered_once() -> None:
     run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
 
 
-@known('8760')
-def test_known_gemini_async_second_call_in_the_same_turn() -> None:
+def test_gemini_async_second_call_in_the_same_turn() -> None:
+    """The model makes a second asynchronous call in the turn of the first: both are in the one response."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(deliver=False)
         sim.call_tools()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
 @known('SIM-18')
@@ -2381,8 +2380,8 @@ def test_baseline_gemini_async_typed_turn_during_the_held_round() -> None:
 def test_scenario_gemini_async_parallel_calls() -> None:
     """Two async calls in one message, with speech before, between, and after their results.
 
-    Accepted on #8760: speech between the two results goes after the second (each result must directly follow
-    its call), but what was said before the first result belongs to the calling response.
+    Speech between the two results goes after the second (each result must directly follow its call), but what was
+    said before the first result belongs to the calling response.
     """
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -2392,7 +2391,7 @@ def test_scenario_gemini_async_parallel_calls() -> None:
         sim.finish_tool()
         sim.speak()
 
-    run_tolerant(async_gemini(), scenario)
+    run_accepting(async_gemini(), scenario, '8760-accepted-between-results')
 
 
 def test_scenario_openai_tool_retries_exhausted() -> None:

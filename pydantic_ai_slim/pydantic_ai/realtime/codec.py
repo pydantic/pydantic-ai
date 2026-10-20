@@ -261,6 +261,13 @@ class ToolCall:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
+    runs_asynchronously: bool = False
+    """Whether the model goes on with the same response while this call runs.
+
+    Gemini Live's `NON_BLOCKING` calls do: the model keeps talking ("this might take a moment") in the turn
+    that made the call. An [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle] then keeps
+    that response going past the call, so what the model says before the call's result goes back is recorded
+    with the call, ahead of the result."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
