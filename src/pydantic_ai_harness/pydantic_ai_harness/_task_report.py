@@ -22,8 +22,11 @@ _CLOSING_TASK_OUTPUT_TAG_OPENER = re.compile(r'<(?=\s*/\s*task[-_]output(?=[\s/>
 
 
 def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
-    """Frame `body` as `<task_output>` data that can't close its own element, with escaped attributes."""
-    attributes = {'task_id': task_id, 'agent_name': agent_name, 'outcome': outcome}
+    """Frame `body` as `<task_output>` data that can't close its own element, with escaped attributes.
+
+    Like a background tool's `<tool_result>`, the frame carries `outcome` only when the task didn't succeed.
+    """
+    attributes = {'task_id': task_id, 'agent_name': agent_name, **({'outcome': outcome} if outcome != 'ok' else {})}
     attrs = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
     body = _CLOSING_TASK_OUTPUT_TAG_OPENER.sub('&lt;', body)
     metadata = {'origin': _TASK_REPORT_ORIGIN, 'task_id': task_id, 'generation': generation}

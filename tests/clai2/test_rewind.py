@@ -80,7 +80,7 @@ def test_background_task_reports_are_not_rewind_points(monkeypatch: pytest.Monke
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('first')], run_id='first'),
         ModelResponse(parts=[TextPart('launched')], run_id='first'),
-        ModelRequest(parts=list(record.report()), run_id='report'),
+        ModelRequest(parts=[record.report()], run_id='report'),
         ModelResponse(parts=[TextPart('reviewed')], run_id='report'),
     ]
     output = StringIO()

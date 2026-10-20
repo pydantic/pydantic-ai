@@ -367,11 +367,13 @@ SubAgent(
 opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
 delegate tool's schema, gives every child a stable conversation ID, and owns every
 worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
-background reports through core's queued-message API. Each report is a short
-framework notice in a `SystemPromptPart`, then the child's output in a
-`UserPromptPart`, framed as `<task_output task_id="..." agent_name="..." outcome="...">`
-data. The output was written by a model, so it never enters system voice, and a
-closing tag inside it can't end the frame early. Use `is_task_report(part)` to
+background reports through core's queued-message API. Each report is the child's
+output in a `UserPromptPart`, framed as `<task_output task_id="..." agent_name="...">`
+data, with `outcome="..."` added when the task didn't succeed, like a background
+tool's `<tool_result>`. The output was written by a model, so it never enters
+system voice, and a closing tag inside it can't end the frame early. Nothing
+precedes the frame: the acceptance receipt the parent got at launch already said a
+report would follow. Use `is_task_report(part)` to
 recognize the output part, for example to keep it out of a transcript of what the
 user typed. Like `BackgroundTools` completions, the metadata is never sent to the
 model, but the Vercel AI and AG-UI message conversions omit it: a history that
