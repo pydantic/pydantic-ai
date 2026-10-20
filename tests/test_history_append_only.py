@@ -316,3 +316,25 @@ def test_a_capability_without_defaults_needs_a_fixture(tmp_path: Path):
     """A new capability that can't be built with its defaults fails with what to add, rather than a `TypeError`."""
     with pytest.raises(pytest.fail.Exception, match='Add a `FIXTURES` entry'):
         build_capabilities('NativeTool', lambda: NativeTool, None, tmp_path)
+
+
+def test_discovery_finds_capabilities_with_nested_type_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A capability whose base takes nested type arguments is still found, through an intermediate base.
+
+    Discovery reads class statements from source, so this runs it over a throwaway package rather than a
+    shipped one: a missed class is a capability the guard silently never checks.
+    """
+    package = tmp_path / 'nested_generic_capabilities'
+    package.mkdir()
+    (package / '__init__.py').write_text('from ._caps import Base, Leaf\n')
+    (package / '_caps.py').write_text(
+        'from typing import Any, Callable\n'
+        'from pydantic_ai.capabilities import AbstractCapability\n\n'
+        'class Base(AbstractCapability[dict[str, Callable[[int], Any]]]):\n    pass\n\n'
+        'class Leaf(Base, metaclass=type):\n    pass\n\n'
+        'class _Private(AbstractCapability[dict[str, Any]]):\n    pass\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    found = discover_capabilities(('nested_generic_capabilities',))
+    assert sorted(found) == ['Base', 'Leaf']
+    assert found['Leaf'].module == 'nested_generic_capabilities._caps'

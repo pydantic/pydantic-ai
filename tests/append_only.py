@@ -99,6 +99,9 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
 
     Swaps the `datetime` name in each `pydantic_ai*` module that imported the class, which is how the
     libraries read the time (`pydantic_ai._utils.now_utc` among them). `monkeypatch` restores them.
+    Code that reads the time any other way (`import datetime`, `time.time()`, or a module first imported
+    during the run) sees real time, which barely moves within a test, so a prefix that renders it would
+    still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
     for name, module in list(sys.modules.items()):
@@ -649,12 +652,21 @@ def _module_sources(package: str) -> Iterator[tuple[str, str]]:
 
 
 def _base_names(bases: str) -> set[str]:
-    """The unqualified names of a class statement's bases, without their type arguments or keywords."""
+    """The unqualified names of a class statement's bases, without their type arguments or keywords.
+
+    Only the base list goes through `ast` (parsing whole modules is what the regex avoids), so nested type
+    arguments like `AbstractCapability[dict[str, Any]]` resolve to `AbstractCapability`.
+    """
+    statement = ast.parse(f'class _({bases}): pass').body[0]
+    assert isinstance(statement, ast.ClassDef)
     names: set[str] = set()
-    for base in re.sub(r'\[[^\]]*\]', '', bases).split(','):
-        base = base.strip()
-        if base and '=' not in base:
-            names.add(base.rsplit('.', 1)[-1])
+    for base in statement.bases:
+        while isinstance(base, ast.Subscript):
+            base = base.value
+        if isinstance(base, ast.Name):
+            names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.add(base.attr)
     return names
 
 
@@ -789,7 +801,7 @@ def check_conversation(
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
     violations = _violations(result, allowed=allowed, check_ids=check_ids)
 
-    # Each violation must be explained by an entry of its own, so a known break can't hide a new one in the
+    # Each violation must be matched by some entry, so a known break can't hide an unrelated one in the
     # same conversation.
     unexpected: list[str] = []
     used: set[int] = set()
