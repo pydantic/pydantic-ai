@@ -108,6 +108,9 @@ class ServerSession:
     """Input audio buffered since the last commit or clear."""
     speaking: str | None = None
     """The user turn server VAD currently hears, if any."""
+    stopped_uncommitted: str | None = None
+    """xAI: the user turn its VAD heard stop and hasn't committed yet. Speech heard before it does re-opens that
+    same turn (recorded: `sim40/xai_race_then_speech.jsonl`, SIM-41)."""
     pending_transcripts: list[str] = field(default_factory=list[str])
     pending_vad_responses: list[str] = field(default_factory=list[str])
     """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
@@ -874,6 +877,15 @@ class OpenAIServer:
         """
         session = self.session
         assert session is not None and session.server_vad and session.speaking is None
+        if (key := session.stopped_uncommitted) is not None:
+            # xAI takes back its own stop: the user goes on in the same turn, under the same item (SIM-41).
+            session.stopped_uncommitted = None
+            session.speaking = key
+            self.truth.speech_reopened.add(key)
+            self._emit(
+                session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
+            )
+            return key
         key = self.truth.new_user_turn()
         session.speaking = key
         self.truth.speech_started[key] = self.truth.tick()
@@ -893,7 +905,9 @@ class OpenAIServer:
         """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to.
 
         `commit=False` is a stop server VAD takes back: the user goes on, and the next start opens the turn
-        the audio is committed as (a guess at semantic VAD's pauses; no recording has one).
+        the audio is committed as (a guess at semantic VAD's pauses; no recording has one). On xAI, which commits a
+        turn a few hundred milliseconds after its stop, the next start re-opens the same turn instead (recorded:
+        `sim40/xai_race_then_speech.jsonl`, SIM-41), and `commit_stopped()` commits it if nobody speaks.
         """
         session = self.session
         assert session is not None and session.speaking is not None
@@ -901,8 +915,25 @@ class OpenAIServer:
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
         if not commit:
-            self.truth.speech_stopped_uncommitted.add(key)
+            if self.dialect == 'xai':
+                session.stopped_uncommitted = key
+            else:
+                self.truth.speech_stopped_uncommitted.add(key)
             return key
+        self._vad_commit(session, key)
+        return key
+
+    def commit_stopped(self) -> str:
+        """xAI commits the turn its VAD heard stop, nobody having spoken again since."""
+        session = self.session
+        assert session is not None
+        key, session.stopped_uncommitted = session.stopped_uncommitted, None
+        assert key is not None
+        self._vad_commit(session, key)
+        return key
+
+    def _vad_commit(self, session: ServerSession, key: str) -> None:
+        item_id = f'item_{key}'
         session.audio_ms = 0
         self.truth.speech_committed.add(key)
         if self.dialect != 'xai':
@@ -919,7 +950,6 @@ class OpenAIServer:
             self._start_response(session, trigger='vad', answers=[key], user_turn=key)
         else:
             session.pending_vad_responses.append(key)
-        return key
 
     def transcribe(self, *, fail: bool = False) -> str:
         """Deliver the oldest pending input transcript (or its transcription failure)."""

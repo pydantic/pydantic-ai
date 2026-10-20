@@ -632,6 +632,29 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
 )
 
 
+def _turn_xai_reopened(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The violation names a turn xAI heard stop, then start again under the same item before committing it."""
+    return any(f"'item_{key}'" in violation.detail for key in sim.truth.speech_reopened)
+
+
+XAI_REOPENED_TURN = Finding(
+    id='SIM-41',
+    title=(
+        'under server VAD, xAI takes back its own stop: speech resumed before it commits the turn reopens the same '
+        'item (a second `speech_started` for it, then another `speech_stopped`, then `committed`). The lifecycle '
+        'already placed the turn at the first stop, so it starts the same turn again'
+    ),
+    tracked_by=(
+        "placing an xAI spoken turn at its commit rather than at VAD's stop; recorded live "
+        '(`xai_race_then_speech` probe, October 2026)'
+    ),
+    evidence='recorded',
+    codes=frozenset({'lifecycle.turn_started_twice'}),
+    providers=frozenset({'xai'}),
+    matches=_turn_xai_reopened,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
@@ -650,6 +673,7 @@ KNOWN_FINDINGS.extend(
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
+        XAI_REOPENED_TURN,
         HAND_COMMIT_RACED_BY_VAD,
     ]
 )
