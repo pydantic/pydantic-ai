@@ -55,7 +55,8 @@ A request is kept warm when:
 
 - the model's cache expires a fixed time after its last use, which each read restarts: a profile with a `'5m'` cache tier, as on Anthropic, Claude and Nova on Amazon Bedrock, and OpenRouter's Anthropic routes;
 - its cache retention is known: the retention the request's settings ask for (such as `Caching(retention='1h')`), else the provider's documented default;
-- the response reported cached tokens.
+- the response reported cached tokens;
+- no native tool call in the history is still waiting for its result. The provider runs such a call when it gets the history, as Anthropic does with an MCP server tool, so each replay would run it again.
 
 OpenAI isn't warmed: GPT-5.6 and later keep a cached prefix for *at least* 30 minutes, and may keep it longer, so a refresh buys nothing certain. Models that cache implicitly, or that publish no retention, aren't warmed either. Neither is a `FallbackModel`, since which provider's cache a replay would hit isn't known.
 
@@ -83,7 +84,8 @@ OpenAI isn't warmed: GPT-5.6 and later keep a cached prefix for *at least* 30 mi
 ## Limits
 
 - **It needs a running event loop.** The refresh runs on the loop the run ran on, so it works in an async application. Between `run_sync()` calls the loop isn't running, so only refreshes during a run (such as during a long tool call) are sent.
-- **It isn't for durable execution**, where model requests run in a separate activity or step.
+- **It isn't for durable execution.** Inside a durable workflow or flow it raises a `UserError`, since its refreshes would run outside the workflow and could repeat on replay.
+- **Between runs, the model must outlive the run.** A model built for one run, such as from `agent.run(..., model='anthropic:...')`, is closed when the run ends, so its refresh fails and warming stops with a warning. Pass the model to `Agent(...)` instead.
 - **State is in-process memory**, keyed by `conversation_id`. Reuse one instance across the runs of a conversation. Runs of one conversation are expected one at a time: two that overlap can cancel each other's refreshes.
 
 ## Telemetry

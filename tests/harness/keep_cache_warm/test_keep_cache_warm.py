@@ -19,8 +19,18 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -29,6 +39,7 @@ from pydantic_ai.settings import CacheRetention
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness import KeepCacheWarm as RootKeepCacheWarm
 from pydantic_ai_harness.keep_cache_warm import CacheWarmingStoppedWarning, KeepCacheWarm
+from tests.harness._recording_durability import RecordingDurability
 
 HANG_GUARD = 10
 """Seconds to wait for a refresh before failing: a hang guard, not a timing assertion."""
@@ -159,6 +170,52 @@ class TestKeepCacheWarm:
     async def test_not_warmed_behind_a_fallback_model(self) -> None:
         model = FallbackModel(FunctionModel(CachingModel(), profile=TWO_SECONDS))
         await Agent(model, deps_type=type(None), capabilities=[_fast()]).run('hello')
+
+        assert not _warmers()
+
+    async def test_not_warmed_while_a_native_tool_call_awaits_its_result(self) -> None:
+        # The provider runs an unpaired native call when it gets the history, so each replay would run it again.
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Look it up, then add 2 and 2.')]),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(tool_name='mcp_server:wiki', args={}, tool_call_id='native-1'),
+                    ToolCallPart(tool_name='add', args={'a': 2, 'b': 2}, tool_call_id='local-1'),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id='local-1')]),
+        ]
+        await _agent(CachingModel(), _fast()).run(message_history=history)
+
+        assert not _warmers()
+
+    async def test_warmed_when_every_native_tool_call_has_its_result(self) -> None:
+        warm = _fast()
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Look it up.')]),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(tool_name='mcp_server:wiki', args={}, tool_call_id='native-1'),
+                    NativeToolReturnPart(tool_name='mcp_server:wiki', content='found', tool_call_id='native-1'),
+                    TextPart('found it'),
+                ]
+            ),
+        ]
+        await _agent(CachingModel(), warm).run('thanks', message_history=history)
+
+        assert len(_warmers()) == 1
+        await warm.stop()
+
+    async def test_rejects_durable_execution(self) -> None:
+        agent = Agent(
+            FunctionModel(CachingModel(), profile=TWO_SECONDS),
+            deps_type=type(None),
+            name='durable',
+            capabilities=[_fast(), RecordingDurability()],
+        )
+
+        with pytest.raises(UserError, match='cannot be used inside a durable workflow'):
+            await agent.run('hello')
 
         assert not _warmers()
 

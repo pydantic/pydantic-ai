@@ -12,7 +12,8 @@ from opentelemetry import context as otel_context
 from opentelemetry.trace import StatusCode, Tracer
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -78,8 +79,8 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
     `default_cache_retention`. It stops `max_idle` after the conversation's last real request.
 
     The refresh runs on the event loop the run ran on, so it needs that loop to keep running, as in an async
-    application; between `run_sync()` calls nothing is refreshed. It isn't for durable execution, where model
-    requests run in a separate activity or step.
+    application; between `run_sync()` calls nothing is refreshed. Inside a durable workflow or flow it raises a
+    `UserError`, since its refreshes would run outside the workflow.
     """
 
     _: KW_ONLY
@@ -137,6 +138,14 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
             warmer.cancel()
         await asyncio.gather(*warmers, return_exceptions=True)
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject durable execution, where a refresh task outside the workflow would run again on replay."""
+        if ctx.in_durable_context:
+            raise UserError(
+                '`KeepCacheWarm` cannot be used inside a durable workflow or flow: its refreshes run as background '
+                'tasks outside the workflow, so they are not checkpointed and can repeat on replay.'
+            )
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -179,6 +188,7 @@ class KeepCacheWarm(AbstractCapability[AgentDepsT]):
             retention is None
             or not self.margin < retention < self.max_idle
             or not (usage.cache_read_tokens or usage.cache_write_tokens)
+            or _has_pending_native_call(request_context.messages)
         ):
             return response
         refresh = _Refresh(
@@ -273,6 +283,22 @@ def _retention(request_context: ModelRequestContext) -> timedelta | None:
     if not profile.get('supports_cache', False) or '5m' not in profile.get('supported_cache_retentions', ()):
         return None
     return model.resolve_cache_retention(request_context.model_settings) or profile.get('default_cache_retention')
+
+
+def _has_pending_native_call(messages: list[ModelMessage]) -> bool:
+    """Whether a response in `messages` has a native tool call without its result.
+
+    The provider runs such a call when it gets the history, as Anthropic does with an MCP server tool, so a
+    replay would run it again each time, whatever `max_tokens` allows.
+    """
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            returned = {part.tool_call_id for part in message.parts if isinstance(part, NativeToolReturnPart)}
+            if any(
+                isinstance(part, NativeToolCallPart) and part.tool_call_id not in returned for part in message.parts
+            ):
+                return True
+    return False
 
 
 def _stop_reason(response: ModelResponse, refresh: _Refresh) -> str | None:
