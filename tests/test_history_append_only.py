@@ -15,6 +15,7 @@ import importlib
 import json
 import re
 import sys
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -46,7 +47,14 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
-from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, UserPromptPart
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionId,
+    InstructionPart,
+    ModelMessage,
+    ModelRequest,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool
@@ -129,7 +137,6 @@ FIXTURES: dict[str, Fixture] = {
 """Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 EXEMPT: dict[str, Exempt] = {
-    'AbstractCapability': Exempt('Abstract base class; every concrete subclass is a case of its own.'),
     'NativeOrLocalTool': Exempt(
         'Base class that needs a subclass; `WebSearch`, `WebFetch`, `XSearch` and `MCP` are its cases.'
     ),
@@ -378,27 +385,82 @@ def test_a_capability_without_defaults_needs_a_fixture(tmp_path: Path):
         build_capabilities('NativeTool', lambda: NativeTool, None, tmp_path)
 
 
-def test_discovery_finds_capabilities_with_nested_type_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A capability whose base takes nested type arguments is still found, through an intermediate base.
-
-    Discovery reads class statements from source, so this runs it over a throwaway package rather than a
-    shipped one: a missed class is a capability the guard silently never checks.
-    """
-    package = tmp_path / 'nested_generic_capabilities'
-    package.mkdir()
-    (package / '__init__.py').write_text('from ._caps import Base, Leaf\n')
-    (package / '_caps.py').write_text(
-        'from typing import Any, Callable\n'
-        'from pydantic_ai.capabilities import AbstractCapability\n\n'
-        'class Base(AbstractCapability[dict[str, Callable[[int], Any]]]):\n    pass\n\n'
-        'class Leaf(Base, metaclass=type):\n    pass\n\n'
-        'class _Private(AbstractCapability[dict[str, Any]]):\n    pass\n'
-    )
+@pytest.fixture
+def capability_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, str]], str]:
+    """Write a throwaway package from `{module: source}` and put it on the path, returning its name."""
     monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
-    importlib.invalidate_caches()
-    found = discover_capabilities(('nested_generic_capabilities',))
-    assert sorted(found) == ['Base', 'Leaf']
-    assert found['Leaf'].module == 'nested_generic_capabilities._caps'
+
+    def write(modules: dict[str, str]) -> str:
+        package = tmp_path / 'probe_capabilities'
+        package.mkdir()
+        for name, source in modules.items():
+            (package / f'{name}.py').write_text(source)
+        importlib.invalidate_caches()
+        return package.name
+
+    return write
+
+
+@pytest.mark.parametrize(
+    ('modules', 'expected'),
+    [
+        pytest.param(
+            {
+                '__init__': 'from ._caps import Base, Leaf\n',
+                '_caps': (
+                    'from typing import Any, Callable\n'
+                    'from pydantic_ai.capabilities import AbstractCapability\n\n'
+                    'class Base(AbstractCapability[dict[str, Callable[[int], Any]]]):\n    pass\n\n'
+                    'class Leaf(Base, metaclass=type):\n    pass\n\n'
+                    'class _Private(AbstractCapability[dict[str, Any]]):\n    pass\n'
+                ),
+            },
+            {'Base': 'probe_capabilities._caps', 'Leaf': 'probe_capabilities._caps'},
+            id='nested-type-arguments',
+        ),
+        pytest.param(
+            {
+                '__init__': 'from ._base import CapabilityBase\nfrom ._caps import Aliased, Qualified\n',
+                '_base': 'from pydantic_ai.capabilities import AbstractCapability as CapabilityBase\n',
+                '_caps': (
+                    'from pydantic_ai import capabilities as caps\n'
+                    'from ._base import CapabilityBase\n\n'
+                    'class Aliased(\n    CapabilityBase[None],\n):\n    pass\n\n'
+                    'class Qualified(caps.WrapperCapability[None]):\n    pass\n'
+                ),
+            },
+            {'Aliased': 'probe_capabilities._caps', 'Qualified': 'probe_capabilities._caps'},
+            id='aliased-and-qualified-bases',
+        ),
+        pytest.param(
+            {
+                '__init__': 'from ._caps import Leaf, Tool\nfrom ._plain import Plain\n',
+                # A class named like a capability base that isn't one, in another module.
+                # And a base that names nothing the package imports.
+                '_lookalike': 'class AbstractCapability:\n    pass\n\nclass Base:\n    pass\n\nclass Stray(missing.Base):\n    pass\n',
+                '_plain': 'from ._lookalike import AbstractCapability, Base\n\nclass Plain(Base, AbstractCapability):\n    pass\n',
+                '_caps': (
+                    'from pydantic_ai.capabilities import AbstractCapability\n\n'
+                    'class Base(AbstractCapability[None]):\n    pass\n\n'
+                    'class Leaf(Base):\n    pass\n\n'
+                    'class Tool:\n    pass\n'
+                ),
+            },
+            {'Leaf': 'probe_capabilities._caps'},
+            id='same-named-classes-in-other-modules',
+        ),
+    ],
+)
+def test_discovery_resolves_bases_to_their_definitions(
+    capability_package: Callable[[dict[str, str]], str], modules: dict[str, str], expected: dict[str, str]
+):
+    """Bases are followed to the class they name, through imports and aliases, not by their spelling.
+
+    Discovery reads source, so this runs it over throwaway packages rather than shipped ones: a missed class is
+    a capability the guard silently never checks, and a lookalike is a case that tests nothing.
+    """
+    found = discover_capabilities((capability_package(modules),))
+    assert {name: ref.module for name, ref in found.items()} == expected
 
 
 def test_only_provider_cache_markers_are_ignored():
@@ -558,3 +620,29 @@ def test_appending_is_free_only_in_the_last_section(
     bodies = [json.dumps({'model': 'gpt-5.6-sol', **body}).encode() for body in (earlier, later)]
     changes = ConversationResult('openai-chat', bodies, (b'', b''), []).changes()
     assert [(change.section, change.identity) for change in changes] == expected
+
+
+def test_instruction_parts_sharing_an_id_are_told_apart():
+    """A change to the first of two parts with the same id is named for that part, not lost under the second."""
+    instruction_id = InstructionId(CapabilityInstructionSource('notes'))
+
+    def parameters(first: str) -> ModelRequestParameters:
+        return ModelRequestParameters(
+            instruction_parts=[InstructionPart(first, id=instruction_id), InstructionPart('Second.', id=instruction_id)]
+        )
+
+    def body(first: str) -> bytes:
+        system = [{'type': 'text', 'text': first}, {'type': 'text', 'text': 'Second.'}]
+        return json.dumps({'model': 'claude-opus-5-5', 'system': system, 'messages': []}).encode()
+
+    result = ConversationResult(
+        'anthropic', [body('First.'), body('Changed.')], (b'', b''), [parameters('First.'), parameters('Changed.')]
+    )
+    assert [(change.section, change.identity) for change in result.changes()] == [
+        ('system', 'instruction:capability:notes')
+    ]
+
+    result = ConversationResult(
+        'anthropic', [body('First.'), body('First.')], (b'', b''), [parameters('First.'), parameters('First.')]
+    )
+    assert result.changes() == []

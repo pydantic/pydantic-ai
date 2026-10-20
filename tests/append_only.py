@@ -642,15 +642,26 @@ def _changes(
 
 
 def _changed_instructions(earlier: ModelRequestParameters | None, later: ModelRequestParameters | None) -> list[str]:
-    """The instruction parts whose content differs between two requests: by id, or by position without one."""
+    """The instruction parts whose content differs between two requests.
+
+    Named by id (`instruction:<id>`, `instruction:<id>#2` for a second part with the same id), or by position
+    for a part without one.
+    """
     if earlier is None or later is None:
         return []
 
     def by_identity(parameters: ModelRequestParameters) -> dict[str, str]:
-        return {
-            f'instruction:{part.id}' if part.id is not None else f'instruction:anonymous@{position}': part.content
-            for position, part in enumerate(parameters.instruction_parts or ())
-        }
+        # Several parts can share an id, so the second and later ones are told apart by occurrence.
+        identities: dict[str, str] = {}
+        seen: dict[str, int] = {}
+        for position, part in enumerate(parameters.instruction_parts or ()):
+            if part.id is None:
+                identity = f'instruction:anonymous@{position}'
+            else:
+                occurrence = seen[str(part.id)] = seen.get(str(part.id), 0) + 1
+                identity = f'instruction:{part.id}' + (f'#{occurrence}' if occurrence > 1 else '')
+            identities[identity] = part.content
+        return identities
 
     before, after = by_identity(earlier), by_identity(later)
     return sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
@@ -723,38 +734,43 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
 
     Reads the source rather than an export list, so a new capability is a new case without anyone
     registering it, and rather than importing it, so collection never imports an integration's SDK.
-    Class definitions are parsed with `ast`, so multi-line and nested-generic bases are followed.
-    A class is a capability when its bases lead to `AbstractCapability`, following base names across
-    `pydantic_ai` and `packages`. It is public when it isn't `_`-prefixed and is importable under its name
-    from its module path with the private segments dropped: `pydantic_ai.capabilities._tool_search.ToolSearch`
-    is public because `pydantic_ai.capabilities` imports `ToolSearch`.
+    Each base class is resolved to the module-qualified class it names, following imports and their aliases
+    across `pydantic_ai` and `packages`, and a class is a capability when that graph leads to
+    `pydantic_ai.capabilities.abstract.AbstractCapability`. It is public when it isn't `_`-prefixed and the
+    module path with the private segments dropped resolves its name to the same class:
+    `pydantic_ai.capabilities._tool_search.ToolSearch` is public because `pydantic_ai.capabilities` imports it.
     """
-    bases: dict[str, set[str]] = {}
-    defined: dict[str, list[str]] = {}
-    for package in ('pydantic_ai', *packages):
-        for module, tree in _module_trees(package):
-            for node in tree.body:
-                if isinstance(node, ast.ClassDef):
-                    bases.setdefault(node.name, set()).update(_base_names(node))
-                    if package in packages:
-                        defined.setdefault(module, []).append(node.name)
-
-    capabilities = {'AbstractCapability'}
+    source = _Source(
+        {module: tree for package in ('pydantic_ai', *packages) for module, tree in _module_trees(package)}
+    )
+    bases = {
+        f'{module}.{node.name}': {resolved for base in node.bases if (resolved := source.resolve_base(module, base))}
+        for module, tree in source.trees.items()
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    capabilities = {_ABSTRACT_CAPABILITY}
     while new := {name for name, names in bases.items() if name not in capabilities and names & capabilities}:
         capabilities |= new
 
     found: dict[str, CapabilityRef] = {}
-    for module, names in defined.items():
+    for qualified in sorted(capabilities - {_ABSTRACT_CAPABILITY}):
+        module, name = qualified.rsplit('.', 1)
         public_module = '.'.join(segment for segment in module.split('.') if not segment.startswith('_'))
-        exported = _exported_names(public_module) if public_module != module else set(names)
-        for name in names:
-            if name in capabilities and not name.startswith('_') and name in exported:
-                ref = CapabilityRef(name, module)
-                # Cases and table entries are keyed by class name, so two public capabilities sharing one
-                # would silently test only the second.
-                assert name not in found, f'two public capabilities are named `{name}`: {found[name].module}, {module}'
-                found[name] = ref
+        if name.startswith('_') or not any(
+            module == package or module.startswith(f'{package}.') for package in packages
+        ):
+            continue
+        if source.resolve(public_module, name) != qualified:
+            continue
+        # Cases and table entries are keyed by class name, so two public capabilities sharing one would
+        # silently test only the second.
+        assert name not in found, f'two public capabilities are named `{name}`: {found[name].module}, {module}'
+        found[name] = CapabilityRef(name, module)
     return found
+
+
+_ABSTRACT_CAPABILITY = 'pydantic_ai.capabilities.abstract.AbstractCapability'
 
 
 def _module_trees(package: str) -> Iterator[tuple[str, ast.Module]]:
@@ -767,29 +783,71 @@ def _module_trees(package: str) -> Iterator[tuple[str, ast.Module]]:
         yield module, ast.parse(path.read_text(encoding='utf-8'))
 
 
-def _base_names(node: ast.ClassDef) -> set[str]:
-    """The unqualified names of a class's bases, without their type arguments."""
-    names: set[str] = set()
-    for base in node.bases:
+@dataclass
+class _Source:
+    """The modules of the scanned packages, with what each top-level name in them refers to."""
+
+    trees: dict[str, ast.Module]
+    classes: dict[str, set[str]] = field(init=False)
+    packages: set[str] = field(init=False)
+    """The modules that are packages, having modules of their own."""
+    imports: dict[str, dict[str, tuple[str, str | None]]] = field(init=False)
+    """Per module, each imported name and what it refers to: `(module, attribute)`, or `(module, None)`."""
+
+    def __post_init__(self) -> None:
+        self.packages = {module.rpartition('.')[0] for module in self.trees}
+        self.classes = {
+            module: {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
+            for module, tree in self.trees.items()
+        }
+        self.imports = {module: self._imports(module, tree) for module, tree in self.trees.items()}
+
+    def _imports(self, module: str, tree: ast.Module) -> dict[str, tuple[str, str | None]]:
+        # A package's `__init__` is the package itself, so relative imports there start from it.
+        package = module if self._is_package(module) else module.rpartition('.')[0]
+        names: dict[str, tuple[str, str | None]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                base = package
+                for _ in range(node.level - 1):
+                    base = base.rpartition('.')[0]
+                target = '.'.join(part for part in (base if node.level else '', node.module or '') if part)
+                for alias in node.names:
+                    names[alias.asname or alias.name] = (target, alias.name)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    local = alias.asname or alias.name.split('.')[0]
+                    names[local] = (alias.name if alias.asname else local, None)
+        return names
+
+    def _is_package(self, module: str) -> bool:
+        return module in self.packages
+
+    def resolve(self, module: str, name: str, depth: int = 0) -> str | None:
+        """The qualified class `name` refers to in `module`, through any chain of imports, or `None`."""
+        if depth > 20 or module not in self.trees:
+            return None
+        if name in self.classes[module]:
+            return f'{module}.{name}'
+        if (target := self.imports[module].get(name)) is None or target[1] is None:
+            return None
+        return self.resolve(target[0], target[1], depth + 1)
+
+    def resolve_base(self, module: str, base: ast.expr) -> str | None:
+        """The qualified class a base expression names, without its type arguments."""
         while isinstance(base, ast.Subscript):
             base = base.value
-        names.add(ast.unparse(base).rsplit('.', 1)[-1])
-    return names
-
-
-def _exported_names(module: str) -> set[str]:
-    """Names a module imports or defines at the top level, read from its source."""
-    spec = importlib.util.find_spec(module)
-    if spec is None or spec.origin is None:  # pragma: no cover
-        return set()
-    tree = ast.parse(Path(spec.origin).read_text(encoding='utf-8'))
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            names.update(alias.asname or alias.name for alias in node.names)
-        elif isinstance(node, ast.ClassDef):
-            names.add(node.name)
-    return names
+        if isinstance(base, ast.Name):
+            return self.resolve(module, base.id)
+        path: list[str] = []
+        while isinstance(base, ast.Attribute):
+            path.insert(0, base.attr)
+            base = base.value
+        if not isinstance(base, ast.Name) or (target := self.imports[module].get(base.id)) is None:
+            return None
+        # `import a.b as c` or `from a import b` (a module): the attribute chain continues from that module.
+        prefix = target[0] if target[1] is None else f'{target[0]}.{target[1]}'
+        return self.resolve('.'.join([prefix, *path[:-1]]), path[-1])
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
