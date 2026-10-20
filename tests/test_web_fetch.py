@@ -1169,6 +1169,12 @@ def scaled_text_scan_budget():
 
 
 class TestMarkdownConverter:
+    def test_large_well_formed_reference_list_is_accepted(self):
+        """An ordinary wide reference list may have over 40k parser events."""
+        html = '<ul>' + '<li class="r"><a href="/x">Ref</a> &ndash; note</li>' * 6_000 + '</ul>'
+        _, content = _convert_html(html)
+        assert content.count('Ref') == 6_000
+
     @pytest.mark.parametrize('tag', ['script', 'style'])
     def test_raw_text_markup_does_not_spend_budget(self, tag: str):
         html = f'<{tag} data-kind="text">' + '<div></div>' * 21 + f'</{tag}><p>ok</p>'

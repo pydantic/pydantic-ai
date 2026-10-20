@@ -45,7 +45,9 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
-# HTMLParser.parse_starttag uses these regexes, which typeshed does not expose.
+# Match HTMLParser's start-tag grammar on supported CPython versions so quoted
+# attributes and comments cannot hide or falsely spend the malformed-tag budget.
+# These parser internals are exercised on each supported Python in CI.
 _HTML_ATTR_RE: re.Pattern[str] = getattr(html_parser, 'attrfind_tolerant')
 _HTML_TAG_RE: re.Pattern[str] = getattr(html_parser, 'tagfind_tolerant')
 _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
@@ -65,8 +67,9 @@ _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 # This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
 # to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
 _MAX_HTML_CONVERSION_COST = 20_000_000
-# Bound parser work separately from the cost of converting the parsed document.
-_MAX_HTML_MARKUP_OPENERS = 20_000
+# Bound parser work separately from conversion. Large reference pages can exceed 40k
+# parser events (tags, attributes, entities), so leave headroom for ordinary pages.
+_MAX_HTML_MARKUP_OPENERS = 100_000
 # `html.parser` repeatedly scans an unfinished tag when a body contains many `<tag` fragments.
 _MAX_HTML_UNFINISHED_OPENERS = 16
 _MAX_HTML_UNFINISHED_TAG_CHARS = 64 * 1024
@@ -74,6 +77,8 @@ _MAX_HTML_TAG_ATTRIBUTES = 2_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
+# Reserve most of AnyIO's default 40 worker slots for other tools during HTML conversion.
+_MAX_CONCURRENT_HTML_CONVERSIONS = 4
 _HTML_CONVERSION_LIMITER: RunVar[anyio.Semaphore] = RunVar('_HTML_CONVERSION_LIMITER')
 
 
@@ -181,7 +186,7 @@ class WebFetchLocalTool:
                 # size, so run it in a worker thread rather than on the event loop.
                 limiter = _HTML_CONVERSION_LIMITER.get(None)
                 if limiter is None:
-                    limiter = anyio.Semaphore(4)
+                    limiter = anyio.Semaphore(_MAX_CONCURRENT_HTML_CONVERSIONS)
                     _HTML_CONVERSION_LIMITER.set(limiter)
                 try:
                     try:
