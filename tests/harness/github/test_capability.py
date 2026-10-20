@@ -110,19 +110,24 @@ class TestGitHub:
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
     @pytest.mark.parametrize(
-        ('auth', 'url', 'toolsets'),
+        ('auth', 'url', 'toolsets', 'lockdown'),
         [
-            ('token', GITHUB_MCP_URL, None),
-            (per_user_token, GITHUB_MCP_URL, None),
-            (None, 'https://example.com/mcp', None),
-            (None, GITHUB_MCP_URL, ['repos']),
+            ('token', GITHUB_MCP_URL, None, False),
+            (per_user_token, GITHUB_MCP_URL, None, False),
+            (None, 'https://example.com/mcp', None, False),
+            (None, GITHUB_MCP_URL, ['repos'], False),
+            (None, GITHUB_MCP_URL, None, True),
         ],
     )
     def test_client_cannot_be_combined_with_connection_settings(
-        self, auth: str | Callable[[RunContext[str | None]], str | None] | None, url: str, toolsets: list[str] | None
+        self,
+        auth: str | Callable[[RunContext[str | None]], str | None] | None,
+        url: str,
+        toolsets: list[str] | None,
+        lockdown: bool,
     ) -> None:
         with pytest.raises(UserError, match='`client` owns the connection'):
-            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets)
+            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
 
     @pytest.mark.parametrize(
         'capability',
@@ -217,8 +222,8 @@ class TestGitHub:
         [
             (GitHub[str | None](auth='token'), {}),
             (
-                GitHub[str | None](auth='token', read_only=True, toolsets=['actions', 'notifications']),
-                {'X-MCP-Readonly': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
+                GitHub[str | None](auth='token', read_only=True, lockdown=True, toolsets=['actions', 'notifications']),
+                {'X-MCP-Readonly': 'true', 'X-MCP-Lockdown': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
             ),
         ],
         ids=['default', 'configured'],
@@ -260,6 +265,10 @@ class TestPerRunAuth:
             await connections_for(capability, 'oauth')
 
     async def test_read_only_applies_per_run(self) -> None:
-        capability = GitHub[str | None](auth=per_user_token, read_only=True, toolsets=['repos'])
+        capability = GitHub[str | None](auth=per_user_token, read_only=True, lockdown=True, toolsets=['repos'])
         [connection] = await connections_for(capability, 'alice-token')
-        assert transport(connection).headers == {'X-MCP-Readonly': 'true', 'X-MCP-Toolsets': 'repos'}
+        assert transport(connection).headers == {
+            'X-MCP-Readonly': 'true',
+            'X-MCP-Lockdown': 'true',
+            'X-MCP-Toolsets': 'repos',
+        }
