@@ -478,6 +478,7 @@ class _SuppliesRegisteredModel(AbstractCapability[Any]):
     [
         pytest.param(lambda: SelectModel(lambda ctx: 'registered'), id='select_model'),
         pytest.param(_SuppliesRegisteredModel, id='custom_get_model'),
+        pytest.param(lambda: WrapperCapability(wrapped=SelectModel(lambda ctx: 'registered')), id='wrapped'),
     ],
 )
 async def test_a_capability_supplies_the_model_of_a_durable_agent_without_one(
