@@ -165,7 +165,7 @@ class DefaultExa:
         exclude_domains: list[str] | None = None,
     ) -> SearchResponse[Result]:
         """Search with the client for the running event loop."""
-        return await self.exa.search(
+        return await self._client().search(
             query,
             contents=contents,
             num_results=num_results,
@@ -180,7 +180,7 @@ class DefaultExa:
         return await self._client().get_contents(urls, text=text)
 
     def _client(self) -> ExaClient:
-        """The client for the running event loop, typed by the protocol, as `AsyncExa.get_contents` is untyped."""
+        """The client for the running event loop, typed by the protocol, since some `AsyncExa` methods are untyped."""
         return self.exa
 
     async def create(

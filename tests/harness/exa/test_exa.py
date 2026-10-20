@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import anyio
 import httpx
 import pytest
 from exa_py.api import (
@@ -41,7 +43,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
-from pydantic_ai_harness.exa._toolset import DefaultExa
 
 
 def _text(output: ToolReturn[str]) -> str:
@@ -604,12 +605,22 @@ class _LoopRecordingExa:
 
     def __init__(self, built: list[_LoopRecordingExa], *, api_key: str) -> None:
         self.api_key = api_key
-        self.loops: list[asyncio.AbstractEventLoop] = []
+        self.loops: list[asyncio.AbstractEventLoop | None] = []
         built.append(self)
 
+    def _record_loop(self) -> None:
+        try:
+            self.loops.append(asyncio.get_running_loop())
+        except RuntimeError:
+            self.loops.append(None)  # Trio
+
     async def search(self, query: str, **kwargs: object) -> SearchResponse[Result]:
-        self.loops.append(asyncio.get_running_loop())
+        self._record_loop()
         return _response(_result())
+
+    async def get_contents(self, urls: str, *, text: TextContentsOptions) -> SearchResponse[Result]:
+        self._record_loop()
+        return _response(_result(text='page text'))
 
 
 class TestDefaultClient:
@@ -640,13 +651,22 @@ class TestDefaultClient:
     async def test_reused_on_the_same_event_loop(self, built: list[_LoopRecordingExa]) -> None:
         toolset = ExaSearch[None]().get_toolset()
         await toolset.web_search('a')
-        await toolset.web_search('b')
+        await toolset.get_page('https://example.dev/page')
         assert [len(client.loops) for client in built] == [2]
 
-    def test_kept_outside_an_asyncio_event_loop(self, built: list[_LoopRecordingExa]) -> None:
-        client = DefaultExa(missing_key_hint='unused')
-        assert client.exa is client.exa
-        assert len(built) == 1
+    def test_kept_on_trio(self, built: list[_LoopRecordingExa]) -> None:
+        """Trio has no asyncio loop to compare, so the client is kept."""
+        pytest.importorskip('trio')
+        toolset = ExaSearch[None]().get_toolset()
+
+        async def search_twice() -> None:
+            await toolset.web_search('a')
+            await toolset.web_search('b')
+
+        # Its own thread: the asyncio test runner has marked this one as running asyncio.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(anyio.run, search_twice, backend='trio').result()
+        assert [client.loops for client in built] == [[None, None]]
 
 
 class TestAgentSpec:

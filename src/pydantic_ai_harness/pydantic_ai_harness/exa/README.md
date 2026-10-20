@@ -370,8 +370,9 @@ The default client is `exa_py.AsyncExa`, configured from the `EXA_API_KEY`
 environment variable. When the variable is missing, building the `Agent` fails
 with a setup hint; the capability itself constructs without it. An `AsyncExa`
 connection pool belongs to the event loop that opened it, so the default client
-is rebuilt when the agent runs on a new event loop, for example in a second
-`asyncio.run`. A client you pass is used as is. Pass any object
+is rebuilt when the agent runs on a new event loop after the previous one has
+stopped, for example in a second `asyncio.run`. A client you pass is used as
+is. Pass any object
 satisfying the `ExaClient` protocol (the subset of `AsyncExa` the toolset calls)
 to configure authentication or the base URL explicitly, or to substitute a fake
 in tests:
