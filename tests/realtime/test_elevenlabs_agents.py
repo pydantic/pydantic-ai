@@ -122,10 +122,16 @@ class FakeWebSocket:
         self._incoming = [frame if isinstance(frame, str) else json.dumps(frame) for frame in incoming]
         self.sent: list[str] = []
         self.closed = False
+        self.drained = asyncio.Event()
+        """Set once a connection held open asks for a frame past the scripted ones.
+
+        The connection only asks for its next frame once the session has taken in the previous one, so by then
+        every scripted frame has been applied."""
 
     async def recv(self) -> str:
         if not self._incoming:
             if self.hold_open:
+                self.drained.set()
                 await asyncio.Event().wait()
             raise websockets.exceptions.ConnectionClosedOK(Close(1000, ''), None)
         return self._incoming.pop(0)
@@ -2452,14 +2458,6 @@ async def test_corrections_after_the_replies_ended_revise_what_history_recorded(
 
     settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
 
-    def heard_nothing_of_the_answer(messages: list[ModelMessage]) -> bool:
-        return any(
-            isinstance(part, SpeechPart) and part.transcript is None
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-        )
-
     before: list[ModelMessage] = []
     with patched_connect(ws):
         async with agent.realtime(model, model_settings=settings).session() as session:
@@ -2469,8 +2467,7 @@ async def test_corrections_after_the_replies_ended_revise_what_history_recorded(
                         before = session.all_messages()
                         break
                 # The corrections make no event of their own: they only revise history.
-                while not heard_nothing_of_the_answer(session.all_messages()):
-                    await anyio.sleep(0.01)
+                await ws.drained.wait()
 
     def spoken(messages: list[ModelMessage]) -> list[tuple[str | None, dict[str, Any] | None, str]]:
         return [
