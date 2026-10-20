@@ -78,7 +78,9 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   messages, contributes instructions or tools, renders history in a model
   adapter, wraps content in tags, or converts history to or from a UI protocol,
   check it against the rules in `agent_docs/message-history-and-caching.md`:
-  no rewrite of earlier history outside compaction, no untrusted content in
+  no accidental, default-on or per-request rewrite of earlier history by
+  framework or harness code (compaction and explicit user-configured history
+  processors are intentional), no untrusted content in
   system voice, no framework voice sent as a user string, no unescaped wrapper
   payload, no framework record found by its text, and the same history always
   renders to the same bytes. For tags: lowercase `snake_case` names, an
