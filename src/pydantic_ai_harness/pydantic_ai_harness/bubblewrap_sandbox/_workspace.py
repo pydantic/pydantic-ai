@@ -212,6 +212,12 @@ class BubblewrapWorkspace(WrapperWorkspace):
     [`SSHWorkspaceBackend`][pydantic_ai_harness.ssh_workspace.SSHWorkspaceBackend] to sandbox commands on the
     remote host. `bwrap` must be installed there (Linux only).
 
+    The wrapped workspace must run commands without a controlling terminal. This wrapper omits
+    `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation;
+    with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input
+    into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses
+    `ssh -T`, so both satisfy this requirement; custom backends must do so too.
+
     Commands see the host read-only, with an empty `/run`, a private `/tmp`, and no network, and can only
     write to the working directory. Without the network, a seccomp filter also stops them from connecting to
     or serving any socket, including the host's Unix sockets. They share the host's processes, so a detached
@@ -255,7 +261,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
             'bwrap',
             '--die-with-parent',
             # Keep the backend's process group so its timeout/cancellation kills descendants too.
-            # Detached Shell jobs start their own session. The backend supplies no controlling terminal.
+            # Detached Shell jobs start their own session. Wrapped backends must supply no controlling terminal.
             # `--unshare-all` without its PID namespace: `bwrap` ends that namespace, killing every
             # process in it, when the command exits, so detached commands (the harness `Shell`'s jobs)
             # would die with the call that started them, and a later call could not see or signal them.
