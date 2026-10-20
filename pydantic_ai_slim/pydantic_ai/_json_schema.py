@@ -262,10 +262,9 @@ class JsonSchemaTransformer(ABC):
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
-            # In this case, no need to retain the union
-            if isinstance(handled[0], dict):
+            # Keep a rejecting member wrapped so a sibling `not` cannot overwrite its constraint.
+            if isinstance(handled[0], dict) and handled[0].get('not') != {}:
                 return handled[0] | schema
-            # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()

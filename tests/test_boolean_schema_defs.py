@@ -76,6 +76,24 @@ def test_inline_boolean_defs_escaped_names(
     assert schema == original
 
 
+@pytest.mark.parametrize('union_kind', ['allOf', 'anyOf', 'oneOf'])
+@pytest.mark.parametrize('definition', [True, False])
+def test_inline_boolean_defs_single_member_union(union_kind: str, definition: bool):
+    schema: JsonSchema = {
+        union_kind: [{'$ref': '#/$defs/X'}],
+        'not': {'type': 'string'},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    expected: JsonSchema = {'not': {'type': 'string'}}
+    if not definition:
+        expected[union_kind] = [{'not': {}}]
+    walker = InlineDefsJsonSchemaTransformer(schema)
+    assert walker.walk() == expected
+    assert walker.walk() == expected
+    assert schema == original
+
+
 @pytest.mark.parametrize('recursive', [False, True])
 @pytest.mark.parametrize(
     'name,reference,encoded_name',
