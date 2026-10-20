@@ -5083,6 +5083,11 @@ class TestHarnessData:
             parts=[UserPromptPart(content='the real ask'), UserPromptPart(content=[background])],
             metadata={'pydantic-ai-harness.compaction.kept-user-message.v1': True},
         )
+        # A kept turn that was nothing but harness data disappears from the kept turns altogether.
+        kept_result_only = ModelRequest(
+            parts=[UserPromptPart(content=[background])],
+            metadata={'pydantic-ai-harness.compaction.kept-user-message.v1': True},
+        )
         captured: list[str] = []
 
         def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
@@ -5107,7 +5112,14 @@ class TestHarnessData:
                 if isinstance(part, UserPromptPart)
             ]
 
-        history: list[ModelMessage] = [kept_before_upgrade, _assistant('a'), _user('b'), _assistant('c'), _user('d')]
+        history: list[ModelMessage] = [
+            kept_result_only,
+            kept_before_upgrade,
+            _assistant('a'),
+            _user('b'),
+            _assistant('c'),
+            _user('d'),
+        ]
         rc = _make_request_context(history)
         history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
         assert [part.content for part in user_parts(history)] == ['the real ask', 'b', 'd']
