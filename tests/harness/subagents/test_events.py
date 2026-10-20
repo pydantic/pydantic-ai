@@ -35,6 +35,8 @@ from pydantic_ai_harness.subagents import (
     SubAgentToolset,
 )
 
+from .._deferred_tools import deferring_agent
+
 
 @dataclass
 class Listener(AbstractCapability[object]):
@@ -293,6 +295,14 @@ class TestOutcomes:
         _, end = _pair(listener)
         assert end.outcome == 'failed'
         assert end.output == 'use what you have'
+
+    async def test_deferred_tool_requests_is_failed(self) -> None:
+        worker = deferring_agent('worker')
+        listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker)]))
+
+        _, end = _pair(listener)
+        assert end.outcome == 'failed'
+        assert end.output.startswith("Sub-agent 'worker' ended with `DeferredToolRequests`")
 
     async def test_failed_without_on_failure_carries_the_retry(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

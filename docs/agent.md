@@ -1232,6 +1232,8 @@ print(result_sync.output)
 
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
 
+Not every model supports every setting: each [`ModelSettings`][pydantic_ai.settings.ModelSettings] field lists the models that do. A model ignores a setting it doesn't support, so the same settings work across models. Most of these are tuning knobs like `temperature` that are ignored silently, but ignoring `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers` or `extra_body` changes what the request guarantees, so the model emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] naming the setting. It does so wherever the setting was set, so when an agent-level setting only applies to some of a [`FallbackModel`](models/overview.md#fallback-model)'s models, set it on those models' own `settings` instead. To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter).
+
 ##### Dynamic model settings
 
 Both agent-level and run-level `model_settings` accept a callable that receives a

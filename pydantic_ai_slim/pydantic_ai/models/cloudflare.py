@@ -44,6 +44,8 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
     max_questions: ClassVar[int | None] = 64
     requires_instructions: ClassVar[bool] = True
 
+    unsupported_settings = DecisionModel.unsupported_settings | {'max_retries'}
+
     _model_name: CloudflareClefModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
     _api_key: str = field(repr=False)
