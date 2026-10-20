@@ -223,9 +223,12 @@ class FakeExecution:
 
     async def signal(self, signum: int) -> None:
         # Like the real SDK's, refused once the process has exited; its pid may belong to another one by now.
-        if self._process.returncode is not None:  # pragma: lax no cover - an exit racing a stop
-            raise boxlite.InternalError('internal error: Failed to send signal')
-        os.kill(self._process.pid, signum)
+        try:
+            if self._process.returncode is not None:  # pragma: lax no cover - an exit racing a stop
+                raise ProcessLookupError
+            os.kill(self._process.pid, signum)
+        except ProcessLookupError:  # pragma: lax no cover - an exit racing a stop
+            raise boxlite.InternalError('internal error: Failed to send signal') from None
 
     def stdout(self) -> AsyncIterator[str]:
         if self._chunks is not None:
@@ -256,10 +259,12 @@ def _end(box: FakeBox) -> None:
         # Never signal a reaped process: its pid may belong to another one by now.
         if process.returncode is None:  # pragma: no branch - reaped only when an ending races its wait
             children = subprocess.run(['pgrep', '-P', str(process.pid)], capture_output=True, text=True, check=False)
+            # Each may exit, and be reaped by the thread waiting for it, before it is signalled.
             for child in children.stdout.split():
                 with suppress(ProcessLookupError, PermissionError):
                     os.killpg(int(child), signal.SIGTERM)
-            os.kill(process.pid, signal.SIGTERM)
+            with suppress(ProcessLookupError):
+                os.kill(process.pid, signal.SIGTERM)
 
 
 def _kill(process: subprocess.Popen[bytes]) -> None:

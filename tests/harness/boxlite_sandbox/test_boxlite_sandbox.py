@@ -191,6 +191,8 @@ async def test_the_command_env_does_not_break_the_backend(fake_boxlite: FakeBoxL
     backend = BoxLiteSandboxBackend(working_dir=working_dir, env={'PATH': '/nonexistent', 'IFS': ':'})
     assert (await backend.run(['ls'])).exit_code == 127
     assert (await backend.run(['/bin/echo', 'a b'])).stdout == 'a b\n'
+    # The script's own variables start empty whatever the command's environment holds.
+    assert (await backend.run(['/bin/echo', 'ran'], env={'t': '1', 'o': '/nonexistent', 'c': '1'})).stdout == 'ran\n'
 
 
 async def test_no_working_dir_uses_the_boxs_own(fake_boxlite: FakeBoxLite) -> None:

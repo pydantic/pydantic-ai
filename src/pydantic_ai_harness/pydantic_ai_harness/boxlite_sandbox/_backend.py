@@ -155,12 +155,14 @@ _STOP_GRACE = 5.0
 # The command runs in the background, in its own session where `setsid` exists, so the script can act on
 # `_STOP` while waiting and then reap it: an orphan goes to the box's PID 1, the image's command, which
 # never reaps. Without `setsid`, a stop reaches only the command, not processes it started, and a program
-# named like a shell builtin runs the builtin. A stop that arrives before the command starts sets `t`.
+# named like a shell builtin runs the builtin. A stop that arrives before the command starts sets `t`, which
+# starts empty whatever the command's `env` says.
 # Output goes to files, not the exec's pipes, so a background job the command starts can't hold the
 # command open. Stdin is at EOF; a missing program exits 127 and a program killed by a signal 128 plus its
 # number. The second `wait` reaps a command after `_STOP` interrupts the first. Only builtins run before the
 # command, as the command's `env` applies to the whole script.
-_EXEC_SCRIPT = """trap 't=1' HUP
+_EXEC_SCRIPT = """t=
+trap 't=1' HUP
 o=$1
 shift
 if command -v setsid >/dev/null; then

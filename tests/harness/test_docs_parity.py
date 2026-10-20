@@ -120,7 +120,16 @@ _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release',
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
 _LEAD_HOOK_NAMES = ('before_model_request', 'after_model_request', 'before_tool_execute', 'after_tool_execute')
 # ClassName-style headings are a smell, except where the class name IS the name.
-_ALLOWED_CLASSNAME_HEADINGS = {'BoxLite', 'FileSystem', 'GitHub', 'Linear', 'LocalStack', 'Notion', 'PostHog', 'StackOne'}
+_ALLOWED_CLASSNAME_HEADINGS = {
+    'BoxLite',
+    'FileSystem',
+    'GitHub',
+    'Linear',
+    'LocalStack',
+    'Notion',
+    'PostHog',
+    'StackOne',
+}
 _FORBIDDEN_HEADINGS = {'overflow', 'authoring', 'overflow capability', 'compaction capabilities'}
 
 
