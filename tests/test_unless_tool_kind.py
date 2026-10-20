@@ -34,7 +34,7 @@ def _with(
 
 
 def read_file(path: str) -> str:
-    return f'contents of {path}'
+    return f'contents of {path}'  # pragma: no cover -- only offered, never called
 
 
 def read_notes() -> str:
@@ -42,7 +42,7 @@ def read_notes() -> str:
 
 
 def read_index() -> str:
-    return 'index'
+    return 'index'  # pragma: no cover -- only offered, never called
 
 
 def _offered_tools(agent: Agent[object, str], prompt: str = 'hello') -> list[list[str]]:
