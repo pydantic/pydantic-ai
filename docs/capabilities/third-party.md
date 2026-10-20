@@ -32,6 +32,10 @@ Pydantic AI supports [multi-agent patterns](../multi-agent-applications.md) dire
 
 * [`pydantic-ai-shields`](https://github.com/vstorm-co/pydantic-ai-shields) - Ready-to-use guardrail capabilities: `CostTracking` (tracks token usage and USD cost per run, raises `BudgetExceededError` on budget overrun); `ToolGuard` (block or require approval for specific tools); `InputGuard` and `OutputGuard` (custom sync or async validation functions); `PromptInjection`, `PiiDetector`, `SecretRedaction`, `BlockedKeywords`, and `NoRefusals` content shields.
 
+## Decision Evidence & Verification {#decision-evidence-verification}
+
+* [`pydantic-ai-loopgrid`](https://github.com/loopgridio/pydantic-ai-loopgrid) - `LoopGridCapability` adds decision-scoped evidence to Pydantic AI's native model and tool lifecycle. It supports policy-based tool authorization, human approval evidence, tool execution and observed-outcome records, and fail-closed checks. LoopGrid Core provides Ed25519-signed, SHA-256-chained evidence with independent verification. Available on [PyPI](https://pypi.org/project/pydantic-ai-loopgrid/).
+
 ## File Operations & Sandboxing {#file-operations-sandboxing}
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) ships sandboxed [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) and [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) capabilities, plus [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) for running tool calls as sandboxed Python. As a community alternative:
