@@ -93,9 +93,9 @@ response.
 
 That LLM doesn't always answer. When it errors, returns nothing or an invalid tool call, or goes quiet for longer
 than the agent's `prompt.cascade_timeout_seconds` (4 seconds by default), ElevenLabs answers the turn with a backup
-LLM from its fallback cascade. Nothing on the conversation WebSocket says which LLM answered. The response's
-`model_name` is still the agent id, and the conversations API reports the answering LLM afterwards, per message, as
-`producing_llm`. To turn the cascade off, set the agent's `prompt.backup_llm_config` to `{"preference": "disabled"}`.
+LLM from its fallback cascade. The response's `model_name` is still the agent id: only a `context_usage` report
+(see [Usage and cost](#usage-and-cost)) names the LLM, and it isn't tied to a response. The conversations API reports
+the answering LLM afterwards, per message, as `producing_llm`. To turn the cascade off, set the agent's `prompt.backup_llm_config` to `{"preference": "disabled"}`.
 To choose the backup LLMs, set it to `{"preference": "override", "order": [...]}`.
 
 ### Configuration ownership
