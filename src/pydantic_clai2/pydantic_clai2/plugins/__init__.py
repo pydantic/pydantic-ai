@@ -472,8 +472,9 @@ class TaskCatalog(Protocol):
         does to it. It runs apart from the conversation: nothing reaches the conversation's history, the
         agent hears no report, and no turn waits for it, so it cannot be backgrounded. Each change arrives
         as `on_task_event`, as for any task. Prompting a task the user stopped lets it resume. Raises
-        `ValueError` for blank text, a task that is running or cannot resume, or one the agent can no longer
-        delegate to, and `RuntimeError` on a CLAI that cannot run it; the task stays as it was then.
+        `ValueError` for blank text, a task that is running, starting from a prompt, or cannot resume, or one
+        the agent can no longer delegate to, and `RuntimeError` on a CLAI that cannot run it; the task stays
+        as it was then.
         """
         ...
 

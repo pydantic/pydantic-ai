@@ -470,20 +470,25 @@ class Tasks:
             raise ValueError('Type a message for the task.')
         if self.prompt_task is None:
             raise RuntimeError('This CLAI cannot prompt a task on its own.')
+        # It reads `finished` until its run starts it, so `allow_resume` cannot tell a second prompt meanwhile.
+        if record.id in self._starting:
+            raise ValueError('This task is starting from a prompt already; wait for it to run.')
         stopped = record.user_stopped
-        # Prompting it is the user's leave to resume it, as asking the agent to is.
-        await self.owner.allow_resume(record.id)
         starting = self._starting[record.id] = asyncio.Event()
-        run = self._prompts[record.id] = asyncio.create_task(
-            self.prompt_task(record, text), name=f'clai2-task-prompt-{record.id}'
-        )
-        run.add_done_callback(lambda done: self._prompted(record.id, done, started=starting.is_set()))
-        started = asyncio.create_task(starting.wait())
         try:
-            await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
+            # Prompting it is the user's leave to resume it, as asking the agent to is.
+            await self.owner.allow_resume(record.id)
+            run = self._prompts[record.id] = asyncio.create_task(
+                self.prompt_task(record, text), name=f'clai2-task-prompt-{record.id}'
+            )
+            run.add_done_callback(lambda done: self._prompted(record.id, done, started=starting.is_set()))
+            started = asyncio.create_task(starting.wait())
+            try:
+                await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                started.cancel()
         finally:
-            started.cancel()
-            self._starting.pop(record.id, None)
+            del self._starting[record.id]
         if starting.is_set():
             return
         try:

@@ -351,6 +351,45 @@ async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None
     await settled(ui)
 
 
+async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
+    """It reads `finished` until its run starts it, as an agent run does after a model request."""
+    gate = asyncio.Event()
+
+    async def work(record: DelegationTask) -> str:
+        await gate.wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        await asyncio.sleep(0)
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    async with ui.router.opened(view=ui):
+        with anyio.fail_after(5):  # Before the fix, the first prompt waited for the whole task.
+            first, second = await asyncio.gather(
+                ui.prompt(record.id, 'first'), ui.prompt(record.id, 'second'), return_exceptions=True
+            )
+        assert first is None
+        assert isinstance(second, ValueError) and 'starting from a prompt' in str(second)
+        assert (record.status, record.prompt) == ('running', 'first')
+        with pytest.raises(ValueError, match='Nothing waits'):
+            ui.background(record.id)
+        gate.set()
+        await settled(ui)
+        assert (record.status, record.outcome) == ('finished', 'ok')
+
+
 async def test_a_session_that_delegates_nothing_prompts_no_task(tmp_path: Path) -> None:
     shell = create_shell(
         create_stock_agent(TestModel()),
