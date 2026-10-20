@@ -124,7 +124,6 @@ class FakeProcess:
         if not self.owner.process_stdout and not self.owner.process_stderr and not self.owner.process_hangs:
             output, self.owner.process_exit_code = self.owner.responder(self.owner.process_command, timeout)
             self.owner.process_stdout = self.owner.process_reply = [output]
-        self.owner.session_commands[f'{session_id}-cmd'] = self.owner.process_command
         marker = re.search(r'pydantic-ai-end-[0-9a-f]{32}', self.owner.process_command)
         assert marker is not None
         # The wrapper sends the command's stdout and stderr to these files.
@@ -434,7 +433,6 @@ class FakeSandbox:
         self.client: FakeClient | None = None
         self.id = sandbox_id
         self.name: str | None = None
-        self.started = False
         self.state = SandboxState.STARTED
         self.purged = False
         self.refresh_error: Exception | None = None
@@ -459,7 +457,6 @@ class FakeSandbox:
         self.process_sessions: set[str] = set()
         self.process_command = ''
         # Each session command's line, by command ID, for its stored logs.
-        self.session_commands: dict[str, str] = {}
         self.process_stdout: list[str] = []
         self.process_stderr: list[str] = []
         self.process_reply: list[str] | None = None
@@ -474,7 +471,6 @@ class FakeSandbox:
         self.process_status_error: Exception | None = None
         self.process_status_gate: asyncio.Event | None = None
         self.process_logs_error: Exception | None = None
-        # What the non-follow `get_session_command_logs` returns, when not the streamed chunks joined.
         self.process_create_gate: asyncio.Event | None = None
         self.process_create_ack_gate: asyncio.Event | None = None
         self.process_logs_started = asyncio.Event()
@@ -489,7 +485,6 @@ class FakeSandbox:
         self.start_calls.append(timeout)
         if self.start_error is not None:
             raise self.start_error
-        self.started = True
         self.state = SandboxState.STARTED
 
     async def refresh_data(self, request_timeout: float | None = None) -> None:

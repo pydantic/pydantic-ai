@@ -30,6 +30,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
+    WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
@@ -64,9 +65,9 @@ _AUTH_MESSAGE = (
 _MISSING_CREDENTIALS_MESSAGE = (
     'No Daytona credentials found. Set DAYTONA_API_KEY, or pass a configured `AsyncDaytona` as `client=`.'
 )
+_REQUEST_TIMEOUT = 30
 # Bound sandbox creation and attachment so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
-_REQUEST_TIMEOUT = 30
 # For create, start, and delete.
 _LIFECYCLE_TIMEOUT = 60.0
 _TEARDOWN_TIMEOUT = 30.0
@@ -166,7 +167,6 @@ def _output_limit_error(stdout: str, stderr: str) -> WorkspaceOutputLimitError:
 
 
 def _output_paths(marker: str) -> tuple[str, str]:
-    """The files a command's stdout and stderr go to, until the backend reads and removes them."""
     return f'/tmp/{marker}.out', f'/tmp/{marker}.err'
 
 
@@ -270,7 +270,6 @@ class _DaytonaProcess:
                 await anyio.sleep(0.1)
 
     async def _result(self, exit_code: int) -> CommandResult:
-        """The finished command's result, read from its output files."""
         out_path, err_path = _output_paths(self._marker)
         try:
             with anyio.fail_after(_REQUEST_TIMEOUT):
@@ -818,7 +817,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     await _raise_failure(sandbox, error, 'Could not determine the working directory')
                 printed = result.result.removesuffix('\n')
                 if result.exit_code != 0 or not posixpath.isabs(printed):
-                    raise WorkspaceUnavailableError(
+                    raise WorkspaceError(
                         f'Could not determine the working directory of Daytona sandbox {sandbox.id}: {result.result}'
                     )
                 self._resolved_working_dir = printed
@@ -846,21 +845,28 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             def output() -> tuple[str, str]:
                 return (process.stdout, process.stderr) if process is not None else ('', '')
 
-            async with command_deadline(timeout, stop=stop, output=output):
-                try:
+            async def attempt() -> CommandResult:
+                nonlocal process
+                async with command_deadline(timeout, stop=stop, output=output):
                     process = await self._start(sandbox, argv, env)
-                except Exception:
-                    # Daytona may have stopped the sandbox while idle. Only setup is retried, where no
-                    # command was accepted, so the command cannot run twice.
-                    if not await _restart_if_stopped(sandbox):
-                        raise
-                    process = await self._start(sandbox, argv, env)
-                result = await process.wait()
-                if process.missing_cwd:
-                    raise WorkspaceError(
-                        f'working_dir {self._working_dir!r} does not exist in Daytona sandbox {sandbox.id}. '
-                        'Create it there, or pass a working_dir that exists.'
-                    )
+                    result = await process.wait()
+                    if process.missing_cwd:
+                        raise WorkspaceError(
+                            f'working_dir {self._working_dir!r} does not exist in Daytona sandbox {sandbox.id}. '
+                            'Create it there, or pass a working_dir that exists.'
+                        )
+                return result
+
+            try:
+                result = await attempt()
+            except WorkspaceTimeoutError:
+                raise
+            except Exception:
+                # Daytona may have stopped the sandbox while idle. Only setup is retried, where no
+                # command was accepted, so the command cannot run twice; the restart is not timed.
+                if process is not None or not await _restart_if_stopped(sandbox):
+                    raise
+                result = await attempt()
             # Delete the finished session before the operation ends and the client may close.
             await run_to_completion(lambda: stop_shielded(stop))
             return result

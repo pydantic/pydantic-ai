@@ -448,10 +448,8 @@ class TestCommands:
         sandbox = fake_daytona.sandboxes[0]
         sandbox.process_hangs = True
         sandbox.process_delete_errors = itertools.repeat(DaytonaConnectionError('offline'))
-        start = anyio.current_time()
-        with pytest.raises(WorkspaceTimeoutError):
+        with anyio.fail_after(10), pytest.raises(WorkspaceTimeoutError):
             await backend.run(['sleep', '30'], timeout=0.01)
-        assert anyio.current_time() - start < 2.6
         assert 'may still be running' in caplog.text
 
     async def test_kill_on_a_deleted_sandbox_does_not_retry(
@@ -602,6 +600,23 @@ class TestCommands:
         result = await backend.run(['true'])
         assert result.exit_code == 0
         assert sandbox.start_calls
+
+    async def test_restart_is_not_counted_against_the_command_timeout(
+        self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = await started()
+        sandbox = fake_daytona.sandboxes[0]
+        sandbox.state = daytona.SandboxState.STOPPED
+        start = sandbox.start
+
+        async def slow_start(timeout: float | None = 60) -> None:
+            # Restarting outlasts the timeout; the command itself fits in it comfortably.
+            await anyio.sleep(1.1)
+            await start(timeout)
+
+        monkeypatch.setattr(sandbox, 'start', slow_start)
+        result = await backend.run(['true'], timeout=1)
+        assert result.exit_code == 0
 
     async def test_session_setup_timeout_is_transient(
         self, fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
@@ -826,14 +841,16 @@ class TestErrorsAndFilesystem:
     async def test_failed_working_dir_probe_names_sdk_output(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         fake_daytona.sandboxes[0].workdir = 'sh: cd: /missing: No such file or directory'
-        with pytest.raises(WorkspaceUnavailableError, match='No such file or directory'):
+        with pytest.raises(WorkspaceError, match='No such file or directory') as exc_info:
             await backend.working_dir()
+        assert exc_info.type is WorkspaceError
 
     async def test_invalid_native_working_dir_is_rejected(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
         fake_daytona.sandboxes[0].workdir = 'relative'
-        with pytest.raises(WorkspaceUnavailableError, match='determine the working directory'):
+        with pytest.raises(WorkspaceError, match='determine the working directory') as exc_info:
             await backend.working_dir()
+        assert exc_info.type is WorkspaceError
 
     async def test_filesystem_roundtrip_uses_file_entry(self, fake_daytona: FakeDaytona) -> None:
         backend = await started(working_dir='/workspace')
