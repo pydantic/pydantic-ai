@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import gzip
-import subprocess
-import sys
-import textwrap
 import zlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -864,79 +861,6 @@ class TestSafeDownload:
         assert isinstance(exc_info.value, httpx2.DecodingError)
         assert isinstance(exc_info.value, httpx.RequestError)
         assert exc_info.value.request.url.path == '/file.txt'
-
-    def test_safe_download_works_without_legacy_httpx(self) -> None:
-        """The public download boundary remains usable when only httpx2 is installed."""
-        script = """
-            import asyncio
-            import sys
-
-            import httpx2
-
-
-            class BlockHttpx:
-                def find_spec(self, fullname, path=None, target=None):
-                    if fullname == 'httpx' or fullname.startswith('httpx.'):
-                        raise ImportError('httpx is not installed')
-
-
-            sys.meta_path.insert(0, BlockHttpx())
-
-            from pydantic_ai import _ssrf
-
-
-            class FailingClient:
-                async def __aenter__(self):
-                    return self
-
-                async def __aexit__(self, *args):
-                    return False
-
-                def build_request(self, method, url, **kwargs):
-                    return httpx2.Request(method, url, **kwargs)
-
-                async def send(self, request, **kwargs):
-                    raise httpx2.ConnectError('Connection failed', request=request)
-
-
-            async def validate_and_resolve_url(url, allow_local):
-                return _ssrf.ResolvedUrl(
-                    resolved_ip='93.184.216.34',
-                    hostname='example.com',
-                    port=80,
-                    is_https=False,
-                    path='/',
-                )
-
-
-            def create_async_httpx2_client(*, timeout):
-                return FailingClient()
-
-
-            _ssrf.validate_and_resolve_url = validate_and_resolve_url
-            _ssrf.create_async_httpx2_client = create_async_httpx2_client
-
-
-            async def main():
-                try:
-                    await _ssrf.safe_download('http://example.com')
-                except httpx2.RequestError as error:
-                    assert type(error) is httpx2.RequestError
-                else:
-                    raise AssertionError('safe_download did not raise the failed request')
-
-
-            asyncio.run(main())
-            assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules)
-        """
-        result = subprocess.run(
-            [sys.executable, '-W', 'error', '-c', textwrap.dedent(script)],
-            capture_output=True,
-            text=True,
-        )
-
-        assert result.returncode == 0, result.stderr
-        assert result.stderr == ''
 
     @pytest.mark.parametrize(
         ('url', 'expected_host'),

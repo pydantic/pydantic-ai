@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ast
 import warnings
-from typing import Literal, overload
+from typing import Literal, NotRequired, overload
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import from_json
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class PartialArgs(TypedDict):

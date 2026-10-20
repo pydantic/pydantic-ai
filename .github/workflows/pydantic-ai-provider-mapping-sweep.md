@@ -2,7 +2,14 @@
 emoji: "🔌"
 name: "Pydantic AI Provider Mapping Sweep"
 description: "Audit one model provider's request/response mapping against its SDK and file a reproducible bug. Rotates providers; runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: weekly on monday
+on:
+  schedule: weekly on monday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -20,6 +27,12 @@ safe-outputs:
   report-failure-as-issue: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[provider-mapping-sweep] "
@@ -49,6 +62,7 @@ imports:
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
+  - shared/security-findings.md
 
 jobs:
   fetch_dynamic_prompt:

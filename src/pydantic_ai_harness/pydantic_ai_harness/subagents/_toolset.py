@@ -29,6 +29,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
+from pydantic_ai.messages import repair_messages
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -39,6 +40,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
+from pydantic_ai_harness._sub_agent_output import resumable_output_reason
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -156,8 +158,8 @@ class SubAgent(Generic[AgentDepsT]):
 
     on_failure: str | None = None
     """Steering message returned to the parent for any soft degradation of this
-    delegate (timeout, child failure, usage budget reached, call budget
-    exhausted), in place of the built-in default. Setting it also makes child
+    delegate (timeout, child failure, a child run ending with `DeferredToolRequests`,
+    usage budget reached, call budget exhausted), in place of the built-in default. Setting it also makes child
     failures soft: a child error returns this message as a normal tool result
     instead of raising a parent `ModelRetry`."""
 
@@ -543,7 +545,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             event_stream_handler=partial(self._stream_child, owner=owner, record=record)
             if record is not None
             else self._event_stream_handler,
-            message_history=record.messages if record is not None else None,
+            # A child stopped mid-tool-call (process exit, cancellation) saved calls without results;
+            # the resumed run adds a new prompt, so close them out as interrupted first.
+            message_history=repair_messages(record.messages) if record is not None else None,
             conversation_id=record.id if record is not None else None,
             run_id=record.run_id if record is not None else None,
         )
@@ -602,7 +606,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 # Installed only for a record, and a record exists only under the owner that `current` returns.
                 if owner is not None and record is not None:  # pragma: no branch
                     record.messages = child_ctx.messages
-                    await owner.notify(record, event)
+                    # The model streaming this request, so an observer can show the child's context usage.
+                    model = child_ctx.model
+                    await owner.notify(record, event, model_name=model.model_name, context_window=model.context_window)
                 yield event
 
         if self._event_stream_handler is not None:
@@ -621,14 +627,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> _Ended:
         """Await the child and turn what happened into what the parent receives.
 
-        Soft outcomes become a steering message the parent reads as a normal tool
-        result; a child's soft failure or contained crash becomes a `ModelRetry`
+        Soft outcomes (timeout, own usage budget, a child run that ended with
+        `DeferredToolRequests`) become a steering message the parent reads as a normal
+        tool result; a child's soft failure or contained crash becomes a `ModelRetry`
         the caller raises. Everything else propagates and aborts the delegation.
         """
         timeout = sub_agent.timeout_seconds
         try:
             result = await (asyncio.wait_for(run, timeout) if timeout is not None else run)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             if timeout is None or isinstance(exc, HookTimeoutError):
                 # The child itself timed out: a hook overran its own budget, or no
                 # delegation budget is set at all. That is a child crash, so the
@@ -663,6 +670,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
+        if (reason := resumable_output_reason(result.output)) is not None:
+            # The parent cannot resume the child run, and delegating the same task again would most
+            # likely stop the same way, so this is a soft outcome rather than a retry.
+            return _Ended(
+                outcome='failed',
+                output=self._steer(
+                    sub_agent.on_failure,
+                    f'Sub-agent {agent_name!r} {reason}, which a delegating agent cannot provide. '
+                    'Do the task another way, or without this sub-agent.',
+                ),
+            )
         return _Ended(outcome='ok', output=str(result.output))
 
     def _crash_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:

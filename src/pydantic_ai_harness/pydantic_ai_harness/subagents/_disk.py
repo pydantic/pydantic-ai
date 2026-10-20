@@ -25,13 +25,12 @@ of nonempty strings or comma-separated strings. Supplying both is rejected.
 model and effort overrides belong in `agent_overrides`. All other fields cause
 that file to be skipped, including permission/sandbox settings and the old
 `[agents.name] config_file` format. No configuration is executed or followed.
-TOML requires Python 3.11+ for stdlib `tomllib`; Markdown also works on Python 3.10.
+TOML files use the standard-library `tomllib` parser.
 """
 
 from __future__ import annotations
 
 import posixpath
-import sys
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -181,8 +180,6 @@ def _toml_tools(*, fields: dict[str, object]) -> tuple[str, ...]:
 
 
 def _parse_agent_toml(*, text: str, path: str) -> ParsedAgent:
-    if sys.version_info < (3, 11):
-        raise ValueError('TOML disk agents require Python 3.11+ (`tomllib`)')
     import tomllib
 
     fields: dict[str, object] = tomllib.loads(text)

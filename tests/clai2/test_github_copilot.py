@@ -29,7 +29,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot
 from pydantic_clai2.models.model_catalog import github_copilot_models
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
-from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
 
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
@@ -178,7 +178,7 @@ async def test_cancel_stops_polling(device_flow: None, monkeypatch: pytest.Monke
 def test_environment_token(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
     monkeypatch.setenv('GH_TOKEN', 'not-for-copilot')
     monkeypatch.setenv('GITHUB_TOKEN', 'not-for-copilot')
-    with pytest.raises(UserError, match='/login copilot'):
+    with pytest.raises(UserError, match='/login github-copilot'):
         github_copilot.token()
     monkeypatch.setenv(variable, 'environment-token')
     assert github_copilot.token() == 'environment-token'
@@ -201,7 +201,7 @@ def test_saved_credentials(stored: str) -> None:
     if stored == 'valid':
         assert github_copilot.token() == 'fake-access'
     else:
-        with pytest.raises(UserError, match='/login copilot'):
+        with pytest.raises(UserError, match='/login github-copilot'):
             github_copilot.token()
 
 
@@ -218,9 +218,11 @@ async def test_connect(
     monkeypatch.setattr(github_copilot, 'discover', discover)
     context, _ = make_context(tmp_path)
     previous = context.settings.model
+    output = io.StringIO()
     for _ in range(2):
         script = Script(lists=[pick('github-copilot'), selected, MenuResult(cancelled=True)], choices=[], texts=[])
-        result = await open_add_model_menu(context, runners=script.runners)
+        result = await open_add_model_menu(context, console=Console(file=output), runners=script.runners)
+        assert 'Enter code: ABCD-EFGH' in output.getvalue(), 'the device code goes to the shell console'
         if selected.item and selected.item.value == 'github-copilot:claude-haiku-4.5':
             assert context.settings.model == 'github-copilot:claude-haiku-4.5'
             assert result == 'Saved model. Applied.'
@@ -255,7 +257,7 @@ async def test_provider_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         choices=[],
         texts=[typed('42')],
     )
-    result = await open_add_model_menu(context, runners=script.runners)
+    result = await open_add_model_menu(context, console=QUIET, runners=script.runners)
     assert f'Saved max_tokens for {name}' in result
     assert 'Saved model. Applied.' in result
     assert context.settings.model == name
@@ -267,7 +269,7 @@ async def test_login_command(device_flow: None, tmp_path: Path, monkeypatch: pyt
     output = io.StringIO()
     await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=SettingsStore(tmp_path / 'config.db'))
     assert github_copilot.token() == 'fake-access'
-    assert 'Usage: /login [codex|copilot]' in output.getvalue()
+    assert 'Usage: /login [openai-codex|github-copilot]' in output.getvalue()
     assert 'fake-access' not in output.getvalue()
 
 

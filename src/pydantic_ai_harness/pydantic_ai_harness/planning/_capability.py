@@ -8,15 +8,20 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.messages import CachePoint, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai.messages import CachePoint, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._cache_points import has_cache_point_target
 from pydantic_ai_harness.planning._store import InMemoryPlanStore, PlanStore
 from pydantic_ai_harness.planning._toolset import (
     SUBTASK_TOOL_NAMES,
+    PlanItemUpdate,
     PlanningToolset,
+    PlanStoreOperations,
     available_tool_names,
     render_plan,
+    resolve_run_store,
+    tool_call_store,
 )
 from pydantic_ai_harness.planning._types import PlanItem
 
@@ -46,17 +51,18 @@ _SUBTASK_GUIDANCE = (
 
 @dataclass
 class Planning(AbstractCapability[AgentDepsT]):
-    """Structured task planning that never invalidates the prompt cache.
+    """Structured task planning that keeps the conversation in the prompt cache.
 
     The model owns the plan through a small toolset (`write_plan`, `read_plan`,
     `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, and
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
     `get_available_tasks`); `tools` narrows that surface to an allowlist. The
     current plan is surfaced back as an *ephemeral* reminder appended to the
-    tail of each request. A single `CachePoint` is anchored on the last durable
-    user content, so the prefix it saves is a prefix of the next request; the
-    reminder itself carries no breakpoint, so only the mutable plan content is
-    re-read each turn.
+    tail of each request and never persisted. The reminder leads with a
+    `CachePoint`, which providers attach to the content right before it -- the
+    last user prompt, tool result, or retry prompt, which the next request
+    starts with -- so on most providers only the reminder itself is re-read each
+    turn. On OpenRouter the breakpoint stops at the previous user message.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -87,7 +93,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     """
 
     cache_ttl: Literal['5m', '1h'] = '5m'
-    """TTL for the cache breakpoint anchored on the last durable user content."""
+    """TTL for the cache breakpoint leading the plan reminder."""
 
     store: PlanStore | None = None
     """Storage backend. `None` keeps a fresh in-memory plan per run (the original
@@ -150,9 +156,29 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `planning` toolset, shared with every per-run copy."""
+        return self._planning_toolset
+
+    @property
+    def _planning_toolset(self) -> PlanningToolset[AgentDepsT]:
         if self._toolset is None:
-            self._toolset = PlanningToolset[AgentDepsT](self)
+            operations = PlanStoreOperations[AgentDepsT](
+                get_items=self._read_plan,
+                set_items=self._set_items,
+                get_item=self._get_item,
+                add_item=self._add_item,
+                update_item=self._update_item,
+                remove_item=self._remove_item,
+            )
+            self._toolset = PlanningToolset[AgentDepsT](self, operations=operations)
         return self._toolset
+
+    async def _run_store(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
+        """The run's store: this copy's own when `for_run` resolved it, the running plan tool call's, or the tree's."""
+        if self._resolved_store is not None:
+            return self._resolved_store
+        if (store := tool_call_store()) is not None:
+            return store
+        return await resolve_run_store(ctx, self, self._planning_toolset)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide static, cache-stable guidance on using the planning tools.
@@ -181,7 +207,12 @@ class Planning(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Anchor a cache breakpoint on durable user content, then append the ephemeral plan reminder."""
+        """Append the ephemeral plan reminder to the request, leading with a cache breakpoint.
+
+        The breakpoint marks the end of the content before the reminder, so each request caches
+        what the next one starts with, including every tool result since the last user prompt,
+        while the reminder stays outside the cached prefix and out of message history.
+        """
         if not self.inject:
             return await handler(request_context)
         items = await self._read_plan(ctx)
@@ -190,15 +221,39 @@ class Planning(AbstractCapability[AgentDepsT]):
         messages = request_context.messages
         last = messages[-1]
         if isinstance(last, ModelRequest):
-            _anchor_cache_breakpoint(messages, self.cache_ttl)
-            last = messages[-1]
-            reminder = UserPromptPart(content=['<plan-reminder>\n', _reminder_text(render_plan(items))])
-            messages[-1] = replace(last, parts=[*last.parts, reminder])
+            content: list[UserContent] = ['<plan-reminder>\n', _reminder_text(render_plan(items))]
+            # With no content before the reminder (an instructions-only first request) there is no
+            # prefix to protect, and providers reject a breakpoint with nothing to attach to.
+            if has_cache_point_target(last.parts):
+                content.insert(0, CachePoint(ttl=self.cache_ttl))
+            messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
         return await handler(request_context)
 
+    # Each plan store call is a durable operation, so recovering a durable run reuses the recorded
+    # result instead of repeating a write, such as appending a step to a persistent store again.
     @durable_operation('read_plan')
     async def _read_plan(self, ctx: RunContext[AgentDepsT]) -> list[PlanItem]:
-        return await self.resolve_store(ctx).get_items()
+        return await (await self._run_store(ctx)).get_items()
+
+    @durable_operation('set_items')
+    async def _set_items(self, ctx: RunContext[AgentDepsT], items: list[PlanItem]) -> None:
+        await (await self._run_store(ctx)).set_items(items)
+
+    @durable_operation('get_item')
+    async def _get_item(self, ctx: RunContext[AgentDepsT], item_id: str) -> PlanItem | None:
+        return await (await self._run_store(ctx)).get_item(item_id)
+
+    @durable_operation('add_item')
+    async def _add_item(self, ctx: RunContext[AgentDepsT], item: PlanItem) -> PlanItem:
+        return await (await self._run_store(ctx)).add_item(item)
+
+    @durable_operation('update_item')
+    async def _update_item(self, ctx: RunContext[AgentDepsT], item_id: str, update: PlanItemUpdate) -> PlanItem | None:
+        return await (await self._run_store(ctx)).update_item(item_id, **update.model_dump(exclude_none=True))
+
+    @durable_operation('remove_item')
+    async def _remove_item(self, ctx: RunContext[AgentDepsT], item_id: str) -> bool:
+        return await (await self._run_store(ctx)).remove_item(item_id)
 
     @classmethod
     def from_spec(
@@ -244,41 +299,3 @@ class Planning(AbstractCapability[AgentDepsT]):
 
 def _reminder_text(plan: str) -> str:
     return f'Your current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'
-
-
-def _anchor_cache_breakpoint(messages: list[ModelMessage], ttl: Literal['5m', '1h']) -> None:
-    """Place a `ttl` cache breakpoint behind the last durable user content, when any exists.
-
-    The breakpoint must not lead its part: a leading one is rejected by OpenAI-compatible
-    and OpenRouter providers, and a breakpoint on ephemeral content would not describe a
-    prefix of the next request. With no eligible durable content, no breakpoint is placed.
-
-    A capability earlier in the capabilities list applies its request mutations first,
-    so one that appends a `UserPromptPart` each request (for example `SystemReminders`)
-    displaces the anchor onto that part; the prefix then stays cache-stable only while
-    that content is stable across turns.
-    """
-    for i in range(len(messages) - 1, -1, -1):
-        message = messages[i]
-        if not isinstance(message, ModelRequest):
-            continue
-        for j in range(len(message.parts) - 1, -1, -1):
-            part = message.parts[j]
-            if not isinstance(part, UserPromptPart) or not _has_anchorable_content(part):
-                continue
-            anchored = (
-                replace(part, content=[part.content, CachePoint(ttl=ttl)])
-                if isinstance(part.content, str)
-                else replace(part, content=[*part.content, CachePoint(ttl=ttl)])
-            )
-            parts = [*message.parts]
-            parts[j] = anchored
-            messages[i] = replace(message, parts=parts)
-            return
-
-
-def _has_anchorable_content(part: UserPromptPart) -> bool:
-    """Whether a `CachePoint` appended to this part would sit behind existing user content."""
-    if isinstance(part.content, str):
-        return bool(part.content)
-    return any(item for item in part.content if not isinstance(item, CachePoint))

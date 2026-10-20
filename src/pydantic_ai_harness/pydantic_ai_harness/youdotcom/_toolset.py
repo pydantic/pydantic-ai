@@ -6,6 +6,7 @@ import functools
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar
 
@@ -16,6 +17,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._output import truncate_head
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
@@ -263,6 +265,14 @@ def _web_result_body(result: models.WebResult, max_text_chars: int, extraction_m
     return result.description or None
 
 
+@dataclass(frozen=True)
+class YouSearchOperations:
+    """The durable operations a `YouSearch` capability runs its toolset's You.com requests through."""
+
+    web_search: ToolOperation
+    get_page: ToolOperation
+
+
 class YouSearchToolset(FunctionToolset[AgentDepsT]):
     """Gives an agent web research tools backed by the You.com Search and Contents APIs.
 
@@ -281,6 +291,10 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
 
     With `defer_to_native=True`, `web_search` is the local fallback for the
     model's native web search, as `YouSearch(native=True)` sets up.
+
+    `YouSearch` passes `operations` so that each tool's You.com request runs as
+    one of its durable operations, whose result durable execution records
+    instead of making the request again on recovery.
     """
 
     def __init__(
@@ -297,9 +311,12 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         country: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
         defer_to_native: bool = False,
+        id: str | None = None,
+        operations: YouSearchOperations | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._client = client if client is not None else default_client(timeout_ms)
+        self._operations = operations
         self._num_results = num_results
         self._extraction_mode: ExtractionModeName = extraction_mode
         self._max_text_chars = max_text_chars
@@ -333,6 +350,8 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The matching pages, each with title, URL, and excerpts.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.web_search(query))
         response = await self._client.search_async(
             query=query,
             count=self._num_results,
@@ -383,6 +402,8 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The page's title, URL, and markdown content.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.get_page(url))
         responses = await self._client.contents_async(
             urls=[url],
             formats=[models.ContentsFormats.MARKDOWN, models.ContentsFormats.METADATA],

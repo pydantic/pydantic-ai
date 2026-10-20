@@ -37,6 +37,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import math
 import os
 import pathlib
 import sys
@@ -45,19 +46,19 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Annotated, Any, TypeAlias, cast
 
 import httpx2
 import logfire
-from anthropic import AsyncAnthropic
+from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -170,9 +171,13 @@ SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
+def _is_attention_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+
+
 def run_request_limit() -> int:
     """Return the workflow-specific cap on model requests."""
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+    if _is_attention_run():
         return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
 
@@ -206,18 +211,77 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
-def safe_output_pending() -> bool:
-    """Whether this is a gh-aw run whose safe-outputs sink is still empty."""
+def _safe_output_status() -> tuple[bool, list[int] | None]:
+    """Return whether output is pending and any Attention candidate IDs still missing decisions."""
+    is_attention = _is_attention_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        return False
+        if is_attention:
+            raise ValueError('Attention safe-output sink is not configured')
+        return False, None
     sink = pathlib.Path(path)
-    return not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    if not is_attention or sink_empty:
+        return sink_empty, None
+
+    workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+    snapshot_path = workspace / 'attention-candidates.json'
+    if not snapshot_path.is_file():
+        raise ValueError('Attention candidate snapshot is missing')
+
+    snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+    candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+    candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+        [candidate['number'] for candidate in candidate_rows]
+    )
+    if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+        raise ValueError('Attention snapshot contains too many or duplicate candidates')
+    candidates = set(candidate_numbers)
+    if not candidates:
+        return sink_empty, []
+
+    recorded: set[int] = set()
+    entry_adapter = TypeAdapter(dict[str, object])
+    for line in sink.read_text(encoding='utf-8').splitlines():
+        try:
+            entry = entry_adapter.validate_json(line)
+        except ValidationError:
+            continue
+        item_number = entry.get('item_number')
+        if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+            try:
+                parsed_number = int(item_number)
+            except ValueError:
+                continue
+            if parsed_number > 0 and str(parsed_number) == item_number:
+                recorded.add(parsed_number)
+    missing = sorted(candidates - recorded)
+    return bool(missing), missing
+
+
+def safe_output_pending() -> bool:
+    """Whether a gh-aw run is missing safe output or Attention decisions."""
+    try:
+        output_pending, _ = _safe_output_status()
+    except (KeyError, OSError, ValueError):
+        if _is_attention_run():
+            return True
+        raise
+    return output_pending
 
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    if not safe_output_pending():
+    output_pending, missing = _safe_output_status()
+    if missing:
+        missing_ids = ', '.join(str(number) for number in missing)
+        logger.warning('attention decisions missing for candidate IDs %s; requesting completion', missing_ids)
+        raise ModelRetry(
+            'Record an attention decision for each missing candidate ID: '
+            f'{missing_ids}. Keep the decisions already recorded and call '
+            '`record_attention_decision` only for these missing IDs.'
+        )
+    if not output_pending:
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
@@ -333,6 +397,38 @@ def _run_timeout_secs() -> int:
 
 SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+# The run's last minutes belong to the parent: sub-agents are cut off before they start,
+# and the parent is then told to emit its safe output. Successful `CI Review` runs need
+# up to about 4 min between their last sub-agent returning and their posted review.
+RUN_TIME_RESERVE_SECS = 5 * 60
+TIME_BUDGET_NOTICE = (
+    '## Time budget nearly spent\n\n'
+    f'This run has under {RUN_TIME_RESERVE_SECS // 60} minutes of wall-clock time left, and reaching '
+    'the limit stops it with nothing posted. Stop investigating. Emit the safe output your '
+    'task ends with now, from what you have already found.'
+)
+
+# Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
+_run_deadline: float | None = None
+
+
+def _run_seconds_left() -> float | None:
+    """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
+    return None if _run_deadline is None else _run_deadline - time.monotonic()
+
+
+def time_budget_notice() -> str | None:
+    """Warn the model once the run's remaining wall-clock time falls inside the parent's reserve."""
+    seconds_left = _run_seconds_left()
+    if seconds_left is None or seconds_left > RUN_TIME_RESERVE_SECS:
+        return None
+    return TIME_BUDGET_NOTICE
+
+
+class RunTimeLimitExceeded(Exception):
+    """The run used its whole wall-clock budget, which is not a provider timeout."""
+
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -836,14 +932,15 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 
 
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
-    """Allow-list + `plan`-mode filter for the Claude Code toolset."""
+    """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
+    attention_read_only = _is_attention_run()
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
-        if plan and name in MUTATING_TOOLS:
+        if (plan or attention_read_only) and name in MUTATING_TOOLS:
             return False
         return True
 
@@ -933,7 +1030,11 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
     http_status: int | None = None
     if isinstance(error, UsageLimitExceeded):
         kind = 'request_limit'
+    elif isinstance(error, RunTimeLimitExceeded):
+        kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, (APITimeoutError, httpx2.TimeoutException)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
@@ -1051,6 +1152,15 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     if sub_request_limit <= 0:
         logger.info('Task refused, request budget nearly spent: %s', description[:120])
         return 'error: the request budget is nearly spent; finish the task from what you already have'
+    seconds_left = _run_seconds_left()
+    timeout = (
+        SUBAGENT_TIMEOUT_SECS
+        if seconds_left is None
+        else min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
+    )
+    if timeout <= 0:
+        logger.info('Task refused, time budget nearly spent: %s', description[:120])
+        return 'error: the time budget is nearly spent; finish the task from what you already have'
     logger.info('Task spawn: %s', description[:120])
     # Fresh dedupe set per sub-agent — otherwise inheriting the parent's
     # `seen` AGENTS.md set would silently hide context the sub-agent needs.
@@ -1077,14 +1187,14 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     try:
         result = await asyncio.wait_for(
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=SUBAGENT_TIMEOUT_SECS,
+            timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
-        logger.error('sub-agent timed out after %.0f min: %s', SUBAGENT_TIMEOUT_SECS / 60, description[:120])
-        return f'error: sub-agent timed out after {SUBAGENT_TIMEOUT_SECS // 60}min'
+        logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
+        return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
@@ -1108,7 +1218,9 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    global _run_deadline
     budget = _run_timeout_secs()
+    _run_deadline = time.monotonic() + budget
     usage = RunUsage()
     try:
         async with AsyncExitStack() as stack:
@@ -1118,7 +1230,7 @@ async def _run_with_timeout(
                 run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
                 timeout=budget,
             )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
             f'run timed out after {budget // 60}min',
@@ -1126,7 +1238,7 @@ async def _run_with_timeout(
             session_id=session_id,
             is_error=True,
             num_turns=usage.requests,
-            error=TimeoutError(),
+            error=RunTimeLimitExceeded(),
         )
         return 1
     except Exception as exc:
@@ -1140,6 +1252,8 @@ async def _run_with_timeout(
             error=exc,
         )
         return 1
+    finally:
+        _run_deadline = None
 
 
 async def run(
@@ -1156,7 +1270,7 @@ async def run(
     run_usage = usage or RunUsage()
     agent: Agent[object, str] = Agent(
         model,
-        instructions=[INSTRUCTIONS, prompt, request_budget_notice],
+        instructions=[INSTRUCTIONS, prompt, request_budget_notice, time_budget_notice],
         retries={'output': NO_SAFE_OUTPUT_RETRIES},
         toolsets=[claude_code_toolset, *mcp_servers],
         capabilities=[
@@ -1236,7 +1350,7 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        task_tool = None if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW else task
+        task_tool = None if _is_attention_run() else task
         claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(

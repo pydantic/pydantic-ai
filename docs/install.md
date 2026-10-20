@@ -1,5 +1,5 @@
 ---
-description: "Install Pydantic AI with pip or uv on Python 3.10+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
+description: "Install Pydantic AI with pip or uv on Python 3.11+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
 ---
 
 # Installation
@@ -10,7 +10,7 @@ Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pyd
 pip/uv-add pydantic-ai
 ```
 
-(Requires Python 3.10+)
+(Requires Python 3.11+)
 
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.

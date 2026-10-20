@@ -110,8 +110,22 @@ async def test_github_rejects_unknown_client() -> None:
         await flow.start()
 
 
+@pytest.fixture
+def delays(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Advance polling without wall-clock sleeps, while retaining cancellation checkpoints."""
+    delays: list[float] = []
+    sleep = anyio.sleep
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+        await sleep(0)
+
+    monkeypatch.setattr(anyio, 'sleep', record_sleep)
+    return delays
+
+
 @pytest.mark.vcr
-async def test_github_pending_authorization_can_be_cancelled() -> None:
+async def test_github_pending_authorization_can_be_cancelled(delays: list[float]) -> None:
     pending = anyio.Event()
 
     async def receive(response: httpx2.Response) -> None:
@@ -129,20 +143,7 @@ async def test_github_pending_authorization_can_be_cancelled() -> None:
                 await pending.wait()
                 group.cancel_scope.cancel()
         assert not client.is_closed
-
-
-@pytest.fixture
-def delays(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Advance polling without wall-clock sleeps, while retaining cancellation checkpoints."""
-    delays: list[float] = []
-    sleep = anyio.sleep
-
-    async def record_sleep(delay: float) -> None:
-        delays.append(delay)
-        await sleep(0)
-
-    monkeypatch.setattr(anyio, 'sleep', record_sleep)
-    return delays
+    assert delays[0] == 5  # GitHub's interval, waited before the pending poll
 
 
 async def test_approval_and_provider_handoff(delays: list[float]) -> None:

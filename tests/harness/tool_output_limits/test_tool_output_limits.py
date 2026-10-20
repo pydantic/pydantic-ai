@@ -172,6 +172,11 @@ class TestPayloadHelpers:
     def test_json_lines_empty_list(self):
         assert json_lines([]) == ''
 
+    def test_presets_render_bytes_that_are_not_utf8_as_base64(self):
+        assert indented_json({'text': b'hi'}) == '{\n  "text": "hi"\n}'
+        assert indented_json({'blob': b'\xff', 'text': b'hi'}) == '{\n  "blob": "_w==",\n  "text": "aGk="\n}'
+        assert json_lines([{'text': b'hi'}, {'blob': b'\xff'}]) == '{"text":"hi"}\n{"blob":"_w=="}'
+
     def test_presets_escape_line_separator_chars(self):
         rendered = json_lines([{'text': 'a\N{LINE SEPARATOR}b'}, {'ok': True}])
         assert rendered.splitlines() == ['{"text":"a\\u2028b"}', '{"ok":true}']
@@ -1213,6 +1218,25 @@ class TestAgentIntegration:
         assert part.metadata is not None
         assert part.metadata['original_metadata'] == 'app-request-id-123'
         assert 'overflow_handle' in part.metadata
+
+    async def test_structured_return_with_bytes_that_are_not_utf8(self, anyio_backend: str):
+        """Binary in a structured return is measured as base64 rather than failing the run."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[_call('read_blob')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=1000))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def read_blob() -> dict[str, bytes]:
+            return {'blob': b'\xff' * 3}
+
+        result = await agent.run('go')
+        returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns == ['{"blob":"____"}']
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(

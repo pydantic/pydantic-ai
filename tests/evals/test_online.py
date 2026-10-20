@@ -2452,6 +2452,7 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
     assert 'tenant' not in attrs
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where `sniffio` cannot be imported')
 @pytest.mark.skipif(
     any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
     reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',

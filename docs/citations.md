@@ -1,26 +1,48 @@
 # Citations
 
-Pydantic AI puts the web and document citations a provider returns on
-[`TextPart.citations`][pydantic_ai.messages.TextPart.citations], without changing the model's text. Some providers only
-return citations when asked. Set `include_citations=True` to ask for them:
+A citation links part of a model's answer to the source that supports it: a web page the model searched or fetched, a
+document you sent with the prompt, or a file in a provider's file store. Providers return citations in two situations:
 
-```python {test="skip"}
-from pydantic_ai import Agent, BinaryContent
+- When the provider runs a search or retrieval tool for the model, such as [web search](native-tools.md#web-search-tool),
+  [web fetch](native-tools.md#web-fetch-tool) or [file search](native-tools.md#file-search-tool). Most providers cite
+  these sources without being asked.
+- When you send documents with the prompt. Providers that support this only cite documents when asked.
 
-agent = Agent('anthropic:claude-sonnet-4-5', model_settings={'include_citations': True})
+Pydantic AI puts the citations a provider returns on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations], in
+the same shape for every provider, without changing the model's text. Set `include_citations=True` to ask the
+providers that only cite when asked:
+
+```python {title="document_citations.py"}
+from pydantic_ai import Agent, BinaryContent, TextPart
+
+agent = Agent('{{ anthropic:medium }}', model_settings={'include_citations': True})
 result = agent.run_sync(
     [
         'How long do customers have to return an item?',
         BinaryContent(data=b'Items may be returned within 30 days.', media_type='text/plain'),
     ]
 )
+for part in result.response.parts:
+    if isinstance(part, TextPart):
+        for citation in part.citations or []:
+            print(citation.sources[0].excerpts)
+            #> ['Items may be returned within 30 days.']
 ```
 
-Providers that don't need an opt-in ignore this setting, and a model may still return no citations.
+Providers that don't need to be asked ignore this setting, and a model may still answer without citations.
 
-To render citations, read each text part's citations and their sources:
+## Reading citations
 
-```python {test="skip"}
+A [`Citation`][pydantic_ai.messages.Citation] has one or more `sources` and an optional
+[`anchor`][pydantic_ai.messages.CitationAnchor], which holds Python character offsets into the text part:
+`part.content[anchor.start:anchor.end]`. Providers point at different things, so there are three cases:
+
+- A [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] selects the text the sources support.
+- A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker, such as `[1]`, that
+  the model wrote into its answer.
+- A citation without an anchor belongs to the text part, but its position in the text is unknown.
+
+```python {title="render_citations.py"}
 from pydantic_ai import (
     Agent,
     ContentCitationAnchor,
@@ -31,34 +53,30 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('{{ openai:medium }}', capabilities=[NativeTool(WebSearchTool())])
 result = agent.run_sync('What is the tallest mountain in Alberta?')
 
-for message in result.all_messages():
-    for part in message.parts:
-        if isinstance(part, TextPart):
-            for citation in part.citations or []:
-                anchor = citation.anchor
-                if isinstance(anchor, ContentCitationAnchor):
-                    location = f'supported text: {part.content[anchor.start : anchor.end]!r}'
-                elif isinstance(anchor, MarkerCitationAnchor):
-                    location = f'citation marker: {part.content[anchor.start : anchor.end]!r}'
-                else:
-                    location = 'somewhere in the text part'
+for part in result.response.parts:
+    if isinstance(part, TextPart):
+        for citation in part.citations or []:
+            anchor = citation.anchor
+            if isinstance(anchor, ContentCitationAnchor):
+                location = f'supports {part.content[anchor.start : anchor.end]!r}'
+            elif isinstance(anchor, MarkerCitationAnchor):
+                location = f'marker {part.content[anchor.start : anchor.end]!r}'
+            else:
+                location = 'somewhere in the text'
 
-                for source in citation.sources:
-                    if isinstance(source, WebCitationSource):
-                        label = source.title or source.url
-                    else:
-                        label = source.title or source.document_id or 'Document source'
-                    print(location, label, source.excerpts)
+            for source in citation.sources:
+                if isinstance(source, WebCitationSource):
+                    label = source.title or source.url
+                else:
+                    label = source.title or source.document_id or 'document'
+                print(location, label)
+                #> marker '[1]' Mount Columbia - Wikipedia
 ```
 
-A citation has one or more sources and an optional [`anchor`][pydantic_ai.messages.CitationAnchor], which holds
-Python character offsets into the text: `part.content[anchor.start:anchor.end]`. A
-[`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] selects the supported text, a
-[`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker the model wrote, and a
-citation without an anchor belongs to the text part, but its position in the text is unknown. Handle all three:
+The same answer looks like this from each kind of provider:
 
 ```python
 from pydantic_ai import (
@@ -69,7 +87,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 
-# Google: the provider lists both sources for the selected text.
+# Google and Anthropic select the supported text. Google lists both sources for the selected text.
 TextPart(
     'Pydantic validates data.',
     citations=[
@@ -80,7 +98,7 @@ TextPart(
     ],
 )
 
-# OpenAI: the selected text is the citation marker.
+# OpenAI selects the citation marker the model wrote.
 TextPart(
     'Pydantic validates data. [1]',
     citations=[
@@ -91,35 +109,34 @@ TextPart(
     ],
 )
 
-# Anthropic: no text range.
+# Some providers give no position in the text.
 TextPart(
     'Pydantic validates data.',
-    citations=[
-        Citation(
-            sources=[
-                WebCitationSource(
-                    'https://example.com',
-                    excerpts=['Pydantic provides data validation using Python type hints.'],
-                )
-            ]
-        )
-    ],
+    citations=[Citation(sources=[WebCitationSource('https://example.com')])],
 )
 ```
 
-A [`DocumentCitationSource`][pydantic_ai.messages.DocumentCitationSource] is any non-web source. Its `document_id` is
-the provider's identifier, not a local path, and inline documents may have neither an ID nor a title. A source's
+A [`WebCitationSource`][pydantic_ai.messages.WebCitationSource] has the page's `url`. A
+[`DocumentCitationSource`][pydantic_ai.messages.DocumentCitationSource] is any other source. Its `document_id` is the
+provider's identifier, not a local path, and documents sent inline may have neither an ID nor a title. A source's
 `excerpts` are the passages the provider returned as evidence: depending on the provider, an exact quote or a wider
 chunk of the source.
 
 Treat citation URLs, titles, and excerpts as untrusted data. Excerpts can contain private retrieved content, so choose
 deliberately whether to log, render, or send them to a client.
 
+## Provider data
+
+The citation types only hold what every provider can fill in. Everything else a provider returned for a part's
+citations, such as where in a document the cited passage is, Google's confidence scores, or the position of an OpenAI
+file citation, is kept in the provider's own format in the part's `provider_details['citations']`. Its shape is the
+provider's and can change with the provider's API.
+
 ## Provider support
 
 | Provider/API | Citations returned | How to enable | Provider support notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search and document citations | `include_citations=True` enables citations for all documents, including those in tool results, and requests them for Web Fetch; Web Search returns citations without it | Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web Search, Web Fetch and document citations | Web Search always returns citations. `include_citations=True` enables them for Web Fetch and for all documents, including those in tool results | Anthropic splits its answer into text parts and cites whole parts, so the anchor covers the part. A fetched PDF is cited as a document source. Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
 | [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents in user prompts | The anchor covers the whole cited block of text; the location in the document is in the source's `provider_details` |
 | [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | |
 | [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | A retrieved document's resource name is its `document_id` |

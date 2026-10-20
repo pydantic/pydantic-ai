@@ -1,13 +1,15 @@
 """The `/set` menu: CLAI's own settings, edited through the shared field editor."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.config import SETTING_FIELDS, UPDATE_CHANNELS, Settings
+from pydantic_clai2.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
+from pydantic_clai2.plugins.menus import SettingsMenu
+from pydantic_clai2.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
+from pydantic_clai2.ui.menus.tool_calls_preview import tool_calls_preview
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names
 
@@ -15,17 +17,23 @@ from pydantic_clai2.ui.rendering.theme import names
 class SettingsSource:
     """Rows from the `Settings` model; edits through `CommandContext`, same as `/set KEY VALUE`."""
 
-    title = 'Settings'
-
-    def __init__(self, context: CommandContext) -> None:
-        """Edits are validated, saved, and applied by `context`."""
+    def __init__(self, context: CommandContext, *, keys: Collection[str] = (), title: str = 'Settings') -> None:
+        """Edits are validated, saved, and applied by `context`; `keys` narrows the rows to those settings."""
         self._context = context
+        self._keys = keys
+        self.title = title
 
     def rows(self) -> list[FieldRow]:
-        """Every `/set` key with its description, default, and fixed choices if it has any."""
+        """Every `/set` key with its description, default, and fixed choices if it has any.
+
+        `run.instructions` is left to `/system_prompt`: a one-line input would lose its line breaks.
+        """
         rows: list[FieldRow] = []
         for key, field in SETTING_FIELDS.items():
+            if key == 'run.instructions' or (self._keys and key not in self._keys):
+                continue
             info = Settings.model_fields[field]
+            preview: ChoicePreview | None = None
             if info.annotation is bool:
                 choices: tuple[str, ...] = ('true', 'false')
             elif key == 'display.theme':
@@ -34,6 +42,9 @@ class SettingsSource:
                 choices = tuple(BUILTIN_SPINNERS)
             elif key == 'model':
                 choices = tuple(known_model_names())
+            elif key == 'display.tool_calls':
+                choices = TOOL_CALL_DISPLAYS
+                preview = tool_calls_preview
             elif key == 'updates.channel':
                 choices = UPDATE_CHANNELS
             else:
@@ -45,6 +56,7 @@ class SettingsSource:
                     default=shown(info.default),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
+                    preview=preview,
                 )
             )
         return rows
@@ -71,6 +83,11 @@ class SettingsSource:
     def reset(self, row: FieldRow) -> str:
         """Forget the override and apply the default."""
         return self._context.reset_setting(row.key)
+
+
+def settings_menu(context: CommandContext, *, keys: Collection[str] = (), title: str = 'Settings') -> SettingsMenu:
+    """`/set`'s rows as a declared menu, which the web UI shows; `keys` narrows it, as `/theme` and `/spinner` do."""
+    return SettingsMenu(source=SettingsSource(context, keys=keys, title=title))
 
 
 async def open_settings_menu(context: CommandContext, *, run: Callable[[FieldMenu], list[str]] | None = None) -> str:

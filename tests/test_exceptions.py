@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import (
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ModelRequestTimeout,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -57,6 +58,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: UsageLimitExceeded('test'),
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
+        lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
         lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
     ],
@@ -71,6 +73,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'UsageLimitExceeded',
         'ModelAPIError',
         'ModelHTTPError',
+        'ModelRequestTimeout',
         'IncompleteToolCall',
         'ToolRetryError',
     ],
@@ -117,6 +120,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         (lambda: ContentFilterError('filtered'), {'message': 'filtered', 'body': None}),
         (lambda: ModelAPIError('gpt-4', 'api failed'), {'model_name': 'gpt-4', 'message': 'api failed'}),
         (
+            lambda: ModelRequestTimeout('gpt-4', 2.5),
+            {'model_name': 'gpt-4', 'timeout': 2.5, 'message': "Request to model 'gpt-4' timed out after 2.5 seconds"},
+        ),
+        (
             lambda: ModelHTTPError(500, 'gpt-4'),
             {'status_code': 500, 'model_name': 'gpt-4', 'body': None, 'headers': None},
         ),
@@ -143,6 +150,32 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'suggested_model_id': 'openai:gpt-5',
             },
         ),
+        (
+            lambda: ModelHTTPError(400, 'model', hint='Check the provider account setting'),
+            {
+                'status_code': 400,
+                'model_name': 'model',
+                'body': None,
+                'headers': None,
+                'hint': 'Check the provider account setting',
+            },
+        ),
+        (
+            lambda: ModelHTTPError(
+                404,
+                'gpt-5x',
+                suggested_model_id='openai:gpt-5',
+                hint='Check the provider account setting',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'body': None,
+                'headers': None,
+                'suggested_model_id': 'openai:gpt-5',
+                'hint': 'Check the provider account setting',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -160,10 +193,13 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'UnexpectedModelBehavior-with-body',
         'ContentFilterError',
         'ModelAPIError',
+        'ModelRequestTimeout',
         'ModelHTTPError-no-body',
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
         'ModelHTTPError-with-model-suggestion',
+        'ModelHTTPError-with-hint',
+        'ModelHTTPError-with-model-suggestion-and-hint',
         'IncompleteToolCall',
     ],
 )
@@ -330,9 +366,10 @@ def test_model_http_error_retry_after_http_date():
     assert result > 0
 
 
-def test_model_http_error_retry_after_unparseable():
+@pytest.mark.parametrize('retry_after', ['not-a-number-or-date', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
+def test_model_http_error_retry_after_unparseable(retry_after: str):
     """retry_after returns None for a Retry-After value it cannot parse."""
-    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'not-a-number-or-date'})
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': retry_after})
     assert exc.retry_after is None
 
 

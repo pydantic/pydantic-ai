@@ -20,7 +20,7 @@ Set `SLACK_USER_TOKEN` to a Slack user token, or pass `auth=` a token. See the [
 from pydantic_ai import Agent
 from pydantic_ai_harness.slack import Slack
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Slack()])
+agent = Agent('{{ openai:medium }}', capabilities=[Slack()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -55,7 +55,7 @@ def slack_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.slack_user_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Slack(auth=slack_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Slack(auth=slack_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
@@ -84,7 +84,7 @@ def slack(ctx: RunContext[Deps]) -> Slack[Deps] | None:
     return Slack(auth=ctx.deps.slack_user_token, read_only=ctx.deps.read_only)
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DynamicCapability(slack, id='slack')])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DynamicCapability(slack, id='slack')])
 ```
 
 With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `slack`, so `defer_loading=True` works without one. To add more than one `Slack` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
@@ -108,7 +108,7 @@ from pydantic_ai_harness.slack import Slack
 
 capability = Slack()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )

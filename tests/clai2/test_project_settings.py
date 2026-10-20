@@ -15,6 +15,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings, resolve_settings
 from pydantic_clai2.config.project_settings import (
     PROJECT_FILE,
@@ -23,6 +24,8 @@ from pydantic_clai2.config.project_settings import (
     load_project_settings,
 )
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.plugins import SessionStart
+from pydantic_clai2.plugins.loader import PluginLoader
 
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:
@@ -142,7 +145,7 @@ async def test_startup_reports_unknown_keys_once(tmp_path: Path) -> None:
     project = load_project_settings(tmp_path)
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/set display.thinking true\n/set display.thinking\n/plugins list\n/exit\n')
+        pipe.send_text('/set display.thinking true\r/set display.thinking\r/plugins list\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None)),
             deps=None,
@@ -165,7 +168,7 @@ async def test_startup_reports_a_clean_file_or_nothing(tmp_path: Path, with_file
     output = io.StringIO()
     project = ProjectSettings(path=tmp_path / PROJECT_FILE) if with_file else None
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('/exit\n')
+        pipe.send_text('/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None)),
             deps=None,
@@ -175,3 +178,96 @@ async def test_startup_reports_a_clean_file_or_nothing(tmp_path: Path, with_file
         )
     assert ('Project settings' in output.getvalue()) is with_file
     assert 'Ignoring' not in output.getvalue()
+
+
+HELPER = """
+from pathlib import Path
+
+from pydantic_clai2.plugins import Plugin
+
+Path({marker!r}).write_text('ran')
+
+
+class Helper(Plugin):
+    pass
+"""
+
+
+def repository(root: Path, name: str, *, declared: bool = True) -> Path:
+    """A git checkout whose `plugins/helper.py` leaves `<name>.ran` next to it when it runs."""
+    directory = root / name
+    (directory / '.git').mkdir(parents=True)
+    (directory / 'src').mkdir()
+    helper = directory / 'plugins' / 'helper.py'
+    helper.parent.mkdir()
+    helper.write_text(HELPER.format(marker=str(root / f'{name}.ran')))
+    if declared:
+        write(directory, {'plugins': [{'id': 'helper', 'factory': 'helper', 'path': 'plugins/helper.py'}]})
+    return directory
+
+
+def ran(root: Path) -> list[str]:
+    return sorted(marker.stem for marker in root.glob('*.ran'))
+
+
+def plugin_loader(store: SettingsStore, project: ProjectSettings, output: io.StringIO) -> PluginLoader[None]:
+    return PluginLoader(
+        store=store,
+        console=Console(file=output, width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        project=project.plugins,
+    )
+
+
+@pytest.mark.parametrize('impostor_declares', [True, False])
+async def test_approving_a_relative_project_plugin_never_runs_another_repositorys_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, impostor_declares: bool
+) -> None:
+    """The approval lives in the user store every repository shares, so its path must not follow the launch directory."""
+    trusted = repository(tmp_path, 'trusted')
+    impostor = repository(tmp_path, 'impostor', declared=impostor_declares)
+    store = SettingsStore(tmp_path / 'config.db')
+
+    monkeypatch.chdir(trusted / 'src')
+    project = load_project_settings(Path.cwd())
+    assert project.plugins == (
+        PluginSettings(id='helper', factory='helper', path=str(trusted / 'plugins' / 'helper.py'), enabled=False),
+    ), 'anchored to the folder holding .clai, not the launch directory'
+    await plugin_loader(store, project, io.StringIO()).command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+    assert [plugin.path for plugin in store.plugins()] == [str(trusted / 'plugins' / 'helper.py')]
+
+    (tmp_path / 'trusted.ran').unlink()
+    monkeypatch.chdir(impostor)
+    loader = plugin_loader(store, load_project_settings(impostor), io.StringIO())
+    await loader.load_all()
+    assert ran(tmp_path) == ['trusted'], 'the approved file runs, never the same path in this repository'
+
+
+async def test_a_relative_path_saved_before_anchoring_is_refused_until_approved_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusted = repository(tmp_path, 'trusted')
+    impostor = repository(tmp_path, 'impostor')
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_plugin(PluginSettings(id='helper', factory='helper', path='plugins/helper.py'))
+
+    monkeypatch.chdir(impostor)
+    output = io.StringIO()
+    await plugin_loader(store, load_project_settings(impostor), output).load_all()
+    assert ran(tmp_path) == []
+    assert 'plugins/helper.py is relative, so it would load from whichever directory CLAI starts in.' in (
+        output.getvalue()
+    )
+
+    monkeypatch.chdir(trusted)
+    loader = plugin_loader(store, load_project_settings(trusted), io.StringIO())
+    await loader.load_all()
+    assert ran(tmp_path) == [] and loader.entries()[0].state.startswith('enabled, failed: ValueError:')
+    message = await loader.command(['remove', 'helper'])
+    assert message.startswith('helper is declared by the project; restored its defaults.')
+    assert store.plugins() == [] and loader.entries()[0].state == 'disabled'
+    await loader.command(['enable', 'helper'])
+    assert ran(tmp_path) == ['trusted']
+    assert [plugin.path for plugin in store.plugins()] == [str(trusted / 'plugins' / 'helper.py')]

@@ -35,6 +35,7 @@ Every store implements the `MediaStore` protocol: `put`, `get`, `exists`, `publi
 | `SqliteMediaStore(...)` | A SQLite database | A single-file store that travels with the data |
 | `S3MediaStore(...)` | S3 or an S3-compatible bucket | Shared or production storage |
 | `MongoMediaStore(...)` | MongoDB (sha256-addressed manual chunking) | A MongoDB deployment; blobs larger than one BSON document, split so no chunk hits the 16 MiB cap |
+| `PostgresMediaStore(...)` | PostgreSQL (one `BYTEA` row per blob) | A PostgreSQL deployment; blobs up to 1 GB |
 
 `MongoMediaStore` needs the `mongodb` extra (which installs `pymongo>=4.17.0`) and is imported the same way (`from pydantic_ai_harness.media import MongoMediaStore`). It stores each blob as sha256-addressed chunks in a `media_chunks` collection, with a `media` manifest document per blob. The chunking bounds each BSON document, so a blob larger than MongoDB's 16 MiB document cap still stores and reads back; it does not bound memory, since `put` takes the whole payload as `bytes` and `get` reassembles every chunk into one `bytearray` (there is no streaming API). The manifest itself holds `MediaContext.metadata` inline and is not chunked, so keep per-blob metadata small. Manual chunking is used instead of GridFS: it keeps content-addressed dedup (GridFS keys files by `ObjectId` and does none) and stays fully testable in-memory.
 
@@ -52,7 +53,36 @@ pip install "pydantic-ai-harness[mongodb]"
 
 `collection=` (default `'media'`) names the manifest collection and derives the chunk collection as `<collection>_chunks`. `chunk_size_bytes=` (default 8 MiB) sets the split size and is rejected below 1 byte or above 16 MiB minus 64 KiB of headroom for the chunk document's own fields. On the first `put` or `get` the store issues `createIndex` for a compound `(files_id, n)` index on the chunk collection, without which reassembly is a collection scan -- so the connecting user needs the privilege to create indexes, and an already-populated collection pays the index build on that first call.
 
-A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore` and `MongoMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP.
+`PostgresMediaStore` takes a caller-owned asyncpg-compatible pool, described by the `PostgresPool` protocol exported from this package. The harness imports no driver and defines no extra for it: the application installs the driver and owns the pool, and the store does not close it. Each blob is one row in the `media` table (`table=` renames it; names outside `[a-z_][a-z0-9_]*` or longer than 63 characters are rejected, lowercase because PostgreSQL folds unquoted identifiers and `'Media'` would share a table with `'media'`), keyed by its sha256 digest, so a second `put` of the same bytes is a no-op (`ON CONFLICT (sha256) DO NOTHING`). The bytes are one `BYTEA` value, which PostgreSQL caps at 1 GB, and there is no streaming API, so a blob has to fit in process memory in both directions.
+
+uv:
+
+```bash
+uv add asyncpg
+```
+
+pip:
+
+```bash
+pip install asyncpg
+```
+
+On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. The connecting role therefore needs `CREATE` on the schema for that first call. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
+
+```python
+import asyncpg
+
+from pydantic_ai_harness.media import PostgresMediaStore
+
+
+async def build_media_store() -> tuple[PostgresMediaStore, asyncpg.Pool]:
+    pool = await asyncpg.create_pool('postgres://localhost/app')
+    return PostgresMediaStore(pool), pool
+```
+
+Close the returned pool during application shutdown. The store does not manage it.
+
+A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP.
 
 ## Walker helpers
 
@@ -79,7 +109,8 @@ If a payload uses the same namespaced keys as the marker format, the writer move
 | Symbol | Purpose |
 |---|---|
 | `MediaStore` | Async content-addressed store protocol (`put` / `get` / `exists` / `public_url` / `get_metadata`) |
-| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `DiskMediaStore`, `SqliteMediaStore`, `S3MediaStore`, `MongoMediaStore`, `PostgresMediaStore` | Concrete stores (`MongoMediaStore` needs the `mongodb` extra) |
+| `PostgresPool`, `PostgresConnection` | The asyncpg-compatible pool and connection protocols `PostgresMediaStore` accepts |
 | `MediaContext` | Per-call context (e.g. tenant) threaded through store operations |
 | `KeyStrategy`, `default_key_strategy` | On-store key layout |
 | `PublicUrlResolver`, `make_static_public_url` | Resolve a stored URI to a public URL |

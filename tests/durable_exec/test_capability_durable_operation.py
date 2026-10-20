@@ -51,7 +51,8 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
@@ -923,6 +924,25 @@ class UsageOperation(AbstractCapability[Any]):
         ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
 
 
+class ProviderCounterUsageOperation(AbstractCapability[Any]):
+    id = 'provider_counter_usage_operation'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record_usage(ctx)
+
+    @durable_operation('record_usage')
+    async def record_usage(self, ctx: RunContext[Any]) -> None:
+        ctx.usage.incr(
+            RequestUsage(
+                cache_write_tokens=6,
+                cache_write_1h_tokens=4,
+                output_tokens=5,
+                output_reasoning_tokens=3,
+                web_searches=2,
+            )
+        )
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -1209,6 +1229,87 @@ async def test_wrapped_durability_dispatches_capability_operation() -> None:
     assert any(name == 'wrapped_durability__capability__operations.calculate' for name, _ in durability.calls)
 
 
+class ToolCallingOperation(AbstractCapability[Any]):
+    id = 'tool_calling'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any], query: str) -> str:
+        self.calls += 1
+        return f'fetched {query}'
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any], query: str) -> str:
+            return await self.fetch(ctx, query)
+
+        return toolset
+
+
+async def test_operation_called_from_a_wrapped_tool_runs_inside_the_tool_unit() -> None:
+    """The tool's unit already records the result, and engines like AWS Lambda can't nest units."""
+    capability = ToolCallingOperation()
+    durability = RecordingDurability()
+    agent = Agent(TestModel(), name='tool_calling', capabilities=[capability, durability])
+
+    await agent.run('test')
+
+    bound = RecordingDurability.from_agent(agent)
+    assert bound is not None
+    names = [name for name, _ in bound.calls]
+    assert 'tool_calling__function_toolset__tool_calling.call_tool:lookup' in names
+    assert not [name for name in names if '__capability__' in name]
+    assert capability.calls == 1
+
+
+class CallsAnotherCapabilitysOperation(AbstractCapability[Any]):
+    id = 'tool_owner'
+
+    def __init__(self, emitter: EmittingOperation) -> None:
+        self.emitter = emitter
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def checkpoint(ctx: RunContext[Any]) -> str:
+            await self.emitter.checkpoint(ctx)
+            return 'done'
+
+        return toolset
+
+
+async def test_operation_run_inside_another_capabilitys_unit_emits_as_its_own_capability() -> None:
+    """Run inline in another capability's tool unit, the operation runs as its own capability, as in its own unit."""
+    observed: list[str | None] = []
+
+    async def observe(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            if isinstance(event, OperationCheckpointEvent):
+                observed.append(event.capability_id)
+
+    emitter = EmittingOperation()
+    agent = Agent(
+        TestModel(),
+        name='cross_capability_emit',
+        capabilities=[
+            emitter,
+            CallsAnotherCapabilitysOperation(emitter),
+            ProcessEventStream(observe),
+            RecordingDurability(),
+        ],
+    )
+
+    await agent.run('test')
+
+    # Once from `before_run`, outside any unit, and once from the other capability's tool unit.
+    assert observed == ['emitting_operation', 'emitting_operation']
+
+
 @requires_temporal
 def test_wrapped_temporal_durability_registers_capability_operation() -> None:
     agent = Agent(
@@ -1263,6 +1364,27 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+async def test_usage_delta_keeps_every_counter() -> None:
+    """A replayed durable operation's usage reaches the run total with every counter, not only the common ones.
+
+    The operation's usage is recorded as the difference from a snapshot taken before it ran, and a replay
+    applies that delta to the run. So the subtraction has to keep the one-hour cache writes and reasoning
+    tokens, and the counters genai-prices extracts without a declared field, like `web_searches`.
+    """
+    agent = Agent(
+        TestModel(), name='counter_usage', capabilities=[ProviderCounterUsageOperation(), ReplayingDurability()]
+    )
+
+    # The second run replays the operation recorded by the first.
+    results = [await agent.run('test'), await agent.run('test')]
+
+    for result in results:
+        usage = result.usage
+        assert (usage.cache_write_tokens, usage.cache_write_1h_tokens) == (6, 4)
+        assert usage.output_reasoning_tokens == 3
+        assert getattr(usage, 'web_searches', 0) == 2
 
 
 @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
@@ -2092,33 +2214,6 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
 
     assert first == replayed == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
-
-
-@pytest.fixture(scope='module')
-def prefect_test_server() -> Generator[None, None, None]:
-    """Run the module's Prefect flow tests against an isolated test server.
-
-    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
-    connect timeout that flakes on slow CI runners; the test harness gives an isolated
-    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
-
-    Ordering constraint: these tests share the 'prefect' xdist group with
-    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
-    autouse, so once entered it stays entered for the rest of the worker. Today this
-    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
-    so this module-scoped harness enters and exits before that one starts. Renaming either
-    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
-    """
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
 
 
 @requires_prefect
