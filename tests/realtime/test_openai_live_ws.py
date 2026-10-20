@@ -43,7 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -892,7 +892,7 @@ async def test_text_sent_mid_reply_is_answered_by_that_reply(
     messages: list[ModelMessage] = []
     speaking = anyio.Event()
 
-    async def watch(session: Any) -> None:
+    async def watch(session: RealtimeSession) -> None:
         async for event in session:  # pragma: no branch
             if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
                 speaking.set()

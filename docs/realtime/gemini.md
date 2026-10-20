@@ -238,6 +238,15 @@ drop cut off an exchange the resumed session no longer has (see
 - A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
   interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
   reply as interrupted before answering the text turn.
+- `gemini-3.1-flash-live-preview` and `gemini-3.8-live` cut a reply off for text (or a tool result) that
+  reaches them while they generate it, and answer the text in the next turn; 3.1 also cancels the tool calls the
+  cut-off turn was waiting on and makes them again. The cut-off reply answers only what started it, so
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] and
+  [`RealtimeTurnCompleteEvent`](events.md#the-turn-boundary) wait for the reply to the text. These models report
+  where in the audio the user started speaking, which tells a reply the user spoke over apart from one text cut
+  off. Vertex's `gemini-live-2.5-flash` cuts a reply off for text too but doesn't report speech, and the
+  native-audio models finish the reply, so on those a wait for text sent just as a reply began can end with that
+  reply.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).

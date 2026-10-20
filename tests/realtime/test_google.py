@@ -79,6 +79,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     merge_realtime_profile,
 )
+from pydantic_ai.realtime.lifecycle import AnswersRevised
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -984,11 +985,11 @@ def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames:
         ('gemini-3.1-flash-live-preview', True),
         ('gemini-3.8-live', True),
         ('models/gemini-3.8-live-extended-thinking', False),  # not probed
-        ('gemini-live-2.5-flash', True),
+        ('gemini-live-2.5-flash', False),  # cuts a reply off, but doesn't say when speech did
     ],
 )
 def test_profile_input_cuts_off_reply(model_name: str, cuts_off: bool) -> None:
-    # Verified live 2026-10-19: text sent mid-reply cuts the reply off (`interrupted`) on these models only.
+    # Verified live 2026-10-19/20: text sent mid-reply cuts the reply off, and speech that does is reported first.
     assert GoogleRealtimeModel(model_name).profile.get('google_input_cuts_off_reply') is cuts_off
 
 
@@ -4696,3 +4697,62 @@ def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: boo
     """A blocking tool-call frame is answered once; a non-blocking call's result may get its own answer."""
     conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), async_tool_calls=async_tool_calls)
     assert conn._answers_tool_calls_per_response is not async_tool_calls  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('activity', 'released'),
+    [
+        # The user started speaking before the second text went out: that text cut the reply off.
+        (
+            genai_types.VoiceActivity(
+                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='0.5s'
+            ),
+            True,
+        ),
+        (
+            genai_types.VoiceActivity(
+                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='0s'
+            ),
+            True,
+        ),
+        # ...or after both went out, over the reply: the speech did.
+        (
+            genai_types.VoiceActivity(
+                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='2.5s'
+            ),
+            False,
+        ),
+        # With no offset to place it, the speech may have come after them.
+        (genai_types.VoiceActivity(voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START), False),
+        (
+            genai_types.VoiceActivity(
+                voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_END, audio_offset='2.5s'
+            ),
+            True,
+        ),
+    ],
+)
+async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
+    activity: genai_types.VoiceActivity, released: bool
+) -> None:
+    """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off."""
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('Tell me a story.')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(event, AnswersRevised) for event in frame) is released

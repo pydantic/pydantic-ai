@@ -62,8 +62,10 @@ def created(response_id: str | None, *, answers: str | None = None) -> dict[str,
     return {'type': 'response.created', 'response': response}
 
 
-def done(response_id: str | None, *, status: str = 'completed') -> dict[str, Any]:
+def done(response_id: str | None, *, status: str = 'completed', reason: str | None = None) -> dict[str, Any]:
     response: dict[str, Any] = {'object': 'realtime.response', 'status': status, 'output': []}
+    if reason is not None:
+        response['status_details'] = {'type': status, 'reason': reason}
     if response_id is not None:
         response['id'] = response_id
     return {'type': 'response.done', 'response': response}
@@ -1273,7 +1275,7 @@ async def test_input_sent_ahead_of_a_commit_is_placed_by_its_own_acknowledgement
 async def test_a_request_overtaken_by_a_response_the_user_cut_off_is_dropped(refused_first: bool) -> None:
     """The user barged in on the response that overtook our request: their speech takes the turn, as it does from a
     request deferred behind that response, so the request is dropped whenever its refusal comes."""
-    cancelled = done('resp_vad', status='cancelled')
+    cancelled = done('resp_vad', status='cancelled', reason='turn_detected')
     refused = active_refusal('pydantic_ai.response.0')
     stream = Stream(
         *SPOKEN_TURN,
@@ -1286,3 +1288,35 @@ async def test_a_request_overtaken_by_a_response_the_user_cut_off_is_dropped(ref
     assert InputLost(input_ids=(0,)) in events
     assert 'RealtimeSessionErrorEvent' not in events[:-1]
     assert len(requests_sent(stream.ws)) == 1
+
+
+@pytest.mark.parametrize(
+    ('reason', 'asked_again'),
+    [
+        # The user barged in on the response that overtook the request: their speech took the turn.
+        ('turn_detected', False),
+        # Cancelled for another reason (xAI cancels a response of its own to start ours): still owed.
+        (None, True),
+    ],
+)
+async def test_a_reconnect_asks_again_for_an_overtaken_request_unless_the_user_cut_that_response_off(
+    reason: str | None, asked_again: bool
+) -> None:
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        done('resp_vad', status='cancelled', reason=reason),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert bool(requests_sent(replacement)) is asked_again
+    # Lost with the reconnect, or (asked again) with the replacement, which closes before answering.
+    assert InputLost(input_ids=(0,)) in events

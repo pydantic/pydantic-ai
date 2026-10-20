@@ -234,6 +234,15 @@ class GeminiBehavior:
             or self.talks_through_tool_calls
         )
 
+    @property
+    def reports_speech(self) -> bool:
+        """Whether the model reports the user starting to speak (`voice_activity`) before it cuts a reply off for it.
+
+        Seen live on 3.x; Vertex's half-cascade model reports nothing, so a cut-off reply's inputs can't be released
+        there. (A native-audio model running tool calls asynchronously is modeled reporting it, as it cuts off.)
+        """
+        return self.cuts_off_reply and not self.closes_tool_turn_separately
+
 
 @dataclass
 class _Turn:
@@ -267,6 +276,8 @@ class _ServerSession:
     triggers: list[str] = field(default_factory=list[str])
     """Inputs the model will answer on its own next (a typed turn, the user's speech, a batch of results)."""
     audio_ms: int = 0
+    audio_received_ms: int = 0
+    """All the audio the session received, which `voice_activity` offsets point into."""
     user_turn: str | None = None
     async_batches: list[_AsyncBatch] = field(default_factory=list[_AsyncBatch])
 
@@ -351,6 +362,7 @@ class GeminiServer:
     def on_realtime_input(self, session: _ServerSession, audio: gt.Blob | None, video: gt.Blob | None) -> None:
         if audio is not None:
             session.audio_ms += len(audio.data or b'') // 32
+            session.audio_received_ms += len(audio.data or b'') // 32
         else:  # The session streams nothing else as realtime input.
             assert video is not None
             self.truth.add_input((video.data or b'')[-8:].decode(errors='replace'), 'image')
@@ -656,6 +668,16 @@ class GeminiServer:
         session = self.session
         assert session is not None
         key = self.truth.new_user_turn()
+        if self.behavior.reports_speech:
+            self._emit(
+                session,
+                gt.LiveServerMessage(
+                    voice_activity=gt.VoiceActivity(
+                        voice_activity_type=gt.VoiceActivityType.ACTIVITY_START,
+                        audio_offset=f'{session.audio_received_ms / 1000}s',
+                    )
+                ),
+            )
         self._barge_in(session)
         session.audio_ms = 0
         self.truth.add_input(key, 'speech', solicits=True)
@@ -718,7 +740,7 @@ class GeminiSimulation(Simulation):
         # The model that closes its tool-call turn separately is a Vertex AI one; its profile flag is only
         # on for a Vertex AI client, which the simulation doesn't have, so it's set explicitly. So is whether a typed
         # turn cuts the reply off, which the simulated server does for an asynchronous round on any model.
-        profile = GoogleRealtimeModelProfile(google_input_cuts_off_reply=self.behavior.cuts_off_reply)
+        profile = GoogleRealtimeModelProfile(google_input_cuts_off_reply=self.behavior.reports_speech)
         if self.behavior.closes_tool_turn_separately:
             profile['google_closes_tool_call_turn_separately'] = True
         return GoogleRealtimeModel(self.behavior.model, provider=self._provider, profile=profile)
@@ -846,7 +868,11 @@ class GeminiMachine(SessionMachine):  # pragma: lax no cover (driven only by ran
         turn = session.turn
         if turn is not None and turn.generation_done:
             return False
-        return (turn is not None and turn.response is not None and not turn.awaiting) or bool(session.triggers)
+        if turn is not None and turn.awaiting:
+            # The model says nothing more until the calls it waits on are answered: a typed turn a model that doesn't
+            # cut its reply off for it gets meanwhile is answered after them (seen live on the native-audio models).
+            return False
+        return (turn is not None and turn.response is not None) or bool(session.triggers)
 
     def can_call_tools(self) -> bool:
         turn = self.gemini.server.session.turn  # pyright: ignore[reportOptionalMemberAccess]

@@ -65,14 +65,16 @@ does not imply that the turn is done.
 
 The event marks the end of what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
 waits for. When a response ends, the session emits it if the model owes nothing more: no reply to anything
-sent, no answer to a tool's result, and no response still under way. Text sent while the model is answering
-asks for a reply, and only the response that answers it settles that: a response already under way when the
-text reached the provider never saw it. On most providers that is a reply of its own, so the event comes once
-that reply ends too; GPT-Live speaks to text in the reply it is giving, so there that reply answers it. A
-response the user cuts off ends the exchange, as does a response the provider started on its own (server-side
-voice activity detection), but one that text you sent cut off answers only what started it (Gemini Live cuts a
-reply off for text that reaches it mid-generation, and answers the text next). The user's transcript can still
-finish after it.
+sent, no answer to a tool's result, and no response still under way.
+
+Only the response that answers an input settles its reply: a response already under way when the input reached
+the provider never saw it, so it doesn't. Text sent while the model is answering therefore usually gets a reply of
+its own, and the event comes once that reply ends too. How a provider answers such text varies: GPT-Live speaks to
+it in the reply it is giving (see [OpenAI](openai.md#text-is-context-not-a-user-turn)), and some Gemini Live models
+cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
+
+A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
+(server-side voice activity detection). The user's transcript can still finish after it.
 
 ## Reading raw audio events
 

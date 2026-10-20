@@ -195,6 +195,20 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
 )
 
 
+def _cut_off_where_speech_is_unreported(sim: Simulation, violation: InvariantViolation) -> bool:
+    """On Vertex's half-cascade model, the input cut off a reply: it reports no speech, so nothing says it wasn't speech."""
+    behavior = getattr(sim, 'behavior', None)
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return (
+        bool(getattr(behavior, 'closes_tool_turn_separately', False))
+        and input_ is not None
+        and any(
+            response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
+            for response in sim.truth.responses.values()
+        )
+    )
+
+
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
     """A response already under way when the input arrived ended the wait for the input's own reply.
 
@@ -236,17 +250,20 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     title=(
         'where the provider gives no signal, a response it started before an input arrived, but that the client '
         "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
-        'native-audio model (which finishes its reply rather than cutting it off for the input), on ElevenLabs '
+        'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
+        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
         'Agents, and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed '
         'its answer (fixed where the provider says: the OpenAI protocol asks again for a request server VAD '
-        'overtook, Gemini 3.x and Vertex hand an input that cut a reply off to the next, and GPT-Live answers text '
+        'overtook, Gemini 3.x hands an input that cut a reply off to the next, and GPT-Live answers text '
         'in the reply under way)'
     ),
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
     codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
     providers=frozenset({'gpt-live', 'gemini', 'elevenlabs-agents'}),
-    matches=_reply_taken_by_earlier_response,
+    matches=lambda sim, violation: (
+        _reply_taken_by_earlier_response(sim, violation) or _cut_off_where_speech_is_unreported(sim, violation)
+    ),
 )
 
 KNOWN_FINDINGS: list[Finding] = [

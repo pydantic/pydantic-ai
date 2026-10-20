@@ -45,7 +45,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeError, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import (
+    RealtimeError,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+)
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteMessage, RealtimeCassette
@@ -1073,7 +1078,7 @@ async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the
     turns: list[str] = []
     """What the session says, in order: the model's words, and each turn it reports complete."""
 
-    async def watch(session: Any) -> None:
+    async def watch(session: RealtimeSession) -> None:
         async for event in session:  # pragma: no branch
             if isinstance(event, FunctionToolResultEvent):
                 result_sent.set()
@@ -1129,7 +1134,7 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
     said: list[str] = []
     turn_complete = anyio.Event()
 
-    async def watch(session: Any) -> None:
+    async def watch(session: RealtimeSession) -> None:
         async for event in session:  # pragma: no branch
             if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
                 said.append(event.delta.transcript_delta or '')
@@ -1140,7 +1145,9 @@ async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
     async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
         tasks.start_soon(watch, session)
         await session.send('What is the status of my order 4411?')
-        if delay := os.environ.get('GEMINI_CUT_DELAY'):  # pragma: no cover (recording: replay keeps the order)
+        # Recording only: GEMINI_CUT_DELAY spaces the two sends so the text reaches Gemini mid-generation, before the
+        # session reads the tool call; replay keeps the recorded order.
+        if delay := os.environ.get('GEMINI_CUT_DELAY'):  # pragma: no cover
             await anyio.sleep(float(delay))
         await session.send('Also, what is 2 plus 2? Answer with the number.')
         with anyio.fail_after(45):

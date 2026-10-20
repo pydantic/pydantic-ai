@@ -516,12 +516,13 @@ class OpenAIServer:
                 session, _error('server_refused', 'The server refused the response request.', event_id), requested
             )
             return
+        # A race, as below: the session defers requests it knows a response is under way for.
         if (
             session.active is not None
             and self.dialect == 'xai'
             and session.turn_detection is not None
             and session.active.truth.trigger == 'vad'
-        ):  # pragma: lax no cover (a race, as below)
+        ):  # pragma: lax no cover
             # Seen live: xAI cancels a response server VAD started for ours.
             self._finish_active(session, 'cancelled', reason='turn_detected')
         if session.active is not None:  # pragma: lax no cover (a race: the session defers requests it knows about)

@@ -196,13 +196,13 @@ def test_an_input_that_cuts_a_reply_off_is_left_to_the_next() -> None:
 
 
 def test_a_reply_the_user_speaks_over_keeps_every_input_it_answers() -> None:
-    """Audio sent since the inputs went out can be speech that cut the reply off: that is no sign an input did."""
+    """The provider heard the user start speaking after the inputs went out: that cut the reply off, not an input."""
     tracker = _CutOffLifecycle(transcribes=False)
     tracker.input_sent('Tell me a story.')
     tracker.input_sent('What is 2 plus 2?')
     tracker.take_pending()
     tracker.frame_for([OutputTranscript('Once upon')])
-    tracker.input_sent(BinaryAudio(data=b'\x00\x01', media_type='audio/pcm'))
+    tracker.speech_heard()
     assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == []
 
 
@@ -223,13 +223,17 @@ def test_a_cancellation_revises_only_the_response_whose_calls_it_names() -> None
     ]
 
 
-def test_audio_that_never_went_out_is_no_sign_the_user_spoke() -> None:
+def test_a_microphone_streaming_silence_is_no_sign_the_user_spoke() -> None:
+    """Audio going out says nothing: an always-on microphone streams silence through a typed turn too."""
     tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
     tracker.input_sent('Tell me a story.')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
     tracker.input_sent('What is 2 plus 2?')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
     tracker.take_pending()
     tracker.frame_for([OutputTranscript('Once upon')])
-    tracker.input_failed(tracker.input_sent(BinaryAudio(data=b'\x00\x01', media_type='audio/pcm')))
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
     assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
-        AnswersRevised(response_id='pydantic_ai_response_1', released=(1,))
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(3,))
     ]

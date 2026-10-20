@@ -113,6 +113,7 @@ from ._openai_protocol import (
     response_finish_reason,
     response_provider_details,
     response_request_metadata,
+    response_status_reason,
     seed_items,
     tool_choice_config,
     tool_content_item_id,
@@ -1313,9 +1314,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             else:
                 # The user's barge-in takes the turn: no response is requested for them.
                 self._lifecycle.requests_dropped(deferred_answers)
-        if matches_active_response and response.status == 'cancelled' and not was_client_cancel:
-            # Likewise for the request that response overtook, should the provider refuse it on its account. (xAI
-            # cancels a response of its own for ours instead, and starts ours.)
+        if matches_active_response and response_status_reason(response) == 'turn_detected':
+            # The user barged in on it (server VAD's reason): likewise for the request that response overtook,
+            # whether the provider refuses it on that response's account or the connection drops first. (xAI cancels
+            # a response of its own for ours with another reason, and starts ours.)
             self._in_flight_cut_off = self._request_in_flight is not None
         if isinstance(response_id, str) and (batch := self._tool_call_batches.get(response_id)) is not None:
             # No more calls can join the response: its tool results are answered once all are in.
@@ -1385,7 +1387,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._lifecycle.socket_replaced()
         # The new conversation's items have ids of their own, which its replay reports as it adds them.
         self._tool_items.clear()
-        self._in_flight_cut_off = False
         try:
             self._ws = await self._dial()
             # A response the socket dropped before it could complete will never be released by its
@@ -1400,11 +1401,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # barge-in explicitly stopped. Sent inside this guard because the new socket can drop before
             # the frame reaches it, which has to consume an attempt like any other failed reconnect.
             if (in_flight := self._request_in_flight) is not None:
-                # Neither refused nor started on the old socket: asked for again like one deferred.
+                # Neither refused nor started on the old socket: asked for again like one deferred, unless the user
+                # barged in on the response that overtook it (then their speech took the turn, and it is lost).
                 self._request_in_flight = None
-                self._pending_response = True
-                self._deferred_response_inputs[:0] = in_flight[0]
-                self._deferred_response_answers[:0] = in_flight[1]
+                if not self._in_flight_cut_off:
+                    self._pending_response = True
+                    self._deferred_response_inputs[:0] = in_flight[0]
+                    self._deferred_response_answers[:0] = in_flight[1]
+                self._in_flight_cut_off = False
             replay_response = self._pending_response or (
                 self._response_active and not self._response_started and not self._cancel_sent
             )

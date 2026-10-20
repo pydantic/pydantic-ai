@@ -140,8 +140,9 @@ class InferredLifecycle:
 
     The next reply then answers the input, so a reply cut off (`ResponseStarted` through a cancelled `ResponseEnded`)
     answers only the oldest input it was taken to answer, as that one started it, or none if it said nothing; and a
-    reply whose tool calls the provider cancels answers only the oldest too. That is, unless audio went out after
-    those inputs: the user may have spoken over the reply, cutting it off as ever. The rest are released
+    reply whose tool calls the provider cancels answers only the oldest too. That is, unless the provider heard the
+    user start speaking after those inputs went out ([`speech_heard()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.speech_heard]):
+    then the user may have cut the reply off, as ever. The rest are released
     ([`AnswersRevised.released`][pydantic_ai.realtime.lifecycle.AnswersRevised.released]) to the next reply. A
     subclass for a provider that cuts its reply off this way (Gemini Live's 3.x models do) sets it to `True`.
     """
@@ -180,11 +181,8 @@ class InferredLifecycle:
         """The response that ended at each tool call (until the next response starts), and the inputs it answers: its
         reply goes on in the answer to the calls."""
         self._spoken_since = -1
-        """The last audio input sent: the user may have spoken over a reply with it. Only an input sent after it can
-        have cut the reply off (see `inputs_cut_off_replies`). (The provider's transcripts of the user's speech can
-        come long after it, so they don't say when the user spoke.)"""
-        self._spoken_before = -1
-        """What `_spoken_since` was before the latest audio input, should that never go out."""
+        """The last input sent when the provider heard the user start speaking: only an input sent after it can have
+        cut a reply off (see `inputs_cut_off_replies`). (Sending audio says nothing: a microphone streams silence too.)"""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
         self._cut_off = False
@@ -236,7 +234,6 @@ class InferredLifecycle:
         self._inputs += 1
         if isinstance(content, BinaryContent) and content.is_audio:
             self._audio_since_reply = True
-            self._spoken_before, self._spoken_since = self._spoken_since, input_id
             return input_id
         if isinstance(content, CommitAudio):
             # The audio sent since the last turn is one now: it joins the conversation as the commit arrives. (Undone
@@ -297,8 +294,6 @@ class InferredLifecycle:
 
     def input_failed(self, input_id: InputId) -> None:
         """The input never went out (its send raised): forget it."""
-        if self._spoken_since == input_id:
-            self._spoken_since = self._spoken_before
         if (uncommit := self._uncommit) is not None and uncommit.input_id == input_id:
             # A commit that never went out committed nothing.
             self._uncommit = None
@@ -355,6 +350,15 @@ class InferredLifecycle:
         return self._open is not None or bool(self._unanswered) or (turn is not None and not turn.joined)
 
     # --- what the server says ---------------------------------------------------------------------
+
+    def speech_heard(self, *, after: InputId | None = None) -> None:
+        """The provider heard the user start speaking, which may cut a reply off (see `inputs_cut_off_replies`).
+
+        A `RealtimeInputSpeechStartEvent` says so; a connection whose provider reports speech some other way (Gemini
+        Live's `voice_activity`) calls this. `after` is the last input sent before the user started speaking, when the
+        provider says where in the audio that was: by default, every input sent so far.
+        """
+        self._spoken_since = max(self._spoken_since, self._inputs - 1 if after is None else after)
 
     def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame to yield for the codec events one provider message makes, with the lifecycle events around them."""
@@ -574,6 +578,7 @@ class InferredLifecycle:
 
         One it doesn't name starts with its first transcript, which may name it, or at its speech end.
         """
+        self.speech_heard()
         self._announce_committed(before)
         turn = self._turn
         if turn is not None:
