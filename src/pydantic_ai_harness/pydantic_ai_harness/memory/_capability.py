@@ -47,7 +47,8 @@ _DEFAULT_GUIDANCE = (
 
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
-_MEMORY_TAG_RE = re.compile(r'<(?=\s*/?\s*memory\b)', re.IGNORECASE)
+# The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
+_MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
 
