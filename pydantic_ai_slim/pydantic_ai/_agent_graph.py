@@ -2722,10 +2722,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = _merge_consecutive_messages(model.prepare_messages(list(messages), model_request_parameters))
                 request_context.messages = messages
 
-        # `request_limit` was checked once at the start of the step. Token and cost limits apply to every
-        # attempt: an earlier attempt's rejected response has already been counted.
-        ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-        ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
+        # The limits were checked at the start of the step, before the first attempt. A later attempt is checked
+        # against token and cost limits again: an earlier attempt's rejected response has been counted since.
+        if request_context.attempt > 1:
+            ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
