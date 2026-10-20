@@ -77,9 +77,12 @@ def test_mid_conversation_system_prompt_closer_cannot_end_the_block(supports_inl
         ]
     )
 
-    [part] = prepared[2].parts
+    request = prepared[2]
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
     if supports_inline_system_prompts:
-        assert part == SystemPromptPart(content=content, timestamp=part.timestamp)
+        assert isinstance(part, SystemPromptPart)
+        assert part.content == content
     else:
         assert isinstance(part, UserPromptPart)
         assert part.content == snapshot(
