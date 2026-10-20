@@ -110,8 +110,8 @@ value this version does not accept) is read as empty, and `author_capability` an
 kept until you repair or remove it.
 
 Every store over one `directory` in a process shares a lock around each manifest update, so
-agents in the same process do not lose each other's updates. Separate processes are not coordinated: point
-each `directory` at one process at a time.
+agents in the same process do not lose each other's updates. Separate processes are not
+coordinated: point each `directory` at one process at a time.
 
 Capability names are at most 64 lowercase letters, digits, and underscores, starting with a
 letter. Reusing a name replaces the previous capability of that name once the new code
@@ -159,8 +159,9 @@ run, with the agent process's environment and permissions, even when validation 
 rejects the code. If that code blocks, cancelling the run stops waiting for it, but its
 worker thread runs until the code returns and then finishes the write, so code that passes
 validation is still saved and loaded by the next `load_active()`; disable it if you did not
-want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so
-an authored module that blocks also blocks that call.
+want it. Other authoring, listing, and disabling calls are not held up by it.
+`store.load_active()` runs authored code in its calling thread, so an authored module that
+blocks also blocks that call.
 
 To have a person approve authored code before any of it runs, require approval for
 `author_capability` with a

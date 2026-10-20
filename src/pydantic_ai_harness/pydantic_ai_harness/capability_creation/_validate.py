@@ -56,29 +56,30 @@ def _check_model_settings_return(value: object) -> None:
 
 
 def _module_name(path: Path) -> str:
-    """The `sys.modules` key for the authored file at `path`, derived from its resolved path."""
+    """The `sys.modules` key for the authored source at `path`, derived from its resolved path."""
     digest = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
     return f'_authored_capability_{path.stem}_{digest}'
 
 
-def _load_module(path: Path) -> ModuleType:
-    """Execute `path` as a fresh module.
+def _load_module(source: Path, file: Path) -> ModuleType:
+    """Execute the source at `source` as a fresh module saved at `file`.
 
     The source is compiled directly instead of through the import system, so no
     bytecode cache is read or written: re-authoring under the same name always
     runs the new source. `dont_inherit` keeps this module's `__future__` imports
-    out of the authored code.
+    out of the authored code. `__file__` and error messages name `file`, which
+    differs from `source` only while a staged copy is validated.
 
     The module is registered in `sys.modules` because `dataclasses` and Pydantic look
     up a class's module there to resolve string annotations (as under
     `from __future__ import annotations`), during the class body and later. The key
-    is derived from the file's resolved path, so reloading a file replaces its entry
-    instead of adding one.
+    is derived from `source`, so reloading a file replaces its entry instead of
+    adding one.
     """
-    name = _module_name(path)
+    name = _module_name(source)
     module = ModuleType(name)
-    module.__file__ = str(path.resolve())
-    code = compile(path.read_bytes(), str(path), 'exec', dont_inherit=True)
+    module.__file__ = str(file.resolve())
+    code = compile(source.read_bytes(), str(file), 'exec', dont_inherit=True)
     sys.modules[name] = module
     exec(code, module.__dict__)
     return module
@@ -106,21 +107,10 @@ def _find_capability_class(module: ModuleType) -> type[AbstractCapability[object
     return found[0]
 
 
-def load_capability_instance(path: Path) -> AbstractCapability[object]:
-    """Import, construct, and check the authored capability, returning the instance.
-
-    Runs the static getters (`get_instructions`, `get_toolset`, `get_native_tools`,
-    `get_model_settings`, `get_serialization_name`) and checks their returns with
-    the same coercions the agent applies, so a wrong return type fails here instead
-    of crashing the next `agent.run`. The async lifecycle hooks need a live
-    `RunContext` and are not invoked. `SystemExit` raised by the authored code is
-    reported as a validation error rather than ending the process.
-
-    Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
-    instance is accepted by any agent's `capabilities=` parameter.
-    """
+def _construct(source: Path, file: Path) -> AbstractCapability[object]:
+    """Load `source` as the module saved at `file` and run the checks of `load_capability_instance`."""
     try:
-        module = _load_module(path)
+        module = _load_module(source, file)
         cls = _find_capability_class(module)
         instance = cls()
         normalize_instructions(instance.get_instructions())
@@ -135,12 +125,37 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     return instance
 
 
+def load_capability_instance(path: Path) -> AbstractCapability[object]:
+    """Import, construct, and check the authored capability, returning the instance.
+
+    Runs the static getters (`get_instructions`, `get_toolset`, `get_native_tools`,
+    `get_model_settings`, `get_serialization_name`) and checks their returns with
+    the same coercions the agent applies, so a wrong return type fails here instead
+    of crashing the next `agent.run`. The async lifecycle hooks need a live
+    `RunContext` and are not invoked. `SystemExit` raised by the authored code is
+    reported as a validation error rather than ending the process.
+
+    Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
+    instance is accepted by any agent's `capabilities=` parameter.
+    """
+    return _construct(path, path)
+
+
 def validate_capability_file(path: Path) -> str:
     """Run the checks of `load_capability_instance` and return the capability class name.
 
     Nothing from the module is kept, so it is removed from `sys.modules` again.
     """
+    return validate_capability_source(path, file=path)
+
+
+def validate_capability_source(source: Path, *, file: Path) -> str:
+    """Validate the source at `source` as if it were saved at `file`, returning the class name.
+
+    The store validates a staged copy before it replaces `file`; the authored code
+    sees `file` as its `__file__`, as it will once loaded.
+    """
     try:
-        return type(load_capability_instance(path)).__name__
+        return type(_construct(source, file)).__name__
     finally:
-        sys.modules.pop(_module_name(path), None)
+        sys.modules.pop(_module_name(source), None)

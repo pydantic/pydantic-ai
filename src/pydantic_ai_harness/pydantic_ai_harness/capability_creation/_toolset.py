@@ -76,7 +76,11 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(str(exc)) from exc
         if record.last_error is not None:
             # `CapabilityStore.write` saves rejected code elsewhere when it keeps a previous version.
-            kept = f'The previous version of {name!r} is unchanged.\n' if record.module_file != f'{name}.py' else ''
+            kept = (
+                f'The previous version of {name!r} is unchanged.\n'
+                if record.module_file == f'{name}.rejected.py'
+                else ''
+            )
             return (
                 f'Capability {name!r} failed validation: {record.last_error}\n{kept}'
                 'Fix the code and call author_capability again with the same name.'

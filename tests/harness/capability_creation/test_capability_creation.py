@@ -348,6 +348,17 @@ class TestCapabilityStore:
         save_spy.assert_not_called()
         assert sorted(path.name for path in tmp_path.iterdir()) == ['bad.py', 'manifest.json']
 
+    def test_authored_code_sees_its_saved_location(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Code that reads a file next to itself must behave the same when authored as when loaded.
+        (tmp_path / 'data.txt').write_text('FROM_DATA', encoding='utf-8')
+        code = 'from pathlib import Path\nDATA = Path(__file__).with_name("data.txt").read_text()\n' + VALID_CODE
+        store = CapabilityStore(tmp_path)
+        assert store.write('reader', code).last_error is None
+        save_spy = Mock()
+        monkeypatch.setattr(CapabilityStore, '_save_manifest', save_spy)
+        assert len(store.load_active()) == 1
+        save_spy.assert_not_called()
+
     def test_failed_reauthor_of_broken_entry_replaces_it(self, tmp_path: Path) -> None:
         # With no version that passed validation to keep, the new attempt is what gets recorded.
         store = CapabilityStore(tmp_path)

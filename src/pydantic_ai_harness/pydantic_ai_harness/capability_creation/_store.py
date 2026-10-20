@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.capability_creation._validate import (
     CapabilityValidationError,
     load_capability_instance,
-    validate_capability_file,
+    validate_capability_source,
 )
 
 _NAME_RE = re.compile(r'[a-z][a-z0-9_]{0,63}')
@@ -132,13 +132,12 @@ class CapabilityStore:
         live = self.directory / f'{name}.py'
         rejected = self.directory / f'{name}.rejected.py'
         # Authored code runs outside the directory lock, so code that blocks holds up only this call.
-        # The candidate keeps the name `<name>.py`, so errors and `__file__` match the file it becomes.
         staging = Path(tempfile.mkdtemp(dir=self.directory, prefix='.candidate-'))
         candidate = staging / live.name
         try:
             candidate.write_text(code, encoding='utf-8')
             try:
-                class_name, error = validate_capability_file(candidate), None
+                class_name, error = validate_capability_source(candidate, file=live), None
             except CapabilityValidationError as exc:
                 class_name, error = '', str(exc)
             with _directory_lock(self.directory):
