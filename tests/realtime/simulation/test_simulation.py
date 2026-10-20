@@ -845,9 +845,8 @@ def test_known_xai_reopening_a_turn_after_its_own_stop() -> None:
         sim.speech_start()
         sim.speech_stop(commit=False)
         sim.send_audio()
+        # The same item starts again: the lifecycle starts the turn it already placed a second time.
         sim.speech_start()
-        sim.speech_stop()
-        sim.settle()
 
     reproduce('SIM-41', OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
 
