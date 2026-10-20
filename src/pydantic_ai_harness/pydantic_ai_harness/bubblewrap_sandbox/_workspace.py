@@ -125,7 +125,7 @@ for entry do
     f:*.tcshrc)
       [ -e "$path" ] || printf 'source ~/.cshrc\n' > "$path" || [ -f "$path" ] || exit 1 ;;
     f:*)
-      [ -e "$path" ] || : > "$path" || [ -f "$path" ] || exit 1 ;;
+      [ -e "$path" ] || printf '' > "$path" || [ -f "$path" ] || exit 1 ;;
   esac
   refuse_link "$path"
   case $entry in
@@ -152,6 +152,8 @@ file, and `/usr/bin/find` is absolute so a writable `PATH` entry can't supply it
 Another workspace on the same host may create a path between the check and the creation, since each
 workspace (and so each run of the capability) sets up on its own. A failed creation is fine when the
 path is then of the right kind, and every path is checked for a symlink again after it is created.
+Files are made with `printf`, not the special builtin `:`, because a failed redirection of a special
+builtin ends a POSIX shell such as dash before the fallback can run.
 """
 
 

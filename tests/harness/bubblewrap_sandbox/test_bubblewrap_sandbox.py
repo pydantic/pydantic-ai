@@ -434,7 +434,7 @@ async def test_login_paths_created_by_another_workspace_meanwhile_are_accepted(t
     races = {
         '/bin/mkdir -- "$path" ||': '{ /bin/mkdir -- "$path"; /bin/mkdir -- "$path"; } ||',
         f'{tcshrc} ||': f'{{ {tcshrc}; {tcshrc}; }} ||',
-        ': > "$path" ||': '{ : > "$path"; : > "$path"; } ||',
+        'printf \'\' > "$path" ||': '{ printf \'\' > "$path"; printf \'\' > "$path"; } ||',
     }
     workspace = BubblewrapWorkspace(Workspace(_RacedLoginSetup(tools.home, races=races)))
 
