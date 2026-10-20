@@ -6263,6 +6263,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }

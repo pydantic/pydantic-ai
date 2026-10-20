@@ -671,11 +671,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        frontend_messages = self.messages
         if message_history:
             # A client-supplied compaction part would trim the trusted server-side history off the
             # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
             frontend_messages = _drop_compaction_parts(frontend_messages)
+        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
+        # strips unresolved tool calls from the end of the history, and a run without a new prompt
+        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
+        # this call can move an earlier, unchecked response to the end. Do any such change before it.
+        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
