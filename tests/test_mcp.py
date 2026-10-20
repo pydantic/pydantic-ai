@@ -63,6 +63,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import Context, FastMCP
+    from fastmcp.server.dependencies import get_http_request
 
     try:
         from fastmcp.server.tasks import TaskConfig
@@ -1775,6 +1776,96 @@ class TestMCPToolsetIntegration:
         async with toolset:
             with pytest.raises(ToolError):
                 await toolset.direct_call_tool('boom', {})
+
+
+def _asgi_http_client(app: ASGIApp) -> httpx.AsyncClient | httpx2.AsyncClient:
+    """An HTTP client of the family the installed FastMCP is built on, routed to an in-process ASGI app."""
+    if MCP_SDK_V2:
+        return httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+
+
+class TestRunContextAuth:
+    """`auth`/`headers` given as a function of the run context: each run connects as its own user."""
+
+    async def test_auth_function_gives_each_concurrent_run_its_own_session(self):
+        users = ['alice', 'bob', 'carol']
+        arrived = 0
+        all_arrived = anyio.Event()
+        server: FastMCP[None] = FastMCP('auth_echo')
+
+        @server.tool
+        async def whoami(ctx: Context) -> str:
+            # Hold every run's call until all of them are in flight, so the runs overlap.
+            nonlocal arrived
+            arrived += 1
+            if arrived == len(users):
+                all_arrived.set()
+            await all_arrived.wait()
+            return f'{get_http_request().headers["authorization"]} {id(ctx.session)}'
+
+        app = server.http_app()
+        client = _asgi_http_client(app)
+        try:
+            async with app.router.lifespan_context(app):
+                toolset = MCPToolset[str]('http://testserver/mcp', http_client=client, auth=lambda ctx: ctx.deps)
+                agent = Agent(TestModel(call_tools=['whoami']), deps_type=str, toolsets=[toolset])
+                async with agent:
+                    # Entering the agent doesn't connect a toolset that resolves `auth` per run.
+                    assert toolset.is_running is False
+                    with anyio.fail_after(10):
+                        results = await asyncio.gather(*(agent.run('who', deps=user) for user in users))
+        finally:
+            await client.aclose()
+
+        outputs = [json.loads(result.output)['whoami'].split(' ') for result in results]
+        assert [output[:2] for output in outputs] == [['Bearer', user] for user in users]
+        assert len({output[2] for output in outputs}) == len(users)
+
+    async def test_headers_function_is_resolved_into_a_per_run_copy(self):
+        async def headers(ctx: RunContext[str]) -> dict[str, str]:
+            return {'Authorization': f'Bearer {ctx.deps}'}
+
+        toolset = MCPToolset[str]('http://localhost:8000/mcp', headers=headers, id='mcp', max_retries=2)
+        # Settings changed after construction carry over to the run's copy.
+        toolset.max_retries = 3
+        sampling_model = TestModel()
+        toolset.set_sampling_model(sampling_model)
+
+        ctx = RunContext[str](deps='alice', model=TestModel(), usage=RunUsage())
+        run_toolset = await toolset.for_run(ctx)
+
+        assert isinstance(run_toolset, MCPToolset)
+        assert run_toolset is not toolset
+        assert run_toolset.client is not toolset.client
+        assert run_toolset.id == 'mcp'
+        assert run_toolset.max_retries == 3
+        assert run_toolset.sampling_model is sampling_model
+        assert isinstance(run_toolset.client.transport, StreamableHttpTransport)
+        assert run_toolset.client.transport.headers == {'Authorization': 'Bearer alice'}
+        # The copy is the run's own toolset; it isn't copied again.
+        assert await run_toolset.for_run(ctx) is run_toolset
+
+    async def test_toolset_resolving_auth_per_run_only_connects_within_a_run(self, run_context: RunContext):
+        toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'token')
+        async with toolset:
+            assert toolset.is_running is False
+        with pytest.raises(UserError, match='can only connect to the server as part of an agent run'):
+            await toolset.list_tools()
+
+        static_toolset = MCPToolset('http://localhost:8000/mcp', auth='token')
+        assert await static_toolset.for_run(run_context) is static_toolset
+
+    async def test_auth_function_cannot_return_oauth(self, run_context: RunContext):
+        toolset = MCPToolset('http://localhost:8000/mcp', auth=lambda ctx: 'oauth')
+        with pytest.raises(UserError, match='which is only supported as a fixed `auth`'):
+            await toolset.for_run(run_context)
+
+    async def test_auth_function_requires_a_url(self, fastmcp_server: FastMCP[None]):
+        with pytest.raises(ValueError, match='only applies to HTTP transports built from a URL string'):
+            MCPToolset(fastmcp_server, auth=lambda ctx: 'token')
+        with pytest.raises(ValueError, match="Cannot pass 'headers' alongside a pre-built"):
+            MCPToolset(Client(fastmcp_server), headers=lambda ctx: {'Authorization': 'Bearer token'})
 
 
 class TestToolResultMapping:
