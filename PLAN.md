@@ -26,7 +26,7 @@ References use migration head `3f4e3e76` for repository integration and current 
 | [`WorkflowPolicy`, `build_agent`][policy] and [engine import][engine] | Coordinate around repository `Task`/policy composition. Keep public engine/CLAI canonical session and usage reporting. Migration retains `Coder(sub_agents=False)` and custom `Task`. |
 | [Safe outputs][workflow] and [compiled host application][host] | Preserve read-only permissions, detection, host-owned writes, markers, head binding and deduplication. Nonempty output does not prove final review publication. |
 
-Recommend a narrow custom-`Task` adapter to the managed task owner, retaining the current runner/accounting and attaching existing capture/persistence capabilities. Keep review semantics repository-local. Wholesale `SubAgents` adoption would change accounting: managed live shared ceilings differ from `Task` reservations/debit. Prove adapter compatibility first. A missing public primitive requires a separate API decision; add no generic scheduler or public checkpoint/review API.
+Register a narrow managed-task adapter only in CI Review's repository agent composition. Keep shared `cli.task` unchanged for other workflows. Retain its runner/accounting and attach existing capture/persistence capabilities. Keep review semantics repository-local. Wholesale `SubAgents` adoption would change accounting: managed live shared ceilings differ from `Task` reservations/debit. Prove adapter compatibility first. A missing public primitive requires a separate API decision; add no generic scheduler or public checkpoint/review API.
 
 ## Failure matrix
 
@@ -73,7 +73,9 @@ Keep complete baseline coverage: every non-generated changed source file has exa
 
 For a streaming change, one owner can inspect changed implementation, another wire-format compatibility, while the parent prepares cancellation/reproduction checks. Share head-bound source artifacts and prior-thread facts; preserve independent judgments. A shared conclusion cannot satisfy both checks. If no slot is available, queue the question under existing admission.
 
-Consume settled reports while unrelated work continues. Validate coverage/evidence and prepare targeted verification immediately. For each surviving finding, the parent still inspects surrounding source, verifies trigger/reproduction and severity, checks false-positive rules/prior threads, and validates the commentable location. Reuse exact source artifacts/receipts instead of repeating all searches and baseline investigation. Unresolved required independent checks stay pending even when another reviewer agrees.
+For parallel CI Review assignments, launch managed background work and return task receipts instead of holding the parent tool batch open. Attach `DelegationReports` to deliver settled reports into the active parent. Keep the task owner inside the workspace/tool resource lifetime; drain all owned work before releasing resources. Existing slot/request reservations remain held until the child settles.
+
+Consume settled reports while unrelated work continues. Validate coverage/evidence and prepare targeted verification immediately. For each surviving finding, the parent still inspects surrounding source, verifies trigger/reproduction and severity, checks false-positive rules/prior threads, and validates the commentable location. Reuse exact source artifacts/receipts instead of repeating all searches and baseline investigation. Before final output, require all assigned work/checks to settle or record recovery infeasibility, drain remaining tasks and mark gaps incomplete. The root needs this explicit join: managed reports alone do not join root children. Unresolved independent checks stay pending even when another reviewer agrees.
 
 | Before | Proposed behavior |
 |---|---|
@@ -96,7 +98,7 @@ After migration merge and design agreement:
 
 1. Reconcile main, migration and published runtime. Reproduce source-observed failures and relevant hypotheses at the repository boundary. Prove the managed-task adapter before adding machinery.
 2. Add evidence/attempt records using managed identity, capture, step persistence and effect inspection. Validate trust, interrupted updates and duplicate delivery.
-3. Add cause-specific operation repair, steering/resume and residual replacement around custom `Task`. Preserve reservations, spent usage, deadline, provider gates and resource ownership.
+3. Register the adapter only for CI Review; retain shared `cli.task` elsewhere. Add cause-specific repair/resume/replacement, background receipts, parent reports and the final join. Preserve reservations, spent usage, deadline, provider gates and resource ownership.
 4. Update seed/managed review prompts together: replace blanket refusal and wait-for-all; retain baseline coverage, reserves and rigorous verification. Test concern ownership/concurrent preparation.
 5. Validate final review against findings/coverage through existing safe outputs. Inline-only is insufficient. Preserve bot-author restrictions, 30-inline ceiling, markers, head binding and redundant-review/noop policy. Add no GitHub writer.
 6. Run targeted [runner][tests], [headless][headless], delegation/output tests and workflow guard; recompile affected workflows only. Verify eligible deployed execution through host publication before comparing outcomes.
@@ -115,7 +117,7 @@ Use in-process scripted models/tools, injected time, controlled events, temporar
 | Pre-start refusal; reservation later released | No false start/coverage; reconsider only after admission changes and missing work is feasible. |
 | Malformed/omitted/stale/cross-assignment claims | Reject invalid claims, retain valid evidence, recover gaps; successful exit cannot yield approval. |
 | Concurrent/late updates, corrupt store, head change | Isolate attempts, freeze publication input; stale updates cannot overwrite accepted facts. Unknown coverage cannot approve. |
-| Baseline plus independent concern; early settled report | Complete baseline ownership, shared facts/independent judgments; prepare verification before unrelated work settles, without higher concurrency. |
+| Baseline plus independent concern; early settled report | Receipts release the parent batch; reports reach the active parent. Prepare verification before unrelated work settles without higher concurrency; final output joins required work. |
 | Disproved candidate or unfinished verification | Discard false positive; keep unresolved proof/checks pending and recover when feasible. No unverified findings. |
 | Repeated activity without evidence progress | Diagnose/change next action; never reward elapsed time or blindly repeat. |
 | Recovery infeasible, with/without verified HIGH/CRITICAL | Name all unreviewed files/required checks. Verified HIGH/CRITICAL requires `REQUEST_CHANGES`; otherwise `COMMENT`, never approval, subject to bot-author restrictions. |
