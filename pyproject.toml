@@ -488,6 +488,7 @@ xfail_strict = true
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
+    "render_live: runs against a real Render sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "temporal: starts or connects to a local Temporal dev server",

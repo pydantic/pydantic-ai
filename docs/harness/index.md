@@ -36,7 +36,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, or Sprites); see [Workspaces](#workspaces).
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Render, or Sprites); see [Workspaces](#workspaces).
 
 With [Modal](modal-sandbox.md), for example:
 
@@ -134,6 +134,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Shell](shell.md) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
 | [Modal Sandbox](modal-sandbox.md) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](e2b-sandbox.md) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
+| [Render Sandbox](render-sandbox.md) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](sprites-sandbox.md) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
