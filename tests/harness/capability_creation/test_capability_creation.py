@@ -588,7 +588,9 @@ class TestCapabilityStore:
         store.write('marker', VALID_CODE)
         (tmp_path / 'marker.py').unlink()
         assert store.load_active() == []
-        assert store.list_all()[0].last_error is not None
+        last_error = store.list_all()[0].last_error
+        assert last_error is not None
+        assert last_error.startswith('FileNotFoundError: ')
 
     def test_load_active_persists_new_error(self, tmp_path: Path) -> None:
         # A capability that validated once but later fails to load gets its error

@@ -185,7 +185,9 @@ class CapabilityStore:
         skipped, not raised. A load outcome that disagrees with the record's
         `last_error` is persisted back to the manifest: a newly broken entry records
         its error, a re-fixed entry clears it, so the manifest stays truthful about
-        which capabilities are actually active.
+        which capabilities are actually active. An outcome is dropped when the entry
+        or its source was rewritten while it was loading, keeping the newer write's
+        state.
         """
         manifest = self._load_manifest()
         instances: list[AbstractCapability[object]] = []
