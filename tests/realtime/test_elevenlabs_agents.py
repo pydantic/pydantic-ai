@@ -2229,6 +2229,126 @@ async def test_interruption_during_playback_does_not_taint_the_next_turn() -> No
     ]
 
 
+# One agent turn with two messages, as recorded live on an agent that speaks before calling a tool: what it says
+# before the call, then its answer to the result, each with its own `response_id` under the turn's `event_id`.
+_SPOKEN_BEFORE_THE_CALL = [
+    {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+    {
+        'type': 'agent_response',
+        'agent_response_event': {
+            'agent_response': 'I am now going to check the weather in Berlin for you.',
+            'event_id': 10,
+            'response_id': 'resp_before_call',
+            'in_response_to_ids': ['user_1'],
+        },
+    },
+    {
+        'type': 'client_tool_call',
+        'client_tool_call': {
+            'tool_name': 'get_weather',
+            'tool_call_id': 'call_1',
+            'parameters': {'city': 'Berlin'},
+            'event_id': 10,
+            'expects_response': True,
+        },
+    },
+    {
+        'type': 'agent_tool_response',
+        'agent_tool_response': {'tool_name': 'get_weather', 'tool_call_id': 'call_1', 'event_id': 10},
+    },
+]
+
+
+def _correction(response_id: str, original: str, corrected: str) -> dict[str, Any]:
+    return {
+        'type': 'agent_response_correction',
+        'agent_response_correction_event': {
+            'original_agent_response': original,
+            'corrected_agent_response': corrected,
+            'event_id': 10,
+            'response_id': response_id,
+        },
+    }
+
+
+_CUT_BEFORE_THE_CALL = _correction(
+    'resp_before_call', 'I am now going to check the weather in Berlin for you.', 'I am now going to...'
+)
+"""Recorded live: a barge-in while the message before the call plays cuts it down to what was heard."""
+
+
+async def test_a_correction_of_an_earlier_message_leaves_the_reply_being_voiced_to_its_own() -> None:
+    """A barge-in corrects every message of the turn the user didn't hear in full, each by its `response_id`.
+
+    Recorded live: the message the user was hearing is cut down to what they heard, and the answer after the tool
+    call, voiced but never heard, is corrected to `''`. The answer, still being voiced (no `context_usage` marks its
+    last audio), ends with its own correction, not with the earlier message's. A unit test rather than a recording:
+    the barge-in has to land in the second after the reply's last audio arrives, which a live run can't time.
+    """
+    answer = 'It is sunny and 21 degrees in Berlin.'
+    events, _ = await _events(
+        [
+            *_SPOKEN_BEFORE_THE_CALL,
+            {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': answer, 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            {'type': 'interruption', 'interruption_event': {'event_id': 47}},
+            _CUT_BEFORE_THE_CALL,
+            _correction('resp_answer', answer, ''),
+        ]
+    )
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(text='I am now going to check the weather in Berlin for you.', is_final=True),
+        ResponseDone(provider_response_id='resp_before_call', provider_details=_CONVERSATION),
+        ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city":"Berlin"}', response_usage_follows=True),
+        SessionUsage(usage=RequestUsage(), response_scoped=True),
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(text=answer, is_final=True),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(
+            interrupted=True,
+            provider_response_id='resp_answer',
+            provider_details={'corrected_agent_response': '', **_CONVERSATION},
+        ),
+    ]
+
+
+async def test_a_correction_of_an_earlier_message_ends_the_streamed_reply_without_its_text() -> None:
+    """A barge-in while the answer after a tool call streams (recorded live, with text parts in `client_events`).
+
+    The answer never gets its `agent_response`, and the one correction names the message before the call, so the
+    answer ends as interrupted, without that message's text as its own.
+    """
+    events, _ = await _events(
+        [
+            *_SPOKEN_BEFORE_THE_CALL,
+            {
+                'type': 'agent_chat_response_part',
+                'text_response_part': {'text': '', 'type': 'start', 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            {
+                'type': 'agent_chat_response_part',
+                'text_response_part': {
+                    'text': 'The weather in Berlin is',
+                    'type': 'delta',
+                    'event_id': 10,
+                    'response_id': 'resp_answer',
+                },
+            },
+            {'type': 'interruption', 'interruption_event': {'event_id': 43}},
+            _CUT_BEFORE_THE_CALL,
+        ]
+    )
+    assert events[-3:] == [
+        OutputTranscript(text='The weather in Berlin is', is_final=False),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(interrupted=True, provider_details=_CONVERSATION),
+    ]
+
+
 async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None:
     # `parameters` arrives as a parsed object; the codec's `args` is a string, so it is re-serialized.
     events, _ = await _events(
