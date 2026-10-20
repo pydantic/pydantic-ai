@@ -969,3 +969,195 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(third)
     assert not lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+# The frames below are cut from live probes of OpenAI's and Azure's GA API under server VAD (October 2026): a commit
+# of ours went out at the moment marked, and the frames are those the server sent, in order, with their ids
+# shortened. Under server VAD, the provider commits only speech its VAD heard: VAD's own commit always comes right
+# after the `speech_stopped` for its item, and the acknowledgement of a commit of ours never does.
+
+
+def speech_started(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}
+
+
+def speech_stopped(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 4992}
+
+
+def audio_committed(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None}
+
+
+def audio_item_added(item_id: str) -> dict[str, Any]:
+    return {
+        'type': 'conversation.item.added',
+        'item': {'id': item_id, 'type': 'message', 'role': 'user', 'content': [{'type': 'input_audio'}]},
+    }
+
+
+def commit_empty(event_id: str | None) -> dict[str, Any]:
+    return {
+        'type': 'error',
+        'error': {
+            'type': 'invalid_request_error',
+            'code': 'input_audio_buffer_commit_empty',
+            'message': 'Error committing input audio buffer: buffer too small.',
+            'event_id': event_id,
+        },
+    }
+
+
+_AUDIO = BinaryAudio(data=b'\x01\x00' * 2_400, media_type='audio/pcm')
+
+
+def turn_events(events: list[LifecycleEvent | str]) -> list[LifecycleEvent | str]:
+    return [
+        event for event in events if isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnClosed, InputAdded))
+    ]
+
+
+async def test_vad_commit_and_a_refusal_naming_ours_leave_our_mid_speech_commit_waiting() -> None:
+    """`race_then_speech`: a commit sent as VAD stopped (refused as empty, naming it), the user speaking on, a second
+    commit mid-speech, and the session closing before that one's acknowledgement (`committed` for the new turn) is
+    read. VAD's commit acknowledges neither of ours, and the refusal takes back the commit it names, so the second
+    is still waiting: it ends the turn under way."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        commit_empty('pydantic_ai.commit.1'),
+        speech_started('item_y'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert [json.loads(sent).get('event_id') for sent in stream.ws.sent if 'commit' in sent] == snapshot(
+        ['pydantic_ai.commit.1', 'pydantic_ai.commit.3']
+    )
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+        ]
+    )
+
+
+async def test_a_refusal_naming_no_commit_of_ours_takes_back_the_oldest() -> None:
+    """A provider that echoes no id of ours (or none at all) refuses its oldest commit not acknowledged: the one sent
+    as VAD stopped, so the one mid-speech still ends the turn under way."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        commit_empty(None),
+        speech_started('item_y'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+        ]
+    )
+
+
+async def test_an_unacknowledged_commit_under_vad_with_no_speech_under_way_makes_no_turn() -> None:
+    """`after_commit`: VAD committed the turn (and started its reply), then a commit of ours went out of the audio
+    streamed after it: silence, which the provider refuses as empty. The session closing before the refusal is read
+    records no turn for it."""
+    stream = Stream(speech_started('item_x'), speech_stopped('item_x'), audio_committed('item_x'), created('resp_1'))
+    await stream.connection.send(_AUDIO)
+    assert turn_events(await stream.take(5)) == snapshot(
+        [UserTurnStarted(turn_id='item_x'), UserTurnEnded(turn_id='item_x')]
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot([])
+
+
+async def test_a_commit_mid_speech_is_acknowledged_with_the_turn_under_way() -> None:
+    """`mid_speech`: our commit commits the turn VAD heard start (no `speech_stopped` before its `committed`), and VAD
+    goes on with a new item, which it stops and commits itself, never having reported its start."""
+    stream = Stream(
+        speech_started('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        speech_stopped('item_z'),
+        audio_committed('item_z'),
+        audio_item_added('item_z'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_z'),
+            UserTurnEnded(turn_id='item_z'),
+        ]
+    )
+    assert not stream.connection._lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_commit_as_new_speech_starts_is_acknowledged_with_it() -> None:
+    """`onset`: VAD committed the turn, our commit went out as the user started again, and the provider reports that
+    speech starting and commits it for ours; VAD then commits the rest itself."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        speech_started('item_y'),
+        audio_committed('item_y'),
+        audio_item_added('item_y'),
+        speech_stopped('item_z'),
+        audio_committed('item_z'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+            UserTurnStarted(turn_id='item_z'),
+            UserTurnEnded(turn_id='item_z'),
+        ]
+    )
+    assert not stream.connection._lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_input_sent_ahead_of_a_commit_is_placed_by_its_own_acknowledgement_after_a_vad_commit() -> None:
+    """VAD's commit comes before the acknowledgement of a text input sent ahead of our commit: the provider had the
+    input after it committed the turn (it acknowledges each in order), so the input follows the reply VAD started."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        created('resp_1'),
+        user_message_added(),
+        commit_empty('pydantic_ai.commit.2'),
+    )
+    await stream.connection.send(TextContext('Some context.'))
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, (UserTurnEnded, InputAdded, ResponseStarted))] == snapshot(
+        [
+            UserTurnEnded(turn_id='item_x'),
+            ResponseStarted(response_id='resp_1', user_turn_id='item_x'),
+            InputAdded(input_id=0),
+        ]
+    )

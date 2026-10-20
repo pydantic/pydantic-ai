@@ -12,7 +12,8 @@ the session, each observed live:
 - server VAD cancels the active response when the user starts speaking (`interrupt_response`), and
   commits the user's audio item, and asks for a response on its own (`create_response`), when they stop;
 - the input transcript arrives on its own schedule, often after the response it prompted;
-- an empty `input_audio_buffer.commit` is refused;
+- an empty `input_audio_buffer.commit` is refused, echoing its `event_id`, and so is one under server VAD with no
+  speech heard (xAI ignores a commit under server VAD altogether);
 - a dropped connection loses whatever was in flight; a re-dial starts a fresh server session, with an
   empty conversation (a tool output for a call it never made is refused) that the client replays history into.
 
@@ -110,7 +111,7 @@ class ServerSession:
     """The user turn server VAD currently hears, if any."""
     stopped_uncommitted: str | None = None
     """xAI: the user turn its VAD heard stop and hasn't committed yet. Speech heard before it does re-opens that
-    same turn (recorded: `sim40/xai_race_then_speech.jsonl`, SIM-41)."""
+    same turn (recorded in a live xAI probe, October 2026: SIM-41)."""
     pending_transcripts: list[str] = field(default_factory=list[str])
     pending_vad_responses: list[str] = field(default_factory=list[str])
     """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
@@ -369,10 +370,21 @@ class OpenAIServer:
         if self._xai_ptt(session):
             self._xai_ptt_commit(session, frame.get('event_id'), answer=True)
             return
-        if session.audio_ms <= 0:
+        if self.dialect == 'xai' and session.server_vad:
+            # Checked live: under server VAD, xAI ignores a commit altogether (no acknowledgement, no error) and
+            # commits only what its VAD hears.
+            return
+        if session.audio_ms <= 0 or (session.server_vad and session.speaking is None):
+            # Checked live: under server VAD, OpenAI and Azure commit only speech their VAD heard start, and refuse
+            # a commit of anything else as empty (after VAD committed the turn, or of the silence after it). The
+            # error echoes the commit's `event_id`.
             self._emit(
                 session,
-                _error('input_audio_buffer_commit_empty', 'Error committing input audio buffer: buffer too small.'),
+                _error(
+                    'input_audio_buffer_commit_empty',
+                    'Error committing input audio buffer: buffer too small.',
+                    frame.get('event_id'),
+                ),
             )
             return
         self._commit_user_turn(session)

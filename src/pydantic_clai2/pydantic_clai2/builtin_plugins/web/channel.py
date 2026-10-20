@@ -131,6 +131,7 @@ class SessionChannel:
             context_tokens=status.context_tokens,
             context_window=status.context_window,
             cost=None if status.cost is None else str(status.cost),
+            cost_is_lower_bound=status.cost_is_lower_bound,
             streamed_tokens=math.ceil(status.streamed_chars / 4),
             output_tokens=status.output_tokens,
             run=None if self._usage is None else usage_info(self._usage),
