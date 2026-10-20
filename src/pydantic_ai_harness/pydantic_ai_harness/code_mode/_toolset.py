@@ -8,6 +8,7 @@ import math
 import re
 import warnings
 from collections.abc import Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
@@ -1059,9 +1060,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_code_tool = self._as_run_code_tool(tool)
         if run_code_tool is None:
             # Native (non-sandboxed) tool -- pass through to the wrapped toolset.
-            if self.speculation is None:
-                return await self.wrapped.call_tool(name, tool_args, ctx, tool)
-            with self.speculation.unsafe_call():
+            with self.speculation.unsafe_call() if self.speculation is not None else nullcontext():
                 return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
         code = tool_args['code']
@@ -1189,12 +1188,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             sees it at the `await` site.
             """
             execution.nested_calls[call_part.tool_call_id] = call_part
+            guard: AbstractContextManager[None] = nullcontext()
             if speculation is not None and speculation.eligible(sandbox_name):
                 await speculation.report_miss(ctx, execution, sandbox_name, call_part)
             elif speculation is not None:
-                with speculation.unsafe_call():
-                    return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
-            return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
+                guard = speculation.unsafe_call()
+            with guard:
+                return execution.finish(call_part, await run_nested_call(tool_manager, call_part))
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
