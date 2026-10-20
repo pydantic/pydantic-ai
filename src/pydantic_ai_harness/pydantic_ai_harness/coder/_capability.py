@@ -25,6 +25,10 @@ FILE_TOOL_NAMES: tuple[str, ...] = ('read_file', 'write_file', 'edit_file', 'lis
 
 
 class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
+    # Clears the class-level default id `ToolOutputLimits` declares, so a `ToolOutputLimits` bound next
+    # to `Coder` is not combined into this one; `Coder` passes its own id when it constructs it.
+    id: str | None = None
+
     def get_toolset(self) -> None:
         """Coder uses bounded truncation, so no spill-retrieval tool is needed."""
         return None
