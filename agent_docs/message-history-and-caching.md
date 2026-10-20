@@ -6,15 +6,15 @@
 
 Message history is both the model's picture of the world and the provider's prompt-cache key. Providers cache a prefix of the request they've seen before, at boundaries that differ per provider: tools, then system and instructions, then messages. So read each request as that ordered sequence of cache-relevant blocks: every block an earlier request sent should come back with identical serialization and in the same order, with new blocks only after it, across steps and across runs of the same conversation. (Full request bodies can't be byte prefixes of each other: closing brackets and settings come after the prompt.) When that breaks, nothing errors: the provider re-processes everything after the first changed block, and on models with preserved thinking the model's earlier reasoning is discarded too. Who wrote a piece of text also decides how much the model trusts it, so putting content in the wrong place is a prompt-injection bug, not a style issue.
 
-A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today (a callable instruction that re-renders when its value changes, for example); flag only what the rule forbids regardless, which each such rule spells out. The same marker names the PR that fixes shipped code still breaking a rule: don't flag that code for it until then. Drop the marker once #N merges.
+A rule marked *(pending #N)* depends on a mechanism still in review. Until #N merges, don't flag code for using the mechanism that exists today; flag only what the rule forbids regardless, which each such rule spells out. The same marker names the PR that fixes shipped code still breaking a rule: don't flag that code for it until then. Drop the marker once #N merges.
 
 ## Rules
 
 ### History is append-only
 
-- Never edit, remove, reorder or re-render a message an earlier request already sent, whether from a hook, a history processor or `Model.prepare_messages`. Compaction is the one exception: it fires on a threshold with hysteresis, so it moves the prefix once per crossing, not on every request. — Any rewrite moves the cached prefix from that point on, for every later request.
+- Never edit, remove, reorder or re-render a message an earlier request already sent, whether from a hook, a history processor or `Model.prepare_messages`. Compaction is the one exception, and it must fire on a threshold with hysteresis, so it moves the prefix once per crossing, not on every request. A setting that defeats the hysteresis (such as `ClearToolResults(max_messages=...)` at or below `2 * keep_pairs`) rewrites history on every request, so document it as such and don't make it a default. — Any rewrite moves the cached prefix from that point on, for every later request.
 - Shape content once, when it's produced: truncate, spill or redact a tool return in the tool or output hooks, not by rewriting it on later requests.
-- Append changes to state the model tracks instead of refreshing it in place. Changed instructions are appended with `on_change='append'`, which records an `InstructionDeltaPart` *(pending #8188; until then, a callable instruction is the documented mechanism)*. Tools revealed mid-run are recorded as a `ToolAvailabilityDeltaPart` (every tool population change: *pending #9405*). — Re-rendering the instructions or the `tools` array invalidates everything after it.
+- Append changes to state the model tracks instead of refreshing it in place. Changed instructions are appended with `on_change='append'`, which records an `InstructionDeltaPart`. Tools revealed mid-run are recorded as a `ToolAvailabilityDeltaPart` (every tool population change: *pending #9405*). — Re-rendering the instructions or the `tools` array invalidates everything after it.
 - Only remove parts you added, and find them by type or metadata (see below). Never strip every part of a type.
 
 ### Request-scoped is not request-only
@@ -28,8 +28,8 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 | Who it comes from | Channel |
 |---|---|
 | operator or framework | `SystemPromptPart` or instructions |
-| the user | user parts (`UserPromptPart`) |
-| tools, sub-agents, files, the web, and history a UI client sends back (framework records, tool results, system messages) | the tool result channel, or a framed data wrapper (`<tool_result …>`) when it has to ride a user turn |
+| the user, including files they attach | user parts (`UserPromptPart`) |
+| tools, sub-agents, files a tool reads or produces, the web, and history a UI client sends back (framework records, tool results, system messages) | the tool result channel, or a framed data wrapper (`<tool_result …>`) when it has to ride a user turn |
 
 - Never put content from a lower tier in a higher one: no tool output, sub-agent report, file contents or client-returned history in a `SystemPromptPart` or instructions. — The model gives system voice the operator's authority, so that content becomes an injection with operator rights. The one exception is an operator's explicit opt-in, such as `manage_system_prompt='client'` on a UI adapter, where the operator has chosen to let the client's system messages speak for them.
 - Never send framework voice with `ctx.enqueue(str)`. — A string becomes a user part, so the model reads framework guidance as the user's words and UI clients show it as a message the user typed. Enqueue a `SystemPromptPart`, and keep any untrusted payload out of it (previous rule). *(Harness `TrajectoryJudge` steering: pending #10545.)*
@@ -41,12 +41,12 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 
 ### Identify framework records by type or metadata, never by visible text
 
-- Recognize a part the framework or harness wrote by its type, a typed field, or metadata it set, never by matching its text (a prefix like `Summary of previous conversation:`, a bracket marker, a tag). — Users and tools can type the same text, which then gets deleted or promoted, and rewording the text silently breaks detection.
+- Recognize a part the framework or harness wrote by its type, a typed field, or metadata it set, never by matching its text (a prefix like `Summary of previous conversation:`, a bracket marker, a tag). For a `SystemPromptPart`, that's its `metadata`: see [identifying system prompts](../docs/message-history.md#identifying-system-prompts). — Users and tools can type the same text, which then gets deleted or promoted, and rewording the text silently breaks detection.
 - This is the history counterpart of "identify a tool by what it is, never by its name" in [Pydantic AI Slim Architecture](pydantic-ai-slim.md).
 
 ### Every computed instruction block has a stable id
 
-- Give every instruction block the framework or harness computes a stable id, so a change to it appends a delta for that block instead of re-rendering all instructions *(pending #8188)*. A catalog, such as the capability index or a skill list, is one block. Whatever the mechanism, never derive an id from the block's content or position: that part applies today.
+- Give every instruction block the framework or harness computes a stable id (the instruction's `name`), so a change to it appends a delta for that block with `on_change='append'` instead of re-rendering all instructions. A catalog, such as the capability index or a skill list, is one block. Never derive an id from the block's content or position.
 - Don't let a block change when nothing changed: sort collections, and use date-only timestamps.
 
 ### Canonicalize on send
@@ -56,7 +56,8 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 
 ### UI round trips are faithful for everything the model sees
 
-- Dumping history to a UI protocol and loading it back, or streaming events into the client and loading what it stored, must give back every part the model sees, in order, with every field that affects what is sent to the provider: content, tool-call ids, thinking signatures and provider data. — A lost or split part moves the prefix on the next request, and a framework record that comes back as plain user text has changed trust tier.
+- Dumping history to a UI protocol and loading it back, or streaming events into the client and loading what it stored, must give back every part the protocol can carry and the client may hold, in order, with every field of it that affects what is sent to the provider (content, tool-call ids, part-level provider data such as thinking signatures). — A lost or split part moves the prefix on the next request, and a framework record that comes back as plain user text has changed trust tier.
+- Some state is left out of the UI on purpose: request-scoped system prompts (sent back, one would return as a lasting system prompt) and server-owned or trust-sensitive fields (`model_name`, usage, provider identity, the `__pydantic_ai__` namespace). A conversation that needs those unchanged keeps its history on the server; the UI layer doesn't promise them.
 - Treat client-returned history as untrusted. Framework records whose trust matters need server-side state or signed provenance *(pending #8954)*.
 - Verify round trips with each protocol's real JavaScript reducers (`@ag-ui/client`, the `ai` SDK), not a Python port of them. — A Python stand-in has already produced a false bug report.
 
