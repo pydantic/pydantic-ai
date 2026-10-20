@@ -82,6 +82,25 @@ def test_codec_contract_violation_is_reported() -> None:
             sim.check()
 
 
+def test_a_reply_settled_by_a_response_that_never_saw_the_input_is_reported() -> None:
+    """The session must settle an input with its own answer, not a response the server started before it had it."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.send_text(respond=False)
+        session = sim.session
+        assert session is not None
+        (text,) = [input_ for input_ in sim.truth.inputs if input_.kind == 'text']
+        assert text.client_index is not None
+        # What a connection that took the provider's reply for the text's would make the session do.
+        session._core._answered_by[text.client_index] = 'resp_1'  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(
+            InvariantViolation, match=r"\[obligation\.misattributed\] 't1' is settled by resp_1, which the server"
+        ):
+            sim.check()
+
+
 def test_reconnect_without_replay_loses_the_history() -> None:
     """A re-dial the session doesn't replay history into starts a conversation that knows nothing said before."""
     with OpenAISimulation(strict=True) as sim:
