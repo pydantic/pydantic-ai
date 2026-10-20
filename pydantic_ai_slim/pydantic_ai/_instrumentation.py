@@ -507,8 +507,8 @@ def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[s
         if isinstance(MCPToolset, type):
 
             def collect_mcp_toolset(child: AbstractToolset[Any]) -> None:
-                if isinstance(child, MCPToolset) and child._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
-                    identities.add(child._telemetry_url_derived_id)  # pyright: ignore[reportPrivateUsage]
+                if isinstance(child, MCPToolset) and (identity := getattr(child, '_telemetry_url_derived_id', None)):
+                    identities.add(identity)
 
             toolset.apply(collect_mcp_toolset)
     return identities
@@ -527,7 +527,7 @@ def mcp_telemetry_url_tool_names(tools: Mapping[str, ToolsetTool[AgentDepsT]] | 
                     tool = tool.source_tool
 
                 def collect_mcp_toolset(child: AbstractToolset[AgentDepsT]) -> None:
-                    if isinstance(child, MCPToolset) and child._telemetry_url_derived_id:  # pyright: ignore[reportPrivateUsage]
+                    if isinstance(child, MCPToolset) and getattr(child, '_telemetry_url_derived_id', None):
                         names.add(name)
 
                 tool.toolset.apply(collect_mcp_toolset)
