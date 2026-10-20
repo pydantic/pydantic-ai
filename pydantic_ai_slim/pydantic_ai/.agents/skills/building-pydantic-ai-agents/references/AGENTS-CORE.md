@@ -109,6 +109,7 @@ Use a durable operation for instruction callbacks that read external state durin
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
+So do MCP server instructions from an `MCPToolset(..., id=..., include_instructions=True)`, keyed `toolset:<id>`; only enable `include_instructions` for servers you trust.
 
 ## Define Agents Declaratively with Specs
 

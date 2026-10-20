@@ -46,6 +46,13 @@ def make_contribution(
     return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
 
 
+def framework_appended_instruction_ids(toolset: AbstractToolset[AgentDepsT]) -> set[InstructionId]:
+    """The ids of blocks under `toolset` that append by the framework's choice rather than their author's."""
+    ids: set[InstructionId] = set()
+    toolset.apply(lambda leaf: ids.update(leaf._framework_appended_instruction_ids()))  # pyright: ignore[reportPrivateUsage]
+    return ids
+
+
 async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:

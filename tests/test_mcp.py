@@ -34,9 +34,13 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    InstructionDeltaPart,
+    InstructionId,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SpeechPart,
@@ -44,10 +48,13 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetInstructionSource,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import CombinedToolset
+from pydantic_ai.toolsets._instruction_collection import framework_appended_instruction_ids
 from pydantic_ai.usage import RunUsage
 
 from .conftest import IsStr, try_import
@@ -803,6 +810,129 @@ class TestMCPToolsetIntegration:
         assert part is not None
         assert part.content == 'You are an MCP test server.'
         assert part.dynamic is False
+        # Without an `id` there's nothing to address the block by, so it keeps rewriting the prefix.
+        assert part.on_change == 'rewrite'
+
+    async def test_get_instructions_append_with_an_id(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server, id='docs', include_instructions=True)
+        async with toolset:
+            part = await toolset.get_instructions(run_context)
+        assert part is not None
+        assert part.on_change == 'append'
+        assert part.dynamic is False
+
+    async def test_server_instructions_keep_the_prefix_and_append_changes_after_a_reconnect(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """Unchanged server instructions send a byte-identical prefix, and new ones after a reconnect append."""
+        prefixes: list[str | None] = []
+        sent: list[list[bytes]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            sent.append([ModelMessagesTypeAdapter.dump_json([message]) for message in messages])
+            return ModelResponse(parts=[TextPart('done')])
+
+        toolset = MCPToolset(fastmcp_server, id='docs', include_instructions=True)
+        agent = Agent(FunctionModel(model_fn), toolsets=[toolset])
+
+        history: list[ModelMessage] = []
+        deltas: list[list[tuple[str, str | None]]] = []
+        for instructions in [
+            'You are an MCP test server.',
+            'You are an MCP test server.',
+            'Prefer `add` over mental arithmetic.',
+        ]:
+            # Each run connects anew, so the server's current instructions are read every time.
+            fastmcp_server.instructions = instructions
+            result = await agent.run('Continue.', message_history=history)
+            assert toolset.is_running is False
+            history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+            deltas.append(
+                [
+                    (str(part.id), part.content)
+                    for message in result.new_messages()
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, InstructionDeltaPart)
+                ]
+            )
+
+        assert deltas == [[], [], [('toolset:docs', 'Prefer `add` over mental arithmetic.')]]
+        assert prefixes[0] == snapshot("""\
+<context id="toolset:docs">
+You are an MCP test server.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+        # The changed instructions don't touch the prefix or anything sent before them.
+        assert prefixes == [prefixes[0]] * 3
+        for previous, current in zip(sent, sent[1:]):
+            assert current[: len(previous)] == previous
+
+    async def test_server_instructions_without_an_id_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
+        prefixes: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model_fn), toolsets=[MCPToolset(fastmcp_server, include_instructions=True)])
+
+        history: list[ModelMessage] = []
+        for instructions in ['First instructions.', 'Second instructions.']:
+            fastmcp_server.instructions = instructions
+            history = (await agent.run('Continue.', message_history=history)).all_messages()
+
+        assert prefixes == ['First instructions.', 'Second instructions.']
+        assert not any(
+            isinstance(part, InstructionDeltaPart)
+            for message in history
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
+    async def test_server_instructions_in_a_deferred_capability_do_not_warn(self, fastmcp_server: FastMCP[None]):
+        """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly."""
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'docs'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        capability = Capability[None](
+            id='docs',
+            defer_loading=True,
+            toolsets=[MCPToolset(fastmcp_server, id='docs_server', include_instructions=True)],
+        )
+        agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            result = await agent.run('Continue.')
+
+        assert result.output == 'done'
+        assert [str(warning.message) for warning in caught if 'on_change' in str(warning.message)] == []
+        load_return = next(
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'load_capability'
+        )
+        assert load_return.content == {'instructions': 'You are an MCP test server.'}
+
+    async def test_framework_appended_instruction_ids(self, fastmcp_server: FastMCP[None]):
+        toolset = CombinedToolset(
+            [
+                MCPToolset(fastmcp_server, id='docs', include_instructions=True),
+                MCPToolset(fastmcp_server, id='excluded'),
+                MCPToolset(fastmcp_server, include_instructions=True),
+            ]
+        )
+        assert framework_appended_instruction_ids(toolset) == {InstructionId(ToolsetInstructionSource('docs'))}
 
     async def test_get_instructions_returns_none_when_disabled(
         self, fastmcp_server: FastMCP[None], run_context: RunContext

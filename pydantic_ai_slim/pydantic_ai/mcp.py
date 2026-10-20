@@ -837,10 +837,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     """
 
     include_instructions: bool
-    """Whether to include the server's `initialize` instructions string in the agent's instruction set.
+    """Whether to add the server's instructions to the agent's instructions.
 
-    Defaults to `False` for backward compatibility. When `True`, the instructions returned by the
-    server during initialization are added to the agent's instructions.
+    Off by default. The server writes this text, and the model receives it with the same authority
+    as instructions you write yourself, so only enable this for servers you trust.
+
+    The instructions are read each time the toolset connects. On a toolset with an
+    [`id`][pydantic_ai.toolsets.AbstractToolset.id], they're keyed `toolset:<id>` and use
+    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: if a later connection
+    brings different instructions, the new text is appended to the conversation rather than
+    rewriting the cached instruction prefix. Without an `id`, changed instructions rewrite the prefix.
     """
 
     include_return_schema: bool | None
@@ -1305,9 +1311,20 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None
         if not self._initialized or self._instructions is None:
             return None
-        # Instructions are captured once during `__aenter__` and don't change across runs while
-        # the toolset stays entered — so they're static from the agent's perspective, not dynamic.
-        return messages.InstructionPart(content=self._instructions, dynamic=False)
+        # Instructions are captured during `__aenter__` and don't change while the toolset stays
+        # entered, so they're static for prompt caching. A later connection can bring different text,
+        # which appends as a change rather than rewriting the prefix. Appending addresses the block by
+        # the toolset's `id`, so without one the text keeps rewriting the prefix as before.
+        return messages.InstructionPart(
+            content=self._instructions,
+            dynamic=False,
+            on_change='append' if self.id is not None else 'rewrite',
+        )
+
+    def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
+        if self.include_instructions and (source := self._instruction_source()) is not None:
+            return frozenset({messages.InstructionId(source)})
+        return frozenset()
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve the tools currently exposed by the server.

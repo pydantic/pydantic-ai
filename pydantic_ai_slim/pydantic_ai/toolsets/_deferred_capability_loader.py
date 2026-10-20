@@ -18,7 +18,10 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ModelResponse, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
-from pydantic_ai.toolsets._instruction_collection import collect_toolset_instructions
+from pydantic_ai.toolsets._instruction_collection import (
+    collect_toolset_instructions,
+    framework_appended_instruction_ids,
+)
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
@@ -101,7 +104,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 
-        if appended := explicitly_appended_blocks(sourced, parts):
+        if appended := explicitly_appended_blocks(
+            sourced, parts, framework_toolset_ids=framework_appended_instruction_ids(self)
+        ):
             warnings.warn(
                 "`on_change='append'` is not supported for deferred capability instructions, so instruction blocks "
                 f'{", ".join(map(repr, appended))} are delivered when the capability loads and their later changes '

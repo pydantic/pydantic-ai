@@ -355,15 +355,19 @@ agent = Agent('{{ openai:medium }}', toolsets=[weather, calculator])
 
 ## Server instructions
 
-MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be automatically injected into the agent's instructions by setting `include_instructions=True`:
+MCP servers can provide instructions during initialization that give context about how to best interact with the server's tools. These are accessible via [`MCPToolset.instructions`][pydantic_ai.mcp.MCPToolset.instructions] after the connection is established, and can be added to the agent's instructions by setting `include_instructions=True`:
 
 ```python {title="mcp_server_include_instructions.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
-toolset = MCPToolset('http://localhost:8000/mcp', include_instructions=True)
+toolset = MCPToolset('http://localhost:8000/mcp', id='docs', include_instructions=True)
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
+
+This is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust.
+
+The instructions are read each time the toolset connects, which by default is once per agent run. On a toolset with an `id`, they're keyed `toolset:<id>` and [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. Without an `id`, changed instructions rewrite the prefix.
 
 ## Tool metadata
 

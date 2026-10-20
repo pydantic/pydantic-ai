@@ -2218,7 +2218,7 @@ async def test_dbos_mcp_toolset_get_instructions_uses_step_when_server_warm(dbos
         assert await inner.get_instructions(run_context) is not None
         instructions = await wrapper.get_instructions(run_context)
 
-    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False)
+    assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=False, on_change='append')
     assert step_calls == ['step']
 
 
@@ -2241,7 +2241,12 @@ mcptoolset_instructions_dbos_agent = DBOSAgent(mcptoolset_instructions_agent)  #
 async def test_dbos_mcptoolset_instructions_propagate(dbos: DBOS):
     """`MCPToolset` instructions propagate through the `DBOSMCPToolset` wrapper."""
     result = await mcptoolset_instructions_dbos_agent.run('Use MCP instructions')
-    assert result.output == snapshot('Be a helpful assistant.')
+    assert result.output == snapshot("""\
+<context id="toolset:mcp">
+Be a helpful assistant.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_dbosify_mcptoolset_dispatches_to_dbosmcptoolset():

@@ -10,7 +10,7 @@ from pydantic_core import SchemaValidator
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
-from ..messages import InstructionPart, ToolsetInstructionSource
+from ..messages import InstructionId, InstructionPart, ToolsetInstructionSource
 from ..tools import ToolDefinition, ToolsPrepareFunc
 from ._instruction_collection import InstructionContribution, make_contribution
 
@@ -231,6 +231,15 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         if self.id is None or ':' in self.id:
             return None
         return ToolsetInstructionSource(self.id)
+
+    def _framework_appended_instruction_ids(self) -> frozenset[InstructionId]:
+        """The ids of this toolset's blocks that use `on_change='append'` by the framework's choice.
+
+        Where appending isn't supported, such as in a realtime session, these blocks fall back to
+        rewriting without the warning an author's own opt-in gets. Called on leaf toolsets only, via
+        [`apply`][pydantic_ai.toolsets.AbstractToolset.apply].
+        """
+        return frozenset()
 
     def _instruction_sources_by_key(self) -> dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]]:
         """Map every source key at or below this toolset to the toolset that owns it.

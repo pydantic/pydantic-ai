@@ -379,7 +379,16 @@ async def test_mcp_server_instructions_are_identified():
 
     async with agent:
         assert await run_and_capture(agent) == [
-            InstructionPart(content='You are an MCP test server.', id=toolset_instruction_id('test-server'))
+            InstructionPart(
+                content="""\
+<context id="toolset:test-server">
+You are an MCP test server.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                on_change='append',
+                id=toolset_instruction_id('test-server'),
+            )
         ]
 
 
