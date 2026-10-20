@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     ModelRetry,
     SkipToolExecution,
+    ToolFailed,
     ToolFailedError,
     ToolRetryError,
     UserError,
@@ -62,6 +63,10 @@ _DEFAULT_RETRY_MESSAGE = 'Tool call rejected by tool guardrail.'
 
 _ARGS_DIRECTION = 'tool args'
 _RESULT_DIRECTION = 'tool result'
+
+
+class _GuardrailRetry(ModelRetry):
+    """A retry a `ToolGuardrail` verdict raised, which its own failure screening passes through."""
 
 
 def _is_arguments(value: object) -> TypeGuard[Mapping[str, Any]]:
@@ -350,7 +355,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_ARGS_DIRECTION, message=message, tool_name=call.tool_name)
                 raise SkipToolExecution(message)
             case 'retry':
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _GuardrailRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'approve':
                 # A resumed run re-evaluates the guard, and a policy that asked for approval
                 # once asks again. Honoring `tool_call_approved` -- the same flag
@@ -376,7 +381,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_redaction(
                     ctx,
                     direction=_ARGS_DIRECTION,
-                    original=args,
                     replacement=replacement,
                     tool_name=call.tool_name,
                 )
@@ -401,11 +405,28 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
         failure as an ordinary `ToolReturnPart`, a retry as a `RetryPromptPart` -- so a
         `result_guard` that did not see them would leave the one text path it exists to
         screen unscreened whenever a tool errored.
+
+        A caller that asks core for raw errors, as `CodeMode` does for the calls its sandbox
+        makes, gets the tool's `ModelRetry` or `ToolFailed` unwrapped, and its message reaches
+        the model the same way. Those are screened too. A retry this guardrail raised itself is
+        not: it is the guard's own instruction, not tool output.
         """
         if self.result_guard is None or not self._guards(call.tool_name):
             return await handler(args)
         try:
             return await handler(args)
+        except _GuardrailRetry:
+            raise
+        except ModelRetry as error:
+            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+            if message is None:
+                raise
+            raise ModelRetry(message) from error
+        except ToolFailed as error:
+            message = await self._screen_failure(ctx, call=call, args=args, content=error.message)
+            if message is None:
+                raise
+            raise ToolFailed(message) from error
         except ToolRetryError as error:
             message = await self._screen_failure(ctx, call=call, args=args, content=error.tool_retry.content)
             if message is None:
@@ -442,7 +463,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 # The tool already failed, but `retry` still means retry: collapsing it into a
                 # replacement message would hand the model a failed result where it was asked
                 # to redo the call, and skip the run's retry accounting with it.
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _GuardrailRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'block':
                 message = verdict.message or _DEFAULT_RESULT_BLOCK_MESSAGE
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
@@ -451,7 +472,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_redaction(
                     ctx,
                     direction=_RESULT_DIRECTION,
-                    original=content,
                     replacement=verdict.replacement,
                     tool_name=call.tool_name,
                 )
@@ -489,7 +509,7 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_block(ctx, direction=_RESULT_DIRECTION, message=message, tool_name=call.tool_name)
                 return message
             case 'retry':
-                raise ModelRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
+                raise _GuardrailRetry(verdict.message or _DEFAULT_RETRY_MESSAGE)
             case 'approve':
                 raise UserError(
                     'A tool result guard cannot return GuardrailResult.approve() -- the tool has already run. '
@@ -499,7 +519,6 @@ class ToolGuardrail(AbstractCapability[AgentDepsT]):
                 trace_redaction(
                     ctx,
                     direction=_RESULT_DIRECTION,
-                    original=result,
                     replacement=verdict.replacement,
                     tool_name=call.tool_name,
                 )

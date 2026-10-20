@@ -34,12 +34,20 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
-from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.guardrails._capability import (
+    _find_prompt_part,  # pyright: ignore[reportPrivateUsage]
+    _prompt_text,  # pyright: ignore[reportPrivateUsage]
+)
+from pydantic_ai_harness.guardrails.detectors import redact_secrets
+from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+
+_SECRET = 'sk-ant-' + 'A' * 40
 
 READINESS_WAIT_TIMEOUT = 10
 
@@ -309,6 +317,65 @@ class TestInputGuardrail:
         assert result.output == 'ok'
         assert seen == ['hello']
 
+    async def test_unannotated_run_context_is_detected_from_a_second_required_parameter(self):
+        seen: list[object] = []
+
+        def guard(ctx, prompt):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+            seen.append((type(ctx).__name__, prompt))  # pyright: ignore[reportUnknownArgumentType]
+            return True
+
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])  # pyright: ignore[reportUnknownArgumentType]
+        await agent.run('hello')
+
+        assert seen == [('RunContext', 'hello')]
+
+    async def test_annotated_run_context_is_detected_when_the_value_has_a_default(self):
+        seen: list[object] = []
+
+        def guard(ctx: RunContext[object], prompt: str = '') -> bool:
+            seen.append((type(ctx).__name__, prompt))
+            return True
+
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])
+        await agent.run('hello')
+
+        assert seen == [('RunContext', 'hello')]
+
+    async def test_a_guard_option_is_not_mistaken_for_the_run_context(self):
+        """A defaulted, keyword-only or variadic parameter is the guard's own option, not the value."""
+        seen: list[object] = []
+
+        def with_default(prompt: str, threshold: float = 0.5) -> bool:
+            seen.append(prompt)
+            return True
+
+        def with_keyword(prompt: str, *, threshold: float = 0.5) -> bool:
+            seen.append(prompt)
+            return True
+
+        def with_options(prompt: str, **options: object) -> bool:
+            seen.append(prompt)
+            return True
+
+        agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=[with_default, with_keyword, with_options])],
+        )
+        await agent.run('hello')
+
+        assert seen == ['hello', 'hello', 'hello']
+
+    @pytest.mark.parametrize('verdict', ['unsafe', None, 1, {'action': 'block'}])
+    async def test_a_verdict_that_is_not_a_bool_or_result_is_a_usage_error(self, verdict: object):
+        """A truthy label read as `True` would let the prompt through, so the verdict is refused instead."""
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=lambda _: verdict)])  # pyright: ignore[reportArgumentType]
+
+        with pytest.raises(UserError, match=f'returned {type(verdict).__name__}'):
+            await agent.run('hello')
+
+        assert seen == []
+
     async def test_retry_action_is_a_usage_error(self):
         agent = Agent(
             TestModel(custom_output_text='ok'),
@@ -457,6 +524,44 @@ class TestInputGuardrailRedaction:
         ig = InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))
         with pytest.raises(UserError, match='could not find a user prompt'):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=_unreachable_handler)
+
+    async def test_replace_rewrites_the_prompt_not_a_part_added_for_this_request(self):
+        """A part an outer capability appends is skipped: the prompt is redacted and the part survives."""
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_AppendNote(), InputGuardrail(guard=redact_secrets)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]', 'note: be brief']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_replace_alongside_system_reminders(self):
+        """A reminder appended to the first request is neither redacted nor mistaken for the prompt."""
+        seen, model = _request_prompts_model()
+        agent = Agent(
+            model,
+            capabilities=[
+                SystemReminders(reminders=[Reminder('stay focused', tag=None)]),
+                InputGuardrail(guard=redact_secrets),
+            ],
+        )
+
+        await agent.run(f'my key is {_SECRET}')
+
+        [(prompt, reminder)] = seen
+        assert prompt == 'my key is [redacted:anthropic_key]'
+        assert 'stay focused' in reminder
+
+    async def test_guard_sees_the_prompt_an_outer_capability_rewrote(self):
+        """The guard reads the prompt part as it reaches the model, not `ctx.prompt` from run start."""
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_AppendSecretToPrompt(), InputGuardrail(guard=redact_secrets)])
+
+        await agent.run('hello')
+
+        assert seen == [['hello\ncontext: [redacted:anthropic_key]']]
 
 
 class TestInputGuardrailSequential:
@@ -825,7 +930,7 @@ class TestInputGuardrailTracing:
         assert span.name == 'guardrail blocked input'
         assert dict(span.attributes or {}) == {'guardrail.direction': 'input', 'guardrail.action': 'block'}
 
-    async def test_redaction_span_includes_content_when_enabled(self):
+    async def test_redaction_span_records_only_the_replacement_when_enabled(self):
         tracer, exporter = _recording_tracer()
         run_ctx, req_ctx = _build_ctx_and_req(tracer=tracer, trace_include_content=True)
 
@@ -837,9 +942,24 @@ class TestInputGuardrailTracing:
         assert dict(span.attributes or {}) == {
             'guardrail.direction': 'input',
             'guardrail.action': 'replace',
-            'guardrail.original': 'hello world',
             'guardrail.replacement': '[redacted]',
         }
+
+    async def test_redacted_prompt_reaches_no_span_when_content_is_traced(self):
+        """With content capture on, every span holds the redacted prompt and none the original."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+
+        await agent.run(f'my key is {_SECRET}')
+
+        spans = exporter.get_finished_spans()
+        assert 'guardrail redacted input' in [span.name for span in spans]
+        recorded = [str(value) for span in spans for value in (span.attributes or {}).values()]
+        assert any('[redacted:anthropic_key]' in value for value in recorded)
+        assert not any(_SECRET in value for value in recorded)
 
     async def test_redaction_span_omits_content_by_default(self):
         tracer, exporter = _recording_tracer()
@@ -1110,39 +1230,43 @@ class TestInputGuardrailParallelStreaming:
                 await observer.blocked.wait()
 
 
-class TestExtractPrompt:
-    """Unit tests for the `_extract_prompt` helper."""
+class TestFindPromptPart:
+    """Unit tests for `_find_prompt_part` and `_prompt_text`."""
 
-    def test_from_messages(self):
-        class _Ctx:
-            prompt = None
-
+    def test_returns_the_most_recent_prompt_in_the_history(self):
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='first')]),
             ModelResponse(parts=[TextPart(content='assistant')]),
             ModelRequest(parts=[UserPromptPart(content='second')]),
         ]
-        assert _extract_prompt(_Ctx(), messages) == 'second'  # pyright: ignore[reportArgumentType]
+        run_ctx, _ = _build_ctx_and_req(messages=messages)
+        part = _find_prompt_part(run_ctx, messages)
+        assert part is not None
+        assert part.content == 'second'
 
-    def test_stringifies_non_str_prompt(self):
-        class _Ctx:
-            prompt = ['multimodal', 'content']
+    def test_skips_a_part_that_is_not_in_the_history(self):
+        prompt = UserPromptPart(content='the prompt')
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[prompt, UserPromptPart(content='reminder')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is prompt
 
-        assert _extract_prompt(_Ctx(), []) == str(['multimodal', 'content'])  # pyright: ignore[reportArgumentType]
-
-    def test_stringifies_non_str_message_part(self):
-        class _Ctx:
-            prompt = None
-
-        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['multi'])])]
-        assert _extract_prompt(_Ctx(), messages) == str(['multi'])  # pyright: ignore[reportArgumentType]
+    def test_falls_back_to_the_latest_part_when_none_is_in_the_history(self):
+        request: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='copied prompt'), UserPromptPart(content='latest')])
+        ]
+        run_ctx, _ = _build_ctx_and_req(messages=[])
+        part = _find_prompt_part(run_ctx, request)
+        assert part is not None
+        assert part.content == 'latest'
 
     def test_returns_none_when_no_user_prompt_part(self):
-        class _Ctx:
-            prompt = None
-
         messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='only model parts here')])]
-        assert _extract_prompt(_Ctx(), messages) is None  # pyright: ignore[reportArgumentType]
+        run_ctx, _ = _build_ctx_and_req(messages=messages)
+        assert _find_prompt_part(run_ctx, messages) is None
+
+    def test_stringifies_non_str_content(self):
+        assert _prompt_text(['multimodal', 'content']) == str(['multimodal', 'content'])
 
 
 class TestInputGuardrailOrdering:
@@ -1181,6 +1305,48 @@ class TestGuardrailResult:
         result = GuardrailResult.allow()
         with pytest.raises(dataclasses.FrozenInstanceError):
             result.message = 'mutated'  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _request_prompts_model() -> tuple[list[list[str]], FunctionModel]:
+    """A model that records the text of every `UserPromptPart` in the request it is sent."""
+    seen: list[list[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        seen.append([str(part.content) for part in last.parts if isinstance(part, UserPromptPart)])
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return seen, FunctionModel(respond)
+
+
+@dataclasses.dataclass
+class _AppendNote(AbstractCapability[Any]):
+    """Appends a `UserPromptPart` to this request only, as `SystemReminders` and `Planning` do."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        request_context.messages[-1] = dataclasses.replace(
+            last, parts=[*last.parts, UserPromptPart(content='note: be brief')]
+        )
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _AppendSecretToPrompt(AbstractCapability[Any]):
+    """Rewrites the user prompt part in place, as a prompt rewriter would."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        for message in request_context.messages:
+            for part in message.parts:
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                    part.content = f'{part.content}\ncontext: {_SECRET}'
+        return await handler(request_context)
 
 
 async def _unreachable_handler(_: ModelRequestContext) -> ModelResponse:  # pragma: no cover - never awaited

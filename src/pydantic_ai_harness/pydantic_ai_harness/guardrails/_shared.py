@@ -15,6 +15,7 @@ from typing import Literal, assert_never
 
 from typing_extensions import TypeIs
 
+from pydantic_ai._utils import takes_run_context
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -150,17 +151,26 @@ one reaches here it has already been checked against that field type.
 def takes_ctx(func: Callable[..., object]) -> bool:
     """Return `True` when `func` declares a leading `RunContext` parameter.
 
-    Detected by parameter count, not annotation: a guard always takes the
-    guarded value, so a second parameter means it also wants the run context.
-    This matches pydantic-ai's own optional-`ctx` convention for output
-    validators. A callable whose signature cannot be introspected is treated
+    Detected from the positional parameters: a guard always takes the guarded
+    value, so a second required positional parameter means it also wants the
+    run context, whether or not it is annotated. Keyword-only parameters and a
+    second positional parameter with a default are options of the guard's own,
+    not the value, so they only count when the first parameter is annotated as
+    `RunContext`. A callable whose signature cannot be introspected is treated
     as taking the value only.
     """
     try:
-        parameters = inspect.signature(func).parameters
+        parameters = inspect.signature(func).parameters.values()
     except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
-    return len(parameters) > 1
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) < 2:
+        return False
+    return positional[1].default is inspect.Parameter.empty or takes_run_context(func)
 
 
 async def evaluate(
@@ -174,7 +184,13 @@ async def evaluate(
         outcome = await outcome
     if isinstance(outcome, GuardrailResult):
         return outcome
-    return GuardrailResult.allow() if outcome else GuardrailResult.block()
+    if isinstance(outcome, bool):
+        return GuardrailResult.allow() if outcome else GuardrailResult.block()
+    # Refused rather than read for truthiness: a classifier label such as `'unsafe'`, or a
+    # verdict object of the wrong type, is truthy and would let the value through.
+    raise UserError(
+        f'A guard must return True, False, or a GuardrailResult; {guard!r} returned {type(outcome).__name__}.'
+    )
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
@@ -287,19 +303,18 @@ def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
     direction: str,
-    original: object,
     replacement: object,
     tool_name: str | None = None,
 ) -> None:
     """Record a zero-duration span marking a guardrail redaction.
 
-    The original and replacement values are attached only when
-    `ctx.trace_include_content` is set, since a redacted value is often the
-    sensitive content the guard exists to keep out of traces.
+    The replacement value is attached only when `ctx.trace_include_content` is
+    set. The original value never is: it is the content the guard removed, and
+    recording it would put a redacted secret into the trace that core's own
+    spans, which see the rewritten value, keep out.
     """
     attributes = direction_attributes(direction, 'replace', tool_name)
     if ctx.trace_include_content:
-        attributes['guardrail.original'] = str(original)
         attributes['guardrail.replacement'] = str(replacement)
     ctx.tracer.start_span(f'guardrail redacted {direction}', attributes=attributes).end()
 

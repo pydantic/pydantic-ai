@@ -30,6 +30,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import CodeMode
 from pydantic_ai_harness.guardrails import (
     GuardrailError,
     GuardrailResult,
@@ -560,6 +561,73 @@ class TestResultGuardOnAFailedTool:
         assert seen == []
         assert 'boom' in str(result.all_messages())
 
+    @pytest.mark.parametrize('error', [ModelRetry('the key is sk-live-000'), ToolFailed('the key is sk-live-000')])
+    async def test_a_failure_inside_code_mode_is_screened(self, error: Exception):
+        """`CodeMode` asks core for raw errors, so the failure arrives unwrapped and is screened all the same."""
+
+        def scrub(info: ToolResultInfo) -> GuardrailResult:
+            cleaned = str(info.result).replace('sk-live-000', '[redacted]')
+            return GuardrailResult.replace(cleaned) if cleaned != str(info.result) else GuardrailResult.allow()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned = [
+                str(part.content)
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name == 'run_code'
+            ]
+            if returned:
+                return ModelResponse(parts=[TextPart(content=' | '.join(returned))])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await lookup(query="key")'})])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[CodeMode(), ToolGuardrail(result_guard=scrub, tools=['lookup'])],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            raise error
+
+        result = await agent.run('hi')
+
+        assert 'sk-live-000' not in result.output
+        assert '[redacted]' in result.output
+
+    @pytest.mark.parametrize('error', [ModelRetry('boom'), ToolFailed('boom')])
+    async def test_an_unwrapped_failure_the_guard_allows_is_reraised_unchanged(self, error: Exception):
+        guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.allow())
+
+        async def handler(args: dict[str, Any]) -> NoReturn:
+            raise error
+
+        with pytest.raises(type(error)) as raised:
+            await guard.wrap_tool_execute(_run_ctx(), call=_call(), tool_def=_tool_def(), args={}, handler=handler)
+
+        assert raised.value is error
+
+    async def test_its_own_retry_verdict_is_not_screened_again(self):
+        """The retry instruction is the guard's own text, not tool output."""
+        seen: list[object] = []
+
+        def result_guard(info: ToolResultInfo) -> GuardrailResult:
+            seen.append(info.result)
+            return GuardrailResult.retry('narrow the query')
+
+        agent = Agent(
+            _scripted(_calls_lookup(query='key'), ModelResponse(parts=[TextPart(content='done')])),
+            deps_type=type(None),
+            capabilities=[ToolGuardrail[None](result_guard=result_guard)],
+        )
+
+        @agent.tool_plain
+        def lookup(query: str) -> str:
+            return 'ok'
+
+        await agent.run('hi')
+
+        assert seen == ['ok']
+
 
 class TestConfigurationShape:
     """A bare string satisfies `Sequence[str]`, and both fields misbehave on one."""
@@ -874,7 +942,7 @@ class TestTracing:
             'guardrail.tool': 'lookup',
         }
 
-    async def test_redaction_span_carries_values_when_content_is_included(self):
+    async def test_redaction_span_carries_only_the_replacement_when_content_is_included(self):
         tracer, exporter = _recording_tracer()
         guard = ToolGuardrail[object](result_guard=lambda info: GuardrailResult.replace('clean'))
 
@@ -886,7 +954,6 @@ class TestTracing:
             'guardrail.direction': 'tool result',
             'guardrail.action': 'replace',
             'guardrail.tool': 'lookup',
-            'guardrail.original': 'dirty',
             'guardrail.replacement': 'clean',
         }
 
