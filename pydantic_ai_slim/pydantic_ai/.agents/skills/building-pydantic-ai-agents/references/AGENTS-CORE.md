@@ -104,9 +104,10 @@ The callback still runs before each request; changed values become full replacem
 Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
 Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` from `get_instructions()` under their own `id`; `@toolset.instructions` has no `on_change`, so override `get_instructions()` on a `FunctionToolset` subclass.
-A custom capability's `get_instructions()` can return such an `InstructionPart` for text that changes between runs; a returned callable can't opt in, so use `Capability` and its decorator for text that changes during a run.
+A custom capability's `get_instructions()` can return such an `InstructionPart` for text that changes between runs, when `for_run` returns a replacement carrying the new text (otherwise the construction-time result is reused); a returned callable can't opt in, so use `Capability` and its decorator for text that changes during a run.
 Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` and `FunctionToolset(instructions=...)` opts in with `InstructionPart('...', name='config', on_change='append')`.
 Callables passed to `Agent(instructions=...)` and run-level `instructions=` can't opt in; use a named decorator instead.
+Build instruction text from operator-controlled state, never from tool arguments, tool output or user content.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.

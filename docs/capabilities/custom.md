@@ -268,7 +268,7 @@ Instructions from a capability with an [`id`][pydantic_ai.capabilities.AbstractC
 
 When a capability's instructions change partway through a conversation, we recommend having the changes [appended](../agent.md#appending-instruction-changes) to the history instead of rewriting the instruction prefix: the prefix, and the conversation cached behind it, stays the same, at the cost of a short replacement in the history for each change. This needs the capability to have an `id`.
 
-For text that changes between runs, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from `get_instructions()`. It's read when the run starts, so a capability that [`for_run`](#per-run-state-isolation) rebuilds from the run's dependencies can change it from one run to the next:
+For text that changes between runs, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from `get_instructions()`. It's read when the agent is built and reused, except in a run where [`for_run`](#per-run-state-isolation) returns a replacement, which is read again. So a capability that `for_run` rebuilds from the run's dependencies can change it from one run to the next:
 
 ```python {title="capability_instruction_changes.py"}
 from dataclasses import dataclass

@@ -277,8 +277,8 @@ class Cart:
 
 class CartToolset(FunctionToolset[Cart]):
     async def get_instructions(self, ctx: RunContext[Cart]) -> list[InstructionPart]:
-        contents = ', '.join(ctx.deps.items) or 'empty'
-        return [InstructionPart(f'The cart contains: {contents}.', name='contents', on_change='append')]
+        count = len(ctx.deps.items)  # (1)!
+        return [InstructionPart(f'Items in the cart: {count}.', name='count', on_change='append')]
 
 
 cart_toolset = CartToolset(id='cart')
@@ -296,7 +296,7 @@ result = agent.run_sync('Add an apple.', deps=Cart())
 first_request = result.all_messages()[0]
 assert isinstance(first_request, ModelRequest)
 print(first_request.instructions)
-#> The cart contains: empty.
+#> Items in the cart: 0.
 print(
     [
         part.content
@@ -306,10 +306,15 @@ print(
         if isinstance(part, InstructionDeltaPart)
     ]
 )
-#> ['The cart contains: a.']
+#> ['Items in the cart: 1.']
 ```
 
+1. Only the count goes into the instructions, not the item names, which come from the model's tool arguments. See the warning below.
+
 _(This example is complete, it can be run "as is")_
+
+!!! warning "Keep untrusted text out of instructions"
+    Instructions carry operator authority, and appended changes are sent as system messages where the model supports them. Build them from state you control, like the count above, never from tool arguments, tool output, or user content: those belong in tool results or user messages.
 
 ## Toolset Composition
 
