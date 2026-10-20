@@ -898,6 +898,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._lifecycle.audio_commit_failed(commit)
             raise
 
+    @asynccontextmanager
+    async def _session_scope(self) -> AsyncGenerator[None]:
+        """Wrap the connection's whole lifetime, from the end of its handshake to its close.
+
+        A hook for a protocol clone to own background work as long as the connection is open (Eleven Realtime's
+        idle keep-alive); `connect()` enters it around its `yield`. A no-op here.
+        """
+        yield
+
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         """Map a raw provider frame to a codec event.
 
@@ -1724,7 +1733,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         session_config = self._session_config(
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )
-        transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         async def dial_headers() -> dict[str, str]:
             headers = await self._auth_headers(settings)
@@ -1742,18 +1750,13 @@ class OpenAIRealtimeModel(RealtimeModel):
             server_model: str | None,
             model_name_getter: Callable[[], str | None],
         ) -> OpenAIRealtimeConnection:
-            return self._connection_class(settings)(
+            return self._build_connection(
                 ws,
                 dial=dial,
-                reconnect=settings.get('reconnect'),
-                input_transcription_enabled=transcription_enabled,
-                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
-                model_name=server_model,
+                settings=settings,
+                session_config=session_config,
+                server_model=server_model,
                 model_name_getter=model_name_getter,
-                audio_output_sample_rate=self.audio_output_sample_rate,
-                prune_tool_items=settings.get('openai_prune_tool_items', False),
-                keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
-                manual_turns=config_has_manual_turns(session_config),
             )
 
         async with connect_openai_protocol(
@@ -1768,4 +1771,33 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_model=session_model,
             build_connection=build_connection,
         ) as connection:
-            yield connection
+            async with connection._session_scope():  # pyright: ignore[reportPrivateUsage]
+                yield connection
+
+    def _build_connection(
+        self,
+        ws: ClientConnection,
+        *,
+        dial: Callable[[], Awaitable[ClientConnection]],
+        settings: OpenAIRealtimeModelSettings,
+        session_config: dict[str, Any],
+        server_model: str | None,
+        model_name_getter: Callable[[], str | None],
+    ) -> OpenAIRealtimeConnection:
+        """Build the connection for a WebSocket session, once its handshake is done.
+
+        A protocol clone overrides it to pass its own connection's arguments; see also `_connection_class`.
+        """
+        return self._connection_class(settings)(
+            ws,
+            dial=dial,
+            reconnect=settings.get('reconnect'),
+            input_transcription_enabled=settings.get('input_transcription_model', 'auto') is not None,
+            interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
+            model_name=server_model,
+            model_name_getter=model_name_getter,
+            audio_output_sample_rate=self.audio_output_sample_rate,
+            prune_tool_items=settings.get('openai_prune_tool_items', False),
+            keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
+            manual_turns=config_has_manual_turns(session_config),
+        )

@@ -46,7 +46,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence, Set as AbstractSet
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
 try:
@@ -63,7 +63,6 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from .._http import AsyncHTTPClient
-from .._instrumentation import get_instructions
 from .._utils import cancel_and_drain
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionErrorEvent
@@ -80,12 +79,10 @@ from ._openai_protocol import (
     CONVERSATION_ITEM_CREATE_EVENT,
     config_has_manual_turns,
     config_interrupts_response_on_speech,
-    connect_openai_protocol,
     loads_obj,
     turn_detection_config,
     with_realtime_query,
 )
-from ._utils import inject_trace_context
 from .codec import OutputTranscript, RealtimeCodecEvent, ResponseDone, ToolResult
 from .model import RealtimeModel, WebRTCAnswer
 from .openai import (
@@ -259,8 +256,8 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         return False
 
     @asynccontextmanager
-    async def _kept_alive(self) -> AsyncGenerator[None]:
-        """Keep the connection open while idle for as long as the context lasts (see `_keep_alive`)."""
+    async def _session_scope(self) -> AsyncGenerator[None]:
+        # Keeps the connection open while idle for as long as it lasts (see `_keep_alive`).
         if self._keep_alive_after is None:
             yield
             return
@@ -386,7 +383,6 @@ class _ElevenLabsOpenAIProvider(OpenAIProvider):
             api_key=elevenlabs_provider.api_key,
             http_client=elevenlabs_provider.client,
         )
-        self.elevenlabs_provider = elevenlabs_provider
 
     @property
     def name(self) -> str:
@@ -449,6 +445,7 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
     """
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = ElevenLabsRealtimeConnection
+    _elevenlabs_provider: ElevenLabsProvider = field(init=False, repr=False)
 
     def __init__(
         self,
@@ -466,11 +463,8 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
                 "`ElevenLabsRealtimeModel` requires an `ElevenLabsProvider` or `provider='elevenlabs'`; "
                 f'got {provider.name!r}.'
             )
+        self._elevenlabs_provider = provider
         super().__init__(model, provider=_ElevenLabsOpenAIProvider(provider), settings=settings, profile=profile)
-
-    @property
-    def _elevenlabs_provider(self) -> ElevenLabsProvider:
-        return cast(_ElevenLabsOpenAIProvider, self._provider).elevenlabs_provider
 
     @property
     def base_url(self) -> str:
@@ -486,62 +480,29 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         del model_settings
         return {'xi-api-key': self._elevenlabs_provider.api_key}
 
-    @asynccontextmanager
-    async def connect(
+    def _build_connection(
         self,
+        ws: ClientConnection,
         *,
-        messages: Sequence[ModelMessage],
-        model_settings: RealtimeModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> AsyncGenerator[ElevenLabsRealtimeConnection]:
-        settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        instructions = get_instructions(messages, model_request_parameters) or ''
-        session_config = self._session_config(
-            instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
+        dial: Callable[[], Awaitable[ClientConnection]],
+        settings: OpenAIRealtimeModelSettings,
+        session_config: dict[str, Any],
+        server_model: str | None,
+        model_name_getter: Callable[[], str | None],
+    ) -> ElevenLabsRealtimeConnection:
+        return ElevenLabsRealtimeConnection(
+            ws,
+            dial=dial,
+            reconnect=settings.get('reconnect'),
+            interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
+            model_name=server_model,
+            model_name_getter=model_name_getter,
+            audio_output_sample_rate=self.audio_output_sample_rate,
+            prune_tool_items=settings.get('openai_prune_tool_items', False),
+            keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
+            manual_turns=config_has_manual_turns(session_config),
+            strip_audio_tags=cast(ElevenLabsRealtimeModelSettings, settings).get('elevenlabs_strip_audio_tags', True),
         )
-
-        async def dial_headers() -> dict[str, str]:
-            headers = await self._auth_headers()
-            # The raw WebSocket bypasses the provider's HTTP client, so every handshake carries the trace context.
-            inject_trace_context(headers)
-            return headers
-
-        def session_model(created: dict[str, Any]) -> str | None:
-            return self._session_model_name(created, settings)
-
-        def build_connection(
-            ws: ClientConnection,
-            dial: Callable[[], Awaitable[ClientConnection]],
-            server_model: str | None,
-            model_name_getter: Callable[[], str | None],
-        ) -> ElevenLabsRealtimeConnection:
-            return ElevenLabsRealtimeConnection(
-                ws,
-                dial=dial,
-                reconnect=settings.get('reconnect'),
-                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
-                model_name=server_model,
-                model_name_getter=model_name_getter,
-                audio_output_sample_rate=self.audio_output_sample_rate,
-                manual_turns=config_has_manual_turns(session_config),
-                strip_audio_tags=settings.get('elevenlabs_strip_audio_tags', True),
-            )
-
-        async with connect_openai_protocol(
-            model_name=self.model,
-            messages=messages,
-            profile=self.profile,
-            provider_name=self.system,
-            session_config=session_config,
-            handshake_timeout=settings.get('handshake_timeout', 30.0),
-            dial_headers=dial_headers,
-            dial_url=self._realtime_url,
-            session_model=session_model,
-            build_connection=build_connection,
-        ) as connection:
-            # The connection's idle keep-alive lives exactly as long as the connection.
-            async with connection._kept_alive():  # pyright: ignore[reportPrivateUsage]
-                yield connection
 
     async def _webrtc_headers(self) -> dict[str, str]:
         # Only the API key: the OpenAI SDK client's other default headers (`OpenAI-Organization`, say) are OpenAI's.

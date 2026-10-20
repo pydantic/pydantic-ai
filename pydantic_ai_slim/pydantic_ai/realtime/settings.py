@@ -52,12 +52,12 @@ class TurnDetection(TypedDict, total=False):
     `high`→`high`, `medium` leaves the provider default); **Eleven Realtime** → semantic-VAD `eagerness`."""
 
     prefix_padding_ms: int
-    """Audio retained before detected speech onset, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini. Defaults to the provider default."""
+    """Audio retained before detected speech onset, in milliseconds. Honored by OpenAI, xAI, Gemini, and
+    Eleven Realtime. Defaults to the provider default."""
 
     silence_duration_ms: int
-    """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini. Defaults to the provider default."""
+    """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, Gemini, and
+    Eleven Realtime. Defaults to the provider default."""
 
 
 class RealtimeModelSettings(TypedDict, total=False):
