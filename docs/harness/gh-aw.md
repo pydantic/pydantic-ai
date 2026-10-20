@@ -285,9 +285,9 @@ Key by key:
   It also decides the wire API: `anthropic/` runs over the Anthropic Messages API, because
   that backend forwards the request path to `api.anthropic.com` unchanged, and the other
   three are OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
-  [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model profiles apply and the thinking
-  its Claude and Gemini models return in `reasoning_text` is kept. Under `PAI_BASE_URL`
-  everything stays on the generic Chat Completions client.
+  [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model
+  profiles apply and the thinking its Claude and Gemini models return in `reasoning_text`
+  is kept. Under `PAI_BASE_URL` everything stays on the generic Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
   when resolving an imported target, it adds the checkout to `sys.path` after loading the

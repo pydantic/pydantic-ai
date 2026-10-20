@@ -538,9 +538,9 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 `$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
 without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
 The provider key is a repository secret, never `engine.env`. Threat detection on safe outputs runs on
-`copilot` and reads `COPILOT_GITHUB_TOKEN` (or `github.token` under `copilot-requests: write`); without either, set `safe-outputs.threat-detection.engine` to
-`codex`, `claude`, or `false`. A spec agent **cannot** use harness
-capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
+`copilot` and reads `COPILOT_GITHUB_TOKEN` (or `github.token` under `copilot-requests: write`); without
+either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `false`. A spec agent
+**cannot** use harness capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 

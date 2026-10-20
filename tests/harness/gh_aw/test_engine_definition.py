@@ -711,15 +711,12 @@ def test_the_anthropic_backend_is_addressed_with_the_messages_api(tmp_path: Path
     assert 'OPENAI_BASE_URL' not in invocation.env
 
 
-@pytest.mark.parametrize(
-    ('provider', 'model', 'port'),
-    [('openai', 'openai/gpt-5', 10000), ('openai', 'codex/gpt-5', 10000)],
-)
-def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, provider: str, model: str, port: int) -> None:
-    invocation = launch(tmp_path, proxy_env(provider, model))
+@pytest.mark.parametrize('model', ['openai/gpt-5', 'codex/gpt-5'])
+def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, model: str) -> None:
+    invocation = launch(tmp_path, proxy_env('openai', model))
 
     assert invocation.cli_args[3] == 'openai-chat:gpt-5'
-    assert invocation.env['OPENAI_BASE_URL'] == f'http://host.docker.internal:{port}/v1'
+    assert invocation.env['OPENAI_BASE_URL'] == 'http://host.docker.internal:10000/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
 
 
