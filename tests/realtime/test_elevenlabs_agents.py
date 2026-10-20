@@ -3040,21 +3040,27 @@ async def test_wait_for_reply_waits_past_a_greeting_the_text_cut_off() -> None:
         async with agent.realtime(model).session() as session:
             with anyio.fail_after(10):
                 await session.send('What is two plus two?')
-                waiting = asyncio.create_task(session.wait_for_reply())
-                ws.release([_AUDIO, {'type': 'interruption', 'interruption_event': {'event_id': 2}}, _GREETING_CUT])
-                await ws.drained.wait()
-                assert not waiting.done()
-                ws.release(
-                    [
-                        {
-                            'type': 'audio',
-                            'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
-                        },
-                        _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
-                        _VOICED,
-                    ]
-                )
-                await waiting
+                replied = anyio.Event()
+
+                async def wait() -> None:
+                    await session.wait_for_reply()
+                    replied.set()
+
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(wait)
+                    ws.release([_AUDIO, {'type': 'interruption', 'interruption_event': {'event_id': 2}}, _GREETING_CUT])
+                    await ws.drained.wait()
+                    assert not replied.is_set()
+                    ws.release(
+                        [
+                            {
+                                'type': 'audio',
+                                'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+                            },
+                            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+                            _VOICED,
+                        ]
+                    )
     replies = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert [(reply.provider_response_id, reply.state) for reply in replies] == [
         ('resp_greeting', 'interrupted'),
