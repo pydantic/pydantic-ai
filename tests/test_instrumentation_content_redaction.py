@@ -34,6 +34,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
     _instrumentation,
+    native_tools,
 )
 from pydantic_ai._instrumentation import (
     ContentPolicy,
@@ -53,7 +54,8 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
-from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool, MCPServerTool
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 
@@ -205,22 +207,15 @@ def test_mcp_credentials_are_masked_when_request_serialization_uses_string_fallb
         assert '[REDACTED]' in serialized
 
 
-def test_unknown_native_tool_extensions_are_retained(request: pytest.FixtureRequest) -> None:
+def test_unknown_native_tool_extensions_are_retained(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unrecognized native tool types and their extension fields remain visible."""
-    previous = NATIVE_TOOL_TYPES.get('future_native_tool')
+    monkeypatch.setattr(native_tools, 'NATIVE_TOOL_TYPES', native_tools.NATIVE_TOOL_TYPES.copy())
 
     @dataclass(kw_only=True)
     class FutureNativeTool(AbstractNativeTool):
         kind: str = 'future_native_tool'
         extension: str = 'SENTINEL-native-extension'
 
-    def restore_registry_entry() -> None:
-        if previous is None:
-            NATIVE_TOOL_TYPES.pop('future_native_tool', None)
-        else:
-            NATIVE_TOOL_TYPES['future_native_tool'] = previous
-
-    request.addfinalizer(restore_registry_entry)
     tool = FutureNativeTool()
     parameters = ModelRequestParameters(native_tools=[tool])
 
@@ -620,7 +615,7 @@ async def test_no_content_reaches_telemetry_when_a_tool_raises(include_content: 
 async def test_no_content_reaches_telemetry_when_before_run_fails(include_content: bool) -> None:
     """Derived MCP labels in history are redacted even when before_run fails."""
     settings, exporter = redacted_setup(include_content)
-    requests = 0
+    model = TestModel()
     capability = MCP('https://mcp.example.test/private/SENTINEL-before-run-mcp-id', native=True, local=False)
     tool = next(iter(capability.get_native_tools()))
     assert isinstance(tool, MCPServerTool)
@@ -630,18 +625,13 @@ async def test_no_content_reaches_telemetry_when_before_run_fails(include_conten
         tool_name=tool_name, tool_call_id='history-call', content={}, provider_name='openai'
     )
 
-    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
-        nonlocal requests
-        requests += 1
-        return ModelResponse(parts=[TextPart('unexpected')])
-
     @dataclass
     class FailingCapability(AbstractCapability[None]):
         async def before_run(self, ctx: RunContext[None]) -> None:
             raise ValueError(SECRETS['tool_exception'])
 
     agent = Agent(
-        FunctionModel(respond),
+        model,
         capabilities=[capability, FailingCapability(), Instrumentation(settings=settings)],
     )
     with pytest.raises(ValueError, match=SECRETS['tool_exception']):
@@ -653,7 +643,7 @@ async def test_no_content_reaches_telemetry_when_before_run_fails(include_conten
             ],
         )
 
-    assert requests == 0
+    assert model.last_model_request_parameters is None
     assert call.tool_name == returned.tool_name == tool_name
     exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
     assert 'SENTINEL-before-run-mcp-id' not in exported
