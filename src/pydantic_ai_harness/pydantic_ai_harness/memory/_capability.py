@@ -18,7 +18,11 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
-from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
+from pydantic_ai_harness.memory._file import FileStore
+from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
+from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
+from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
     MemoryDeleteResult,
@@ -26,9 +30,6 @@ from pydantic_ai_harness.memory._toolset import (
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
-    injection_listing_limit,
-    list_subfiles,
-    render_memory_prompt,
     run_as_operation,
 )
 
@@ -391,12 +392,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         if backend == 'memory':
             store: MemoryStore = InMemoryStore()
         elif backend == 'file':
-            from pydantic_ai_harness.memory._store import FileStore
-
             store = FileStore(directory)
         elif backend == 'sqlite':
-            from pydantic_ai_harness.memory._store import SqliteMemoryStore
-
             store = SqliteMemoryStore(database=database)
         else:
             raise ValueError(f'unknown backend {backend!r}; expected `memory`, `file`, or `sqlite`')

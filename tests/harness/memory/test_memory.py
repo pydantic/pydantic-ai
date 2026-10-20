@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
@@ -1597,6 +1598,15 @@ class TestConfigurationAndSpecs:
         instructions = _latest_instructions(result.all_messages())
         assert '## Team notes' in instructions
         assert 'storage-id' not in instructions
+
+    def test_from_spec_defaults_match_the_constructor(self) -> None:
+        defaults = {memory_field.name: memory_field.default for memory_field in fields(Memory)}
+        options = {
+            name: parameter.default
+            for name, parameter in inspect.signature(Memory.from_spec).parameters.items()
+            if name not in {'backend', 'directory', 'database'}
+        }
+        assert options == {name: defaults[name] for name in options}
 
     def test_from_spec_backends_and_cross_backend_validation(self, tmp_path: Path) -> None:
         assert isinstance(Memory.from_spec().store, InMemoryStore)
