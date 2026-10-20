@@ -191,7 +191,7 @@ BrowserUse(
 )
 ```
 
-Flat `sensitive_data` values are available on every domain, so they require a
+Flat `sensitive_data` values have no domain of their own, so they require a
 non-empty `allowed_domains` allowlist with explicit hostnames on the capability
 or `browser_profile`. Host globs, including `'*.example.com'`, and catch-all
 entries such as `'*'` and `'https://*'` are rejected. Use the domain-scoped
@@ -209,7 +209,8 @@ whenever `sensitive_data` is configured, BrowserUse:
   navigations;
 - replaces each secret value in the `browse_web` result with its placeholder,
   so a value the sub-agent writes into its answer does not reach the host
-  model.
+  model. Every occurrence is replaced, including inside other words, so a very
+  short value can garble the result.
 
 A domain-scoped secret is still substituted into a navigation made from its own
 domain, so add `allowed_domains` to bound where such a request can go.
@@ -400,7 +401,9 @@ BrowserUse(browser_agent=factory)
 existing factories: unpack what you forward, ignore the rest (the default
 factory, `default_browser_agent`, forwards all of `settings`). The factory
 must not start or stop the session itself; the tool owns the session
-lifecycle.
+lifecycle. `request.sensitive_data` arrives with flat values keyed by the
+allowlist entries; when it is set, exclude browser-use's `evaluate` action from
+the agent's `Tools`, as the default factory does.
 
 ## BrowserUse vs PlaywrightBrowser
 

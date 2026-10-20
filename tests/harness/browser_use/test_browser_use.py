@@ -1357,22 +1357,28 @@ class TestSensitiveDataSafety:
 
         assert json.loads(result) == {'name': '<secret>x_password</secret>', 'price_usd': 1}
 
-    async def test_secret_values_are_redacted_from_a_schema_retry(self, kill_calls: list[BrowserSession]) -> None:
-        """A validation error quotes the input it rejected, which can be the secret."""
+    @pytest.mark.parametrize('secret', ['hunter2', 'sk-' + 'A1b2C3d4' * 8, 'it\'s "quoted"'])
+    async def test_secret_values_are_redacted_from_a_schema_retry(
+        self, kill_calls: list[BrowserSession], secret: str
+    ) -> None:
+        """A validation error quotes the input it rejected as a truncated `repr()`, which can hold the secret."""
         with pytest.raises(ValidationError) as rejected:
-            _Facts.model_validate({'name': 'Pro', 'price_usd': 'hunter2'})
-        history = _FakeHistory(result='hunter2', success=True, structured_error=rejected.value)
+            _Facts.model_validate({'name': 'Pro', 'price_usd': secret})
+        history = _FakeHistory(result=secret, success=True, structured_error=rejected.value)
         capability = BrowserUse[None](
             output_schema=_Facts,
-            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            sensitive_data={'https://safe.example': {'x_password': secret}},
             browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
         )
 
         with pytest.raises(ModelRetry) as caught:
             await capability.get_toolset().browse_web(_ctx(), 'task')
 
-        assert 'hunter2' not in caught.value.message
-        assert '<secret>x_password</secret>' in caught.value.message
+        assert caught.value.message == (
+            'The browser agent finished, but its result did not match the configured output schema: '
+            'price_usd: Input should be a valid integer, unable to parse string as an integer'
+        )
+        assert secret[:8] not in caught.value.message
 
     async def test_flat_secrets_are_scoped_to_the_allowlist(self, kill_calls: list[BrowserSession]) -> None:
         """browser-use substitutes a flat secret on any page, `data:` URLs included, which no allowlist blocks.

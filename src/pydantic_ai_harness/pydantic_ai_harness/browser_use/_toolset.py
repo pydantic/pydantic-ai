@@ -686,9 +686,19 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         try:
             structured = history.structured_output
         except ValidationError as error:
+            # The error's text quotes the rejected input as a truncated `repr()`, which redaction
+            # cannot match, so with secrets configured only each failing location and message is kept.
+            detail = (
+                str(error)
+                if self._secret_pattern is None
+                else '; '.join(
+                    f'{".".join(str(part) for part in item["loc"])}: {item["msg"]}'
+                    for item in error.errors(include_input=False, include_url=False)
+                )
+            )
             raise ModelRetry(
                 self._redact(
-                    f'The browser agent finished, but its result did not match the configured output schema: {error}'
+                    f'The browser agent finished, but its result did not match the configured output schema: {detail}'
                 )
             ) from error
         # A `None` here is unreachable with browser-use's own history, which parses whenever there
