@@ -931,11 +931,6 @@ A later <context> element with the same id replaces the earlier one and stays in
     async def test_server_instructions_without_an_id_are_keyed_by_the_url_host(self):
         """A remote server's instructions append under its hostname when the toolset has no `id`."""
         server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
-
-        @server.tool
-        async def ping() -> str:
-            return 'pong'
-
         prefixes: list[str | None] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
