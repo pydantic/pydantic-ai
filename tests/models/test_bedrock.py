@@ -4865,7 +4865,9 @@ Both documents are very short. If you're asking about combined length, together 
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
-    assert usage.cache_read_tokens > 0
+    # Bedrock read the first turn's cache entry here until at least March 2026. It now only reads it for an identical
+    # request, while the same conversation without documents still hits on the next turn.
+    assert usage.cache_read_tokens == 0
 
 
 @pytest.mark.vcr()
