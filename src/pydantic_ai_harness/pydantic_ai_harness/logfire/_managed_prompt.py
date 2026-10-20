@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from logfire.variables import Variable
+from logfire.variables import ResolvedVariable, Variable
 from pydantic_handlebars import HandlebarsError
 
 from pydantic_ai import TemplateStr
@@ -19,7 +19,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
     from logfire import Logfire
-    from logfire.variables import ResolvedVariable
 
     from pydantic_ai.capabilities.abstract import WrapRunHandler
     from pydantic_ai.run import AgentRunResult
@@ -126,10 +125,10 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
 
     render_template: bool = False
     """When `True`, render the resolved prompt as a Handlebars template against the agent's
-    `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.TemplateStr]); `{{field}}` is
+    `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.template.TemplateStr]); `{{field}}` is
     filled from `deps`. Anyone who can edit the prompt in Logfire can then place any `deps` value
     in the system prompt. A remote prompt that fails to compile falls back to the code default
-    with a `RuntimeWarning`. Defaults to `False`, so the resolved prompt is used verbatim."""
+    with a `RuntimeWarning`, and the run is then reported as the code default. Defaults to `False`, so the resolved prompt is used verbatim."""
 
     logfire_instance: Logfire | None = None
     """Logfire instance to resolve the variable on. When `None`, the global default instance
@@ -233,8 +232,10 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             attributes = self.attributes
 
         resolved = self._variable.get(targeting_key=targeting_key, attributes=attributes, label=self.label)
+        template = None
+        if self.render_template:
+            resolved, template = self._compile_template(resolved, targeting_key, attributes)
         with resolved:
-            template = self._compile_template(resolved, targeting_key, attributes) if self.render_template else None
             token = self._active.set(_ActivePrompt(resolved, template))
             try:
                 return await handler()
@@ -243,15 +244,16 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
 
     def _compile_template(
         self, resolved: ResolvedVariable[str], targeting_key: str | None, attributes: Mapping[str, Any] | None
-    ) -> TemplateStr[object]:
-        """Compile the resolved prompt, falling back to the code default when it is not a valid template."""
+    ) -> tuple[ResolvedVariable[str], TemplateStr[object]]:
+        """Compile the resolved prompt, falling back to the code default when it is not a valid template.
+
+        On fallback, the returned resolution describes the code default that actually runs, so the
+        run's baggage and `resolved` don't credit the remote version that failed to compile.
+        """
         try:
-            return TemplateStr[object](resolved.value)
+            return resolved, TemplateStr[object](resolved.value)
         except HandlebarsError as e:
-            default = self._variable.default
-            if callable(default):
-                default = default(targeting_key, attributes)
-            if resolved.value == default:
+            if resolved.reason == 'code_default':
                 raise
             warnings.warn(
                 f'Managed prompt {self._variable.name!r} (label {resolved.label!r}, version {resolved.version!r}) '
@@ -259,4 +261,10 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
                 RuntimeWarning,
                 stacklevel=2,
             )
-            return TemplateStr[object](default)
+            default = self._variable.default
+            if callable(default):
+                # Logfire passes its merged targeting context here; the run's own key and attributes
+                # are the closest public equivalent.
+                default = default(targeting_key, attributes)
+            fallback = ResolvedVariable(name=resolved.name, value=default, exception=e, reason='other_error')
+            return fallback, TemplateStr[object](default)

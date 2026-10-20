@@ -102,7 +102,7 @@ enclosing span the label is drawn at random per run.
 
 By default the resolved prompt is used verbatim. Pass `render_template=True` to render it as a
 Handlebars template against the agent's `deps`, the same mechanism as
-[`TemplateStr`][pydantic_ai.TemplateStr], so `{{field}}` is filled from `deps`:
+[`TemplateStr`][pydantic_ai.template.TemplateStr], so `{{field}}` is filled from `deps`:
 
 ```python
 from dataclasses import dataclass
@@ -135,7 +135,8 @@ The template can reference any field of `deps`, so anyone who can edit the promp
 rendering off.
 
 The template is compiled once per run. If a remote prompt is not a valid template, the run uses the code
-default and emits a `RuntimeWarning`. An invalid code default raises.
+default and emits a `RuntimeWarning`; the run's baggage and `resolved` then report the code default
+(`reason='other_error'`). An invalid code default raises.
 
 ## Prompt-cache trade-off
 

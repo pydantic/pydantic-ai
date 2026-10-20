@@ -518,11 +518,21 @@ async def test_invalid_remote_template_falls_back_to_default(capfire: CaptureLog
             'broken_template', default='Hello {{name}}!', label='production', render_template=True
         )
         agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+        seen: list[tuple[str | None, str | None, dict[str, Any]]] = []
+
+        @agent.tool_plain
+        def inspect() -> str:
+            resolved = capability.resolved
+            assert resolved is not None
+            seen.append((resolved.reason, resolved.label, dict(logfire.get_baggage())))
+            return 'ok'
 
         with pytest.warns(RuntimeWarning, match=r"'prompt__broken_template' \(label 'production', version 2\)"):
             result = await agent.run('hi', deps=NameDeps(name='Alice'))
 
-    assert instructions_seen(result.all_messages()) == ['Hello Alice!']
+    assert instructions_seen(result.all_messages()) == ['Hello Alice!', 'Hello Alice!']
+    # The run is credited to the code default that ran, not to the remote version that failed.
+    assert seen == [('other_error', None, {'logfire.variables.prompt__broken_template': '<code_default>'})]
 
 
 async def test_invalid_remote_template_falls_back_to_callable_default(capfire: CaptureLogfire) -> None:
