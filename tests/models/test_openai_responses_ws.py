@@ -811,6 +811,85 @@ async def test_same_socket_continuation_replays_after_request_scoped_prompt(
     ]
 
 
+@pytest.mark.parametrize('destination', ['http', 'websocket'])
+@pytest.mark.parametrize('edit_seed', [False, True])
+async def test_concrete_seed_validates_history_across_transports(
+    allow_model_requests: None, sockets: SocketHarness, destination: str, edit_seed: bool
+):
+    """An explicit stored seed must not restore history edited before a socket replay."""
+    socket = sockets.pending[0]
+    socket.responses = deque([text_events('socket answer', 'resp_socket')])
+    next_socket = ScriptedSocket(responses=deque([text_events('final answer', 'resp_final')]))
+    sockets.pending.append(next_socket)
+    http_bodies: list[Frame] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        http_bodies.append(FRAME_ADAPTER.validate_json(request.content))
+        first = len(http_bodies) == 1
+        text = 'seed answer' if first else 'final answer'
+        response = text_events(text, 'resp_seed' if first else 'resp_final')[-1]['response']
+        assert isinstance(response, dict)
+        response['output'] = [
+            {
+                'type': 'message',
+                'id': 'msg_http',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': text, 'annotations': []}],
+            }
+        ]
+        return httpx2.Response(200, json=response)
+
+    initial_settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': True}
+    seeded_settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'resp_seed', 'openai_store': False}
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel(
+            'gpt-4o',
+            provider=OpenAIProvider(api_key='test', http_client=http_client),
+            history_digest_key=b'conversation secret',
+        )
+        seed = await Agent(source, model_settings=initial_settings).run('secret')
+        history = seed.all_messages()
+        request = history[0]
+        assert isinstance(request, ModelRequest)
+        if edit_seed:
+            request.parts = [UserPromptPart('[redacted]')]
+
+        async with source.connect() as connected:
+            replay = await Agent(connected, model_settings=seeded_settings).run('socket turn', message_history=history)
+            if destination == 'http':
+                final = await Agent(source, model_settings=seeded_settings).run(
+                    'follow up', message_history=replay.all_messages()
+                )
+                final_frame = http_bodies[-1]
+            else:
+                async with source.connect() as other:
+                    final = await Agent(other, model_settings=seeded_settings).run(
+                        'follow up', message_history=replay.all_messages()
+                    )
+                final_frame = next_socket.sent[0]
+
+    assert seed.output == 'seed answer'
+    assert replay.output == 'socket answer'
+    assert final.output == 'final answer'
+    assert len(http_bodies) == (2 if destination == 'http' else 1)
+    assert http_bodies[0]['store'] is True
+    prefix: list[Frame] = [
+        {'role': 'user', 'content': '[redacted]'},
+        {'role': 'assistant', 'content': 'seed answer'},
+    ]
+    socket_turn: list[Frame] = [{'role': 'user', 'content': 'socket turn'}]
+    assert socket.sent[0].get('previous_response_id') == (None if edit_seed else 'resp_seed')
+    assert socket.sent[0]['input'] == [*(prefix if edit_seed else []), *socket_turn]
+    assert final_frame.get('previous_response_id') == (None if edit_seed else 'resp_seed')
+    assert final_frame['input'] == [
+        *(prefix if edit_seed else []),
+        *socket_turn,
+        {'role': 'assistant', 'content': 'socket answer'},
+        {'role': 'user', 'content': 'follow up'},
+    ]
+
+
 async def test_compatible_response_is_not_a_history_boundary(allow_model_requests: None, sockets: SocketHarness):
     socket = sockets.pending[0]
     socket.responses = deque([text_events('socket answer', 'resp_socket')])

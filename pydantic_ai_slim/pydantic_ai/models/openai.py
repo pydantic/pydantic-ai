@@ -4043,6 +4043,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     and message.provider_name == self.system
                     and message.provider_response_id == setting
                 ):
+                    # A later response can digest an edited prefix while the stored seed still holds the original.
+                    if self._history_changed(message, messages[:index]):
+                        return None, messages
                     return setting, messages[index + 1 :]
         return setting, messages
 
