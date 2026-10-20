@@ -437,7 +437,7 @@ class WorkflowAgent(Generic[AgentDepsT]):
     @property
     def resolved_name(self) -> str | None:
         """The sandbox function name: the explicit `name`, else the agent's `name`."""
-        return self.name if self.name is not None else self.agent.name
+        return self.name or self.agent.name
 
     @property
     def resolved_description(self) -> str | None:

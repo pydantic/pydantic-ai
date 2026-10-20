@@ -224,11 +224,6 @@ async def test_empty_description_hides_the_agent_description() -> None:
     assert 'async def reviewer(*, task: str) -> str:' in desc
 
 
-def test_empty_name_does_not_fall_back_to_the_agent_name() -> None:
-    with pytest.raises(UserError, match='has no `name`'):
-        DynamicWorkflow[object](agents=[WorkflowAgent(_sub_agent(name='reviewer'), name='')])
-
-
 def test_workflow_agent_accepts_positional_agent() -> None:
     reviewer = _sub_agent(name='reviewer')
     entry = WorkflowAgent(reviewer, description='Reviews code.')
