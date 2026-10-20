@@ -2984,6 +2984,63 @@ async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> No
     )
 
 
+class _PacedWebSocket(FakeWebSocket):
+    """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
+
+    hold_open = True
+
+    def __init__(self, incoming: Sequence[dict[str, Any] | str]) -> None:
+        super().__init__(incoming)
+        self._released = asyncio.Event()
+
+    def release(self, frames: Sequence[dict[str, Any]]) -> None:
+        self.drained.clear()
+        self._incoming.extend(json.dumps(frame) for frame in frames)
+        self._released.set()
+
+    async def recv(self) -> str:
+        while not self._incoming:
+            self._released.clear()
+            self.drained.set()
+            await self._released.wait()
+        return self._incoming.pop(0)
+
+
+async def test_wait_for_reply_waits_past_a_greeting_the_text_cut_off() -> None:
+    """`wait_for_reply()` for text sent as the greeting started ends with the reply that names the text.
+
+    The order of what was sent and received credits the greeting with the text; its `in_response_to_ids` (empty, as
+    recorded live) says otherwise, so the wait goes on until the reply that does name it.
+    """
+    ws = _PacedWebSocket([HANDSHAKE_FRAME])
+    model = _model(RestRecorder(agent_json()))
+    agent: Agent[None, str] = Agent()
+    with patched_connect(ws):
+        async with agent.realtime(model).session() as session:
+            with anyio.fail_after(10):
+                await session.send('What is two plus two?')
+                waiting = asyncio.create_task(session.wait_for_reply())
+                ws.release([_AUDIO, {'type': 'interruption', 'interruption_event': {'event_id': 2}}, _GREETING_CUT])
+                await ws.drained.wait()
+                assert not waiting.done()
+                ws.release(
+                    [
+                        {
+                            'type': 'audio',
+                            'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
+                        },
+                        _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+                        _VOICED,
+                    ]
+                )
+                await waiting
+    replies = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [(reply.provider_response_id, reply.state) for reply in replies] == [
+        ('resp_greeting', 'interrupted'),
+        ('resp_reply', 'complete'),
+    ]
+
+
 @pytest.mark.parametrize(
     ('answers', 'revision'),
     [
