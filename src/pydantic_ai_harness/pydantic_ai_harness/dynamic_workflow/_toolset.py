@@ -55,8 +55,8 @@ from pydantic_ai_harness._monty_exec import (
 )
 from pydantic_ai_harness._sub_agent_output import resumable_output_reason, without_resumable_outputs
 
-# Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
-# be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
+# Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
+# running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
 # schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
 _in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
 
@@ -75,8 +75,9 @@ class WorkflowResourceLimits(TypedDict, total=False):
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
     `while True` loop, which would otherwise burn a core in the sandbox worker (and block the
-    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch. Sleeping is not execution time either, so when set,
-    the script may also sleep for up to this long in total."""
+    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch.
+    Sleeping is not execution time either, so when set, the script may also sleep for up to this
+    long in total."""
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
@@ -761,10 +762,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         parts.extend(_signature_blocks(baseline, list(baseline), body=_STUB_BODY))
         for name in self._by_name:
             if name not in self._baseline_names:
-                for block in _signature_blocks(self._catalog_through(name), [name], body=_STUB_BODY):
-                    # A type shared with an earlier agent renders identically; define it once.
-                    if block not in parts:
-                        parts.append(block)
+                parts.extend(_signature_blocks(self._catalog_through(name), [name], body=_STUB_BODY))
         return '\n\n'.join(parts)
 
     def _catalog_through(self, name: str) -> dict[str, WorkflowAgent[AgentDepsT]]:
