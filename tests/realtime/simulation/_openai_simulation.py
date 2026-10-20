@@ -266,6 +266,8 @@ class OpenAISimulation(Simulation):
             server.finish()
         elif session.speaking is not None:
             server.speech_stop()
+        elif session.stopped_uncommitted is not None:
+            server.commit_stopped()
         elif session.pending_transcripts:
             server.transcribe()
         else:
@@ -392,7 +394,8 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
     @rule(deliver=st.booleans(), ticks=TICKS, commit=st.booleans())
     def speech_stop(self, deliver: bool, ticks: int | None, commit: bool) -> None:
-        # xAI adds a turn's item when it hears speech start, so a stop it takes back is not modeled there.
+        # xAI re-opens the turn it heard stop when speech resumes before it commits (SIM-41): pinned by a scenario,
+        # and left out of exploration until the session handles it.
         commit = commit or self.openai_sim.openai.dialect == 'xai'
         self.run(lambda: self.openai_sim.speech_stop(deliver=deliver, ticks=ticks, commit=commit))
 
