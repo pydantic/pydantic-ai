@@ -7,6 +7,7 @@ observed against the live API; `test_elevenlabs_ws.py` replays the recordings.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
@@ -19,10 +20,12 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import WebRTCSession
-from pydantic_ai.realtime.codec import OutputTranscript
+from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted
+from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import TestEnv, try_import
+from ..realtime_connections import lifecycle_events
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -32,6 +35,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
+    from pydantic_ai.realtime.codec import ToolResult
     from pydantic_ai.realtime.elevenlabs import (
         ElevenLabsRealtimeConnection,
         ElevenLabsRealtimeModel,
@@ -39,7 +43,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
-    from .test_openai import FakeConnect, FakeWebSocket
+    from .test_openai import FakeConnect, FakeWebSocket, PushWebSocket
+    from .test_openai_lifecycle import created, describe, done, frames, tool_output_added, transcript
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
@@ -142,7 +147,10 @@ def test_session_config_shape() -> None:
             'instructions': 'Be nice',
             'output_modalities': ['audio'],
             'audio': {
-                'input': {'format': {'type': 'audio/pcm', 'rate': 24000}, 'turn_detection': {'type': 'semantic_vad'}},
+                'input': {
+                    'format': {'type': 'audio/pcm', 'rate': 24000},
+                    'turn_detection': {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True},
+                },
                 'output': {'format': {'type': 'audio/pcm'}},
             },
             'tools': [
@@ -163,7 +171,7 @@ def test_session_config_elevenlabs_settings() -> None:
         {
             'input': {
                 'format': {'type': 'audio/pcm', 'rate': 24000},
-                'turn_detection': {'type': 'semantic_vad'},
+                'turn_detection': {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True},
                 'transcription': {'language': 'es'},
             },
             'output': {'format': {'type': 'audio/pcm'}, 'voice': 'JBFqnCBsd6RMkjVDRZzb'},
@@ -191,7 +199,10 @@ def test_session_config_drops_settings_elevenlabs_ignores() -> None:
             'instructions': '',
             'output_modalities': ['audio'],
             'audio': {
-                'input': {'format': {'type': 'audio/pcm', 'rate': 24000}, 'turn_detection': {'type': 'semantic_vad'}},
+                'input': {
+                    'format': {'type': 'audio/pcm', 'rate': 24000},
+                    'turn_detection': {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True},
+                },
                 'output': {'format': {'type': 'audio/pcm'}},
             },
             'max_output_tokens': 2048,
@@ -208,15 +219,29 @@ def test_session_config_rejects_a_transcription_model() -> None:
 def test_session_config_cross_provider_turn_detection() -> None:
     assert _config(ElevenLabsRealtimeModelSettings(turn_detection=False))['audio']['input']['turn_detection'] is None
     assert _config(ElevenLabsRealtimeModelSettings(turn_detection=True))['audio']['input']['turn_detection'] == {
-        'type': 'semantic_vad'
+        'type': 'semantic_vad',
+        'create_response': True,
+        'interrupt_response': True,
     }
+    # Only the knobs given are sent.
+    config = _config(ElevenLabsRealtimeModelSettings(turn_detection={'silence_duration_ms': 500}))
+    assert config['audio']['input']['turn_detection'] == snapshot(
+        {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True, 'silence_duration_ms': 500}
+    )
     config = _config(
         ElevenLabsRealtimeModelSettings(
             turn_detection={'sensitivity': 'high', 'prefix_padding_ms': 200, 'silence_duration_ms': 800}
         )
     )
     assert config['audio']['input']['turn_detection'] == snapshot(
-        {'type': 'semantic_vad', 'eagerness': 'high', 'prefix_padding_ms': 200, 'silence_duration_ms': 800}
+        {
+            'type': 'semantic_vad',
+            'create_response': True,
+            'interrupt_response': True,
+            'eagerness': 'high',
+            'prefix_padding_ms': 200,
+            'silence_duration_ms': 800,
+        }
     )
 
 
@@ -366,7 +391,7 @@ async def test_create_client_secret_request() -> None:
                 'audio': {
                     'input': {
                         'format': {'type': 'audio/pcm', 'rate': 24000},
-                        'turn_detection': {'type': 'semantic_vad'},
+                        'turn_detection': {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True},
                     },
                     'output': {'format': {'type': 'audio/pcm'}, 'voice': 'george'},
                 },
@@ -393,3 +418,134 @@ async def test_connection_names_elevenlabs_when_closed() -> None:
     conn = ElevenLabsRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
     assert conn._provider_label == 'ElevenLabs Realtime'  # pyright: ignore[reportPrivateUsage]
     assert await collect_codec_events(conn) == []
+
+
+# --- connection behavior --------------------------------------------------------------------------
+
+
+async def test_keep_alive_sends_an_empty_append_when_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ElevenLabs closes a session that hasn't heard from the client for 60 seconds, and pings don't count.
+    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', 0.01)
+    ws = PushWebSocket()
+    conn = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+
+    async def read() -> None:
+        async for _ in conn.frames():
+            pass  # pragma: no cover
+
+    reading = asyncio.create_task(read())
+    await asyncio.sleep(0.05)
+    assert {'type': 'input_audio_buffer.append', 'audio': ''} in [json.loads(sent) for sent in ws.sent]
+    reading.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reading
+
+
+def _call(response_id: str, call_id: str) -> dict[str, Any]:
+    return {
+        'type': 'response.function_call_arguments.done',
+        'response_id': response_id,
+        'item_id': f'item_{call_id}',
+        'output_index': 0,
+        'call_id': call_id,
+        'name': 'lookup',
+        'arguments': '{}',
+    }
+
+
+async def test_tool_calls_abandoned_by_a_later_response() -> None:
+    """A response that starts before a tool call's result is in makes ElevenLabs give up on that call.
+
+    Its result never reaches the model, and a `response.create` after it goes unanswered, so the connection
+    doesn't ask for one: the result's input is settled as lost instead of leaving `wait_for_reply()` waiting.
+    """
+    ws = FakeWebSocket(
+        frames(
+            created('resp_1'),
+            _call('resp_1', 'call_1'),
+            done('resp_1'),
+            created('resp_2'),
+            done('resp_2'),
+            tool_output_added('call_1'),
+        )
+    )
+    conn = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    events = aiter(lifecycle_events(conn))
+    taken = [describe(await anext(events)) for _ in range(8)]
+    await conn.send(ToolResult(tool_call_id='call_1', output='42'))
+    rest = [describe(event) async for event in events]
+
+    assert taken + rest == snapshot(
+        [
+            ResponseStarted(response_id='resp_1'),
+            'ToolCall',
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_2'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            InputAdded(input_id=0),
+            InputLost(input_ids=(0,)),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+    assert [json.loads(sent)['type'] for sent in ws.sent] == snapshot(['conversation.item.create'])
+
+
+async def test_audio_tags_are_stripped_from_transcripts() -> None:
+    ws = FakeWebSocket(
+        frames(
+            created('resp_1'),
+            {**transcript('resp_1', '[cheerful]'), 'item_id': 'item_1'},
+            {**transcript('resp_1', ' Hello'), 'item_id': 'item_1'},
+            {**transcript('resp_1', ' there! [happy'), 'item_id': 'item_1'},
+            {**transcript('resp_1', '] How are you?'), 'item_id': 'item_1'},
+            {
+                'type': 'response.output_audio_transcript.done',
+                'response_id': 'resp_1',
+                'item_id': 'item_1',
+                'output_index': 0,
+                'content_index': 0,
+                'transcript': '[cheerful] Hello there! [happy] How are you?',
+            },
+            done('resp_1'),
+        )
+    )
+    events = await collect_codec_events(ElevenLabsRealtimeConnection(ws))  # type: ignore[arg-type]
+    assert events == snapshot(
+        [
+            OutputTranscript(text='Hello', item_id='item_1', response_id='resp_1'),
+            OutputTranscript(text=' there!', item_id='item_1', response_id='resp_1'),
+            OutputTranscript(text=' How are you?', item_id='item_1', response_id='resp_1'),
+            OutputTranscript(text='Hello there! How are you?', is_final=True, item_id='item_1', response_id='resp_1'),
+            ResponseDone(
+                provider_response_id='resp_1',
+                finish_reason='stop',
+                provider_details={'status': 'completed', 'audio_tags': ['cheerful', 'happy']},
+            ),
+        ]
+    )
+
+
+async def test_audio_tags_kept_when_stripping_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript_done = json.dumps(
+        {
+            'type': 'response.output_audio_transcript.done',
+            'response_id': 'resp_1',
+            'item_id': 'item_1',
+            'output_index': 0,
+            'content_index': 0,
+            'transcript': '[cheerful] Hi.',
+        }
+    )
+    ws = FakeWebSocket([_created(), _updated(), transcript_done])
+    monkeypatch.setattr(rt_elevenlabs.websockets, 'connect', FakeConnect(ws))
+    model = _model(ElevenLabsRealtimeModelSettings(elevenlabs_strip_audio_tags=False))
+    async with _connect(model, 'x') as conn:
+        events = await collect_codec_events(conn)
+    assert [event.text for event in events if isinstance(event, OutputTranscript)] == ['[cheerful] Hi.']

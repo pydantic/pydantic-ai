@@ -104,7 +104,7 @@ def _is_audio_send(frame: dict[str, Any]) -> bool:
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
 _SECRET_RE = re.compile(
-    r'(sk-[A-Za-z0-9_\-]{8,}|sk_[A-Za-z0-9]{20,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
+    r'(sk-[A-Za-z0-9_\-]{8,}|(?<![A-Za-z0-9])sk_[A-Za-z0-9]{20,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
 )
 _SECRET_PLACEHOLDER = '<scrubbed>'
 

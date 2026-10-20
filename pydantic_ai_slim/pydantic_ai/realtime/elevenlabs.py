@@ -43,8 +43,10 @@ SDK supplies the event types the shared OpenAI codec is built on):
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Callable, Sequence, Set as AbstractSet
-from dataclasses import dataclass
+import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence, Set as AbstractSet
+from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
 try:
@@ -61,17 +63,30 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .._http import AsyncHTTPClient
 from ..exceptions import UserError
-from ..messages import ModelMessage
+from ..messages import ModelMessage, RealtimeSessionErrorEvent
 from ..models import ModelRequestParameters
 from ..profiles.elevenlabs import elevenlabs_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
-from ._lifecycle import LifecycleEvent
+from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
+from ._lifecycle import LifecycleEvent, RealtimeFrame
 from ._openai_lifecycle import OpenAILifecycle
-from ._openai_protocol import AUTO_TRANSCRIPTION_MODEL, turn_detection_config, with_realtime_query
+from ._openai_protocol import (
+    AUTO_TRANSCRIPTION_MODEL,
+    CONVERSATION_ITEM_CREATE_EVENT,
+    loads_obj,
+    turn_detection_config,
+    with_realtime_query,
+)
+from .codec import OutputTranscript, RealtimeCodecEvent, ResponseDone, ToolResult
 from .model import RealtimeModel, WebRTCAnswer
-from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+from .openai import (
+    OpenAIRealtimeConnection,
+    OpenAIRealtimeModel,
+    OpenAIRealtimeModelSettings,
+    _DecodedFrame,  # pyright: ignore[reportPrivateUsage]
+)
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile, RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
@@ -93,6 +108,10 @@ The realtime WebSocket is that URL plus `realtime`, with the HTTP scheme swapped
 client-secret endpoint is that URL plus `realtime/client_secrets`, as on OpenAI:
 `https://api.elevenlabs.io` → `https://api.elevenlabs.io/v1/convai` → `wss://api.elevenlabs.io/v1/convai/realtime`.
 A data-residency `base_url` maps onto its own realtime host the same way."""
+
+_KEEP_ALIVE_FRAME = '{"type":"input_audio_buffer.append","audio":""}'
+"""An empty audio append: a client message that adds no audio, which keeps the session open (verified live)."""
+_RESPONSE_CREATED_EVENT = 'response.created'
 
 LatestElevenLabsRealtimeModelNames = Literal['eleven_realtime_v1_mini', 'eleven_realtime_v1_max']
 """The latest Eleven Realtime model names."""
@@ -128,6 +147,16 @@ class ElevenLabsRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """Language code of the conversation (e.g. `'en'`, `'es'`, `'pt-br'`), used for transcription, speech, and the
     model's reply language. The server's default is English."""
 
+    elevenlabs_strip_audio_tags: bool
+    """Whether to remove expressive audio tags such as `[cheerful]` from the model's transcripts. Defaults to `True`.
+
+    Eleven Realtime writes tags into its reply to direct the delivery, and they are part of the transcript, though
+    they aren't spoken. They are removed from the transcript, streamed and in history alike, and the tags a response's
+    transcript held are kept, in order and without brackets, in its `provider_details['audio_tags']`. Only lowercase
+    words in square brackets count as tags, so citations (`[1]`), Markdown links, and placeholders like `[Your Name]`
+    are kept. Set this to `False` to keep the transcript exactly as ElevenLabs sends it, tags included.
+    """
+
     elevenlabs_max_duration_seconds: int
     """Maximum wall-clock duration of a session, in seconds, from 60 to 7200. The server's default is 600.
 
@@ -160,6 +189,11 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
     _provider_label = 'ElevenLabs Realtime'
     # Images are dropped from conversation items, so there is nowhere for a tool result's images to go.
     _supports_tool_result_images = False
+    _keep_alive_after: ClassVar[float | None] = 45.0
+    """Seconds without sending anything after which the connection sends a keep-alive frame, or `None` for never.
+
+    ElevenLabs closes a session that hasn't received a client message for 60 seconds (`1002`), and doesn't count
+    pings."""
 
     def __init__(
         self,
@@ -192,12 +226,129 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             keep_tool_items=keep_tool_items,
         )
         self._lifecycle = _ElevenLabsLifecycle()
+        self._strip_audio_tags = True
+        # The streamed transcript of each output item under way, with its audio tags removed, and the tags each
+        # response's transcripts held (see `_strip_transcript_tags`).
+        self._tag_strippers: dict[str | None, AudioTagStripper] = {}
+        self._audio_tags: dict[str | None, list[str]] = {}
+        # When this connection last sent the server anything, on the event loop's clock (see `_keep_alive`).
+        self._last_sent = 0.0
+        # Tool calls ElevenLabs gave up on when it started another response before their results were in (see
+        # `_abandon_outstanding_tool_calls`).
+        self._abandoned_tool_calls: set[str] = set()
 
     @property
     def _prunes_tool_calls(self) -> bool:
         # ElevenLabs answers `conversation.item.delete` with a `not_implemented` error: `openai_prune_tool_items`
         # is one of the settings it ignores.
         return False
+
+    async def frames(self) -> AsyncIterator[RealtimeFrame]:
+        keep_alive = asyncio.create_task(self._keep_alive()) if self._keep_alive_after is not None else None
+        try:
+            async for frame in super().frames():
+                yield frame
+        finally:
+            if keep_alive is not None:
+                keep_alive.cancel()
+
+    async def _keep_alive(self) -> None:
+        """Keep an idle session open: ElevenLabs closes one that hasn't heard from the client for 60 seconds.
+
+        Pings don't count, so after `_keep_alive_after` seconds without sending anything, this sends an empty
+        `input_audio_buffer.append`, which adds no audio.
+        """
+        assert self._keep_alive_after is not None
+        loop = asyncio.get_running_loop()
+        # The handshake just went out: the clock starts now.
+        self._last_sent = loop.time()
+        while True:
+            idle = loop.time() - self._last_sent
+            if idle >= self._keep_alive_after:
+                with suppress(*self.transport_errors):
+                    # A dropped socket is `frames`' to handle: it reconnects or ends the session.
+                    await self._ws.send(_KEEP_ALIVE_FRAME)
+                self._last_sent = loop.time()
+                idle = 0.0
+            await asyncio.sleep(self._keep_alive_after - idle)
+
+    async def _send_event(self, event: dict[str, Any]) -> None:
+        await super()._send_event(event)
+        self._last_sent = asyncio.get_running_loop().time()
+
+    async def _decode_frame(self, raw: str) -> _DecodedFrame:
+        abandoned: list[str] = []
+        if _RESPONSE_CREATED_EVENT in raw and loads_obj(raw).get('type') == _RESPONSE_CREATED_EVENT:
+            abandoned = self._abandon_outstanding_tool_calls()
+        decoded = await super()._decode_frame(raw)
+        if self._strip_audio_tags:
+            decoded.codec = self._strip_transcript_tags(decoded.codec)
+        if abandoned:
+            decoded.codec.append(
+                RealtimeSessionErrorEvent(
+                    message=(
+                        'ElevenLabs Realtime started a new response before the results of tool calls '
+                        f'{", ".join(repr(call_id) for call_id in abandoned)} were sent, and abandoned those calls: '
+                        'their results will not reach the model.'
+                    ),
+                    type='tool_calls_abandoned',
+                    recoverable=True,
+                )
+            )
+        return decoded
+
+    def _abandon_outstanding_tool_calls(self) -> list[str]:
+        """Give up on the tool calls of finished responses still waiting for results, as ElevenLabs just did.
+
+        Once another response starts, a `function_call_output` for an earlier call never reaches the model, and the
+        `response.create` that follows it goes unanswered, so the results already sent for those responses are
+        answered by nothing, and those still to come are not asked to be.
+        """
+        abandoned: list[str] = []
+        for response_id, batch in list(self._tool_call_batches.items()):
+            if batch.done and batch.unanswered:
+                del self._tool_call_batches[response_id]
+                self._lifecycle.requests_dropped(batch.inputs)
+                abandoned.extend(sorted(batch.unanswered))
+        self._abandoned_tool_calls.update(abandoned)
+        return abandoned
+
+    async def _send_tool_result(self, content: ToolResult, *, input_index: int) -> None:
+        if content.tool_call_id not in self._abandoned_tool_calls:
+            await super()._send_tool_result(content, input_index=input_index)
+            return
+        self._abandoned_tool_calls.discard(content.tool_call_id)
+        self._tool_call_responses.pop(content.tool_call_id, None)
+        # Still added to the conversation, which keeps it complete, but no response is asked for: none would come.
+        self._lifecycle.tool_output_sent(content.tool_call_id, input_index)
+        await self._send_event(
+            {
+                'type': CONVERSATION_ITEM_CREATE_EVENT,
+                'item': {'type': 'function_call_output', 'call_id': content.tool_call_id, 'output': content.output},
+            }
+        )
+        self._lifecycle.requests_dropped([input_index])
+
+    def _strip_transcript_tags(self, events: list[RealtimeCodecEvent]) -> list[RealtimeCodecEvent]:
+        """Remove expressive audio tags from output transcripts, keeping each response's in its `provider_details`."""
+        stripped: list[RealtimeCodecEvent] = []
+        for event in events:
+            if isinstance(event, OutputTranscript):
+                key = event.item_id or event.response_id
+                if event.is_final:
+                    # The whole text, stripped at once, which is what the stripped pieces streamed before it add up to.
+                    self._tag_strippers.pop(key, None)
+                    text, tags = strip_audio_tags(event.text)
+                    self._audio_tags.setdefault(event.response_id, []).extend(tags)
+                else:
+                    text = self._tag_strippers.setdefault(key, AudioTagStripper()).feed(event.text)
+                    if not text:
+                        continue
+                event = replace(event, text=text)
+            elif isinstance(event, ResponseDone) and (tags := self._audio_tags.pop(event.provider_response_id, None)):
+                event = replace(event, provider_details={**(event.provider_details or {}), 'audio_tags': tags})
+            stripped.append(event)
+        return stripped
 
 
 class _ElevenLabsOpenAIProvider(OpenAIProvider):
@@ -234,16 +385,17 @@ def _turn_detection_config(settings: ElevenLabsRealtimeModelSettings) -> dict[st
                 'Eleven Realtime only supports semantic VAD: set `openai_turn_detection` to '
                 "`{'type': 'semantic_vad'}`, or use the cross-provider `turn_detection` setting."
             )
-        config = turn_detection_config(turn_detection)
-        assert config is not None
-        if config.get('eagerness') == 'auto':
+        vad = turn_detection_config(turn_detection)
+        assert vad is not None
+        if vad.get('eagerness') == 'auto':
             # ElevenLabs takes `low`, `medium` or `high`; leaving it out keeps the server default, `medium`.
-            del config['eagerness']
-        return config
+            del vad['eagerness']
+        return vad
     base = settings.get('turn_detection', True)
     if base is False:
         return None
-    config = {'type': 'semantic_vad'}
+    # Spelled out, as the shared OpenAI config does, so the session knows the server cancels a response on speech.
+    config: dict[str, Any] = {'type': 'semantic_vad', 'create_response': True, 'interrupt_response': True}
     if base is not True:
         # Semantic VAD's `eagerness` takes the same values as the cross-provider `sensitivity`.
         if (sensitivity := base.get('sensitivity')) is not None:
@@ -312,6 +464,26 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         # The API key goes in `xi-api-key`; `Authorization: Bearer` only takes a client secret.
         del model_settings
         return {'xi-api-key': self._elevenlabs_provider.api_key}
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[OpenAIRealtimeConnection]:
+        settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        async with super().connect(
+            messages=messages, model_settings=model_settings, model_request_parameters=model_request_parameters
+        ) as connection:
+            assert isinstance(connection, ElevenLabsRealtimeConnection)
+            connection._strip_audio_tags = settings.get('elevenlabs_strip_audio_tags', True)  # pyright: ignore[reportPrivateUsage]
+            yield connection
+
+    async def _webrtc_headers(self) -> dict[str, str]:
+        # Only the API key: the OpenAI SDK client's other default headers (`OpenAI-Organization`, say) are OpenAI's.
+        return await self._auth_headers()
 
     def _session_model_name(self, created: dict[str, Any], model_settings: OpenAIRealtimeModelSettings) -> str | None:
         # `session.created` always reports the default model. The requested one is set by the `session.update`

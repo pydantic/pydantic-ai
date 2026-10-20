@@ -140,7 +140,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
     ignores it (`google_input_transcription` configures Gemini's own transcription).
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), xAI, and Eleven Realtime (`'auto'` only).
     """
 
     output_modality: Literal['audio', 'text']

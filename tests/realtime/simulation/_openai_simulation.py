@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
+from unittest.mock import patch
 
 from hypothesis import strategies as st
 from hypothesis.stateful import precondition, rule
@@ -17,7 +18,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.realtime.azure import AzureRealtimeModel
-from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
+from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeConnection, ElevenLabsRealtimeModel
 from pydantic_ai.realtime.lifecycle import RealtimeFrame, StaleEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
@@ -160,7 +161,8 @@ class OpenAISimulation(Simulation):
 
     @contextmanager
     def transport(self) -> Generator[None]:
-        with self.server.network.patch():
+        # ElevenLabs' keep-alive is a timer that never stops, so the simulation could never come to rest with it.
+        with self.server.network.patch(), patch.object(ElevenLabsRealtimeConnection, '_keep_alive_after', None):
             yield
 
     # --- provider behavior --------------------------------------------------------------------------
