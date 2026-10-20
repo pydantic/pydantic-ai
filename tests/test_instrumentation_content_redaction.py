@@ -256,6 +256,28 @@ def test_model_parameter_customization_preserves_url_identity_provenance() -> No
     assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
 
 
+def test_model_parameter_customization_preserves_explicit_native_id() -> None:
+    class RebuildsParameters(TestModel):
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            return ModelRequestParameters(native_tools=model_request_parameters.native_tools)
+
+    url = 'https://mcp.example.test/private/SENTINEL-path'
+    identity = MCP(url, native=True, local=False).id
+    assert identity is not None
+    parameters = ModelRequestParameters(
+        native_tools=[MCPServerTool(id=identity, url=url)], _telemetry_mcp_url_ids=set()
+    )
+
+    _, prepared = RebuildsParameters().prepare_request(None, parameters)
+    serialized = model_request_parameters_attributes(prepared)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert prepared._telemetry_mcp_url_ids == set()  # pyright: ignore[reportPrivateUsage]
+    assert json.loads(serialized)['native_tools'][0]['id'] == identity
+    assert json.loads(serialized)['native_tools'][0]['url'] == '[REDACTED]'
+
+
 def test_url_derived_mcp_tool_call_name_is_masked_in_request_span() -> None:
     capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
     tool = next(iter(capability.get_native_tools()))

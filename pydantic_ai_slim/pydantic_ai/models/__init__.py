@@ -953,7 +953,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         params = replace(
             customized_params,
             _telemetry_mcp_url_ids=(
-                model_request_telemetry_url_ids(customized_params)
+                model_request_telemetry_url_ids(
+                    customized_params,
+                    known_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                )
                 | model_request_telemetry_url_ids(model_request_parameters)
             ),
             _telemetry_mcp_url_toolset_ids=(
