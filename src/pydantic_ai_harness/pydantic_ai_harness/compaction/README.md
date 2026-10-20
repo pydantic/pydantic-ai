@@ -475,14 +475,17 @@ releases; set `incremental=False` to retain the prior regeneration behavior. `pr
 when it falls outside the window. Pass `keep_tokens` to retain a minimum amount of original message text
 instead of using `keep_messages`.
 
-The summary is a `CompactionPart` in a `ModelResponse` of its own, right after the original system
-prompts, which stay exactly as they were. Each provider model receives it as assistant text inside
-`<conversation_summary>` (a `FunctionModel` gets the part itself), never as part of the system prompt: a
-model wrote it, from a history that can include tool output. Because it is a compaction part, Pydantic
-AI also treats it as a compaction boundary, so tool discoveries and on-demand capability loads from
-before it are announced again, and `WarnOnCacheBusts` reports the cache drop it causes as `compacted`. A
-history saved before this, with the summary in a system prompt opening with `Summary of previous
-conversation:`, keeps working: that summary anchors the next one and is replaced by it.
+The summary is a `CompactionPart` in a `ModelResponse` of its own. The original system prompts stay
+exactly as they were, ahead of it along with the original first user turn when
+`preserve_first_user_message` keeps it. The kept tail always opens with a request, moving back a turn
+when the cutoff would start it at a response, so the summary is never followed by a second assistant
+turn. Each provider model receives it as assistant text inside `<conversation_summary>` (a
+`FunctionModel` gets the part itself), never as part of the system prompt: a model wrote it, from a
+history that can include tool output. Because it is a compaction part, Pydantic AI also treats it as a
+compaction boundary, so tool discoveries and on-demand capability loads from before it are announced
+again, and `WarnOnCacheBusts` reports the cache drop it causes as `compacted`. A history saved before
+this, with the summary in a system prompt opening with `Summary of previous conversation:`, keeps
+working: that summary anchors the next one and is replaced by it.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,

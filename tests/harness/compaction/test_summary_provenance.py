@@ -21,8 +21,10 @@ class TestSummarizingCompaction:
             model=TestModel(custom_output_text='summary of both prompts'),
         )
 
-        summary, preserved_prompt, last_response = result
+        # The first prompt precedes the summary; the later prompt is kept with its answer, so the summary
+        # isn't followed by a second assistant turn.
+        preserved_prompt, summary, later_request, last_response = result
         assert isinstance(summary, ModelResponse) and summary.run_id is None
         assert summary.parts == [CompactionPart(content='summary of both prompts')]
         assert summary.timestamp > max(first_prompt.timestamp, later_prompt.timestamp)
-        assert preserved_prompt == messages[0] and last_response == messages[-1]
+        assert preserved_prompt == messages[0] and later_request is messages[2] and last_response == messages[-1]

@@ -1616,16 +1616,8 @@ class TestPreserveFirstUserMessage:
         await _continue(agent, [f'turn {n}' for n in range(2, 8)], history=[first, _assistant('ok')])
         assert _request_shapes(sent[-1]) == snapshot(
             [
-                ['system-prompt: Be terse.'],
-                [
-                    'user-prompt: attached doc',
-                    'user-prompt: the actual question',
-                    'user-prompt: turn 3',
-                    'user-prompt: turn 4',
-                    'user-prompt: turn 5',
-                    'user-prompt: turn 6',
-                    'user-prompt: turn 7',
-                ],
+                ['system-prompt: Be terse.', 'user-prompt: attached doc', 'user-prompt: the actual question'],
+                ['user-prompt: turn 7'],
             ]
         )
 
@@ -1697,13 +1689,13 @@ class TestPreserveFirstUserMessage:
 
             result = await comp.before_model_request(ctx, rc)
 
-        # Summary message + first user message + 1 kept = 3.
+        # First user message + summary + 1 kept = 3.
         assert len(result.messages) == 3
-        # First message is the summary (with system prompts).
         assert 'Summary.' in _summary_text(result.messages)
-        # Second message is the preserved first user message.
-        assert isinstance(result.messages[1], ModelRequest)
-        user_parts = [p for p in result.messages[1].parts if isinstance(p, UserPromptPart)]
+        # The preserved first user message comes first: it precedes everything the summary covers.
+        assert isinstance(result.messages[0], ModelRequest)
+        assert isinstance(result.messages[1], ModelResponse)
+        user_parts = [p for p in result.messages[0].parts if isinstance(p, UserPromptPart)]
         assert len(user_parts) == 1
         assert user_parts[0].content == 'build a web app'
 
@@ -1781,15 +1773,8 @@ class TestIncrementalSummarization:
         assert _summary_text(sent[-1]) == 'Summary 5.'
         assert _request_shapes(sent[-1]) == snapshot(
             [
-                ['system-prompt: Be terse.'],
-                [
-                    'user-prompt: turn 1',
-                    'user-prompt: turn 3',
-                    'user-prompt: turn 4',
-                    'user-prompt: turn 5',
-                    'user-prompt: turn 6',
-                    'user-prompt: turn 7',
-                ],
+                ['system-prompt: Be terse.', 'user-prompt: turn 1'],
+                ['user-prompt: turn 7'],
             ]
         )
 
@@ -1814,7 +1799,7 @@ class TestIncrementalSummarization:
         assert 'Oldest.' not in prompts[0]
         assert _summary_text(sent[-1]) == 'Summary 1.'
         assert _request_shapes(sent[-1]) == snapshot(
-            [['system-prompt: Be terse.'], ['user-prompt: turn 1', 'user-prompt: turn 3', 'user-prompt: turn 5']]
+            [['system-prompt: Be terse.', 'user-prompt: turn 1', 'user-prompt: turn 3'], ['user-prompt: turn 5']]
         )
 
     async def test_recompaction_keeps_one_receipt(self):
@@ -4852,8 +4837,9 @@ recent
         first = ModelRequest(parts=[SystemPromptPart(content='Be terse.'), *_user('a').parts])
         result = await agent.run('go', message_history=[first, _assistant('b'), _user('c'), _assistant('d')])
 
-        standing, summary, *_ = result.all_messages()
+        standing, first_user, summary, *_ = result.all_messages()
         assert isinstance(standing, ModelRequest)
+        assert [p.content for p in first_user.parts if isinstance(p, UserPromptPart)] == ['a']
         assert [(part.part_kind, part.content) for part in standing.parts if isinstance(part, SystemPromptPart)] == [
             ('system-prompt', 'Be terse.')
         ]
@@ -4926,6 +4912,85 @@ recent
             if isinstance(part, CompactionPart)
         ]
         assert summaries == ['NEW', 'OLD']
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    @pytest.mark.parametrize('preserve_first_user_message', [True, False])
+    async def test_an_instructions_only_agent_sends_alternating_turns(
+        self, allow_model_requests: None, preserve_first_user_message: bool
+    ):
+        """With no system prompt, the summary still sits between user turns, and never next to another response.
+
+        The cutoff for `keep_messages=2` falls on a response; the kept tail is moved back to the request
+        before it, so the summary isn't followed by a second assistant turn.
+        """
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=10, output_tokens=1))
+        )
+        agent = Agent(
+            AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)),
+            instructions='Be terse.',
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer([], output='S'),
+                    max_messages=4,
+                    keep_messages=2,
+                    preserve_first_user_message=preserve_first_user_message,
+                )
+            ],
+        )
+        history: list[ModelMessage] = [_user('first'), _assistant('a'), _user('second'), _assistant('b')]
+        await agent.run('third', message_history=history)
+
+        [body] = get_mock_chat_completion_kwargs(client)
+        roles = [message['role'] for message in body['messages']]
+        assert all(previous != current for previous, current in zip(roles, roles[1:]))
+        texts = [block['text'] for message in body['messages'] for block in message['content'] if 'text' in block]
+        expected = ['first'] if preserve_first_user_message else []
+        assert texts == [*expected, '<conversation_summary>\nS\n</conversation_summary>', 'second', 'b', 'third']
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    async def test_a_tool_loop_tail_keeps_its_thinking_first(self, allow_model_requests: None):
+        """A tail that opens mid tool loop keeps the user turn before it, so the summary never leads that response."""
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=10, output_tokens=1))
+        )
+        agent = Agent(
+            AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client)),
+            instructions='Be terse.',
+            capabilities=[
+                SummarizingCompaction(
+                    model=_recording_summarizer([], output='S'),
+                    max_messages=4,
+                    keep_messages=2,
+                    preserve_first_user_message=False,
+                )
+            ],
+        )
+
+        @agent.tool_plain
+        def look() -> str:
+            return 'seen'
+
+        history: list[ModelMessage] = [
+            _user('first'),
+            _assistant('a'),
+            _user('look'),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='need to look', signature='sig', provider_name='anthropic'),
+                    ToolCallPart(tool_name='look', args={}, tool_call_id='c1'),
+                ],
+                provider_name='anthropic',
+                model_name='claude-sonnet-5-5',
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='look', content='seen', tool_call_id='c1')]),
+        ]
+        await agent.run(message_history=history)
+
+        [body] = get_mock_chat_completion_kwargs(client)
+        roles = [message['role'] for message in body['messages']]
+        assert roles == ['assistant', 'user', 'assistant', 'user']
+        assert body['messages'][2]['content'][0]['type'] == 'thinking'
 
     async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
         """A history with the old system-prompt summary keeps loading, and its summary is replaced."""

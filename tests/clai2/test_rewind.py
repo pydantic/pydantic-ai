@@ -35,7 +35,7 @@ from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.menus.rewind import RewindPoint, build_rewind_menu, rewind
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.menu_script import Script, pick
-from tests.clai2.test_compaction import make_plugin, two_turns
+from tests.clai2.test_compaction import make_plugin, three_turns
 from tests.clai2.test_live_prompt import editor
 from tests.clai2.test_sessions import saved_session
 
@@ -88,10 +88,10 @@ def test_empty_and_unsupported_menu_cancels(monkeypatch: pytest.MonkeyPatch, mes
 
 
 async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
-    transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='answer and later instruction'))
+    transcript = Transcript(messages=three_turns(), model=TestModel(custom_output_text='answer and later instruction'))
     plugin = make_plugin(transcript, protected_tokens=0)
     await plugin.commands.execute_async('/compact')
-    assert len(transcript.messages) == 3
+    assert len(transcript.messages) == 4
     menu = build_rewind_menu(transcript.messages)
     assert menu.highlighted is not None and menu.highlighted.disabled
     monkeypatch.setattr('sys.stdout', StringIO())
@@ -106,7 +106,7 @@ async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypat
     monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
     result = build_rewind_menu(session.messages).run()
     assert result.item is not None
-    assert result.item.value == RewindPoint(message_index=3, text='after compaction', images=())
+    assert result.item.value == RewindPoint(message_index=4, text='after compaction', images=())
 
 
 async def test_replacement_images_do_not_count_discarded_draft_against_limit() -> None:

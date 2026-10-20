@@ -41,6 +41,7 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    _is_safe_cutoff,  # pyright: ignore[reportPrivateUsage]
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -341,6 +342,37 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     return None
 
 
+def _back_to_request(messages: list[ModelMessage], cutoff: int) -> int:
+    """Move *cutoff* back to the nearest request it can split the history at without orphaning a tool call.
+
+    The summary is an assistant turn, so a kept tail that opened with a response would put two
+    assistant turns in a row: providers that combine them would start the response with the summary
+    text (which Anthropic rejects ahead of a thinking block), and strict-alternation chat templates
+    reject them outright. Keeping one more turn is cheaper than either. A history with no such request
+    before *cutoff* keeps *cutoff* as it is.
+    """
+    if not 0 < cutoff < len(messages):
+        return cutoff
+    for index in range(cutoff, 0, -1):
+        if isinstance(messages[index], ModelRequest) and _is_safe_cutoff(messages, index):
+            return index
+    return cutoff
+
+
+def _open_tail_at_request(
+    messages: list[ModelMessage], to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+) -> tuple[list[ModelMessage], list[ModelMessage]]:
+    """Widen the kept tail of *messages* back to a request, taking what it gains out of *to_summarize*.
+
+    *preserved* is a suffix of *messages*, possibly shorter than what *to_summarize* leaves.
+    """
+    start = len(messages) - len(preserved)
+    adjusted = _back_to_request(messages, start)
+    if adjusted == start:
+        return to_summarize, preserved
+    return to_summarize[: min(len(to_summarize), adjusted)], messages[adjusted:]
+
+
 def _is_legacy_summary(part: SystemPromptPart) -> bool:
     """Whether *part* is a summary written by a release that stored it as a system prompt."""
     return part.content.startswith(_SUMMARY_PREFIX)
@@ -592,6 +624,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
         else:
             cutoff = find_safe_cutoff(messages, self.keep_messages)
+        if not self.keep_user_messages:
+            # The summary is an assistant turn, so the kept tail must open with a request; see
+            # `_back_to_request`. Retained user copies sit between them instead, when there are any.
+            cutoff = _back_to_request(messages, cutoff)
 
         if cutoff <= 0:
             return messages
@@ -602,30 +638,19 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
-            extra = self._kept_user_messages(to_summarize)
-            extra = extra[-self.keep_messages :] if self.keep_messages else []
-            if self.keep_tokens == 0:
-                # Preserve the legacy zero-budget edge case, including zero-token copies.
-                retained: list[ModelMessage] = []
-                for message in reversed(extra):
-                    if estimate_token_count([message], self.tokenizer) == 0:
-                        retained.append(message)
-                    else:
-                        break
-                extra = list(reversed(retained))
-                # Retained user turns spent the whole zero budget; reserve one slot so the
-                # request being answered still survives compaction.
-                preserved = preserved[find_safe_cutoff(preserved, 1) :]
-            elif self.keep_tokens is None:
-                retained_tail_slots = max(1, self.keep_messages - len(extra))
-                if len(preserved) > retained_tail_slots:
-                    preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
+            extra, preserved = self._retain_user_turns(to_summarize, preserved)
         elif self.preserve_first_user_message:
             first_user_msg = find_first_user_message(messages)
             if first_user_msg is not None:
                 idx = messages.index(first_user_msg)
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
+
+        if self.keep_user_messages and not extra:
+            # No retained user copy separates the summary from the tail, so the tail opens at a request.
+            to_summarize, preserved = _open_tail_at_request(messages, to_summarize, preserved)
+            if not to_summarize:
+                return messages
 
         if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
@@ -638,7 +663,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         # The summary is model-written text standing in for the turns it replaced, so it is a
         # `CompactionPart` in a response of its own: core sends it as framed assistant text and treats
-        # it as a compaction boundary, and the standing system prompt stays exactly as it was.
+        # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
+        # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
+        # turns kept by `keep_user_messages` follow it, as they always did.
         summary_message = ModelResponse(parts=[CompactionPart(content=summary)])
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
@@ -646,13 +673,38 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             # The new summary was written as an update of the newest earlier one, so it supersedes any
             # the cutoff kept. Without an anchor the new summary never saw them, so they stay.
             preserved = without_summaries(preserved)
-        result: list[ModelMessage] = [*standing, summary_message, *extra, *preserved]
+        before, after = ([], extra) if self.keep_user_messages else (extra, [])
+        result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
         if self.receipts:
             result = self._insert_receipt(
                 summary_message, to_summarize, result, ctx, protected_tail=len(preserved) if self.keep_tokens else 0
             )
         return result
+
+    def _retain_user_turns(
+        self, to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], list[ModelMessage]]:
+        """The user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
+        extra = self._kept_user_messages(to_summarize)
+        extra = extra[-self.keep_messages :] if self.keep_messages else []
+        if self.keep_tokens == 0:
+            # Preserve the legacy zero-budget edge case, including zero-token copies.
+            retained: list[ModelMessage] = []
+            for message in reversed(extra):
+                if estimate_token_count([message], self.tokenizer) == 0:
+                    retained.append(message)
+                else:
+                    break
+            extra = list(reversed(retained))
+            # Retained user turns spent the whole zero budget; reserve one slot so the
+            # request being answered still survives compaction.
+            preserved = preserved[find_safe_cutoff(preserved, 1) :]
+        elif self.keep_tokens is None:
+            retained_tail_slots = max(1, self.keep_messages - len(extra))
+            if len(preserved) > retained_tail_slots:
+                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
+        return extra, preserved
 
     def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
         """Rebuild each summarized user turn as a preserved, size-bounded user message."""

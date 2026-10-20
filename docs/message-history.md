@@ -1123,8 +1123,9 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
     if len(messages) > 10:
         oldest_messages = messages[:10]
         summary = await summarize_agent.run(message_history=oldest_messages)
-        # Replace them with the summary, which every model receives as assistant text
-        return [ModelResponse(parts=[CompactionPart(content=summary.output)]), *messages[-1:]]
+        # Keep the first request (the task) and the current one, with the summary of everything
+        # between them as an assistant turn, so user and assistant turns still alternate
+        return [messages[0], ModelResponse(parts=[CompactionPart(content=summary.output)]), *messages[-1:]]
 
     return messages
 
