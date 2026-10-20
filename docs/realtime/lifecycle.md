@@ -240,9 +240,11 @@ time, the refusal is reported like any other, and `wait_for_reply()` stops waiti
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
-iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async
-with` block exits (from [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side
-has already failed, the next outbound session method raises that failure instead; it is delivered
-only once.
+iterated. A receive-loop failure ends the session; a tool failure ends only the exchange it was part
+of, so a consumer that catches it and iterates again keeps a working session (see
+[Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
+and transcript views end, and the failure is raised when the `async with` block exits (from
+[`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side has already failed, the
+next outbound session method raises that failure instead; it is delivered only once.
 
 For symptom-first debugging, see [Troubleshooting](troubleshooting.md).

@@ -87,8 +87,9 @@ live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.close
 The session starts receiving at whichever comes first: the first outbound call, the first
 `stream_audio()` or `stream_transcripts()` view, or the first `async for` over the session. It does
 not start on entry, so a view created inside the session block — as every example here does — cannot
-miss output the model produced before it subscribed. A fatal receive or tool failure is raised
-from active event iteration; without an active iterator, the views end and context exit raises it.
+miss output the model produced before it subscribed. A fatal receive failure or a tool failure is
+raised from active event iteration, which can go on after a tool failure; without an active
+iterator, the views end and context exit raises it.
 The next outbound session method raises an already-ended receive side's failure first, and the same
 failure is never delivered twice.
 
@@ -150,7 +151,12 @@ and implement [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send] and
 turns, and inputs (as the OpenAI Realtime API does) is best translated into lifecycle events directly. One that
 identifies none of them (as Gemini Live and OpenAI GPT-Live don't) can hand each input it sends and each
 provider message it reads to an [`InferredLifecycle`][pydantic_ai.realtime.lifecycle.InferredLifecycle], which
-works the lifecycle out from their order. Here, a reply to a text turn is a response that answers it:
+works the lifecycle out from their order. Either way, a connection that names the output items its codec events
+stream (their `item_id`) can say more about one:
+[`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about it on
+the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] reports how much of it the
+listener heard, which can come after its response ended and revises the copy history recorded. Here, a reply to a
+text turn is a response that answers it:
 
 ```python
 import asyncio

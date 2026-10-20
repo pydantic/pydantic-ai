@@ -1143,7 +1143,7 @@ async def test_tool_error_ends_transcript_only_session(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_weather',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='failed',

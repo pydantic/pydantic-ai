@@ -38,6 +38,7 @@ its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker
 - `lifecycle.bad_revision`: an `AnswersRevised` claims an input for a response that isn't under way, or releases one
   the response wasn't answering;
 - `lifecycle.input_added_twice`: an input joins the conversation twice;
+- `lifecycle.cut_of_unknown_item`: an `OutputItemCut` names an output item no content named;
 - `lifecycle.turn_started_twice` / `lifecycle.turn_end_without_start`: a spoken turn isn't bracketed by
   one start and one end (or discard);
 - `lifecycle.unended_at_close` / `lifecycle.turn_unended_at_close`: the stream ended with a response or
@@ -55,6 +56,7 @@ from pydantic_ai.realtime._lifecycle import (
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -113,6 +115,8 @@ class LifecycleChecker:
     _turns: set[str] = field(default_factory=set[str])
     _open_turns: set[str] = field(default_factory=set[str])
     _joined_turns: set[str] = field(default_factory=set[str])
+    _items: set[str] = field(default_factory=set[str])
+    """The output items content named, for `lifecycle.cut_of_unknown_item`."""
 
     def feed(self, event: RealtimeCodecEvent | LifecycleEvent) -> list[ConformanceIssue]:
         position = self.events
@@ -133,6 +137,8 @@ class LifecycleChecker:
         return found
 
     def _feed_lifecycle_content(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
+        if isinstance(event, (AudioDelta, OutputTranscript)) and event.item_id is not None:
+            self._items.add(event.item_id)
         response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
         if (
             isinstance(event, ResponseDone)
@@ -179,17 +185,7 @@ class LifecycleChecker:
 
     def _feed_lifecycle(self, event: LifecycleEvent, issue: Callable[[str, str], None]) -> None:
         if isinstance(event, ResponseStarted):
-            if event.response_id in self._started:
-                issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
-            self._started.add(event.response_id)
-            self._open_responses.add(event.response_id)
-            if not event.provider_id:
-                self._made_up_ids.add(event.response_id)
-            sent = self.inputs_sent() if self.inputs_sent is not None else 0
-            if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
-                issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
-            self._answers[event.response_id] = set(event.answers)
-            self._settle(event.answers, issue)
+            self._feed_start(event, issue)
         elif isinstance(event, ResponseEnded):
             if event.response_id in self._responses_ended:
                 issue('lifecycle.duplicate_end', f'{event.response_id!r} ended twice')
@@ -205,6 +201,10 @@ class LifecycleChecker:
             self._added_inputs.add(event.input_id)
         elif isinstance(event, AnswersRevised):
             self._feed_revision(event, issue)
+        elif isinstance(event, OutputItemCut):
+            # (A cut can come after its response ended: generation outruns playback.)
+            if event.item_id not in self._items:
+                issue('lifecycle.cut_of_unknown_item', f'cut of output item {event.item_id!r} no content named')
         elif isinstance(event, OutputItemDetails):
             if event.response_id not in self._open_responses:
                 issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
@@ -231,6 +231,19 @@ class LifecycleChecker:
                 issue('lifecycle.turn_end_without_start', f'spoken turn {event.turn_id!r} closed without starting')
             self._open_turns.discard(event.turn_id)
             self._joined_turns.discard(event.turn_id)
+
+    def _feed_start(self, event: ResponseStarted, issue: Callable[[str, str], None]) -> None:
+        if event.response_id in self._started:
+            issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
+        self._started.add(event.response_id)
+        self._open_responses.add(event.response_id)
+        if not event.provider_id:
+            self._made_up_ids.add(event.response_id)
+        sent = self.inputs_sent() if self.inputs_sent is not None else 0
+        if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
+            issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
+        self._answers[event.response_id] = set(event.answers)
+        self._settle(event.answers, issue)
 
     def _feed_revision(self, event: AnswersRevised, issue: Callable[[str, str], None]) -> None:
         answers = self._answers.setdefault(event.response_id, set())
