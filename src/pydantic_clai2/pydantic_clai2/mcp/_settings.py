@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from string import Template
 from typing import Annotated, Literal
 
+import fastmcp
 import httpx
 from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
@@ -18,9 +19,10 @@ OAUTH_TIMEOUT = 330.0
 """Seconds to allow for the initialize handshake when it includes a browser sign-in."""
 
 # FastMCP logs the OAuth URL and callback server at INFO through its own handler, over the prompt.
-# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging.
+# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging. (FastMCP sets
+# its logger's level as it's imported, which is why it's imported above: imported later, it would undo this.)
 if 'FASTMCP_LOG_LEVEL' not in os.environ:  # pragma: no branch
-    logging.getLogger('fastmcp').setLevel(logging.WARNING)
+    logging.getLogger(fastmcp.__name__).setLevel(logging.WARNING)
 
 
 class ServerSettings(BaseModel):
@@ -62,10 +64,6 @@ class RemoteServer(ServerSettings):
         if self.url.username or self.url.password:
             raise ValueError('OAuth URLs cannot carry credentials')
         return self
-
-    def init_timeout(self) -> float | None:
-        """The configured timeout, or enough time for a browser sign-in when using OAuth."""
-        return self.timeout or (OAUTH_TIMEOUT if self.auth else None)
 
 
 class HTTPServer(RemoteServer):

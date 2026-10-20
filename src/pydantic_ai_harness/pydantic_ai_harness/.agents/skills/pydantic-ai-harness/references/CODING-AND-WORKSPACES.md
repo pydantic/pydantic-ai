@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` for an isolated cloud machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -14,6 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
+| Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -51,7 +52,7 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, `WarnNearLimits(max_context_fraction=0.9)`, a `ToolOutputLimits`
+`ClearToolResults(max_fraction=0.7)`, a `ToolOutputLimits`
 that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`, and
 prompt caching (unified `cache=True`).
 
@@ -161,6 +162,10 @@ Tool arguments (scripted tests need them; `expected_hash` exists only with `cont
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
+
+`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
+from its leading bytes, not its extension), and a text description (size, media type, and for other
+binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
 
 Parameters: `root_dir` (default the working directory; must be the working directory or an **ancestor**
 of it, so `FileSystem(root_dir='data')` under `LocalWorkspace('.')` raises `UserError`: attach
@@ -311,6 +316,26 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
+### SmolSandbox
+
+`SmolSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False,
+working_dir='/workspace', env=None)` (backend `SmolSandboxBackend`, extra `[smol]`) boots a local
+[smolvm](https://github.com/smol-machines/smolvm) microVM on first use. No credentials; needs macOS on
+Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`.
+
+- Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
+  `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
+  egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
+  so a ref can't reach other tools' VMs. The name isn't proof of origin (any process of this OS user can
+  use it), so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
+  `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
+  in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
+- Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
+  not flush a VM's disk when the process exits, so stop it first:
+  `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
+- File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace
@@ -430,7 +455,8 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/modal-sandbox/
 - https://pydantic.dev/docs/ai/harness/e2b-sandbox/
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/harness/smol-sandbox/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
 - https://pydantic.dev/docs/ai/harness/localstack/

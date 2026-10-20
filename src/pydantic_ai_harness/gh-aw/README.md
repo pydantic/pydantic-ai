@@ -58,11 +58,18 @@ OpenAI-shaped and use Chat Completions.
 
 ## What actually runs
 
+The engine first reads the safe-outputs file gh-aw names in `GH_AW_SAFE_OUTPUTS`. If a
+`steps:` or `pre-agent-steps:` entry already wrote a `noop` there, the engine exits with
+status 0 without starting CLAI 2, as gh-aw's built-in engines do; gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. A missing or unreadable file, and lines that are not JSON, do not
+count as a `noop`.
+
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
-`pydantic-clai2==0.54.0`, `pydantic-ai-harness==0.54.0`, and
+`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
@@ -70,11 +77,11 @@ tools. gh-aw writes the MCP server configuration outside the checkout and mounts
 read-only inside the sandbox; repository-controlled files cannot select an MCP server
 that runs with the gateway's credentials.
 
-The headless runner streams model responses so their typed events can be recorded in the
-canonical session. The engine subscribes to typed core events through the public
-`Agent.on_event` API. The inline parser selects their framed JSONL records from captured
-engine stdio, and the gh-aw runtime bootstrap writes the canonical stream to
-`agent-session.jsonl`: `session.init`,
+The headless runner streams model responses so it can record assistant messages, reasoning,
+tool calls and results (including native tools), and usage in the canonical session. The
+engine subscribes to typed core events through the public `Agent.on_event` API. The inline
+parser selects their framed JSONL records from captured engine stdio. The gh-aw runtime
+bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
 `user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
 available; startup failures still record status without usage when none is available. Errors
@@ -362,5 +369,5 @@ Consumers pinned to a tag or a SHA stay where they are until they move the ref.
 A harness release does not move the engine. `engine.version` is an ordinary line in
 the file, so a new release reaches consumers only once a pull request bumps it --
 and lint refuses a pin that is not on PyPI, so that pull request is green only after
-the release is published. The release workflow opens an issue when the harness
-version it just published and the pinned version differ.
+the release is published. The release workflow opens that pull request when the
+harness version it just published is newer than the version pinned on the default branch.

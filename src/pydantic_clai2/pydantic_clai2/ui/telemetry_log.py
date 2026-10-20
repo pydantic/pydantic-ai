@@ -43,12 +43,29 @@ class _LogFile(RotatingFileHandler):
         self._failed = True
 
 
+def _writes(logger: logging.Logger) -> bool:
+    """Whether the logger has a handler that writes records out.
+
+    A `NullHandler`, such as the one the `clai2` entry point adds for the whole process, only discards them.
+    """
+    return any(not isinstance(handler, logging.NullHandler) for handler in logger.handlers)
+
+
+def _shown(logger: logging.Logger | None) -> bool:
+    """Whether the logger, or an ancestor its records propagate to, writes records out."""
+    while logger is not None:
+        if _writes(logger):
+            return True
+        logger = logger.parent if logger.propagate else None
+    return False
+
+
 def _unhandled_below(record: logging.LogRecord) -> bool:
-    """Whether no logger between the record's own and the top-level one it propagated to has a handler."""
+    """Whether no logger between the record's own and the top-level one it propagated to writes it out."""
     parts = record.name.split('.')
     loggers = logging.root.manager.loggerDict
     return not any(
-        isinstance(logger := loggers.get('.'.join(parts[:depth])), logging.Logger) and logger.handlers
+        isinstance(logger := loggers.get('.'.join(parts[:depth])), logging.Logger) and _writes(logger)
         for depth in range(2, len(parts) + 1)
     )
 
@@ -58,7 +75,8 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     """Send warnings and errors from the Logfire and OpenTelemetry loggers to `path`, and name it on exit if written.
 
     A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
-    descendant, is left alone: only records that would otherwise fall through to `logging.lastResort` are redirected.
+    descendant, is left alone: only records no handler would write out are redirected, whether they would fall
+    through to `logging.lastResort` or be discarded by a `NullHandler`.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
     handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
@@ -67,7 +85,7 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     handler.addFilter(_unhandled_below)
     # `lastResort` only fires when no handler at all is on a record's path, so a handler on these loggers is enough;
     # records still propagate, so a handler the application adds to the root later sees them too.
-    loggers = [logger for name in _LOGGERS if not (logger := logging.getLogger(name)).hasHandlers()]
+    loggers = [logger for name in _LOGGERS if not _shown(logger := logging.getLogger(name))]
     for logger in loggers:
         logger.addHandler(handler)
     try:

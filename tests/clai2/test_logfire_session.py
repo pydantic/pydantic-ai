@@ -3,13 +3,15 @@
 import asyncio
 import io
 import json
+import os
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 import anyio
 import pytest
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -22,7 +24,6 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
 from pydantic_clai2.cli import headless
 from pydantic_clai2.cli.command_context import CommandContext
@@ -32,6 +33,7 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.runtime._session import Session, current_session_id
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from tests.clai2.test_forks import Model
@@ -150,7 +152,7 @@ async def test_user_tag_chooses_the_root_email_and_only_git_email_runs_git(
 ) -> None:
     looked_up = False
 
-    async def configured_email() -> str:
+    async def configured_email(*, cwd: Path) -> str:
         nonlocal looked_up
         looked_up = True
         return 'developer@example.com'
@@ -198,7 +200,7 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
         assert (await shell.run_turn(TurnStart(text='first'), headless=True)).outcome == 'completed'
         child = shell.fork_session(None, [])
         await child.prompt('fork')
-        shell.session.clear()
+        await shell.session.clear()
         second_id = shell.session.summary.id
         assert (await shell.run_turn(TurnStart(text='second'), headless=True)).outcome == 'completed'
         with telemetry.span('resume command'):
@@ -313,7 +315,16 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         startup = next(span for span in ui if span.name == 'session started')
         resumed = next(span for span in ui if span.name == 'conversation resumed')
         assert startup.parent == resumed.parent == root_context
-    assert all(span.context is not None and span.context.trace_id == root_context.trace_id for span in recorder.spans())
+    # The browser names sessions in the background, before any root is chosen: its own traces.
+    namer = {
+        span.context.trace_id
+        for span in recorder.spans()
+        if span.name == 'invoke_agent session_namer' and span.context is not None
+    }
+    assert all(
+        span.context is not None and span.context.trace_id in {root_context.trace_id, *namer}
+        for span in recorder.spans()
+    )
 
 
 @pytest.mark.parametrize(('prompt', 'outcome'), [('hello', 'completed'), ('explode', 'failed'), ('block', 'cancelled')])
@@ -401,21 +412,93 @@ async def test_background_run_keeps_nested_agents_and_threaded_ui_in_its_convers
     assert foreground_ui.parent == roots[0].context
 
 
+async def test_roots_end_within_their_lifetime_even_when_idle_until_exit(
+    recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Logfire rejects a span that started over a day before export, so a root left open until exit was lost."""
+    monkeypatch.setattr(logfire_session, 'ROOT_LIFETIME', 0)
+    session_id: str | None = None
+    plugin = load_logfire(
+        PluginHost(
+            name='observability',
+            console=Console(file=io.StringIO()),
+            settings={'ui_events': True},
+            session_id=lambda: session_id,
+        )
+    )
+    agent = Agent(TestModel(), deps_type=type(None), name='parent')
+    nested = Agent(TestModel(), deps_type=type(None), name='child')
+
+    def roots() -> list[ReadableSpan]:
+        return [span for span in recorder.spans() if span.name == 'CLAI session']
+
+    async def ended(count: int) -> None:
+        with anyio.fail_after(5):
+            while len(roots()) < count:
+                await anyio.sleep(0)
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        await ended(2)
+        # The run's root has ended, but what the run records still nests where it ran.
+        telemetry.record('during run')
+        return (await nested.run('nested', capabilities=plugin.capabilities)).output
+
+    await plugin.dispatch(SessionStart(agent=agent, settings=Settings()))
+    try:
+        # Ended before startup selects the conversation: it is not bound to it, a new root is.
+        await ended(1)
+        session_id = 'session-1'
+        await agent.run('first', capabilities=plugin.capabilities)
+        # `/clear` selects another conversation; the first one's ended root stays ended.
+        session_id = 'session-2'
+        telemetry.record('after run')
+        # Left idle until exit, as a terminal left open overnight.
+        await ended(3)
+    finally:
+        await close(plugin)
+
+    spans = recorder.spans()
+    provisional, run_root, later = roots()
+    assert [(span.attributes or {})['agent_session_id'] for span in (run_root, later)] == ['session-1', 'session-2']
+    assert (provisional.attributes or {})['agent_session_id'] not in {'session-1', 'session-2'}
+    assert all('reason' not in (span.attributes or {}) for span in roots())
+    opened = [span for span in spans if span.name == 'CLAI session opened']
+    assert [span.parent for span in opened] == [span.context for span in roots()]
+    tool = next(span for span in spans if operation(span) == 'execute_tool')
+    child_run, parent_run = [span for span in spans if operation(span) == 'invoke_agent']
+    assert parent_run.parent == run_root.context
+    assert child_run.parent == tool.context
+    assert next(span for span in spans if span.name == 'during run').parent == tool.context
+    assert next(span for span in spans if span.name == 'after run').parent == later.context
+
+
 @pytest.mark.parametrize('email', [None, '', 'developer@example.com'])
 async def test_git_email_uses_git_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, email: str | None
 ) -> None:
     config = tmp_path / 'gitconfig'
     config.write_text(f'[user]\nemail = {email}\n' if email is not None else '')
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
     monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
-    assert await logfire_session.git_email() == (email or None)
+    assert await logfire_session.git_email(cwd=tmp_path) == (email or None)
+
+
+async def test_git_email_is_the_repositorys_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repository's own `user.email` comes from the directory asked about, not the process's."""
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    repo = tmp_path / 'repo'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', '-C', str(repo), 'config', 'user.email', 'repo@example.com'], check=True)
+    monkeypatch.chdir(tmp_path)
+    assert await logfire_session.git_email(cwd=repo) == 'repo@example.com'
+    assert await logfire_session.git_email(cwd=tmp_path) is None
 
 
 @pytest.mark.parametrize('unavailable', ['missing', 'timeout'])
 async def test_git_email_is_optional(monkeypatch: pytest.MonkeyPatch, unavailable: str) -> None:
-    async def run_process(command: list[str], *, check: bool) -> None:
+    async def run_process(command: list[str], *, cwd: Path, check: bool) -> None:
         if unavailable == 'missing':
             raise FileNotFoundError('git')
         await anyio.sleep_forever()
@@ -427,4 +510,4 @@ async def test_git_email_is_optional(monkeypatch: pytest.MonkeyPatch, unavailabl
             return anyio.move_on_after(0)
 
         monkeypatch.setattr(logfire_session, 'move_on_after', immediate_timeout)
-    assert await logfire_session.git_email() is None
+    assert await logfire_session.git_email(cwd=Path()) is None

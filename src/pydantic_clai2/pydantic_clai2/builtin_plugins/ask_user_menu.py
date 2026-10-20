@@ -63,31 +63,46 @@ class QuestionMenu:
         """Show the available actions without a separate Space-key convention."""
         if self.editing_custom:
             return 'Enter submits - Esc back - Ctrl-C decline'
+        if self.cursor == self.other:
+            return 'Up/Down move - type your answer - Esc decline'
         action = 'toggle; Done submits' if self.question.multi_select else 'select'
         return f'Up/Down move - number/Enter {action} - Esc decline'
 
+    @property
+    def other(self) -> int:
+        """The row index of `Other (type answer)`, after the options and any `Done` row."""
+        return len(self.question.options) + int(self.question.multi_select)
+
+    def edit_custom(self, key: str | Paste) -> str | None:
+        """Edit the typed answer; return it when Enter submits nonblank text."""
+        if isinstance(key, Paste):
+            self.custom.insert(key.text.replace('\t', '    '))
+        elif key == 'escape':
+            self.editing_custom = False
+        elif key == 'enter':
+            return self.custom.text.strip() or None
+        elif key != 'ctrl-r':
+            self.custom.edit(key)
+        return None
+
     def choose(self, key: str | Paste) -> tuple[str, ...] | str | None:
         """Apply a key; return selections only when a nonempty answer is submitted."""
-        if isinstance(key, Paste):
-            if self.editing_custom:
-                self.custom.insert(key.text.replace('\t', '    '))
-            return None
+        typed = isinstance(key, Paste) or (len(key) == 1 and key.isprintable())
+        if typed and self.cursor == self.other:
+            # Text typed on the highlighted `Other` row starts the answer, without an Enter first.
+            self.editing_custom = True
         if self.editing_custom:
-            if key == 'escape':
-                self.editing_custom = False
-            elif key == 'enter':
-                return self.custom.text.strip() or None
-            elif key != 'ctrl-r':
-                self.custom.edit(key)
+            return self.edit_custom(key)
+        if isinstance(key, Paste):
             return None
         count = len(self.question.options)
-        rows = count + int(self.question.multi_select) + 1
+        rows = self.other + 1
         if key in ('up', 'down', 'tab'):
             self.cursor = (self.cursor + (-1 if key == 'up' else 1)) % rows
         elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
             if key != 'enter':
                 self.cursor = int(key) - 1
-            if self.cursor == rows - 1:
+            if self.cursor == self.other:
                 self.editing_custom = True
                 return None
             if not self.question.multi_select:
@@ -269,13 +284,21 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     return text
 
 
+def render_question(event: AgentStreamEvent) -> RenderableType | None:
+    """The transcript's lines for an `ask_user_question` call and its answer; `None` for other events."""
+    if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
+        return render_call(event)
+    return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
+
+
 class AskUserPlugin(Plugin):
     """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
+        if not self.host.console.is_terminal:
+            return ()
         return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
-        if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == TOOL_NAME:
-            return render_call(event)
-        return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
+        return render_question(event)

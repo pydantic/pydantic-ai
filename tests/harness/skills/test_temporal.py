@@ -106,4 +106,8 @@ async def test_skills_are_read_through_the_durable_workspace(client: Client) -> 
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert output == '# Skill: reviewer\n\nCheck the tests.'
+    directory = (WORK / 'skills' / 'reviewer').resolve()
+    assert output == (
+        f'# Skill: reviewer\n\nSkill directory: `{directory}`. Relative paths in this skill resolve against it.'
+        '\n\nCheck the tests.'
+    )

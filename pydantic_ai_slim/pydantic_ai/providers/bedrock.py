@@ -25,6 +25,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
     bedrock_claude_cache_retentions,
+    bedrock_lacks_claude_structured_output,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -238,6 +239,19 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent once the history has a tool call.
+
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
+
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
+
+    Default: `None`.
+    """
+
     bedrock_disallows_sampling_settings: bool
     """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
 
@@ -256,18 +270,6 @@ class BedrockModelProfile(ModelProfile, total=False):
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These models support structured output on the direct Anthropic API but are not listed
-    # in the Bedrock Runtime structured-output docs:
-    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = (
-        'claude-opus-4-1',
-        'claude-opus-4-7',
-        'claude-opus-4-8',
-        'claude-opus-5',
-        'claude-sonnet-5',
-        'claude-haiku-5-5',
-        'claude-fable-5',
-    )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
     # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
@@ -291,12 +293,13 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_adaptive_thinking=supports_adaptive,
             bedrock_supports_effort=supports_effort,
             bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
         ),
         _strip_builtin_tools(downstream),
     )
-    supports_structured_output = profile.get('supports_json_schema_output', False) and not model_name.startswith(
-        bedrock_structured_output_unsupported
-    )
+    supports_structured_output = profile.get(
+        'supports_json_schema_output', False
+    ) and not bedrock_lacks_claude_structured_output(model_name)
     return merge_profile(
         profile,
         BedrockModelProfile(

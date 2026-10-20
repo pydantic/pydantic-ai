@@ -149,12 +149,30 @@ class Forks(Generic[DepsT, OutputT]):
         try:
             yield
         finally:
-            self._busy -= 1
-            if not self._busy:
-                self._idle.set()
-                held, self._held = self._held, []
-                for text, style in held:
-                    self._print(text, style)
+            self._release()
+
+    @asynccontextmanager
+    async def quiet(self) -> AsyncGenerator[None]:
+        """Wait until no turn or command owns the terminal, then hold it like `busy` for a background notice."""
+        while True:
+            await self._idle.wait()
+            async with self._terminal:
+                if not self._busy:
+                    self._busy += 1
+                    self._idle.clear()
+                    break
+        try:
+            yield
+        finally:
+            self._release()
+
+    def _release(self) -> None:
+        self._busy -= 1
+        if not self._busy:
+            self._idle.set()
+            held, self._held = self._held, []
+            for text, style in held:
+                self._print(text, style)
 
     def _notify(self, text: str, style: str) -> None:
         # One-line notices print now when idle; otherwise `busy()` prints them on release.

@@ -18,7 +18,7 @@ from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.menus.slash_search import KeyHandler, slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
-_HINT = 'a add · d remove · [ ] reorder · esc discard'
+_HINT = 'a add - d remove - [ ] reorder - Esc discard'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -83,17 +83,15 @@ def edit_chain(context: CommandContext, name: str | None, runners: Runners) -> C
             cursor = len(models)  # back on the add row, or on the model it added
             if (picked := _pick_member(context, models, runners)) is not None:
                 models.append(picked)
-        elif value is _Row.SAVE:
+        else:
+            # Enter on a model does nothing, so the menu closes with a row only for Save.
+            assert value is _Row.SAVE
             if len(models) < 2:
                 notice = 'A chain needs at least two models.'
                 cursor = len(models)
                 continue
             context.store.save_chain(name=name, models=models)
             return ChainChange(name=name, message=f'Saved chain:{name} ({" -> ".join(models)}).')
-        else:
-            # Enter on a model does nothing but keep the cursor on it.
-            assert isinstance(value, _Member)
-            cursor = value.index
 
 
 def rename_chain(context: CommandContext, name: str, runners: Runners) -> ChainChange | None:
@@ -170,6 +168,10 @@ def _build_editor(name: str, models: list[str], *, cursor: int, notice: str) -> 
     def add(menu: Menu, item: MenuItem) -> MenuResult:
         return MenuResult(item=MenuItem('add', value=_Row.ADD))
 
+    def choose(menu: Menu, item: MenuItem) -> MenuResult | None:
+        # Enter adds or saves on those rows; a model has no action of its own, and the editor stays open.
+        return None if member(item) is not None else MenuResult(item=item)
+
     def remove(menu: Menu, item: MenuItem) -> MenuResult | None:
         index = member(item)
         return None if index is None else MenuResult(item=MenuItem('remove', value=_Remove(index)))
@@ -182,7 +184,7 @@ def _build_editor(name: str, models: list[str], *, cursor: int, notice: str) -> 
         .preview(lambda item: _editor_details(name, models, item))
     )
 
-    hotkeys = {'a': add, 'd': remove, '[': move(-1), ']': move(1)}
+    hotkeys = {'enter': choose, 'a': add, 'd': remove, '[': move(-1), ']': move(1)}
     return slash_search(builder, footer=_HINT, key_source=menu_key, hotkeys=hotkeys)
 
 

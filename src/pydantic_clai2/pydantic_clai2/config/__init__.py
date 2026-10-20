@@ -36,11 +36,18 @@ class Settings(BaseModel):
             'as @* does. PROVIDER@default:MODEL runs the default account alone.'
         ),
     )
+    code_mode: bool = Field(
+        default=True,
+        description=(
+            'Fold tools into a sandboxed run_code that runs each statement while the model writes. '
+            'Off, every tool is called natively.'
+        ),
+    )
     speculative_code_mode: bool = Field(
         default=False,
         description=(
-            'Fold tools into a sandboxed run_code that executes and speculates while the model writes. '
-            'Ctrl+X Ctrl+S toggles it.'
+            'Also start read-only calls in run_code before the model reaches them. Turns on code mode '
+            'for its runs. Ctrl+X Ctrl+S toggles it.'
         ),
     )
     instructions: str = Field(
@@ -125,6 +132,7 @@ SETTING_FIELDS = {
     'display.tool_arg_chars': 'tool_arg_chars',
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
+    'run.code_mode': 'code_mode',
     'run.speculative_code_mode': 'speculative_code_mode',
     'run.instructions': 'instructions',
     'accounts.pool': 'pool_accounts',

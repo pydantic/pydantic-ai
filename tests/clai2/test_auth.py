@@ -20,13 +20,17 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
-from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
+from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.api_keys import forget_connection
 from pydantic_clai2.config.credential_store import has_credentials, load_codex_credentials
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.menu_worker import holding_output
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from tests.clai2.surface_terminal import SurfaceTerminal
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
@@ -51,16 +55,13 @@ async def never_called_back(self: OpenAICodexOAuthFlow) -> OpenAICodexCredential
     raise AssertionError('unreachable')  # pragma: no cover
 
 
-def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:
-    """An auth whose paste prompt pops scripted answers; the callback never fires."""
+def scripted(values: list[str | None]) -> tuple[list[str], CodexAuth]:
+    """An auth whose paste prompt pops scripted answers, `None` for a cancelled prompt; the callback never fires."""
     prompts: list[str] = []
 
-    async def paste(message: str) -> str:
+    async def paste(message: str) -> str | None:
         prompts.append(message)
-        value = values.pop(0)
-        if isinstance(value, BaseException):
-            raise value
-        return value
+        return values.pop(0)
 
     return prompts, CodexAuth(Console(file=io.StringIO()), read_line=paste)
 
@@ -117,7 +118,7 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
         return CREDENTIALS
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     output = io.StringIO()
     auth = CodexAuth(Console(file=output), read_line=never_pasted)
     commands = Commands()
@@ -131,7 +132,8 @@ async def test_login_uses_core_flow(monkeypatch: pytest.MonkeyPatch, command: st
 
 
 async def test_login_dispatches_copilot_by_short_and_provider_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def copilot(*, console: Console, account: str) -> str:
+    async def copilot(*, console: Console, account: str, dialogs: Dialogs | None) -> str:
+        assert dialogs is None
         return f'Copilot connected as {account}.'
 
     monkeypatch.setattr('pydantic_clai2.models.github_copilot.login', copilot)
@@ -182,7 +184,7 @@ async def test_failed_login_does_not_save(monkeypatch: pytest.MonkeyPatch) -> No
         raise UserError('Authorization denied')
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchange)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
     with pytest.raises(UserError, match='denied'):
         await auth.login([])
@@ -201,7 +203,7 @@ async def test_pasted_redirect_wins_over_callback(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code', exchange_code)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     monkeypatch.setattr('secrets.token_urlsafe', fixed_state)
     pasted = 'the-code' if bare else '  http://localhost:1455/auth/callback?code=the-code&state=fixed-state \n'
     prompts, auth = scripted(['', '   ', pasted])
@@ -211,6 +213,37 @@ async def test_pasted_redirect_wins_over_callback(monkeypatch: pytest.MonkeyPatc
     assert len(prompts) == 3
     assert 'Paste the URL' in prompts[0]
     assert await auth.source.load() == CREDENTIALS
+
+
+async def test_paste_prompt_shows_under_the_sign_in_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The prompt drew wherever the live panel left the cursor, over the URL it asks about."""
+    screens: list[list[str]] = []
+    terminal = SurfaceTerminal(width=100, height=30)
+
+    async def exchange_code(self: OpenAICodexOAuthFlow, code: str) -> OpenAICodexCredentials:
+        screens.append([line for line in terminal.lines() if line])
+        return CREDENTIALS
+
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
+    monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code', exchange_code)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
+    surface = PromptSurface(output=terminal, size=lambda: (100, 30))
+    surface.paint(('> /login openai-codex',))
+    surface.release()
+    console = Console(file=surface, width=100, height=30, color_system=None)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.question_input.create_input', lambda: pipe)
+        pipe.send_text('the-code\r')
+        with holding_output(surface.held):
+            assert 'connected' in await CodexAuth(console).login([])
+    (screen,) = screens
+    assert screen[-3:] == [
+        'If the browser cannot reach this machine (for example over SSH), paste the URL it ends up on.',
+        'Paste the URL the browser lands on (or finish there):',
+        '[8 characters]',
+    ]
+    assert any(line.startswith('https://auth.openai.com/oauth/authorize?') for line in screen)
+    assert 'the-code' not in terminal.getvalue(), 'the pasted authorization code is not shown'
 
 
 async def port_in_use(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
@@ -238,7 +271,7 @@ async def test_paste_survives_a_failed_callback(monkeypatch: pytest.MonkeyPatch,
         OpenAICodexOAuthFlow, 'exchange_code_from_callback', exchanged_elsewhere if same_tick else port_in_use
     )
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code', exchange_code)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     auth = CodexAuth(Console(file=output), read_line=paste)
     assert 'connected' in await auth.login([])
     assert await auth.source.load() == CREDENTIALS
@@ -247,8 +280,8 @@ async def test_paste_survives_a_failed_callback(monkeypatch: pytest.MonkeyPatch,
 
 async def test_lost_race_then_rejected_paste(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', port_in_use)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
-    _, auth = scripted(['', EOFError()])
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
+    _, auth = scripted(['', None])
     with pytest.raises(UserError, match='cancelled'):
         await auth.login([])
     assert load_codex_credentials() is None
@@ -259,13 +292,12 @@ async def test_lost_race_then_rejected_paste(monkeypatch: pytest.MonkeyPatch) ->
     [
         ('http://localhost:1455/auth/callback?code=x&state=other', 'different login'),
         ('http://localhost:1455/auth/callback?error=access_denied&state=fixed-state', 'access_denied'),
-        (KeyboardInterrupt(), 'cancelled'),
-        (EOFError(), 'cancelled'),
+        (None, 'cancelled'),
     ],
 )
-async def test_rejected_paste(monkeypatch: pytest.MonkeyPatch, pasted: str | BaseException, message: str) -> None:
+async def test_rejected_paste(monkeypatch: pytest.MonkeyPatch, pasted: str | None, message: str) -> None:
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     monkeypatch.setattr('secrets.token_urlsafe', fixed_state)
     _, auth = scripted([pasted])
     with pytest.raises(UserError, match=message):
@@ -278,12 +310,6 @@ def test_code_from_paste_state_binding() -> None:
     assert code_from_paste(text='https://x/cb?state=s&code=c', state='s') == 'c'
     with pytest.raises(UserError, match='different login'):
         code_from_paste(text='https://x/cb?code=c', state='s')
-
-
-async def test_default_read_line_uses_prompt_toolkit() -> None:
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('pasted value\n')
-        assert await read_line('> ') == 'pasted value'
 
 
 async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -305,7 +331,7 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
         await auth.login(['invalid'])
 
     monkeypatch.setattr(OpenAICodexOAuthFlow, 'exchange_code_from_callback', never_called_back)
-    monkeypatch.setattr('webbrowser.open', fake_browser)
+    monkeypatch.setattr('pydantic_clai2.auth.open_browser', fake_browser)
     with pytest.raises(UserError, match='timed out'):
         await auth.login([])
     assert auth.model('openai-codex:test').model_name == 'test'

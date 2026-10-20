@@ -31,7 +31,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import PostHog
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[PostHog()])
+agent = Agent('{{ openai:medium }}', capabilities=[PostHog()])
 result = agent.run_sync('Which feature flags are active in my project?')
 print(result.output)
 ```
@@ -69,7 +69,7 @@ def posthog_key(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.posthog_key
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[PostHog(auth=posthog_key)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[PostHog(auth=posthog_key)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only` and `features` still apply to every run.
@@ -98,7 +98,7 @@ from pydantic_ai_harness import PostHog
 
 capability = PostHog()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -126,7 +126,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - PostHog:
       features: [flags, insights]

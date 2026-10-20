@@ -54,6 +54,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
+from .continuation_utils import ScriptedContinuationModel, StreamSegment
 
 with try_import():
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
@@ -954,6 +955,32 @@ async def test_chat_span_records_response_rejected_by_after_hook(capfire: Captur
     )
     assert rejected_span['attributes']['gen_ai.usage.input_tokens'] == 10
     assert rejected_span['attributes']['gen_ai.usage.output_tokens'] == 1
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_chat_span_records_a_stream_the_consumer_stopped(capfire: CaptureLogfire) -> None:
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(texts=['A', 'B'], state='complete', provider_response_id='a', input_tokens=7, output_tokens=3)
+        ]
+    )
+    agent = Agent(model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    async with agent.iter('hello') as run:
+        with pytest.raises(RuntimeError, match='stop'):
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for text in stream.stream_text(debounce_by=None):  # pragma: no branch
+                            if 'A' in text:
+                                raise RuntimeError('stop')
+
+    [chat_span] = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert chat_span['attributes']['gen_ai.output.messages'] == snapshot(
+        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'A'}]}]
+    )
+    assert chat_span['attributes']['gen_ai.usage.input_tokens'] == 7
+    assert chat_span['attributes']['gen_ai.usage.output_tokens'] == 3
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

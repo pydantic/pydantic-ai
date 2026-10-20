@@ -23,10 +23,22 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
-  on_session_end, on_turn_start, or on_turn_end.
+  on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
+  on_command_end. Follow delegated tasks with on_task_event, which fires for every
+  stream event of every task, text deltas included, so keep it cheap.
+- Drive the prompt from somewhere other than the keyboard, such as a remote UI:
+  host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
+  cancels the running turn or command, await host.complete(text) returns what Tab offers, and
+  host.sessions lists, reads, renames, forks, archives, and deletes the saved sessions /resume shows.
+  host.setting(KEY) reads a setting such as run.code_mode. host.plugins lists what /plugins
+  shows, turns plugins on and off, reloads them, and saves a loaded plugin's settings.
+  host.tasks lists the delegated tasks /tasks shows and stops, backgrounds, or resumes them;
+  it is None while no task owner runs them, such as in a headless -p run.
 - Configure a plugin: declare a Pydantic settings model as the class's type
   parameter, `Plugin[MySettings]`, and read self.settings.
-- Offer a settings menu: override async configure().
+- Offer a settings menu: return SettingsMenu(source=..., actions=...) from settings_menu();
+  an action asks through the Dialogs it gets (choose, text, confirm, wait). Override async
+  configure() only for a menu that cannot be declared; it opens in the terminal alone.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.
@@ -179,18 +191,23 @@ Logfire instance. It exports to Logfire only when credentials are present, with
 no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
 load failures, failed turns, unexpected slash command failures, failing plugin
 handlers) are recorded with their traceback, or only their type with include_content
-false; usage errors are not. Text and binary images are included by
-default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
-/plugins disable observability to remove it, or replace its settings with:
+false; usage errors are not. Prompts, results, and binary images are left out by
+default (include_content and include_binary_content are false), so credentials
+alone export only metadata. Review the telemetry destination before turning
+content on. Use /plugins disable observability to remove it, or replace its
+settings with:
 
 ```text
-/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
-then receives the telemetry), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
+then receives the telemetry), variables_key (the name of a /keys entry holding a
+Logfire API key with the project:read_variables scope, used instead of
+LOGFIRE_API_KEY when a capability reads managed variables through this plugin's
+Logfire instance), httpx (default false; set true to trace httpx and httpx2 requests process-wide, with headers and bodies captured when include_content is true), and ui_events (default true; set false to opt out: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
 submissions, by name; while include_content is on, a submitted prompt also
 carries its text, but ! lines and slash-command arguments never do).
@@ -271,14 +288,17 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The four CLAI moments are async methods returning None:
+The CLAI moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
-| on_session_start | SessionStart(agent, settings) | Initialize session resources |
+| on_session_start | SessionStart(agent, settings, conversation_chosen) | Initialize session resources |
 | on_session_end | SessionEnd(reason) | Clean up; reason is exit, eof, or error |
 | on_turn_start | TurnStart(text) | Rewrite event.text or event.cancel() |
 | on_turn_end | TurnEnd(text, outcome, result, error) | Observe completion or failure |
+| on_conversation_changed | ConversationChanged(conversation_id, title) | Follow /new, /clear, /resume, and retitles |
+| on_command_end | CommandEnd(text, output, error) | Show a /command's result somewhere else |
+| on_task_event | TaskEvent(task, event) | Follow a delegated task's run, as /tasks does |
 
 Import these event classes from pydantic_clai2.plugins. Event payloads are typed,
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
@@ -385,7 +405,8 @@ unknown key would break their plugin loading.
 - A build that lists every feature a setting needs applies it as saved.
 - A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
   shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
-  setting, and prints one line per plugin, such as
+  setting. Startup stays quiet; the plugin's /plugins row and the result of /plugins enable
+  or reload show one line, such as
   coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
 - Reading never rewrites anything. When that build saves the plugin's settings, it writes the
   ignored values back unchanged, still tagged. A tag only goes away when its value changes.
@@ -473,7 +494,6 @@ thinking, not tool-specific rendering.
 Add a fragment to the status row with get_status_segments:
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -482,15 +502,16 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The fragment is appended after the built-in figures and painted muted. The row
-repaints about ten times a second, so it runs that often: no blocking IO, no
-awaits, no printing. Return an empty string to contribute nothing that frame.
-Fragments are truncated from the right on narrow terminals and cannot set their
-own colours. get_status_segments adds to the row; replacing the row, prompt
-editor, splash, or adding custom palettes is still a CLAI source change.
+repaints about ten times a second while CLAI works and once a second while idle,
+so it runs that often: no blocking IO, no awaits, no printing. Return an empty
+string to contribute nothing that frame. Fragments are truncated from the right
+on narrow terminals and cannot set their own colours. get_status_segments adds
+to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a CLAI source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 
@@ -719,12 +740,16 @@ builders headlessly, with injected runners instead of a real terminal.
 
 In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
-edits, and verify disable removes your commands and tools. Keep README.md and
+edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
 by Plugin or PluginHost, state that limitation and propose a focused source change rather
 than monkeypatching a private global registry.
 
 ## Headless invocation
+
+`clai2 --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+from a local browser UI instead; the built-in `web` plugin is a worked example of
+`host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
 `clai2 -p "PROMPT" -m PROVIDER:NAME` runs one saved turn and prints only the final
 answer. Prompt text is required as an argument; stdin is not read. Use

@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
-from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, JsonValue, Tag, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -75,7 +75,8 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
+from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
     MockOpenAIResponses,
@@ -4364,6 +4365,112 @@ async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: N
     assert response.output == snapshot('The current time is Noon.')
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_compatible_api_gemini_3_tool_call_thought_signature(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture, stream: bool
+):
+    """Gemini 3 rejects the request after a tool call unless each call's `extra_content` thought signature comes back.
+
+    Of parallel calls, only the first carries one, so the second goes back without.
+    """
+    provider = OpenAIProvider(
+        base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+        api_key=gemini_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get today's weather for a city."""
+        return 'sunny, 28°C'
+
+    prompt = (
+        "What's the weather in Taipei and Kaohsiung? Call get_weather once for each city in parallel, then summarize."
+    )
+    if stream:
+        async with agent.run_stream(prompt) as streamed_result:
+            output = await streamed_result.get_output()
+        messages = streamed_result.all_messages()
+    else:
+        result = await agent.run(prompt)
+        output, messages = result.output, result.all_messages()
+
+    expected_output = {
+        False: snapshot(
+            'The weather is currently sunny in both Taipei and Kaohsiung, with a temperature of 28°C in both cities.'
+        ),
+        True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
+    }
+    assert output == expected_output[stream]
+    taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
+    assert messages[1].parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='get_weather',
+                args='{"city":"Taipei"}',
+                tool_call_id=taipei_call_id,
+                provider_name='openai',
+                provider_details={'extra_content': {'google': {'thought_signature': signature}}},
+            ),
+            ToolCallPart(tool_name='get_weather', args='{"city":"Kaohsiung"}', tool_call_id=kaohsiung_call_id),
+        ]
+    )
+    assert [
+        message['tool_calls']
+        for message in json_objects(request_capture.body('/chat/completions', index=1)['messages'])
+        if message['role'] == 'assistant'
+    ] == snapshot(
+        [
+            [
+                {
+                    'id': taipei_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'},
+                    'extra_content': {'google': {'thought_signature': signature}},
+                },
+                {
+                    'id': kaohsiung_call_id,
+                    'type': 'function',
+                    'function': {'name': 'get_weather', 'arguments': '{"city":"Kaohsiung"}'},
+                },
+            ]
+        ]
+    )
+
+
+async def test_tool_call_extra_content_not_sent_to_other_provider(allow_model_requests: None):
+    """`extra_content` that another provider returned isn't sent with its tool call, like every replayed signature.
+
+    A unit test rather than a VCR one: no single recording produces another provider's tool call, so the history is
+    hand-built, and the claim is only about the outgoing body.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')))
+    model = OpenAIChatModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Weather in Taipei?'),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'get_weather',
+                    '{"city": "Taipei"}',
+                    tool_call_id='call_1',
+                    provider_name='litellm',
+                    provider_details={'extra_content': {'google': {'thought_signature': 'c2lnbmF0dXJl'}}},
+                )
+            ],
+            provider_name='litellm',
+        ),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+    ]
+
+    await direct_model_request(model, messages)
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1]['tool_calls'] == snapshot(
+        [{'id': 'call_1', 'type': 'function', 'function': {'name': 'get_weather', 'arguments': '{"city":"Taipei"}'}}]
+    )
+
+
 def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
@@ -5334,6 +5441,23 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
+async def test_openai_text_verbosity_chat_completions(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """`openai_text_verbosity` goes out as Chat Completions' top-level `verbosity`, and only when set."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5.6-luna', provider=provider))
+
+    result = await agent.run('What is 2+2?', model_settings=OpenAIChatModelSettings(openai_text_verbosity='low'))
+    assert result.output == snapshot('4')
+    await agent.run('What is 2+2?')
+
+    assert [
+        {key: value for key, value in body.items() if key == 'verbosity'}
+        for body in request_capture.bodies('/chat/completions')
+    ] == [{'verbosity': 'low'}, {}]
+
+
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
     """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
     c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
@@ -5488,8 +5612,8 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
     omits that field while the run is thinking, so it must be sent empty when thinking is active and
     left off otherwise. Parametrized over the three providers that use this mode — DeepSeek and
     MoonshotAI (`reasoning_content`) and OpenRouter (`reasoning`) — to pin that the backfill is
-    field-name-agnostic (it reads `openai_chat_thinking_field`). The real-API counterpart is
-    `test_deepseek.py::test_deepseek_deferred_capability_with_thinking`.
+    field-name-agnostic (it reads `openai_chat_thinking_field`). DeepSeek accepting the empty field is
+    recorded by `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill`.
 
     A deferred capability load used to be the trigger, because the reveal was rendered as a
     fabricated `search_tools` call/return pair. It's a system instruction now and produces no
@@ -5557,6 +5681,231 @@ async def test_field_mode_thinking_backfill_on_synthetic_tool_search_turn(
         and any(call['function']['name'] == 'search_tools' for call in message.get('tool_calls', ()))
     )
     assert synthetic_turn.get(thinking_field) == ('' if thinking else None)
+
+
+def _thinking(content: str, id: str = 'reasoning_content') -> ThinkingPart:
+    # `'auto'` sends a part back in its field only when it came from this provider: `OpenAIProvider.name`.
+    return ThinkingPart(content=content, id=id, provider_name='openai')
+
+
+def _weather_call(city: str, tool_call_id: str) -> ToolCallPart:
+    return ToolCallPart('get_weather', {'city': city}, tool_call_id=tool_call_id)
+
+
+def _weather_return(tool_call_id: str) -> ModelRequest:
+    return ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id=tool_call_id)])
+
+
+_WEATHER_PROMPT = ModelRequest(parts=[UserPromptPart('Weather in Paris, then London?')])
+
+
+@dataclass(frozen=True)
+class AutoThinkingBackfillCase:
+    id: str
+    history: list[ModelMessage]
+    assistant_turns: list[dict[str, JsonValue]]
+    thinking_field: str | None = None
+
+
+AUTO_THINKING_BACKFILL_CASES = [
+    AutoThinkingBackfillCase(
+        id='current_turn_tool_call',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_content': ''},
+            ]
+        ),
+    ),
+    # A `FallbackModel` step served by Anthropic within the same user turn: its native tool search is
+    # split into a synthesized `search_tools` turn, and neither that turn nor the call after it thinks.
+    AutoThinkingBackfillCase(
+        id='current_turn_fallback_native_tool_search',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+                    ),
+                    NativeToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='srvtoolu_1',
+                        provider_name='anthropic',
+                    ),
+                    _weather_call('London', 'toolu_2'),
+                ],
+                provider_name='anthropic',
+            ),
+            _weather_return('toolu_2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['search_tools'], 'reasoning_content': ''},
+                {'tool_calls': ['get_weather'], 'reasoning_content': ''},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='profile_thinking_field',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='reasoning_text'), _weather_call('Paris', 'c1')],
+                provider_name='openai',
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_text': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_text': ''},
+            ]
+        ),
+        thinking_field='reasoning_text',
+    ),
+    # The turn without thinking sits before the last user message, so it goes out as it always has.
+    AutoThinkingBackfillCase(
+        id='earlier_turn_tool_call',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_thinking('Paris first.'), _weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+            ModelResponse(parts=[_thinking('Both done.'), TextPart('Sunny, then sunny.')], provider_name='openai'),
+            ModelRequest(parts=[UserPromptPart('Thanks!')]),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
+                {'tool_calls': [], 'reasoning_content': 'Both done.'},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='no_thinking_field_sent',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(parts=[_weather_call('Paris', 'c1')], provider_name='openai'),
+            _weather_return('c1'),
+        ],
+        assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
+    ),
+    # Thinking from another provider goes back as tags in `content`, so the request carries no field to backfill.
+    AutoThinkingBackfillCase(
+        id='foreign_thinking_only',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[ThinkingPart('Paris first.', provider_name='anthropic'), _weather_call('Paris', 'toolu_1')],
+                provider_name='anthropic',
+            ),
+            _weather_return('toolu_1'),
+        ],
+        assistant_turns=snapshot([{'tool_calls': ['get_weather']}]),
+    ),
+    # An `OpenAIResponsesModel` reasoning item replayed through Chat: its id is not a Chat thinking field.
+    AutoThinkingBackfillCase(
+        id='responses_reasoning_id',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='rs_0123abcd'), _weather_call('Paris', 'c1')],
+                provider_name='openai',
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'rs_0123abcd': 'Paris first.'},
+                {'tool_calls': ['get_weather']},
+            ]
+        ),
+    ),
+    AutoThinkingBackfillCase(
+        id='two_thinking_fields_sent',
+        history=[
+            _WEATHER_PROMPT,
+            ModelResponse(
+                parts=[_thinking('Paris first.', id='reasoning'), _weather_call('Paris', 'c1')], provider_name='openai'
+            ),
+            _weather_return('c1'),
+            ModelResponse(parts=[_thinking('London next.'), _weather_call('London', 'c2')], provider_name='openai'),
+            _weather_return('c2'),
+            ModelResponse(parts=[_weather_call('Rome', 'c3')], provider_name='openai'),
+            _weather_return('c3'),
+        ],
+        assistant_turns=snapshot(
+            [
+                {'tool_calls': ['get_weather'], 'reasoning': 'Paris first.'},
+                {'tool_calls': ['get_weather'], 'reasoning_content': 'London next.'},
+                {'tool_calls': ['get_weather']},
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize('case', AUTO_THINKING_BACKFILL_CASES, ids=lambda case: case.id)
+async def test_auto_mode_thinking_backfill(allow_model_requests: None, case: AutoThinkingBackfillCase):
+    """`'auto'` sends the one thinking field the request carries, empty, on current-turn tool calls that lack it.
+
+    DeepSeek in thinking mode 400s on a tool-calling assistant turn after the last user message that omits
+    `reasoning_content`, and a generic OpenAI-compatible provider leaves the mode at `'auto'`. The negative
+    cases pin what stays unchanged: earlier user turns, a request carrying no thinking field or two of them,
+    and a key that isn't a Chat thinking field. A mock transport stands in for a cassette because the claim is
+    the request each synthetic history produces, which no provider response affects;
+    `test_deepseek.py::test_deepseek_auto_mode_thinking_backfill` is the live counterpart.
+    """
+    request_bodies: list[bytes] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request_bodies.append(request.content)
+        return httpx2.Response(
+            200,
+            json=completion_message(ChatCompletionMessage(content='Sunny.', role='assistant')).model_dump(mode='json'),
+        )
+
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'deepseek-v4-flash',
+            provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client),
+            profile=OpenAIModelProfile(openai_chat_thinking_field=case.thinking_field) if case.thinking_field else None,
+        )
+        await Agent(model, tools=[get_weather]).run(message_history=case.history)
+
+    body = TypeAdapter(dict[str, JsonValue]).validate_json(request_bodies[0])
+    assistant_turns: list[dict[str, JsonValue]] = []
+    for sent in json_objects(body['messages']):
+        if sent['role'] == 'assistant':
+            tool_names: list[JsonValue] = []
+            for call in json_objects(sent.get('tool_calls', [])):
+                function = call['function']
+                assert isinstance(function, dict)
+                tool_names.append(function['name'])
+            extra = {key: value for key, value in sent.items() if key not in ('role', 'content', 'tool_calls')}
+            assistant_turns.append({'tool_calls': tool_names, **extra})
+    assert assistant_turns == case.assistant_turns
 
 
 async def test_openai_custom_reasoning_field_not_sending(allow_model_requests: None):
@@ -5881,8 +6230,10 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -5912,6 +6263,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }

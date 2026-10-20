@@ -125,6 +125,8 @@ _ACQUIRE_TIMEOUT = 150.0
 _HANDSHAKE_RETRY_DELAYS = (1.0, 4.0)
 # Bounds the internal `pwd` probe behind `working_dir()`, which may first wake a sleeping Sprite.
 _INTERNAL_EXEC_TIMEOUT = 30
+# Bounds the control-plane lookup that confirms, after each command, the Sprite was not deleted while it ran.
+_DELETION_CHECK_TIMEOUT = 2.0
 # Combined output ceiling and error preview size, as in Pydantic AI's local backend.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _PREVIEW_BYTES = 64 * 1024
@@ -373,19 +375,23 @@ def _map_error(error: Exception, sprite_name: str | None) -> WorkspaceError | No
     return WorkspaceError(f'Sprites refused the request: {error}')
 
 
-async def _check_sigkill_sprite(sprite: AsyncSprite) -> None:
-    # A user's SIGKILL also exits 137; only a control-plane 404 proves the Sprite died.
-    # A stalled or failing lookup must not replace the command's real result.
-    try:
-        with anyio.fail_after(2):
+async def _check_sprite_deleted(sprite: AsyncSprite, *, deadline: float) -> None:
+    """Raise `WorkspaceUnavailableError` if the control plane says `sprite` no longer exists.
+
+    A Sprite deleted mid-command can still report a normal exit, and a user's SIGKILL also exits
+    137; only a control-plane 404 proves the Sprite died. A stalled or failing lookup must not
+    replace the command's real result, and the lookup ends by the command's `deadline`.
+    """
+    with anyio.CancelScope(deadline=min(deadline, anyio.current_time() + _DELETION_CHECK_TIMEOUT)):
+        try:
             await sprite.client.get_sprite(sprite.name)
-    except NotFoundError as error:
-        raise WorkspaceUnavailableError(
-            f'The Sprite {sprite.name!r} no longer exists: it was deleted. '
-            "Pass `workspace='new'` to start a fresh sandbox."
-        ) from error
-    except Exception:
-        pass
+        except NotFoundError as error:
+            raise WorkspaceUnavailableError(
+                f'The Sprite {sprite.name!r} no longer exists: it was deleted. '
+                "Pass `workspace='new'` to start a fresh sandbox."
+            ) from error
+        except Exception:
+            pass
 
 
 class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
@@ -743,8 +749,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
             # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
             await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
-        if code == 137:
-            await _check_sigkill_sprite(sandbox)
+        await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
         return result
 
     async def _check_working_dir(

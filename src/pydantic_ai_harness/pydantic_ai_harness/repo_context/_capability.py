@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import SystemPromptPart, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
@@ -22,6 +22,7 @@ from pydantic_ai_harness.repo_context._loader import (
     discover_instruction_files,
     find_dir_context_file,
     render_context_file,
+    render_context_file_path,
     render_context_files,
 )
 from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
@@ -29,6 +30,10 @@ from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
 _INVENTORY_HINT = (
     'Call `{tool_name}` to map where this repo keeps its coding-assistant setup '
     '(instruction dirs, skills, sub-agents, and hooks) so you can inspect it.'
+)
+_POINTER_NOTE = (
+    'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
+    '`<context-file>` tag that follows. Read the file if it is relevant to your task.'
 )
 _DEFAULT_TRAVERSAL_TOOL_NAMES = frozenset({'list_directory', 'read_file'})
 _DEFAULT_TRAVERSAL_PATH_ARG = 'path'
@@ -249,7 +254,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if context_file is None or key in self._seen_dirs:
             return
         self._seen_dirs.add(key)
-        ctx.enqueue(self._render_note(context_file))
+        ctx.enqueue(*self._render_note(context_file))
 
     async def _resolve_directory(self, workspace: Workspace, raw_path: str) -> Path:
         working_dir = await self._working_dir(workspace)
@@ -261,14 +266,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return candidate
         return candidate.parent if not entry.is_dir else candidate
 
-    def _render_note(self, context_file: ContextFile) -> str:
+    def _render_note(self, context_file: ContextFile) -> Sequence[str | SystemPromptPart]:
+        """The file's contents as repository data, or a framework pointer followed by the file's path as data.
+
+        The contents and the path are the repository's, not the operator's or the framework's, so they go on
+        the user channel in a `<context-file>` tag. Only the pointer's own wording is in system voice.
+        """
         label = self._label(context_file.path)
         if self.nested_inject == 'contents':
-            return render_context_file(context_file, label=label)
-        return (
-            f'<repo-context>This directory has {context_file.path.name} ({label}). '
-            f'Read it if relevant to your task.</repo-context>'
-        )
+            return [render_context_file(context_file, label=label)]
+        return [SystemPromptPart(_POINTER_NOTE), render_context_file_path(label)]
 
     def _label(self, path: Path) -> str:
         assert self._cached_working_dir is not None, 'a note is only rendered once the directory is resolved'

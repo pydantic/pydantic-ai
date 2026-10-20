@@ -83,7 +83,7 @@ dbos_config: DBOSConfig = {
 DBOS(config=dbos_config)
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     instructions="You're an expert in geography.",
     name='geography',  # (2)!
     capabilities=[DBOSDurability()],  # (3)!
@@ -129,7 +129,7 @@ Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAg
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.dbos import DBOSAgent
 
-agent = Agent('openai:gpt-5.6-sol', name='geography')
+agent = Agent('{{ openai:medium }}', name='geography')
 dbos_agent = DBOSAgent(agent)  # Use `dbos_agent` in place of `agent`.
 ```
 
@@ -202,7 +202,7 @@ deploy the change as a new application version; DBOS can't recover a workflow st
 
 ### Model Selection at Runtime
 
-[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
+[`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] supports both model strings (like `'{{ openai:medium }}'`) and model instances. A model instance can't be serialized across the step boundary, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance: pre-register it by passing a `models` dict to [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] and reference it by key (or pass the registered instance), or pass a model-name string and build the instance inside the step with a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability — the right choice when the model depends on the run's `deps`, e.g. per-user credentials. Model-name strings themselves never need registering. The agent's own model, set at construction, is always available as the default.
 
 To customize how a model string is built — a custom provider, or per-user credentials carried on the run's `deps` — add a [`ResolveModelId`](../capabilities/resolve-model-id.md) capability before `DBOSDurability`: it gets first crack at every string, and the resolver runs again inside the step with the run's actual `deps`, so it must be deterministic for a given `(model_id, deps)` and must not perform external I/O.
 
@@ -232,9 +232,15 @@ Because the model stream is consumed inside the step, cancelling it from the wor
 
 [`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `DBOSDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `DBOSAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
 
+### Run Timeouts
+
+A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflow. The run's start time is recorded as a `{name}.run_start_time` step, so a recovered workflow keeps the deadline the run started with, and may find it has already passed. When the deadline passes, the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in workflow code, where you can catch it. The deprecated `DBOSAgent` rejects `timeout=`.
+
+The deadline bounds the agent run, not the workflow. To bound the whole workflow as well, start it inside DBOS's `SetWorkflowTimeout`, which cancels the workflow when it expires.
+
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step.
 
 ### Parallel Tool Execution
 

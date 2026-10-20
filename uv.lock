@@ -35,20 +35,13 @@ pydantic-core = false
 pydantic-ai-harness = false
 logfire-api = false
 cassetter = false
-aiohttp = "2026-10-05T17:43:49Z"
 listentome = false
-asyncpg = "2026-10-06T20:32:41Z"
-fastavro = "2026-10-05T22:24:00Z"
-rpds-py = "2026-10-04T16:32:38Z"
 logfire = false
 pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-10-02T15:05:25Z"
-anthropic = "2026-10-08T03:42:01.588842Z"
-openai = "2026-10-06T21:31:20Z"
-google-genai = "2026-09-22T17:23:02Z"
+google-genai = "2026-10-13T00:38:20Z"
 
 [manifest]
 members = [
@@ -1701,19 +1694,19 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "2.10.0"
+version = "2.29.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "click" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dateutil" },
     { name = "pyyaml" },
-    { name = "sqlalchemy" },
-    { name = "typer-slim" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/06/77ff1a7af60589875b9352f9e64824374c9f3620a741d59e99f3ac8ae189/dbos-2.10.0.tar.gz", hash = "sha256:5bb12ba64c8ddf5d2c0e0906681f34604054940c67ea7778d74a42039b515631", size = 232118, upload-time = "2026-01-26T17:30:18.296Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/4b/8ca257ab318110169254756a7d28df63ea3f3efd52e8fc4fe6d2dfb7798a/dbos-2.29.0.tar.gz", hash = "sha256:ae6015bba43b5842a4a99abcc7826ca00c758af767ebaf79e6304c0b4f58ec46", size = 613970, upload-time = "2026-07-30T15:04:45.059Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/99/3cca8a35151eec46aa049129ccfe47dcee87398cea01abd6fb83c5a7ada0/dbos-2.10.0-py3-none-any.whl", hash = "sha256:da5c752e3bac323e31458fcafe7149934816529b971b70a5a715b0e5e324ae50", size = 145363, upload-time = "2026-01-26T17:30:16.939Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/3f/c5c05b9e20b4796dc18a1558f6ee4378116d21da303aab74a2518adc99e9/dbos-2.29.0-py3-none-any.whl", hash = "sha256:49104b64b8917dc3d321704f1d20058486c86129420b96b910f1e725fbdebca6", size = 242746, upload-time = "2026-07-30T15:04:43.273Z" },
 ]
 
 [[package]]
@@ -2346,15 +2339,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.1.10"
+version = "0.1.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/0b/159528e8580f9a5c985be78fcbea6230a1bcc1d46a9f8b681511d2c37e3f/genai_prices-0.1.10.tar.gz", hash = "sha256:889ba486497f8a85e9dd0e9228a27f2e135e31a850e96924b880f22c132092ac", size = 125604, upload-time = "2026-10-09T17:58:15.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/de/119c7ba00b9ddbf629de34cf390ab472da6d7bc5df0c51cdbec900280a74/genai_prices-0.1.13.tar.gz", hash = "sha256:76c9e2dd3917fdacdf3bc562297c4591384142ea2283c477e1512fafa4e3a384", size = 134622, upload-time = "2026-10-15T09:47:04.739Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/0c/379fe71fccf01d829f1d72f805189453f12ba4b96e4b49a5cde8e1afd5ba/genai_prices-0.1.10-py3-none-any.whl", hash = "sha256:1f0eb9ff0b02f3a40b3aa590098fbc3bfc9e08ef124fa0bd132e9d899a6fec88", size = 132788, upload-time = "2026-10-09T17:58:14.463Z" },
+    { url = "https://files.pythonhosted.org/packages/41/5a/b6b7d55148d367d07bcd3efdf24e3086ad199ea5109d0c335a872dfaac95/genai_prices-0.1.13-py3-none-any.whl", hash = "sha256:6d2b40760a2f7f5e207bac9b98de0af80e60c58ead497872a5331a7cee610477", size = 142541, upload-time = "2026-10-15T09:47:03.424Z" },
 ]
 
 [[package]]
@@ -2377,7 +2370,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "2.25.0"
+version = "2.30.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -2391,9 +2384,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/0a/a3b7856ca840031d4393dbdd97b67fe811b20061315ed68b67b5c85ca80d/google_genai-2.25.0.tar.gz", hash = "sha256:ab603baa5eee0205926ad0f8d7f93e0400df6d67650e99c33e01ab228ea16ad6", size = 699564, upload-time = "2026-09-22T17:23:01.238Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/84/1d8817ac6999730ba0ce92cd2f0d373300ca8bafd0b3a432b8694737904e/google_genai-2.30.0.tar.gz", hash = "sha256:bd370da8366cef7efebdb4cee959b2180b402cb81ebd7a7fcfe0f00869dae73a", size = 736285, upload-time = "2026-10-13T00:38:19.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/a8/178dbb9d1d6cac721b01592e291146a024bae5ee3224e36569348921dd6c/google_genai-2.25.0-py3-none-any.whl", hash = "sha256:2e8f3a5f76ed00d5ffc3153f6089bc7d3511054eed53ad9cfc6095a7dc59b028", size = 1159631, upload-time = "2026-09-22T17:22:59.291Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/b4/8cd54d2631371677f8157f45abce53f02fb19200b661451df618cd8ca851/google_genai-2.30.0-py3-none-any.whl", hash = "sha256:d59236ca3d5cbb93add212069d363d51eeea31b3628358f519b6a1d8f4bf43b4", size = 1198375, upload-time = "2026-10-13T00:38:16.299Z" },
 ]
 
 [[package]]
@@ -5318,6 +5311,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pgtask"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "psycopg" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/50/163df9cd15865d7245a33b6c790b13d1b287b2e36799084006ffaada449c/pgtask-0.3.0.tar.gz", hash = "sha256:bb7d3189e0d599ff0cfc9a82064c1a516b37bb1a1c6da536a930d230b3b06a6f", size = 206890, upload-time = "2026-09-11T10:36:00.545Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/9a/612f1995036126fac9e5af8eefe8cf373dc528086e19e144f178d703e030/pgtask-0.3.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:6eb051d7ccc6a4bd7e73afc9093188f390ab6cf7e0a1a5dbf40ba80e268ba215", size = 4168017, upload-time = "2026-09-11T10:35:50.85Z" },
+    { url = "https://files.pythonhosted.org/packages/89/9b/ab0b07ee9f7393580a09a61302588b7b6112159e05d9351f937fc5621018/pgtask-0.3.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:a4245161da2523b6dbfc223531494208399f73fbfcfcf596ec288d05c851cb11", size = 4030212, upload-time = "2026-09-11T10:35:52.97Z" },
+    { url = "https://files.pythonhosted.org/packages/77/0d/8a369ce96318e7a5fd22203d2a6273ce5301d82b8d85f9f824207f059674/pgtask-0.3.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f9d6098f357fbaf510a0f9c192088252906baaa354d9cc07bf8c1128be986969", size = 4420862, upload-time = "2026-09-11T10:35:55.195Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/65/23031c09795f28e50f571108327350c959b674eb5f82c4cda73342aac224/pgtask-0.3.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:d43de8d01c4a568975f805149a5edcd3e2e5bba39dbed21c23af41ac33e4de0b", size = 4442585, upload-time = "2026-09-11T10:35:56.946Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/f4/74bd9ee45535444eba5e7920c6ac093cd7fdd0312a412c1197ac7a139f5a/pgtask-0.3.0-cp310-abi3-win_amd64.whl", hash = "sha256:8d102537613ee4a5eeca7ff4cfc23c4d085da318ac10c836180577fa588023e1", size = 3751062, upload-time = "2026-09-11T10:35:58.972Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5949,6 +5959,9 @@ dbos = [
 duckduckgo = [
     { name = "pydantic-ai-slim", extra = ["duckduckgo"] },
 ]
+elevenlabs-agents-realtime = [
+    { name = "pydantic-ai-slim", extra = ["elevenlabs-agents-realtime"] },
+]
 exa = [
     { name = "pydantic-ai-slim", extra = ["exa"] },
 ]
@@ -6075,6 +6088,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["cohere"], marker = "extra == 'cohere'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["duckduckgo"], marker = "extra == 'duckduckgo'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["elevenlabs-agents-realtime"], marker = "extra == 'elevenlabs-agents-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["exa"], marker = "extra == 'exa'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["google-realtime"], marker = "extra == 'google-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
@@ -6097,7 +6111,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 coverage = [{ name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" }]
@@ -6281,6 +6295,9 @@ notion = [
 ordinal = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+pgtask = [
+    { name = "pgtask" },
+]
 playwright = [
     { name = "idna" },
     { name = "playwright" },
@@ -6298,6 +6315,9 @@ prompt-injection-defender-ml = [
 pylon = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
+render = [
+    { name = "render" },
+]
 researcher = [
     { name = "pydantic-ai-slim", extra = ["duckduckgo", "web-fetch"] },
 ]
@@ -6306,6 +6326,9 @@ skills = [
 ]
 slack = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
+]
+smol = [
+    { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (sys_platform == 'darwin' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform == 'darwin' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (sys_platform == 'darwin' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform == 'darwin' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (sys_platform == 'linux' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform == 'linux' and extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (sys_platform == 'linux' and extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sprites = [
     { name = "sprites-py" },
@@ -6338,6 +6361,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.58.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
+    { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "pydantic_ai_slim" },
@@ -6366,14 +6390,16 @@ requires-dist = [
     { name = "pydantic-monty", marker = "extra == 'dynamic-workflow'", specifier = ">=1.0.0,<2" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.17.0" },
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
+    { name = "render", marker = "extra == 'render'", specifier = ">=1.2.0" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
+    { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "researcher", "skills", "slack", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -6425,6 +6451,9 @@ dbos = [
 ]
 duckduckgo = [
     { name = "ddgs" },
+]
+elevenlabs-agents-realtime = [
+    { name = "websockets" },
 ]
 evals = [
     { name = "pydantic-evals" },
@@ -6545,9 +6574,9 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
-    { name = "genai-prices", specifier = ">=0.1.10" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.25.0" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.25.0" },
+    { name = "genai-prices", specifier = ">=0.1.13" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
@@ -6592,6 +6621,7 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
+    { name = "websockets", marker = "extra == 'elevenlabs-agents-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'google-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'openai-realtime'", specifier = ">=14.0" },
     { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
@@ -6599,26 +6629,29 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"
 source = { editable = "src/pydantic_clai2" }
 dependencies = [
     { name = "cryptography" },
+    { name = "fastapi" },
     { name = "genai-prices" },
     { name = "keyring" },
     { name = "logfire", extra = ["httpx"] },
     { name = "opentelemetry-instrumentation-httpx" },
     { name = "pillow" },
     { name = "prompt-toolkit" },
-    { name = "pydantic-ai-harness", extra = ["coder"] },
+    { name = "pydantic-ai-harness", extra = ["coder", "skills"] },
     { name = "pydantic-ai-slim", extra = ["anthropic", "mcp", "openai"] },
     { name = "pydantic-monty" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "termflow-md" },
+    { name = "uvicorn" },
     { name = "websockets" },
 ]
 
@@ -6630,21 +6663,24 @@ typesafe = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=42" },
+    { name = "fastapi", specifier = ">=0.115.0" },
     { name = "genai-prices", specifier = ">=0.1.7" },
     { name = "keyring", specifier = ">=25.6" },
     { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.65b0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
-    { name = "pydantic-ai-harness", extras = ["coder"], editable = "src/pydantic_ai_harness" },
+    { name = "pydantic-ai-harness", extras = ["coder", "skills"], editable = "src/pydantic_ai_harness" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai"], editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "pydantic_ai_slim" },
     { name = "pydantic-monty", specifier = ">=1.0.0,<2" },
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich", specifier = ">=14" },
     { name = "termflow-md", specifier = ">=1.0.0,<2" },
-    { name = "websockets", specifier = ">=13.0" },
+    { name = "uvicorn", specifier = ">=0.38.0" },
+    { name = "websockets", specifier = ">=15.0" },
 ]
 provides-extras = ["typesafe"]
 
@@ -7625,6 +7661,21 @@ wheels = [
 ]
 
 [[package]]
+name = "render"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "attrs" },
+    { name = "httpx" },
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/7f/ff8b32177bfa6b3b80de4a70066e3010f64dfee67b3856ddd9375278faaf/render-1.2.0.tar.gz", hash = "sha256:2186c32f7179719f71f2d9c4fbbbb3aa754417d3d1f07ad7ad0dfa2f2a56b011", size = 470393, upload-time = "2026-09-23T21:45:53.134Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/43/69fedb0bb7e296b48e83acb3438caee181442b870fc2b0dc1e57fdf915b4/render-1.2.0-py3-none-any.whl", hash = "sha256:15d11ff29d2dfa306cc899757cae9db98dc749f4d8c22bd295ee854fcdfa0104", size = 939520, upload-time = "2026-09-23T21:45:51.58Z" },
+]
+
+[[package]]
 name = "requests"
 version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8197,6 +8248,16 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "smolmachines"
+version = "1.22.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/d6/b50862dfa8118ba15ad01c43f4b9677165a128f2f75dfcdfe828e1df6a3a/smolmachines-1.22.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:0a1ed133663e54d9e8e12470d1de400ee5e022a499283e032d3353ed153294ab", size = 50899795, upload-time = "2026-10-02T17:55:01.866Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/21/468bacb86b7045bc32ffe4770b03c976f656ef2476c078067b197f195a70/smolmachines-1.22.2-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:484529199752a71bf53a7b554ce26a0656f121c990c3efc3271458479fb81e0e", size = 62054058, upload-time = "2026-10-02T17:55:06.28Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/66/a81a18d62620388f359f08a87ba879532e7c2f406efd6820710c55c82d63/smolmachines-1.22.2-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:74b91b61101f2d470e4e1b837d269a6a47b5afe217d5be490354ca91bc004b02", size = 63715792, upload-time = "2026-10-02T17:55:10.379Z" },
 ]
 
 [[package]]
@@ -8786,8 +8847,8 @@ name = "typer-slim"
 version = "0.20.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "typing-extensions" },
+    { name = "click", marker = "python_full_version >= '3.14' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.14' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3f/3d/6a4ec47010e8de34dade20c8e7bce90502b173f62a6b41619523a3fcf562/typer_slim-0.20.1.tar.gz", hash = "sha256:bb9e4f7e6dc31551c8a201383df322b81b0ce37239a5ead302598a2ebb6f7c9c", size = 106113, upload-time = "2025-12-19T16:48:54.206Z" }
 wheels = [

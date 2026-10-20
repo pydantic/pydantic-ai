@@ -395,6 +395,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 experiment_metadata=metadata,
                 span_id=span_id,
                 trace_id=trace_id,
+                dataset_name=self.name,
             )
 
             # Run report evaluators

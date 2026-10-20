@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 
 from pydantic_ai._deferred_capabilities import (
+    CAPABILITY_LOAD_KIND,
     LoadCapabilityArgs,
     LoadCapabilityCallPart,
     LoadCapabilityReturn,
@@ -69,7 +70,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            tool_kind='capability-load',
+            tool_kind=CAPABILITY_LOAD_KIND,
         )
 
         load_tool = ToolsetTool(

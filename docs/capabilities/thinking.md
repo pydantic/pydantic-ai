@@ -18,7 +18,7 @@ Use the [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
-agent = Agent('anthropic:claude-opus-4-7', capabilities=[Thinking(effort='high')])
+agent = Agent('{{ anthropic:large }}', capabilities=[Thinking(effort='high')])
 ```
 
 You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_ai.settings.ModelSettings] directly:
@@ -26,7 +26,7 @@ You can also set the underlying `thinking` field in [`ModelSettings`][pydantic_a
 ```python {title="unified_thinking.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-7', model_settings={'thinking': 'high'})
+agent = Agent('{{ anthropic:large }}', model_settings={'thinking': 'high'})
 ```
 
 The [`Thinking.effort`][pydantic_ai.capabilities.Thinking.effort] value accepts:
@@ -65,6 +65,16 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (OpenAI GPT-5.6 and GPT-6) | Not mapped | Not mapped | No verified unified-thinking mapping on Converse |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
+
+Many providers report how many of a response's output tokens were reasoning tokens. Pydantic AI reports that count as [`output_reasoning_tokens`][pydantic_ai.usage.RequestUsage.output_reasoning_tokens] on the response's usage, and sums it over the run in [`RunUsage`][pydantic_ai.usage.RunUsage]. It's included in `output_tokens`, and it's `0` when the model didn't reason or the provider doesn't report the count separately.
+
+## Thinking in message history
+
+Pydantic AI sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model instead of dropping it. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself. The one profile value that opts out of sending it is `False` on [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts], which no shipped model sets.
+
+Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. Each of those channels checks a credential the provider minted, a signature or the id it issued for the item, so the channel is only open for a part that still has one and came from that same provider. A part that lost it on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from another model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
+
+Anthropic is the exception to both *where* that text goes and *how* it is tagged — see [Carried-over thinking](#carried-over-thinking).
 
 ## OpenAI
 
@@ -122,7 +132,33 @@ agent = Agent(model, model_settings=settings)
 
 The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI raises its [default](../models/anthropic.md#model-settings) as needed to leave at least 4096 tokens beyond the budget.
 
-Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
+Pydantic AI reports how many thinking tokens Anthropic used as `output_reasoning_tokens`, and also in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
+
+### Carried-over thinking
+
+Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking in message history](#thinking-in-message-history) for when that happens — is sent as text, but not from the turn it was produced in. Claude's *own* reasoning takes this path too whenever its signature didn't survive, which is the common case: a history round-tripped through your storage.
+
+!!! warning "Claude imitates formatting it sees in assistant turns"
+    Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
+
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
+
+    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with `model` and `provider` attributes read from the [`ModelResponse`][pydantic_ai.messages.ModelResponse] it came from: `<assistant_thinking model="claude-opus-4-5" provider="anthropic">` for Claude's own unsigned reasoning, `<assistant_thinking model="gpt-5.6" provider="openai">` for a `FallbackModel` chain that fell back from OpenAI, and either attribute left off when the response doesn't record it. The tag is rendered for each request and never stored in your message history, and a closing `</assistant_thinking>` inside the reasoning is escaped so it can't end the block early. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
+
+    To send it in the assistant turn instead, turn the flag off for your model:
+
+    ```python {title="anthropic_carried_thinking.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.profiles import ModelProfile
+
+    model = AnthropicModel(
+        'claude-sonnet-5-5',
+        profile=ModelProfile(mimics_assistant_message_formatting=False),
+    )
+    agent = Agent(model)
+    ...
+    ```
 
 ### Interleaved Thinking
 
@@ -213,6 +249,8 @@ agent = Agent(model, model_settings=settings)
 ## Bedrock
 
 For Claude Sonnet 4.6+, Opus 4.6+, and Haiku 5.5, Pydantic AI's unified `thinking` setting translates to AWS's required [adaptive thinking](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html) shape automatically — set [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] and you're done.
+
+Claude served through Bedrock inherits the Anthropic model profile, so reasoning replayed from history follows [Carried-over thinking](#carried-over-thinking) here too.
 
 For older Claude models or to pin a specific `budget_tokens`, you can still use [`BedrockModelSettings.bedrock_additional_model_requests_fields`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_additional_model_requests_fields] [model setting](../agent.md#model-run-settings) to pass provider-specific configuration directly:
 
@@ -361,7 +399,7 @@ Claude requires `temperature` to be exactly 1 when thinking is enabled, but Cort
 
 The `magistral` family always reasons and does not need to be specifically enabled; `thinking=False` is silently ignored. Mistral has [deprecated](https://docs.mistral.ai/resources/deprecated/native-reasoning) the `magistral` family in favor of the adjustable-reasoning models below.
 
-Models with adjustable reasoning (the Mistral Small 4 and Medium 3.5 families: `mistral-small-latest`, `mistral-small-2603`, `mistral-medium-latest`, `mistral-medium`, `mistral-medium-3`, `mistral-medium-3-5`, `mistral-medium-3.5`, `mistral-medium-2604`) are controlled via the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting, which maps to Mistral's `reasoning_effort`. Mistral exposes only `'high'` (full thinking) and `'none'` (thinking suppressed), so every enabled level maps to `'high'` and only `thinking=False` maps to `'none'`. Older `mistral-small-*` / `mistral-medium-*` snapshots do not support reasoning, so `thinking` is silently ignored for them. Adjustable reasoning applies when using the native Mistral provider; OpenAI-compatible providers that host these models (such as LiteLLM or Azure) do not support it and `thinking` is ignored there. OpenRouter is the exception: it maps the unified `thinking` setting to its own `reasoning` parameter for any model it routes.
+Models with adjustable reasoning (the Mistral Large 4, Small 4, and Medium 3.5 families: `mistral-large-4`, `mistral-large-4-0`, `mistral-small-latest`, `mistral-small-2603`, `mistral-medium-latest`, `mistral-medium`, `mistral-medium-3`, `mistral-medium-3-5`, `mistral-medium-3.5`, `mistral-medium-2604`) are controlled via the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting, which maps to Mistral's `reasoning_effort`. Mistral exposes only `'high'` (full thinking) and `'none'` (thinking suppressed), so every enabled level maps to `'high'` and only `thinking=False` maps to `'none'`. Older `mistral-small-*` / `mistral-medium-*` snapshots and `mistral-large-latest` do not support reasoning, so `thinking` is silently ignored for them. Adjustable reasoning applies when using the native Mistral provider; OpenAI-compatible providers that host these models (such as LiteLLM or Azure) do not support it and `thinking` is ignored there. OpenRouter is the exception: it maps the unified `thinking` setting to its own `reasoning` parameter for any model it routes.
 
 ## Cohere
 

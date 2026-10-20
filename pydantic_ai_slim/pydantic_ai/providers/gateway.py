@@ -192,6 +192,7 @@ def gateway_provider(
     if canonical == 'google-cloud':
         # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
         # server only exposes the Google Cloud (Vertex) route today.
+        from .google import _create_google_httpx2_client  # pyright: ignore[reportPrivateUsage]
         from .google_cloud import GoogleCloudProvider
 
         def build_google_provider(client: AsyncHTTPClient) -> GoogleCloudProvider:
@@ -203,7 +204,7 @@ def gateway_provider(
             build_google_provider,
             api_key=api_key,
             http_client=http_client,
-            create_http_client=create_async_httpx2_client,
+            create_http_client=_create_google_httpx2_client,
         )
 
     if canonical == 'anthropic':
