@@ -2552,6 +2552,35 @@ def test_subagent_timeout_marks_the_spans_it_cuts_off(
     assert ('gen_ai.usage.input_tokens' in (cut_off_chat.attributes or {})) == bool(chunks_before_cutoff)
 
 
+def test_a_subagents_own_timeout_error_is_not_marked_as_timed_out(
+    agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+):
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            raise TimeoutError('provider read timeout')
+        elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()):
+        rc = asyncio.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-timeout-error',
+            )
+        )
+    assert rc == 0
+    assert [error_type for *_, error_type in _span_outcomes(agent_spans)] == [None] * len(
+        agent_spans.get_finished_spans()
+    )
+
+
 @pytest.mark.parametrize(
     ('stream_chunks', 'expected'),
     [

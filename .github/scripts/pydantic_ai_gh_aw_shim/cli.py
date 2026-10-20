@@ -467,13 +467,23 @@ _wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall
 
 @asynccontextmanager
 async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
-    """`asyncio.timeout`, registered so `_MarkTimedOutSpans` can tell its cancellation from others."""
-    async with asyncio.timeout(seconds) as cap:
-        token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
-        try:
+    """`asyncio.timeout` that marks the span holding it when it expires.
+
+    It is registered so `_MarkTimedOutSpans` can tell the cancellations it causes from others, and a
+    `TimeoutError` raised by the work it caps leaves it unexpired. `task`'s cap marks the
+    `execute_tool Task` span, which otherwise looks like a successful call.
+    """
+    cap = asyncio.timeout(seconds)
+    token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+    try:
+        async with cap:
             yield
-        finally:
-            _wall_clock_caps.reset(token)
+    except TimeoutError:
+        if cap.expired():
+            _mark_timed_out(get_current_span())
+        raise
+    finally:
+        _wall_clock_caps.reset(token)
 
 
 def _run_seconds_left() -> float | None:
@@ -1261,8 +1271,6 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
-        # The `execute_tool Task` span, which otherwise looks like a successful call.
-        _mark_timed_out(get_current_span())
         return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
