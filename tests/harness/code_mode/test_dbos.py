@@ -34,9 +34,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
@@ -110,6 +112,24 @@ code_mode_agent = Agent(
 def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     result = code_mode_agent.run_sync(prompt)
     return {'output': str(result.output), 'messages': result.all_messages_json().decode()}
+
+
+class _LimitAbortCrash(BaseException):
+    """Leave the failed attempt pending so DBOS recovery replays its recorded model request."""
+
+
+_limit_errors: list[str] = []
+
+
+@DBOS.workflow()
+def run_limited_code_mode_agent() -> None:
+    try:
+        code_mode_agent.run_sync('Calculate 3 + 4', usage_limits=UsageLimits(tool_calls_limit=1))
+    except UsageLimitExceeded as error:
+        _limit_errors.append(str(error))
+        if len(_limit_errors) == 1:
+            raise _LimitAbortCrash from error
+        raise
 
 
 _GATHERED_CALLS = 3
@@ -236,6 +256,24 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     steps = dbos_instance.list_workflow_steps(workflow_id)
     step_names = [step['function_name'] for step in steps]
     assert step_names.count('code_mode_dbos_agent__model.request') == 2
+
+
+def test_tool_calls_limit_refuses_during_recovery(dbos_instance: DBOS) -> None:
+    _limit_errors.clear()
+    _captured_tool_defs.clear()
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):
+        run_limited_code_mode_agent()
+
+    handle = DBOS.resume_workflow(workflow_id)
+    with pytest.raises(UsageLimitExceeded, match=r'tool_calls_limit of 1 \(tool_calls=2\)'):
+        handle.get_result()
+
+    assert len(_limit_errors) == 2
+    assert _limit_errors[0] == _limit_errors[1]
+    assert len(_captured_tool_defs) == 1
+    steps = dbos_instance.list_workflow_steps(workflow_id)
+    assert [step['function_name'] for step in steps].count('code_mode_dbos_agent__model.request') == 1
 
 
 def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:

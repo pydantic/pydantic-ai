@@ -660,6 +660,7 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
         # counts the call itself once it succeeds, so the reservation is released however it ends.
         reserved = 1
+        # usage-attribution: a temporary pending-call reservation, released in `finally` below
         ctx.usage.tool_calls += 1
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)

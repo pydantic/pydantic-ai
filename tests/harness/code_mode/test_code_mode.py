@@ -44,6 +44,7 @@ from pydantic_ai import (
     RunContext,
     Tool,
     ToolDefinition,
+    capture_run_messages,
 )
 from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
@@ -2423,10 +2424,16 @@ class TestCodeMode:
         """
         agent, pinged = self._ping_agent(code)
 
-        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
-            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+        with capture_run_messages() as messages:
+            with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
+                await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
 
         assert sorted(pinged) == [0, 1]
+        assert [part.tool_name for message in messages for part in message.parts if isinstance(part, ToolCallPart)] == [
+            'run_code'
+        ]
+        # Aborted code publishes no return metadata, so partial nested parts cannot enter model history.
+        assert not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
     @pytest.mark.parametrize('failure', ['worker-crash', 'host-error', 'sandbox-panic'])
     async def test_tool_calls_limit_survives_execution_failure(

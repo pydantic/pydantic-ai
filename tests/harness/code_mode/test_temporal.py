@@ -33,8 +33,9 @@ import pytest
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import (
@@ -53,9 +54,11 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.harness.code_mode.conftest import websocket_relay_server
@@ -224,8 +227,8 @@ remote_code_mode_agent = Agent(
 @workflow.defn
 class CodeModeWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> dict[str, Any]:
-        result = await code_mode_agent.run(prompt)
+    async def run(self, prompt: str, tool_calls_limit: int | None = None) -> dict[str, Any]:
+        result = await code_mode_agent.run(prompt, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
         return {
             'output': str(result.output),
             'messages': result.all_messages_json().decode(),
@@ -356,6 +359,37 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
         assert run_code_td.description is not None
         assert 'async def add' in run_code_td.description
         assert run_code_td.parameters_json_schema['properties']['code']['type'] == 'string'
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[CodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+async def test_tool_calls_limit_fails_and_replays(client: Client) -> None:
+    workflow_id = 'test_code_mode_temporal_tool_calls_limit'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeModeWorkflow],
+        plugins=[AgentPlugin(code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                CodeModeWorkflow.run,
+                args=['Calculate 3 + 4', 1],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == UsageLimitExceeded.__name__
+    assert 'tool_calls_limit of 1 (tool_calls=2)' in cause.message
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     replay_result = await Replayer(
