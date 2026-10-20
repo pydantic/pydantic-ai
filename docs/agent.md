@@ -1624,7 +1624,7 @@ You declare a [`name`][pydantic_ai.messages.InstructionPart.name]; the framework
 
 There are two ways to declare a name, depending on what the part is:
 
-- **A function** is named where it is registered: [`@agent.instructions(name=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions].
+- **A function** is named where it is registered: [`@agent.instructions(name=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], [`@toolset.instructions(name=...)`][pydantic_ai.toolsets.FunctionToolset.instructions]. A function that isn't registered with a decorator, such as one passed to `Agent(instructions=...)` or returned from a capability's `get_instructions()`, can instead return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] that carries its `name`.
 - **Literal text** carries its name on the text itself, by passing an [`InstructionPart`][pydantic_ai.messages.InstructionPart] anywhere instructions are accepted — `Agent(instructions=...)`, `Capability(instructions=...)`, `FunctionToolset(instructions=...)`, or a `get_instructions()` implementation on a [capability](capabilities/custom.md) or [toolset](toolsets.md#building-a-custom-toolset). The part also decides whether it counts as [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which is what keeps it outside the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)), and a part is always kept whole rather than merged with its neighbours.
 
 Because a part's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the part's position or wording, both of which change as the agent evolves.
@@ -1726,7 +1726,48 @@ assert changes == ['Todo status: done.']
 
 The function still runs before each model request, including the request after a tool call. The initial value stays in the prefix. A changed value produces a typed [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of history containing the complete replacement. Unchanged values add nothing; changing from A to B and back to A emits both replacements. Returning `None` or an empty string withdraws the previous instruction. Removing a contributing source also withdraws its tracked blocks. A block first appearing after the baseline is delivered at the end of history.
 
-Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
+Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions.
+
+Every way of registering an instruction function can opt in. The decorators take `on_change` alongside `name`: [`@agent.instructions`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] and [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions]. Any instruction function, including one passed to `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)`, or returned from a capability's [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], can instead return `InstructionPart(..., name='state', on_change='append')`. A part a function returns counts as dynamic, and returning `None` withdraws the block like returning an empty string:
+
+```python {title="instruction_changes_returned_part.py"}
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Page:
+    path: str
+
+
+@dataclass
+class CurrentPage(AbstractCapability[Page]):
+    def get_instructions(self):
+        def current_page(ctx: RunContext[Page]) -> InstructionPart:
+            return InstructionPart(f'The user is on {ctx.deps.path}.', name='page', on_change='append')
+
+        return current_page
+
+
+agent = Agent(TestModel(), deps_type=Page, capabilities=[CurrentPage(id='page')])
+first = agent.run_sync('Hi!', deps=Page('/home'))
+second = agent.run_sync('What now?', deps=Page('/settings'), message_history=first.all_messages())
+changes = [
+    part.content
+    for message in second.new_messages()
+    if isinstance(message, ModelRequest)
+    for part in message.parts
+    if isinstance(part, InstructionDeltaPart)
+]
+print(changes)
+#> ['The user is on /settings.']
+```
+
+A function registered with a `name` can return an unnamed part to set only `on_change`; it can't rename itself. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 

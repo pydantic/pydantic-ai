@@ -102,7 +102,8 @@ For changing operator state, use `@agent.instructions(name='state', on_change='a
 The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
 Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
-Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
+Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`, or use `@toolset.instructions(name='state', on_change='append')` on a `FunctionToolset` with an `id`.
+Any instruction function (passed to `Agent(instructions=...)`, returned from a capability's `get_instructions()`, ...) can return `InstructionPart(..., name='state', on_change='append')` to opt in from inside the function.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.
