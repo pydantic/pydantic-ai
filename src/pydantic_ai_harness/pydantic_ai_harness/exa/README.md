@@ -296,11 +296,13 @@ to proceed. Each result includes the run ID, which the model can pass back as
 Inline execution polls the runs one after another, and `timeout_ms` applies to
 each, so a response that starts several runs can wait up to `timeout_ms` per
 run. A run whose polling times out keeps running on Exa, and the retry prompt
-gives the model its run ID to follow up on. A run whose polling is cancelled,
-because the agent run was, is cancelled on Exa too when the `runs` client has a
-`cancel` method, as `exa_py`'s does. If creating a run fails after the request
-was sent, for example on a read timeout, the error is raised instead of
-retried, since Exa may have created the run.
+gives the model its run ID to follow up on. When the agent run is cancelled
+while it polls, the capability cancels the Exa run too, if the `runs` client has
+a `cancel` method, as `exa_py`'s does. Under durable execution the run is left
+running, since the engine can resume the wait. If creating a run fails in a way
+that Exa may have acted on (a 5xx response, or a network failure after the
+request was sent), the error is raised instead of retried, so the model can't
+start a second run.
 
 ## Multiple instances
 
@@ -364,9 +366,10 @@ in-flight runs then cannot find.
 
 The default client is `exa_py.AsyncExa`, configured from the `EXA_API_KEY`
 environment variable. When the variable is missing, building the `Agent` fails
-with a setup hint; the capability itself constructs without it. Pass any object satisfying the `ExaClient` protocol -- the subset of
-`AsyncExa` the toolset calls -- to configure authentication or the base URL
-explicitly, or to substitute a fake in tests:
+with a setup hint; the capability itself constructs without it. Pass any object
+satisfying the `ExaClient` protocol (the subset of `AsyncExa` the toolset calls)
+to configure authentication or the base URL explicitly, or to substitute a fake
+in tests:
 
 ```python
 from exa_py import AsyncExa

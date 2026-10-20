@@ -1,5 +1,6 @@
 """Tests for the ExaAgent capability, ExaAgentToolset, and agent_run_result."""
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -235,10 +236,13 @@ class TestExaAgentToolset:
         with pytest.raises(ModelRetry, match='Exa request failed: connection refused'):
             await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
 
-    async def test_failure_after_the_request_was_sent_propagates(self) -> None:
+    @pytest.mark.parametrize(
+        'error', [httpx.ReadTimeout('timed out'), ValueError('Request failed with status code 502: bad gateway')]
+    )
+    async def test_failure_after_exa_may_have_acted_propagates(self, error: Exception) -> None:
         """Exa may have created the run already, so asking the model to call again could start a second one."""
-        runs = _FakeRuns(error=httpx.ReadTimeout('timed out'))
-        with pytest.raises(httpx.ReadTimeout):
+        runs = _FakeRuns(error=error)
+        with pytest.raises(type(error)):
             await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
 
     async def test_value_error_that_is_not_an_http_response_propagates(self) -> None:
@@ -356,11 +360,45 @@ class TestExaAgent:
     async def test_cancelled_inline_polling_cancels_the_exa_run(self, cancel_error: Exception | None) -> None:
         runs = _CancellableRuns(cancel_error=cancel_error)
         agent = Agent(TestModel(), capabilities=[ExaAgent(runs=runs)])
-        async with anyio.create_task_group() as group:
-            group.start_soon(agent.run, 'Research something.')
-            await runs.polling.wait()
-            group.cancel_scope.cancel()
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(agent.run, 'Research something.')
+                await runs.polling.wait()
+                group.cancel_scope.cancel()
         assert runs.cancelled == ['run_c']
+
+    async def test_natively_cancelled_inline_polling_cancels_the_exa_run(self) -> None:
+        runs = _CancellableRuns()
+        task = asyncio.ensure_future(Agent(TestModel(), capabilities=[ExaAgent(runs=runs)]).run('Research something.'))
+        with anyio.fail_after(5):
+            await runs.polling.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert runs.cancelled == ['run_c']
+
+    async def test_cancelled_polling_in_a_durable_run_leaves_the_exa_run_running(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A durable engine can resume the wait elsewhere, e.g. on another worker after a restart."""
+        monkeypatch.setattr(RunContext, 'in_durable_context', property(lambda _: True))
+        runs = _CancellableRuns()
+        creator = ExaAgent[None](runs=runs)
+        with pytest.raises(CallDeferred) as exc_info:
+            await creator.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(lambda: creator.handle_deferred_tool_calls(ctx, requests=requests))
+                await runs.polling.wait()
+                group.cancel_scope.cancel()
+        assert runs.cancelled == []
 
     async def test_cancelled_inline_polling_without_a_cancel_method_still_propagates(self) -> None:
         class _HangingRuns(_FakeRuns):

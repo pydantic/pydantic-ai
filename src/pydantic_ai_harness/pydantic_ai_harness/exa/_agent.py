@@ -390,11 +390,26 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             metadata = requests.metadata.get(call.tool_call_id, {})
             run_id = metadata.get(RUN_ID_METADATA_KEY)
             if metadata.get(_OWNER_METADATA_KEY) == self._owner_token and isinstance(run_id, str):
-                result = await self._resolve_run(run_id)
+                result = await self._await_run(ctx, run_id)
                 calls[call.tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
         if not calls:
             return None
         return DeferredToolResults(calls=calls)
+
+    async def _await_run(self, ctx: RunContext[AgentDepsT], run_id: str) -> ToolReturn[str] | RetryRequest:
+        """Resolve one run, cancelling it on Exa if the agent run is cancelled while it waits.
+
+        Once the agent run is cancelled, nothing is left to read the run's result. Under durable
+        execution the engine may resume the wait, for example on another worker after a restart,
+        so there the run is left running.
+        """
+        try:
+            return await self._resolve_run(run_id)
+        except anyio.get_cancelled_exc_class():
+            runs = None if ctx.in_durable_context else self._resolved_runs()
+            if isinstance(runs, _CancellableRuns):
+                await stop_shielded(lambda: runs.cancel(run_id), grace=_CANCEL_GRACE_SECONDS)
+            raise
 
     @durable_operation('resolve_run')
     async def _resolve_run(self, run_id: str) -> ToolReturn[str] | RetryRequest:
@@ -408,17 +423,11 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         the run may still finish server-side and the model can follow up with
         `previous_run_id`. `handle_deferred_tool_calls` turns each into its
         `ModelRetry` result. Account and configuration failures propagate.
-
-        When polling is cancelled, nothing is left to read the run's result, so the
-        run is cancelled too if the runs client supports it.
         """
-        runs = self._resolved_runs()
         try:
-            run = await runs.poll_until_finished(run_id, poll_interval=self.poll_interval, timeout_ms=self.timeout_ms)
-        except anyio.get_cancelled_exc_class():
-            if isinstance(runs, _CancellableRuns):
-                await stop_shielded(lambda: runs.cancel(run_id), grace=_CANCEL_GRACE_SECONDS)
-            raise
+            run = await self._resolved_runs().poll_until_finished(
+                run_id, poll_interval=self.poll_interval, timeout_ms=self.timeout_ms
+            )
         except (TimeoutError, httpx.HTTPError, ValueError) as error:
             if not isinstance(error, TimeoutError) and not is_recoverable(error):
                 raise

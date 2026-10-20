@@ -134,13 +134,17 @@ def is_recoverable(error: Exception, *, idempotent: bool = True) -> bool:
     An HTTP error response is recoverable unless it is an account or configuration state
     (401, 402, 403). A `ValueError` that is not an HTTP error response comes from exa-py
     itself (an option it rejects, or a response it cannot parse), so it is not. A network
-    failure is recoverable, except that a request with a side effect (`idempotent=False`)
-    is only repeated when the failure came before the request was sent.
+    failure is recoverable.
+
+    A request with a side effect (`idempotent=False`) is only repeated when Exa can't
+    have acted on it: a network failure before the request was sent, or a 4xx response.
+    A 5xx response or a failure after sending may come after Exa acted.
     """
     if isinstance(error, httpx.HTTPError):
         return idempotent or isinstance(error, _UNSENT_ERRORS)
     if isinstance(error, ValueError) and (match := _STATUS_RE.match(str(error))):
-        return int(match.group(1)) not in _ACCOUNT_STATUSES
+        status = int(match.group(1))
+        return status not in _ACCOUNT_STATUSES and (idempotent or status < 500)
     return False
 
 

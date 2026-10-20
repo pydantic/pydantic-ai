@@ -121,8 +121,8 @@ Gotchas:
   `agent_run_result` raises on a schema mismatch as the call's result.
 - Empty pages and answers, HTTP error responses such as rate limits, and network failures become
   `ModelRetry` (up to the tool's retry limit); 401/402/403 and other `exa_py` errors propagate.
-  Creating an Exa run is not retried after the request was sent, since the run may exist.
-- Cancelling an agent run during inline polling cancels the Exa run too, when `runs` has `cancel`.
+  Creating an Exa run is not retried after a 5xx or a network failure past sending, since the run may exist.
+- Cancelling a non-durable agent run during inline polling cancels the Exa run too, when `runs` has `cancel`.
 - Page text, titles, and excerpts are third-party content; `get_page` reads any URL the model passes.
   Add `PromptInjectionDefender` or tool approval when that matters.
 - Citations: each tool returns a `ToolReturn` whose `metadata['sources']` is a list of `ExaSource`
