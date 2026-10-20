@@ -1177,8 +1177,13 @@ class TestMarkdownConverter:
     def test_whitespace_closed_comment_does_not_hide_markup(self):
         html = '<!--comment-- >' + '<li>x</li>' * 21
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_OPENERS', 20):
-            with pytest.raises(ModelRetry, match='too complex'):
-                _convert_html(html)
+            try:
+                _, content = _convert_html(html)
+            except ModelRetry as exc:
+                assert 'too complex' in str(exc)
+            else:
+                # Python versions disagree on whether '-- >' closes the comment.
+                assert not content
 
     @pytest.mark.parametrize(
         ('prefix', 'suffix'),
