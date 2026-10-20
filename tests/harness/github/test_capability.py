@@ -52,8 +52,16 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
-    result = toolset.client.transport
+    """The HTTP transport of the one MCP connection in `toolset`, looking through wrappers such as the read-only filter."""
+    connections: list[MCPToolset[DepsT]] = []
+
+    def collect(leaf: AbstractToolset[DepsT]) -> None:
+        if isinstance(leaf, MCPToolset):
+            connections.append(leaf)
+
+    toolset.apply(collect)
+    [connection] = connections
+    result = connection.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
 
@@ -106,19 +114,24 @@ class TestGitHub:
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
     @pytest.mark.parametrize(
-        ('auth', 'url', 'toolsets'),
+        ('auth', 'url', 'toolsets', 'lockdown'),
         [
-            ('token', GITHUB_MCP_URL, None),
-            (per_user_token, GITHUB_MCP_URL, None),
-            (None, 'https://example.com/mcp', None),
-            (None, GITHUB_MCP_URL, ['repos']),
+            ('token', GITHUB_MCP_URL, None, False),
+            (per_user_token, GITHUB_MCP_URL, None, False),
+            (None, 'https://example.com/mcp', None, False),
+            (None, GITHUB_MCP_URL, ['repos'], False),
+            (None, GITHUB_MCP_URL, None, True),
         ],
     )
     def test_client_cannot_be_combined_with_connection_settings(
-        self, auth: str | Callable[[RunContext[str | None]], str | None] | None, url: str, toolsets: list[str] | None
+        self,
+        auth: str | Callable[[RunContext[str | None]], str | None] | None,
+        url: str,
+        toolsets: list[str] | None,
+        lockdown: bool,
     ) -> None:
         with pytest.raises(UserError, match='`client` owns the connection'):
-            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets)
+            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
 
     @pytest.mark.parametrize(
         'capability',
@@ -141,6 +154,27 @@ class TestGitHub:
             match="Capability id 'github' is used by multiple GitHub capabilities that disagree on 'auth', 'read_only'",
         ):
             Agent(TestModel(), capabilities=[GitHub(auth='a'), GitHub(auth='b', read_only=True)])
+
+    @pytest.mark.parametrize('unset', [None, ''])
+    def test_unset_id_means_the_default(self, unset: str | None) -> None:
+        capability = GitHub[str | None](id=unset, auth='token')
+        assert (capability.id, capability.get_toolset().id) == ('github', 'github')
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(UserError, match="Capability id 'github' is used by multiple GitHub capabilities"):
+            Agent(TestModel(), capabilities=[GitHub(id=None, auth='a'), GitHub(id=None, auth='b')])
+
+    @pytest.mark.parametrize(
+        ('capability', 'description'),
+        [
+            (GitHub[str | None](auth='token'), 'Read and change GitHub resources.'),
+            (GitHub[str | None](auth='token', read_only=True), 'Read GitHub resources.'),
+            (GitHub[str | None](auth='token', read_only=True, description='Work repos.'), 'Work repos.'),
+        ],
+        ids=['default', 'read-only', 'custom'],
+    )
+    def test_description_matches_read_only(self, capability: GitHub[str | None], description: str) -> None:
+        assert capability.get_description() == description
 
     @pytest.mark.parametrize(
         ('capability', 'include'),
@@ -170,27 +204,45 @@ class TestGitHub:
         monkeypatch.setenv('GITHUB_TOKEN', 'environment-token')
         assert bearer(GitHub().get_toolset()) == 'Bearer environment-token'
 
-    def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_token_raises_when_the_agent_is_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GITHUB_TOKEN', raising=False)
         with pytest.raises(UserError, match='Set `GITHUB_TOKEN`'):
-            GitHub().get_toolset()
+            Agent(TestModel(), capabilities=[GitHub()])
+
+    @pytest.mark.parametrize('source', ['auth', 'environment'])
+    def test_oauth_token_raises(self, source: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('GITHUB_TOKEN', 'oauth')
+        capability = GitHub[str | None](auth='oauth' if source == 'auth' else None)
+        with pytest.raises(UserError, match="GitHub needs a token, not 'oauth'"):
+            capability.get_toolset()
+
+    @pytest.mark.parametrize('url', ['http://api.githubcopilot.com/mcp/', 'https:///mcp', 'api.githubcopilot.com/mcp'])
+    def test_url_must_be_https(self, url: str) -> None:
+        with pytest.raises(UserError, match='`url` must be an `https://` URL'):
+            GitHub(auth='token', url=url)
 
     def test_empty_toolsets_raise(self) -> None:
         with pytest.raises(UserError, match='at least one tool group'):
             GitHub(auth='token', toolsets=[])
 
-    @pytest.mark.parametrize('group', ['repos,actions', '', ' '])
+    @pytest.mark.parametrize('group', ['repos,actions', '', ' ', ' repos', 'repos actions', 'repos\r\nX-Injected: 1'])
     def test_each_toolset_names_one_group(self, group: str) -> None:
         with pytest.raises(UserError, match='must name one tool group'):
             GitHub(auth='token', toolsets=['issues', group])
+
+    def test_toolsets_are_copied_when_checked(self) -> None:
+        groups = ['repos']
+        capability = GitHub[str | None](auth='token', toolsets=groups)
+        groups.append('')
+        assert transport(capability.get_toolset()).headers == {'X-MCP-Toolsets': 'repos'}
 
     @pytest.mark.parametrize(
         ('capability', 'headers'),
         [
             (GitHub[str | None](auth='token'), {}),
             (
-                GitHub[str | None](auth='token', read_only=True, toolsets=['actions', 'notifications']),
-                {'X-MCP-Readonly': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
+                GitHub[str | None](auth='token', read_only=True, lockdown=True, toolsets=['actions', 'notifications']),
+                {'X-MCP-Readonly': 'true', 'X-MCP-Lockdown': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
             ),
         ],
         ids=['default', 'configured'],
@@ -201,6 +253,15 @@ class TestGitHub:
     def test_enterprise_endpoint(self) -> None:
         url = 'https://copilot-api.acme.ghe.com/mcp'
         assert transport(GitHub(auth='token', url=url).get_toolset()).url == url
+
+    async def test_hosted_read_only_keeps_only_marked_tools(self, server: FastMCP) -> None:
+        # Stand in a server that ignores `X-MCP-Readonly` for the hosted connection, to show the client-side filter.
+        def ignore_header(leaf: AbstractToolset[None]) -> AbstractToolset[None]:
+            return MCPToolset[None](server) if isinstance(leaf, MCPToolset) else leaf
+
+        toolset = GitHub[None](auth='token', read_only=True).get_toolset().visit_and_replace(ignore_header)
+        result = await Agent(TestModel(), deps_type=type(None), toolsets=[toolset]).run('Use the tools')
+        assert result.output == '{"read_resource":"read"}'
 
 
 class TestPerRunAuth:
@@ -219,7 +280,7 @@ class TestPerRunAuth:
 
     async def test_provider_returning_oauth_raises(self) -> None:
         capability = GitHub[str | None](auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="GitHub needs a token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     async def test_read_only_applies_per_run(self) -> None:
