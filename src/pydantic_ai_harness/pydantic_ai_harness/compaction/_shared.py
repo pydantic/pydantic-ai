@@ -13,8 +13,11 @@ from json import dumps
 from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
+from pydantic_ai._instructions import instruction_window_start
 from pydantic_ai.messages import (
     CompactionPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -86,25 +89,15 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     `FilePart` is deliberately absent: its payload is binary, and counting its length as
     characters would be a number with no relation to what the provider bills.
     """
-    # Core omits earlier updates after an instruction baseline is replaced. The attribute
-    # guard keeps this compatible with core releases that predate instruction updates.
-    baseline_index = max(
-        (
-            index
-            for index, message in enumerate(messages)
-            if isinstance(message, ModelRequest)
-            and hasattr(message, 'instruction_baseline')
-            and message.instruction_baseline is not None  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]  # pragma: lax no cover
-        ),
-        default=0,
-    )
+    # Core omits the changes from before the current instruction window.
+    baseline_index = instruction_window_start(messages)
     per_message: list[list[str]] = []
     for index, msg in enumerate(messages):
         segments: list[str] = []
         if isinstance(msg, ModelRequest):
             for request_part in msg.parts:
-                if request_part.part_kind == 'instruction-delta' and index < baseline_index:  # pyright: ignore[reportUnnecessaryComparison]
-                    continue  # pragma: lax no cover
+                if isinstance(request_part, InstructionDeltaPart) and index < baseline_index:
+                    continue
                 segments.extend(_request_part_text(request_part))
         else:
             for response_part in msg.parts:
@@ -126,9 +119,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
         return [_user_prompt_text_for_counting(part)]
     elif isinstance(part, SystemPromptPart):
         return [part.content]
-    # Match the discriminator so this remains importable before the new core part is released.
-    elif part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
-        return [part.render()]  # pragma: lax no cover - requires core instruction updates
+    elif isinstance(part, InstructionDeltaPart):
+        return [part.render()]
+    # Records what the request's instructions were made of, which are counted with the request.
+    elif isinstance(part, InstructionBaselinePart):
+        return []
     elif isinstance(part, ToolReturnPart):
         # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
         # they arrive here too.

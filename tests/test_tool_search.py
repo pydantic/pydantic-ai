@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, Un
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
+    InstructionBaselinePart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -3103,6 +3104,9 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
         for part in msg.parts:
+            if isinstance(part, InstructionBaselinePart):
+                # Records the instructions the request was sent, not a step of the conversation.
+                continue
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
@@ -3496,6 +3500,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for msg in messages:
             part_trace: list[dict[str, Any]] = []
             for part in msg.parts:
+                if isinstance(part, InstructionBaselinePart):
+                    continue
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):

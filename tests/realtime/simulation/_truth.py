@@ -164,6 +164,8 @@ class GroundTruth:
     """Those whose `input_audio_buffer.cleared` the client read."""
     speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
     """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    speech_reopened: set[str] = field(default_factory=set[str])
+    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
     transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each spoken user turn's completed transcript."""
     models_every_spoken_turn: bool = False
@@ -214,6 +216,13 @@ class GroundTruth:
             if input_.key in response.answers and input_.answered_by is None:
                 input_.answered_by = response.key
         return response
+
+    def answer(self, response: TruthResponse, keys: list[str]) -> None:
+        """`response`, already under way, answers the inputs `keys` too."""
+        response.answers.extend(keys)
+        for input_ in self.inputs:
+            if input_.key in keys and input_.answered_by is None:
+                input_.answered_by = response.key
 
     def new_call_id(self) -> str:
         call_id = f'call_{self.next_call_number}'
