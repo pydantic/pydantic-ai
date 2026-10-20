@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
@@ -34,7 +35,17 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import (
+    CommandResult,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceCommand,
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness.compaction import SlidingWindowCompaction
 from pydantic_ai_harness.memory import (
     FileStore,
@@ -120,6 +131,77 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
         await toolset.write_memory(ctx, 'hello')
     with pytest.raises(ToolFailed):
         await toolset.delete_memory(ctx, 'topic')
+
+
+class _RefusingRenameBackend(LocalWorkspaceBackend):
+    """A local workspace whose `mv` exits with an error, so `FileStore` cannot replace a file."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if isinstance(command, list) and command[-1].endswith('/notes.md'):
+            return CommandResult(exit_code=1, stdout='', stderr='mv: rename refused')
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_failed_file_store_write_names_only_the_memory_file(tmp_path: Path) -> None:
+    directory = str(tmp_path / 'memory')
+    store = FileStore(directory, workspace=_RefusingRenameBackend(tmp_path))
+    toolset = MemoryToolset(Memory[None](store=store, namespace='acme'))
+    with pytest.raises(ToolFailed) as failure:
+        await toolset.write_memory(_ctx(), 'fact', 'notes')
+    assert str(failure.value) == "Could not update memory file 'notes.md'."
+    cause = str(failure.value.__cause__)
+    assert f'{directory}/acme/main/notes.md' in cause
+
+
+class _FailingWorkspaceStore(InMemoryStore):
+    def __init__(self, error: WorkspaceError) -> None:
+        super().__init__({'main/notes.md': 'body\n'})
+        self.error = error
+
+    async def write(
+        self, path: str, content: str, *, expected_version: str | None, operation: MemoryOperation | None = None
+    ) -> MemoryMutation:
+        raise self.error
+
+    async def delete(
+        self, path: str, *, expected_version: str | None, operation: MemoryOperation | None = None
+    ) -> MemoryMutation:
+        raise self.error
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected', 'message'),
+    [
+        (
+            WorkspaceError('backend failed in /srv/app/memory/main'),
+            ToolFailed,
+            "Could not update memory file 'notes.md'.",
+        ),
+        (
+            WorkspaceTimeoutError('timed out in /srv/app/memory'),
+            ToolFailed,
+            "Updating memory file 'notes.md' timed out.",
+        ),
+        (WorkspaceReadOnlyError('/srv/app/memory'), ToolFailed, 'The workspace is read-only; the change was refused.'),
+        (WorkspaceUnavailableError('sandbox was destroyed'), WorkspaceUnavailableError, 'sandbox was destroyed'),
+    ],
+)
+async def test_failed_workspace_mutations_name_only_the_memory_file(
+    error: WorkspaceError, expected: type[Exception], message: str
+) -> None:
+    toolset = MemoryToolset(Memory[None](store=_FailingWorkspaceStore(error)))
+    with pytest.raises(expected) as write_failure:
+        await toolset.write_memory(_ctx(), 'more', 'notes')
+    with pytest.raises(expected) as delete_failure:
+        await toolset.delete_memory(_ctx('call-2'), 'notes')
+    assert str(write_failure.value) == str(delete_failure.value) == message
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:

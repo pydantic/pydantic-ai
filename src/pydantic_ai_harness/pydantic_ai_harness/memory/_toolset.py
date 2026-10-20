@@ -8,16 +8,22 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, NoReturn, TypeVar
 
 from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai.workspaces import (
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness._workspace import raise_tool_failure
 from pydantic_ai_harness.memory._file import FileStore
@@ -292,7 +298,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
             except WorkspaceError as exc:
                 _set_span_error(span, exc)
-                raise_tool_failure(exc)
+                _raise_workspace_failure(exc, name)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
                 raise ModelRetry(_escape_message(name)) from exc
@@ -381,7 +387,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
             except WorkspaceError as exc:
                 _set_span_error(span, exc)
-                raise_tool_failure(exc)
+                _raise_workspace_failure(exc, name)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
                 raise ModelRetry(_escape_message(name)) from exc
@@ -561,6 +567,19 @@ def _bounded_search_matches(
         bounded.append(_search_match(match, prefix, snippet))
         remaining -= len(snippet)
     return bounded, truncated
+
+
+def _raise_workspace_failure(error: WorkspaceError, name: str) -> NoReturn:
+    """Report a failed workspace mutation naming only the memory file.
+
+    A backend's message can carry the host path and the scope, which includes the namespace, so
+    the model sees only the filename. The original error stays chained as `__cause__`.
+    """
+    if isinstance(error, WorkspaceUnavailableError | WorkspaceReadOnlyError):
+        raise_tool_failure(error)
+    if isinstance(error, WorkspaceTimeoutError):
+        raise ToolFailed(f'Updating memory file {name!r} timed out.') from error
+    raise ToolFailed(f'Could not update memory file {name!r}.') from error
 
 
 def _escape_message(name: str) -> str:
