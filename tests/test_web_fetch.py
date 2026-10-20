@@ -23,6 +23,7 @@ from markdownify import MarkdownConverter, markdownify
 from pydantic_ai._utils import run_in_executor, using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
     _HTML_CONVERSION_LIMITER,  # pyright: ignore[reportPrivateUsage]
+    _MAX_CONCURRENT_HTML_CONVERSIONS,  # pyright: ignore[reportPrivateUsage]
     _MAX_HTML_MARKUP_OPENERS,  # pyright: ignore[reportPrivateUsage]
     WebFetchLocalTool,
     _convert_html,  # pyright: ignore[reportPrivateUsage]
@@ -47,7 +48,47 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
 
 
 class TestWebFetchLocalTool:
+    @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+    async def test_html_conversion_default_cancellation_waits_for_completion(self, anyio_backend: str):
+        """The default worker keeps the caller waiting until conversion completes."""
+        started = anyio.Event()
+        release = Event()
+        finished = anyio.Event()
+        scopes: list[anyio.CancelScope] = []
+
+        def convert(html: str) -> tuple[str, str]:
+            anyio.from_thread.run_sync(started.set)
+            release.wait()
+            return '', html
+
+        async def fetch(tool: WebFetchLocalTool):
+            with anyio.CancelScope() as scope:
+                scopes.append(scope)
+                await tool('https://example.com')
+            finished.set()
+
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response('<p>x</p>'),
+            ),
+            patch('pydantic_ai.common_tools.web_fetch._convert_html', side_effect=convert),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            async with anyio.create_task_group() as group:
+                try:
+                    group.start_soon(fetch, tool)
+                    with anyio.fail_after(10):
+                        await started.wait()
+                    scopes[0].cancel()
+                    await anyio.wait_all_tasks_blocked()
+                    assert not finished.is_set()
+                finally:
+                    release.set()
+
     async def test_html_conversion_task_creation_failure_releases_slot(self):
+        """A failed task factory cannot consume a conversion slot."""
         with (
             patch(
                 'pydantic_ai.common_tools.web_fetch.safe_download',
@@ -59,9 +100,10 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             with pytest.raises(RuntimeError, match='cannot spawn'):
                 await tool('https://example.com')
-        assert _HTML_CONVERSION_LIMITER.get().value == 4
+        assert _HTML_CONVERSION_LIMITER.get().value == _MAX_CONCURRENT_HTML_CONVERSIONS
 
     async def test_cancelled_html_conversion_error_is_observed(self):
+        """A cancelled caller does not leave a worker exception unobserved."""
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
         release = Event()
@@ -96,9 +138,9 @@ class TestWebFetchLocalTool:
                     release.set()
 
                 limiter = _HTML_CONVERSION_LIMITER.get()
-                for _ in range(4):
+                for _ in range(_MAX_CONCURRENT_HTML_CONVERSIONS):
                     await asyncio.wait_for(limiter.acquire(), timeout=10)
-                for _ in range(4):
+                for _ in range(_MAX_CONCURRENT_HTML_CONVERSIONS):
                     limiter.release()
                 await asyncio.sleep(0)
                 gc.collect()
@@ -108,6 +150,7 @@ class TestWebFetchLocalTool:
             loop.set_exception_handler(previous_handler)
 
     async def test_cancelled_html_conversion_keeps_its_worker_slot(self):
+        """A cancelled custom-executor caller keeps its slot until its worker ends."""
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
         release = Event()
@@ -118,7 +161,7 @@ class TestWebFetchLocalTool:
             nonlocal running
             with lock:
                 running += 1
-                if running == 4:
+                if running == _MAX_CONCURRENT_HTML_CONVERSIONS:
                     loop.call_soon_threadsafe(started.set)
             release.wait()
             return '', html
@@ -134,22 +177,25 @@ class TestWebFetchLocalTool:
             patch('pydantic_ai.common_tools.web_fetch._convert_html', side_effect=convert),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            first = [asyncio.create_task(tool('https://example.com')) for _ in range(4)]
+            first = [asyncio.create_task(tool('https://example.com')) for _ in range(_MAX_CONCURRENT_HTML_CONVERSIONS)]
             later = first
             try:
                 await asyncio.wait_for(started.wait(), timeout=10)
                 for task in first:
                     task.cancel()
                 await asyncio.gather(*first, return_exceptions=True)
-                later = [asyncio.create_task(tool('https://example.com')) for _ in range(4)]
+                later = [
+                    asyncio.create_task(tool('https://example.com')) for _ in range(_MAX_CONCURRENT_HTML_CONVERSIONS)
+                ]
                 await asyncio.sleep(0)
                 await asyncio.wait_for(run_in_executor(lambda: None), timeout=10)
-                assert running == 4
+                assert running == _MAX_CONCURRENT_HTML_CONVERSIONS
             finally:
                 release.set()
                 await asyncio.gather(*later, return_exceptions=True)
 
     async def test_html_conversion_keeps_default_workers_available(self):
+        """Concurrent conversions leave default worker capacity for other tools."""
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
         release = Event()
@@ -160,7 +206,7 @@ class TestWebFetchLocalTool:
             nonlocal running
             with lock:
                 running += 1
-                if running == 4:
+                if running == _MAX_CONCURRENT_HTML_CONVERSIONS:
                     loop.call_soon_threadsafe(started.set)
             release.wait()
             return '', html
@@ -177,7 +223,7 @@ class TestWebFetchLocalTool:
             tasks = [asyncio.create_task(tool('https://example.com')) for _ in range(8)]
             try:
                 await asyncio.wait_for(started.wait(), timeout=10)
-                assert running == 4
+                assert running == _MAX_CONCURRENT_HTML_CONVERSIONS
                 assert await run_in_executor(lambda: 'available') == 'available'
             finally:
                 release.set()
@@ -200,23 +246,6 @@ class TestWebFetchLocalTool:
         assert result['title'] == 'Test Page'
         assert 'Hello' in result['content']
         assert 'World' in result['content']
-
-    async def test_fetch_html_without_asyncio_loop(self):
-        with (
-            patch(
-                'pydantic_ai.common_tools.web_fetch.safe_download',
-                new_callable=AsyncMock,
-                return_value=_html_response('<title>Fallback</title><p>Content</p>'),
-            ),
-            patch('pydantic_ai.common_tools.web_fetch.asyncio') as mocked_asyncio,
-        ):
-            mocked_asyncio.get_running_loop.side_effect = RuntimeError
-            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            result = await tool('https://example.com')
-
-        assert isinstance(result, dict)
-        assert result['title'] == 'Fallback'
-        assert 'Content' in result['content']
 
     async def test_fetch_html_title_with_whitespace(self):
         """Title whitespace is stripped."""
@@ -961,6 +990,12 @@ _CONVERTER_PARITY_CASES = [
 
 
 class TestMarkdownConverter:
+    def test_large_well_formed_reference_list_is_accepted(self):
+        """An ordinary wide reference list may have over 40k parser events."""
+        html = '<ul>' + '<li class="r"><a href="/x">Ref</a> &ndash; note</li>' * 6_000 + '</ul>'
+        _, content = _convert_html(html)
+        assert content.count('Ref') == 6_000
+
     @pytest.mark.parametrize('tag', ['script', 'style'])
     def test_raw_text_markup_does_not_spend_budget(self, tag: str):
         html = f'<{tag} data-kind="text">' + '<div></div>' * 21 + f'</{tag}><p>ok</p>'
