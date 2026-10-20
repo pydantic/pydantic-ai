@@ -690,7 +690,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
     ]
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(tiny_msgs)  # pyright: ignore[reportPrivateUsage]
-    assert not any('compaction trim' in m for m in caplog.messages)
+    assert not any(m.startswith('trim: ') for m in caplog.messages)
     caplog.clear()
 
     big = 'Z' * 20_000
@@ -706,7 +706,7 @@ def test_trim_logs_substitution_counts_only_when_changes_fired(caplog: LogCaptur
         msgs.append(ModelRequest(parts=[UserPromptPart(content=f't{i}')]))
     with caplog.at_level('INFO', logger='pydantic_ai_gh_aw_shim'):
         shim._trim_tool_results(msgs)  # pyright: ignore[reportPrivateUsage]
-    log_line = next((m for m in caplog.messages if 'compaction trim' in m), None)
+    log_line = next((m for m in caplog.messages if m.startswith('trim: ')), None)
     assert log_line is not None
     assert 'deduped 1' in log_line and 'truncated 2' in log_line and 'saved' in log_line
 
@@ -1042,11 +1042,25 @@ def test_log_safe_outputs_state_handles_missing_env(monkeypatch: pytest.MonkeyPa
 # model resolution (proxy semantics — unchanged)
 # --------------------------------------------------------------------------- #
 def test_model_defaults_to_claude_sonnet_4_6(monkeypatch: pytest.MonkeyPatch):
-    for v in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'):
+    for v in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL', 'GH_AW_MAX_OUTPUT_TOKENS'):
         monkeypatch.delenv(v, raising=False)
     model, label = shim.build_model(shim.parse_args(['--print']))
     assert label == 'anthropic:claude-sonnet-4-6'
     assert model.__class__.__name__ == 'AnthropicModel'
+    assert model.settings is None
+
+
+def test_model_applies_configured_output_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('GH_AW_MAX_OUTPUT_TOKENS', '16384')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert model.settings == {'max_tokens': 16_384}
+
+
+@pytest.mark.parametrize('output_tokens', ('not-an-int', '0', '-1', ''))
+def test_model_rejects_invalid_output_limit(monkeypatch: pytest.MonkeyPatch, output_tokens: str) -> None:
+    monkeypatch.setenv('GH_AW_MAX_OUTPUT_TOKENS', output_tokens)
+    with pytest.raises(ValueError):
+        shim.build_model(shim.parse_args(['--print']))
 
 
 def test_model_argv_flag_wins(monkeypatch: pytest.MonkeyPatch):

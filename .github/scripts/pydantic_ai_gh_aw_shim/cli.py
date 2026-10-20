@@ -75,6 +75,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -510,12 +511,20 @@ def build_model(args: Args) -> tuple[Model, str]:
       2. `ANTHROPIC_MODEL` env var (standard Anthropic SDK convention;
          gh-aw populates this from the workflow's `engine.model:` field).
       3. Fallback default `claude-sonnet-4-6`.
+
+    `GH_AW_MAX_OUTPUT_TOKENS` overrides the model's output limit when provided.
     """
     model_name = args.model or os.environ.get('ANTHROPIC_MODEL') or 'claude-sonnet-4-6'
     anthropic_base = os.environ.get('ANTHROPIC_BASE_URL')
     auth_token = (
         os.environ.get('ANTHROPIC_AUTH_TOKEN') or os.environ.get('ANTHROPIC_API_KEY') or PROXY_BEARER_PLACEHOLDER
     )
+    model_settings: ModelSettings | None = None
+    if (output_tokens := os.environ.get('GH_AW_MAX_OUTPUT_TOKENS')) is not None:
+        max_tokens = int(output_tokens)
+        if max_tokens <= 0:
+            raise ValueError('`GH_AW_MAX_OUTPUT_TOKENS` must be positive')
+        model_settings = {'max_tokens': max_tokens}
     logger.info('anthropic model=%s base_url=%s', model_name, anthropic_base or '(default)')
     client = AsyncAnthropic(
         auth_token=auth_token,
@@ -524,7 +533,7 @@ def build_model(args: Args) -> tuple[Model, str]:
         max_retries=_LLM_MAX_RETRIES,
     )
     return (
-        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client)),
+        AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client), settings=model_settings),
         f'anthropic:{model_name}',
     )
 

@@ -34,6 +34,8 @@ engine:
   model: ${{ vars.GH_AW_MODEL }}
   command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
   env:
+    # Match v2's generic Anthropic output default for review responses.
+    GH_AW_MAX_OUTPUT_TOKENS: '16384'
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
 ---
