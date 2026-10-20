@@ -13,7 +13,7 @@ import itertools
 import weakref
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any, NotRequired
@@ -346,7 +346,9 @@ class BatchPool:
             task.add_done_callback(self._submissions.discard)
 
     async def _cancel(self, model: Model, batch: Batch) -> None:
-        await model.batch_cancel(batch)
+        # Best effort, like cancelling an abandoned request's batch: nobody is left to report a failure to.
+        with suppress(Exception):
+            await model.batch_cancel(batch)
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether none still does."""

@@ -986,3 +986,31 @@ async def test_a_request_cancelled_as_its_batch_is_created_is_abandoned_in_it() 
         while not wrapped.canceled:
             await asyncio.sleep(0)
     assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_a_failing_cancel_of_an_abandoned_batch_is_ignored() -> None:
+    requests: list[asyncio.Task[ModelResponse]] = []
+    cancel_attempts: list[str] = []
+
+    class FailingCancelModel(SlowBatchTestModel):
+        async def batch_create(self, requests_to_create: Sequence[EncodedBatchRequest]) -> Batch:
+            batch = await super().batch_create(requests_to_create)
+            asyncio.get_running_loop().call_soon(requests[0].cancel)
+            return batch
+
+        async def batch_cancel(self, batch: Batch) -> Batch:
+            cancel_attempts.append(batch.id)
+            raise ModelHTTPError(status_code=500, model_name='test', body='cancel failed')
+
+    wrapped = FailingCancelModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=1, max_wait=None)
+    requests.append(asyncio.create_task(_pending_response(model)))
+    with pytest.raises(asyncio.CancelledError):
+        await requests[0]
+    with anyio.fail_after(5):
+        while not cancel_attempts:
+            await asyncio.sleep(0)
+    # Let the cancel task finish; an unretrieved exception would fail the test as an unraisable warning.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert cancel_attempts == [wrapped.created[0].id]
