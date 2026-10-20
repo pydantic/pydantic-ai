@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import sys
 import time
@@ -21,6 +22,7 @@ from markdownify import MarkdownConverter, markdownify
 
 from pydantic_ai._utils import run_in_executor, using_thread_executor
 from pydantic_ai.common_tools.web_fetch import (
+    _HTML_CONVERSION_LIMITER,  # pyright: ignore[reportPrivateUsage]
     _MAX_HTML_MARKUP_OPENERS,  # pyright: ignore[reportPrivateUsage]
     WebFetchLocalTool,
     _convert_html,  # pyright: ignore[reportPrivateUsage]
@@ -45,6 +47,52 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
 
 
 class TestWebFetchLocalTool:
+    async def test_cancelled_html_conversion_error_is_observed(self):
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        release = Event()
+        reported: list[dict[str, Any]] = []
+
+        def convert(_html: str) -> tuple[str, str]:
+            loop.call_soon_threadsafe(started.set)
+            release.wait()
+            raise ModelRetry('too complex')
+
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: reported.append(context))
+        try:
+            with (
+                ThreadPoolExecutor(max_workers=1) as executor,
+                using_thread_executor(executor),
+                patch(
+                    'pydantic_ai.common_tools.web_fetch.safe_download',
+                    new_callable=AsyncMock,
+                    return_value=_html_response('<p>x</p>'),
+                ),
+                patch('pydantic_ai.common_tools.web_fetch._convert_html', side_effect=convert),
+            ):
+                tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+                task = asyncio.create_task(tool('https://example.com'))
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=10)
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                finally:
+                    release.set()
+
+                limiter = _HTML_CONVERSION_LIMITER.get()
+                for _ in range(4):
+                    await asyncio.wait_for(limiter.acquire(), timeout=10)
+                for _ in range(4):
+                    limiter.release()
+                await asyncio.sleep(0)
+                gc.collect()
+                await asyncio.sleep(0)
+            assert reported == []
+        finally:
+            loop.set_exception_handler(previous_handler)
+
     async def test_cancelled_html_conversion_keeps_its_worker_slot(self):
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
