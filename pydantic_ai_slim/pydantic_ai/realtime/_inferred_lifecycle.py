@@ -782,8 +782,10 @@ class InferredLifecycle:
         cuts it off (as Gemini Live does). Which of those taken for its own came during it can't be told, but the
         oldest of them started it.
         """
-        # Only with no sign the user spoke since the last of them went out, which would cut the reply off as well.
-        if self.inputs_cut_off_replies and released and released[-1] > self._spoken_since:
+        # Only those sent after the user last started speaking: speech after an input would cut the reply off as well,
+        # so the reply may well have answered that input before it was.
+        released = tuple(input_id for input_id in released if input_id > self._spoken_since)
+        if self.inputs_cut_off_replies and released:
             events.append(AnswersRevised(response_id=response_id, released=released))
             self._unanswered[:0] = released
 

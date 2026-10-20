@@ -4742,3 +4742,32 @@ async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
     )
     frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
     assert any(isinstance(event, AnswersRevised) for event in frame) is released
+
+
+async def test_only_inputs_sent_after_the_user_spoke_are_released() -> None:
+    """Speech that started between two texts: the one sent before it stays answered by the cut-off reply."""
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send('Tell me a story.')  # input 0, at 0 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('And another.')  # input 2, at 1 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')  # input 4, at 2 s
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='1.5s'
+    )
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert [event for event in frame if isinstance(event, AnswersRevised)] == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(4,))
+    ]
