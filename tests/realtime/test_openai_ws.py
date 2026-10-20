@@ -982,6 +982,52 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
 
 
+async def test_pruned_tool_items_stop_costing_input_tokens(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_prune_tool_items`, a tool round's items leave the server conversation once it is answered.
+
+    The tool returns a long report, so the next response's input tokens show whether the server still reads it.
+    History keeps the round.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(output_modality='text', openai_prune_tool_items=True),
+    )
+    agent = Agent(
+        instructions='Use the weather_report tool for any weather question, then answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def weather_report(city: str) -> str:
+        """Fetch the full weather station report for a city."""
+        return f'Station report for {city}: foggy, 12 degrees, light wind from the west. ' * 150
+
+    async def reply_to(text: str) -> None:
+        await session.send(text)
+        with anyio.fail_after(30):
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    async with agent.realtime(model).session() as session:
+        stream = session.__aiter__()
+        await reply_to('What is the weather in London?')
+        await reply_to('Thanks! Now just say goodbye.')
+
+    deleted = [
+        frame for frame in sent_frames_containing(cassette, 'item_id') if frame['type'] == 'conversation.item.delete'
+    ]
+    assert len(deleted) == 2
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.usage.input_tokens for response in responses] == snapshot([65, 2795, 102])
+    assert any(isinstance(part, ToolReturnPart) for message in session.all_messages() for part in message.parts), (
+        'history keeps the round'
+    )
+
+
 async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A provider-requested tool can hang up without wedging its own task or the session iterator."""
     provider, _ = openai_ws_cassette
@@ -1532,9 +1578,10 @@ async def test_interrupt_after_the_reply_finished_generating(
     """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
 
     The reply is still being heard, so the barge-in must still truncate its item, and the provider must
-    accept that for a finished response, so the model doesn't believe it was heard in full. History is
-    append-only: the recorded reply keeps its full text and `complete` state, and the next reply is
-    unaffected. The playback position is 0 so it replays deterministically.
+    accept that for a finished response, so the model doesn't believe it was heard in full. History records
+    the reply as cut off where playback stopped, keeping the transcript the provider gave (it doesn't say
+    which words were heard), and the next reply is unaffected. The playback position is 0 so it replays
+    deterministically.
     """
     provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
@@ -1566,7 +1613,11 @@ async def test_interrupt_after_the_reply_finished_generating(
     assert 'error' not in received
 
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    speech = [[part for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+    assert [[(part.transcript, part.interrupted_at_ms) for part in parts] for parts in speech] == snapshot(
+        [[('Hello! Great to connect with you.', 0)], [('Take care, talk soon!', None)]]
+    )
     assert responses[0].provider_response_id is not None
     # The truncation named the first reply's output item.
     first_item = next(
@@ -1575,3 +1626,48 @@ async def test_interrupt_after_the_reply_finished_generating(
         if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.output_item.added'
     )
     assert truncates[0]['item_id'] == first_item
+
+
+async def test_interrupt_partway_through_a_finished_reply(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A barge-in partway into a reply that already finished truncates it there, and history records the cut.
+
+    The transcript stays what the provider gave (it doesn't say which words were heard), so a text model or
+    a replay reads it with the interruption marker. The cassette keeps only a few bytes of each audio delta,
+    so the position attributed as played (20 ms) lies within what replays too.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in two full sentences.')
+
+    async with agent.realtime(model).session() as session:
+        _stream = session.stream_audio()  # the single playback view the position is attributed to
+        events = aiter(session)
+        with anyio.fail_after(60):
+            await session.send('Tell me about the moon.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+            assert await session.interrupt(played_bytes=960) is True
+            # The next turn, so the provider's acknowledgement of the truncation is read before closing.
+            await session.send('Say goodbye.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == snapshot([20])
+    received = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert 'conversation.item.truncated' in received
+    assert 'error' not in received
+
+    response, goodbye = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert (response.state, goodbye.state) == ('interrupted', 'complete')
+    [speech] = [part for part in response.parts if isinstance(part, SpeechPart)]
+    assert speech.interrupted_at_ms == snapshot(20)
+    assert speech.transcript == snapshot(
+        "The moon is Earth's only natural satellite, and it's the fifth largest moon in the solar system. It's about a quarter the size of Earth, and it takes roughly 27 days to orbit our planet, showing phases as it moves through its cycle."
+    )

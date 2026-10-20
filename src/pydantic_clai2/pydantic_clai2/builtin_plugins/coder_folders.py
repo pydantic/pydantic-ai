@@ -1,39 +1,42 @@
-"""The Coder folder list and local directory browser, run on the menu worker."""
+"""The Coder folder list and local directory browser, asked through `Dialogs`."""
 
 from __future__ import annotations
 
 import re
+import textwrap
 from contextlib import suppress
-from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from sqlite3 import Error as SQLiteError
-from typing import TYPE_CHECKING, Generic, Literal
+from typing import TYPE_CHECKING, Generic
 
-from rich.console import Console
-from rich.text import Text
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.layout import COLLAPSE_BELOW
-from termflow.tui.menu import Menu, MenuResult
-from termflow.tui.terminal import terminal_size
-from termflow.tui.textinput import TextInput
+from anyio import to_thread
 
 from pydantic_clai2.plugins import DepsT
-from pydantic_clai2.ui.menus.field_menu import (
-    TERMINAL,
-    FieldMenu,
-    Runners,
-    is_save_and_close,
-    picked,
-    run_flow,
-    save_and_close_item,
-)
-from pydantic_clai2.ui.menus.menu_worker import menu_key
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.plugins.menus import Dialogs, Option
+from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.coder import CoderSource
 
 _FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
+
+_CHILD = 'open:'
+"""Prefixes a subdirectory's name in the browser's option values, so no name collides with another option."""
+
+
+def prose(text: str) -> str:
+    """Sentences in short lines: the terminal cuts long ones off beside an 80-column list; the web UI joins them."""
+    return '\n\n'.join(textwrap.fill(paragraph, width=36) for paragraph in text.split('\n\n'))
+
+
+_ADD_HELP = prose(
+    'Load sub-agent definitions (*.md and *.toml), not files for code search.\n\n'
+    'Add a directory path, browse local directories, or add a folder name such as agents or global. '
+    'Names search .agents, .claude and .codex in the project and home. '
+    'Relative paths resolve in each project; absolute and ~ paths are the same everywhere.\n\n'
+    'Changes save immediately. Removing an entry never deletes files.'
+)
 
 
 def is_folder_name(value: str) -> bool:
@@ -47,48 +50,17 @@ def is_project_relative(value: str) -> bool:
 
 
 def _display(text: str) -> str:
+    """Escape control characters, so a name or path from disk cannot drive the terminal."""
     return ''.join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+
+
+def _display_lines(text: str) -> str:
+    return '\n'.join(_display(line) for line in text.split('\n'))
 
 
 def _safe_initial(text: str) -> str:
     """Offer a replacement instead of emitting control characters from an existing path."""
     return text if text.isprintable() else ''
-
-
-def _preview(text: str) -> str:
-    """Wrap paths by terminal cells rather than silently clipping their ends."""
-    columns = max(10, terminal_size()[0] - 1)
-    width = max(12, columns - max(20, columns // 2) - 3)
-    return '\n'.join(_wrap(text, width=width))
-
-
-def _wrap(text: str, *, width: int) -> list[str]:
-    safe = '\n'.join(_display(line) for line in text.split('\n'))
-    return [line.plain for line in Text(safe).wrap(Console(), width, overflow='fold')]
-
-
-# Termflow paints disabled rows unclipped, and its narrowest list column is half the collapse width.
-# Wrapping notices to fit that column keeps them inside every layout, so a resize never reflows rows.
-_NOTICE_WIDTH = COLLAPSE_BELOW // 2 - 2
-
-
-def _menu_size() -> tuple[int, int]:
-    # Reserve Termflow's final newline so full pages do not scroll off their title.
-    columns, rows = terminal_size()
-    return columns, max(1, rows - 1)
-
-
-def _build(builder: MenuBuilder, items: list[MenuItem], *, initial: int = 0) -> Menu:
-    rows: list[MenuItem] = []
-    cursor = 0
-    for index, item in enumerate(items):
-        if index == initial:
-            cursor = len(rows)
-        if item.disabled:
-            rows += [MenuItem(line, disabled=True) for line in _wrap(item.label, width=_NOTICE_WIDTH)]
-        else:
-            rows.append(item)
-    return builder.items(rows).initial_index(cursor).size(_menu_size).build()
 
 
 def _directory_problem(path: Path) -> str | None:
@@ -101,6 +73,13 @@ def _directory_problem(path: Path) -> str | None:
     return None
 
 
+def _same_directory(first: Path, second: Path) -> bool:
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
+
+
 class DirectoryPicker:
     """Browse directories, including hidden ones, without changing the process directory."""
 
@@ -109,7 +88,8 @@ class DirectoryPicker:
         self.project = project
         self.error = ''
 
-    def build(self) -> Menu:
+    def options(self) -> tuple[list[Option], str]:
+        """The browser's options and description for the current directory; reads the disk."""
         children: list[Path] = []
         problem = _directory_problem(self.current)
         if problem is None:
@@ -120,77 +100,59 @@ class DirectoryPicker:
                 )
             except OSError as exc:
                 problem = f'Cannot list directory: {exc.strerror or exc}'
-        items = [
-            MenuItem('Use this directory', value=True, disabled=problem is not None),
-            MenuItem('.. (parent directory)', value=self.current.parent, disabled=self.current == self.current.parent),
-            MenuItem('Go to path / view current...', value='path'),
-            MenuItem('Project directory', value=self.project),
-            MenuItem('Home directory', value=Path.home()),
-            *[MenuItem(_display(child.name) + '/', value=child) for child in children],
+        options = [Option(value='use', label='Use this directory', description=prose(problem or ''))]
+        if self.current != self.current.parent:
+            options.append(Option(value='parent', label='.. (parent directory)'))
+        options += [
+            Option(value='path', label='Go to path / view current...'),
+            Option(value='project', label='Project directory', description=_display(str(self.project))),
+            Option(value='home', label='Home directory', description=_display(str(Path.home()))),
+            *[
+                Option(value=_CHILD + child.name, label=_display(child.name) + '/', description=_display(str(child)))
+                for child in children
+            ],
         ]
-        if problem or self.error:
-            items.append(MenuItem(_display(problem or self.error), disabled=True))
-        elif not children:
-            items.append(MenuItem('No subdirectories. This directory can be used.', disabled=True))
-
-        def matches(query: str, item: MenuItem) -> bool:
-            query = query.casefold()
-            # Termflow only dispatches navigation shortcuts while filtered rows exist.
-            return not item.disabled and (
-                query in item.label.casefold()
-                or (
-                    item.value == 'path' and not any(query in row.label.casefold() for row in items if not row.disabled)
-                )
+        notice = problem or self.error or ('' if children else 'No subdirectories. This directory can be used.')
+        description = (
+            (f'{prose(_display(notice))}\n\n' if notice else '')
+            + f'Current directory\n{_display(str(self.current))}\n\n'
+            + prose(
+                'Open a folder to look inside; Use this directory saves its absolute path, '
+                'the same in every project. Esc returns without changing settings.'
             )
-
-        return _build(
-            MenuBuilder('Browse local directories')
-            .style(markdown_style())
-            .searchable(True)
-            .filter_fn(matches)
-            .preview(
-                lambda item: _preview(
-                    (f'{problem or self.error}\n\n' if problem or self.error else '')
-                    + f'Current directory\n{self.current}\n\n'
-                    + (f'Open\n{item.value}' if isinstance(item.value, Path) else item.label)
-                    + '\n\nEnter opens a folder; Use this directory saves its absolute path, '
-                    'the same in every project. Esc returns without changing settings.'
-                )
-            )
-            .on_key('left', lambda _menu, _item: MenuResult(item=MenuItem('', value=self.current.parent)))
-            .on_key('ctrl-l', lambda _menu, _item: MenuResult(item=MenuItem('', value='path')))
-            .footer_hint('Enter open/use | Left up | Ctrl+L path | Esc back')
-            .key_source(menu_key),
-            items,
         )
+        return options, description
 
-    def run(self, *, runners: Runners) -> Path | None:
+    async def run(self, dialogs: Dialogs) -> Path | None:
+        """The directory the user chose, or `None` when they backed out."""
         while True:
-            item = picked(runners.run_choice(self.build()))
-            if item is None:
+            options, description = await to_thread.run_sync(self.options)
+            choice = await dialogs.choose(title='Browse local directories', options=options, description=description)
+            if choice is None:
                 return None
             self.error = ''
-            if isinstance(item.value, Path):
-                self.current = item.value
-            elif item.value is True:
-                self.error = _directory_problem(self.current) or ''
+            if choice == 'use':
+                self.error = await to_thread.run_sync(_directory_problem, self.current) or ''
                 if not self.error:
                     return self.current
-            elif item.value == 'path':
-                editor = (
-                    TextInputBuilder('Go to directory')
-                    .style(markdown_style())
-                    .prompt('Path: ')
-                    .initial(_safe_initial(str(self.current)))
-                    .placeholder('Enter a path; control characters are not copied')
-                    .validator(self.path_problem)
-                    .footer_hint('Enter open - Esc back')
-                    .key_source(menu_key)
-                    .build()
+            elif choice == 'path':
+                text = await dialogs.text(
+                    title='Go to directory',
+                    label='Path',
+                    initial=_safe_initial(str(self.current)),
+                    placeholder='Enter a path; control characters are not copied',
+                    check=self.path_problem,
                 )
-                result = runners.run_text(editor)
-                if not result.cancelled and result.value is not None:
-                    self.current = self.path(result.value)
+                if text:
+                    self.current = await to_thread.run_sync(self.path, text)
+            elif choice == 'parent':
+                self.current = self.current.parent
+            elif choice == 'project':
+                self.current = self.project
+            elif choice == 'home':
+                self.current = Path.home()
+            else:
+                self.current = self.current / choice.removeprefix(_CHILD)
 
     def path(self, text: str) -> Path:
         return (self.current / Path(text.strip()).expanduser()).resolve()
@@ -204,14 +166,6 @@ class DirectoryPicker:
             return f'Invalid directory: {exc}'
 
 
-@dataclass(frozen=True, kw_only=True)
-class FolderAction:
-    """An entry action returned to the loop before opening another widget."""
-
-    kind: Literal['path', 'name', 'browse', 'edit', 'remove']
-    index: int | None = None
-
-
 class FolderMenu(Generic[DepsT]):
     """Manage entries individually while retaining their order and stored representation."""
 
@@ -223,93 +177,127 @@ class FolderMenu(Generic[DepsT]):
     def folders(self) -> list[str]:
         return self.source.agent_folders()
 
-    def details(self, item: MenuItem) -> str:
-        return _preview((f'{self.notice}\n\n' if self.notice else '') + self._details(item))
+    def details(self, index: int) -> str:
+        """What one entry searches, and whether it is readable here; reads the disk."""
+        value = self.folders()[index]
+        if is_folder_name(value):
+            details = f'Folder name: {value}\n\nProject, then home:\n' + '\n'.join(self.source.expand_folder(value))
+            return _display_lines(details + '\n\nMissing named locations are skipped.')
+        try:
+            path = self.path(value)
+            problem = _directory_problem(path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return _display_lines(f'{value}\n\nCannot open directory: {exc}')
+        if is_project_relative(value):
+            details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
+            details += prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
+            details += '\n\n' + prose('Resolved against each project CLAI runs in.')
+        else:
+            details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
+            details += prose(problem or 'Directory is readable.')
+        return _display_lines(details)
 
-    def _details(self, item: MenuItem) -> str:
-        if is_save_and_close(item):
-            return 'Changes are already saved. Return to Coder settings.'
-        if isinstance(item.value, int):
-            value = self.folders()[item.value]
-            if is_folder_name(value):
-                details = f'Folder name: {value}\n\nProject, then home:\n' + '\n'.join(self.source.expand_folder(value))
-                details += '\n\nMissing named locations are skipped.'
-            else:
-                try:
-                    path = self.path(value)
-                    problem = _directory_problem(path)
-                except (OSError, RuntimeError, ValueError) as exc:
-                    return f'{value}\n\nCannot open directory: {exc}'
-                if is_project_relative(value):
-                    details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
-                    details += f'{problem} Skipped in this project.' if problem else 'Directory is readable.'
-                    details += '\n\nResolved against each project CLAI runs in.'
-                else:
-                    details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
-                    details += problem or 'Directory is readable.'
-            return details
-        return (
-            'Load sub-agent definitions (*.md and *.toml), not files for code search.\n\n'
-            'Add a directory path, browse local directories, or add a folder name such as agents or global. '
-            'Names search .agents, .claude and .codex in the project and home. '
-            'Relative paths resolve in each project; absolute and ~ paths are the same everywhere.\n\n'
-            'Changes save immediately. Removing an entry never deletes files.'
-        )
-
-    def build(self, *, initial: int = 0) -> Menu:
+    def options(self) -> tuple[list[Option], str]:
+        """The list's options and description, notices first; reads the disk."""
         folders = self.folders()
-        items = [
-            MenuItem(
-                f'{index + 1}. {_display(value) if is_folder_name(value) else _display(Path(value).name) + "/"}',
-                value=index,
-                description='folder name' if is_folder_name(value) else _display(value),
+        options = [
+            Option(
+                value=str(index),
+                label=f'{index + 1}. {value if is_folder_name(value) else _display(Path(value).name) + "/"}',
+                description=self.details(index),
             )
             for index, value in enumerate(folders)
         ]
-        if not folders:
-            items.append(MenuItem('No folders selected. Disk agents are off.', disabled=True))
-        if not self.source.sub_agents_enabled():
-            items.append(MenuItem('Sub-agents are disabled in Coder settings.', disabled=True))
-        items += [
-            MenuItem('+ Add directory path...', value=FolderAction(kind='path')),
-            MenuItem('+ Browse local directories...', value=FolderAction(kind='browse')),
-            MenuItem('+ Add folder name...', value=FolderAction(kind='name')),
-            save_and_close_item(),
+        options += [
+            Option(value='path', label='+ Add directory path...', description=_ADD_HELP),
+            Option(value='browse', label='+ Browse local directories...', description=_ADD_HELP),
+            Option(value='name', label='+ Add folder name...', description=_ADD_HELP),
+            Option(
+                value='close',
+                label=SAVE_AND_CLOSE,
+                description=prose('Changes are already saved. Return to Coder settings.'),
+            ),
         ]
-        notices = [MenuItem(_display(self.notice), disabled=True)] if self.notice else []
-        return _build(
-            MenuBuilder('Agent folders')
-            .style(markdown_style())
-            .preview(self.details)
-            .on_key('a', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='path'))))
-            .on_key('b', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='browse'))))
-            .on_key('e', lambda _, item: self.action(item, kind='edit'))
-            .on_key('d', lambda _, item: self.action(item, kind='remove'))
-            .footer_hint('Enter menu | a add/b browse | e edit/d rm | Esc')
-            .key_source(menu_key),
-            [*notices, *items],
-            initial=min(initial, len(items) - 1) + len(notices),
-        )
+        notices = [
+            _display(self.notice),
+            '' if folders else 'No folders selected. Disk agents are off.',
+            '' if self.source.sub_agents_enabled() else 'Sub-agents are disabled in Coder settings.',
+        ]
+        return options, '\n'.join(prose(notice) for notice in notices if notice)
 
-    def action(self, item: MenuItem, *, kind: Literal['edit', 'remove']) -> MenuResult | None:
-        if not isinstance(item.value, int):
-            return None
-        return MenuResult(item=MenuItem('', value=FolderAction(kind=kind, index=item.value)))
+    async def run(self, dialogs: Dialogs) -> list[str]:
+        """Show the list until the user closes it, saving each change; the messages to show."""
+        messages: list[str] = []
+        while True:
+            options, description = await to_thread.run_sync(self.options)
+            choice = await dialogs.choose(title='Agent folders', options=options, description=description)
+            if choice is None or choice == 'close':
+                return messages
+            index: int | None = None
+            if choice.isdigit():
+                index = int(choice)
+                choice = await dialogs.choose(
+                    title='Manage agent folder',
+                    options=[
+                        Option(value='edit', label='Edit name or path...'),
+                        Option(value='browse', label='Replace by browsing...'),
+                        Option(value='remove', label='Remove from search (keep files)'),
+                        Option(value='back', label='Back'),
+                    ],
+                    description=await to_thread.run_sync(self.details, index),
+                )
+                if choice is None or choice == 'back':
+                    continue
+            self.notice = ''
+            folders = self.folders().copy()
+            if choice == 'remove':
+                assert index is not None
+                folders.pop(index)
+            else:
+                value = await self.edit(dialogs, kind=choice, index=index)
+                if value is None:
+                    continue
+                if index is None:
+                    folders.append(value)
+                else:
+                    folders[index] = value
+            try:
+                await to_thread.run_sync(self.source.save_agent_folders, folders)
+            except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
+                self.notice = f'Could not save: {exc}'
+                continue
+            self.notice = 'Folder removed. Files were not changed.' if choice == 'remove' else 'Agent folder saved.'
+            messages.append(self.notice)
 
-    def actions(self, index: int) -> Menu:
-        return _build(
-            MenuBuilder('Manage agent folder')
-            .style(markdown_style())
-            .preview(lambda _: self.details(MenuItem('', value=index)))
-            .footer_hint('Enter select - Esc back')
-            .key_source(menu_key),
-            [
-                MenuItem('Edit name or path...', value=FolderAction(kind='edit', index=index)),
-                MenuItem('Replace by browsing...', value=FolderAction(kind='browse', index=index)),
-                MenuItem('Remove from search (keep files)', value=FolderAction(kind='remove', index=index)),
-                MenuItem('Back', value=None),
-            ],
-        )
+    async def edit(self, dialogs: Dialogs, *, kind: str, index: int | None) -> str | None:
+        """The new entry, or `None` when the user backed out or it is not acceptable (saying why in `notice`)."""
+        current = self.folders()[index] if index is not None else ''
+        named = kind == 'name' or (kind == 'edit' and is_folder_name(current))
+        if kind == 'browse':
+            start = self.project
+            if current and not is_folder_name(current):
+                # A broken entry like `~nosuchuser/agents` must still be replaceable from the project.
+                with suppress(RuntimeError):
+                    start = self.project / Path(current).expanduser()
+            chosen = await DirectoryPicker(start=start, project=self.project).run(dialogs)
+            if chosen is None:
+                return None
+            value = str(chosen)
+        else:
+            text = await dialogs.text(
+                title='Edit agent folder' if index is not None else 'Add agent folder',
+                label='Name' if named else 'Path',
+                initial=_safe_initial(current),
+                placeholder='agents or global' if named else './team-agents (in each project) or ~/my-agents',
+                check=partial(self.problem, named=named, index=index),
+            )
+            # Empty text never removes an entry: removing is its own action.
+            if not text:
+                return None
+            value = self.value(text, named=named)
+        # Checked again: the disk may have changed since the dialog accepted it, and browsing checks nothing.
+        self.notice = await to_thread.run_sync(partial(self.problem, value, named=named, index=index)) or ''
+        return None if self.notice else value
 
     def value(self, text: str, *, named: bool) -> str:
         text = text.strip()
@@ -350,94 +338,7 @@ class FolderMenu(Generic[DepsT]):
     def path(self, value: str) -> Path:
         return (self.project / Path(value).expanduser()).resolve()
 
-    def editor(self, *, named: bool, index: int | None) -> TextInput:
-        return (
-            TextInputBuilder('Edit agent folder' if index is not None else 'Add agent folder')
-            .style(markdown_style())
-            .prompt('Name: ' if named else 'Path: ')
-            .initial(_safe_initial(self.folders()[index]) if index is not None else '')
-            .placeholder('agents or global' if named else './team-agents (in each project) or ~/my-agents')
-            .validator(lambda text: self.problem(text, named=named, index=index))
-            .footer_hint('Enter save | Esc cancel | Empty never removes')
-            .key_source(menu_key)
-            .build()
-        )
 
-    def run(self, *, runners: Runners = TERMINAL) -> list[str]:
-        messages: list[str] = []
-        cursor = 0
-        while True:
-            item = picked(runners.run_list(self.build(initial=cursor)))
-            if item is None:
-                return messages
-            if isinstance(item.value, int):
-                cursor = item.value
-                item = picked(runners.run_choice(self.actions(item.value)))
-            if item is None or not isinstance(item.value, FolderAction):
-                continue
-            action = item.value
-            self.notice = ''
-            folders = self.folders().copy()
-            if action.index is not None:
-                cursor = action.index
-            try:
-                if action.kind == 'remove':
-                    assert action.index is not None
-                    folders.pop(action.index)
-                else:
-                    value = self.edit(action, runners=runners)
-                    if value is None:
-                        if self.notice:
-                            cursor = 0
-                        continue
-                    if action.index is None:
-                        cursor = len(folders)
-                        folders.append(value)
-                    else:
-                        folders[action.index] = value
-                self.source.save_agent_folders(folders)
-            except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
-                self.notice = f'Could not save: {exc}'
-                cursor = 0
-                continue
-            self.notice = (
-                'Folder removed. Files were not changed.' if action.kind == 'remove' else 'Agent folder saved.'
-            )
-            messages.append(self.notice)
-
-    def edit(self, action: FolderAction, *, runners: Runners) -> str | None:
-        current = self.folders()[action.index] if action.index is not None else ''
-        named = action.kind == 'name' or (action.kind == 'edit' and is_folder_name(current))
-        if action.kind == 'browse':
-            start = self.project
-            if current and not is_folder_name(current):
-                # A broken entry like `~nosuchuser/agents` must still be replaceable from the project.
-                with suppress(RuntimeError):
-                    start = self.project / Path(current).expanduser()
-            chosen = DirectoryPicker(start=start, project=self.project).run(runners=runners)
-            if chosen is None:
-                return None
-            value = str(chosen)
-        else:
-            result = runners.run_text(self.editor(named=named, index=action.index))
-            if result.cancelled or result.value is None:
-                return None
-            value = self.value(result.value, named=named)
-        problem = self.problem(value, named=named, index=action.index)
-        if problem:
-            self.notice = problem
-            return None
-        return value
-
-
-def _same_directory(first: Path, second: Path) -> bool:
-    try:
-        return first.samefile(second)
-    except OSError:
-        return False
-
-
-def run_coder_flow(source: CoderSource[DepsT], *, runners: Runners = TERMINAL) -> list[str]:
-    """Keep scalar settings in the shared editor and delegate the folder list."""
-    folders = FolderMenu(source, project=Path.cwd())
-    return run_flow(FieldMenu(source), runners, submenus={'agent_folders': lambda: folders.run(runners=runners)})
+async def edit_agent_folders(source: CoderSource[DepsT], dialogs: Dialogs) -> list[str]:
+    """The **Agent folders** row's action: the folder list for the directory the session works in."""
+    return await FolderMenu(source, project=source.host.workspace).run(dialogs)

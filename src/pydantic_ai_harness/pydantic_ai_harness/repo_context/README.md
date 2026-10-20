@@ -40,9 +40,11 @@ print(result.output)
 
 Loads `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor up to
 `home_dir` (inclusive). Precedence is ancestor-first, workspace-last: broadest
-context first, most specific last. Files are deduped by visited path and by content
-hash, so a symlinked `AGENTS.md -> CLAUDE.md` or two ancestors sharing identical
-content load once.
+context first, most specific last. Files are deduped by the path a symlink resolves
+to and by content hash, so a symlinked `CLAUDE.md -> AGENTS.md` or two ancestors
+sharing identical content load once. Where the workspace can resolve symlinks, a
+symlinked file is labeled with its target's name, so `CLAUDE.md -> AGENTS.md`
+reaches the model as `AGENTS.md`.
 
 When `home_dir` is `None` (the default), only the working directory is scanned -- no
 walk-up. Pass the workspace home path explicitly to walk up to it. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`.
@@ -88,6 +90,7 @@ result = agent.run_sync('List the source directory.')
 `nested_inject='pointer'` (default) enqueues a one-line note pointing at the
 file; `'contents'` enqueues the file body. The note reaches message history
 before the next model request. Each directory is surfaced at most once per run.
+As with the walk-up, a symlinked instruction file is named after its target.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
 the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
@@ -104,6 +107,26 @@ to a non-default value emits `HarnessDeprecationWarning` and keeps the old
 tool-name and argument sniffing path active for hosts that do not emit events.
 With the defaults, sniffing is disabled, so a `FileSystem` event cannot deliver
 the same note twice.
+
+## Trust
+
+Walk-up files become part of the agent's instructions, so the model gives them
+the same weight as the instructions you write yourself. That is what the strategy
+is for, and it means the working directory and `home_dir` should hold only
+instruction files you would put in your own instructions.
+
+Nested files are different: the model chooses which directories to read, and
+those can include vendored code or a checkout someone else wrote. Their contents
+and paths reach the model as a user message, not as instructions. The
+`'pointer'` note's own wording is the framework's, so it is a `SystemPromptPart`
+(a system message where the model supports one mid-conversation, and
+`<system>`-tagged user text otherwise), followed by the file's path as a
+user-message `<context-file path="..." />` tag.
+
+Each file is wrapped in `<context-file path="...">` tags. A closing
+`</context-file>` tag inside a file is escaped as `&lt;/context-file>`, and the
+path is HTML-escaped, so a file cannot end its block early and continue as
+something else.
 
 ## Cache cost
 

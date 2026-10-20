@@ -8,12 +8,14 @@ their existing setup: `/model add` connections, or core's environment variables.
 
 import inspect
 import json
+import re
 from functools import partial
 from typing import Annotated, Protocol, TypeGuard
 
 from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, ValidationError
+from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, infer_model
@@ -21,6 +23,8 @@ from pydantic_ai.providers import Provider, infer_provider_class
 from pydantic_clai2.config.api_keys import KeyReference, prompt_api_key, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials
 from pydantic_clai2.models.profiles import account, parse_model
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs
 
 CONNECTIONS = ('openrouter', 'vllm')
 """Providers whose profile is a full connection, signed in the way `/model add` connects them."""
@@ -62,11 +66,20 @@ def supports(provider: str, *, profile: str | None) -> bool:
     return provider in CONNECTIONS or (profile is not None and keyed_provider(provider) is not None)
 
 
-async def login(*, provider: str, profile: str | None) -> str:
-    """Ask for the connection or key privately and save it under the profile's account."""
+async def login(*, provider: str, profile: str | None, console: Console, dialogs: Dialogs | None = None) -> str:
+    """Ask for the connection or key privately and save it under the profile's account.
+
+    With `dialogs`, the key is a `/keys` entry, picked or typed there and saved under a name
+    such as `OPENAI_WORK`; a connection is set up in the terminal only, printing through `console`.
+    """
     name = account(provider, profile)
     if provider in CONNECTIONS:
-        saved = await _connect(provider=provider, name=name)
+        if dialogs is not None:
+            raise ValueError(f'Connect {name} in the terminal: /login {name}.')
+        saved = await _connect(provider=provider, name=name, console=console)
+    elif dialogs is not None:
+        token = await choose_key(name=_key_name(name), label=f'{provider} API key for {name}', dialogs=dialogs)
+        saved = token is not None and await _save_token(provider=provider, name=name, token=token)
     else:
         saved = await _save_key(provider=provider, name=name)
     if not saved:
@@ -76,11 +89,11 @@ async def login(*, provider: str, profile: str | None) -> str:
     return f'{name} connected, {storage}. Use {name}:MODEL.'
 
 
-async def _connect(*, provider: str, name: str) -> bool:
+async def _connect(*, provider: str, name: str, console: Console) -> bool:
     if provider == 'openrouter':
         from pydantic_clai2.models import openrouter
 
-        connection = await openrouter.prompt_connection()
+        connection = await openrouter.prompt_connection(console=console)
         if connection is None:
             return False
         await to_thread.run_sync(partial(openrouter.save_connection, connection, account=name))
@@ -101,7 +114,18 @@ async def _save_key(*, provider: str, name: str) -> bool:
         return False
     if not isinstance(token, KeyReference) and not token.strip():
         raise ValueError(f'An API key is required for {name}.')
-    connection = KeyConnection(token=token if isinstance(token, KeyReference) else SecretStr(token.strip()))
+    return await _save_token(
+        provider=provider, name=name, token=token if isinstance(token, KeyReference) else SecretStr(token.strip())
+    )
+
+
+def _key_name(account: str) -> str:
+    """The `/keys` name a key typed for `account` is saved under, such as `OPENAI_WORK` for `openai@work`."""
+    return re.sub(r'\W', '_', account).upper()
+
+
+async def _save_token(*, provider: str, name: str, token: SecretStr | KeyReference) -> bool:
+    connection = KeyConnection(token=token)
     # Build it now, so a provider that also needs an endpoint or region fails here, not on the next turn.
     await to_thread.run_sync(partial(_checked_provider, provider=provider, name=name, token=connection.token))
     value = connection.model_dump(mode='json')

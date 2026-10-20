@@ -9,6 +9,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
+from typing import Literal
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -20,6 +21,7 @@ from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
     CustomEvent,
+    EnqueuedMessagesEvent,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -37,7 +39,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
-from .._adapter import compaction_payload
+from .._adapter import compaction_payload, enqueued_messages_for_client
 from .._utils import MCP_APPS_UI_TYPE, mcp_app_ui_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
@@ -50,6 +52,7 @@ from ._utils import (
     BUILTIN_TOOL_CALL_ID_PREFIX,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
+    ENQUEUED_MESSAGES_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -141,6 +144,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
     never wired together.
     """
+
+    manage_system_prompt: Literal['server', 'client'] = 'server'
+    """Who owns the system prompt, as [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt].
+
+    With `'server'`, `SystemPromptPart`s delivered by [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue]
+    are left out of the enqueued messages sent to the frontend.
+    """
+
+    preserve_file_data: bool = False
+    """Whether enqueued messages sent to the frontend keep `FilePart` and `UploadedFile` items, as [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]."""
 
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
@@ -445,6 +458,32 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             content=compaction_payload(part),
         )
 
+    async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        # The adapter module imports this one to build its stream.
+        from ._adapter import AGUIAdapter
+
+        # An activity rather than chat messages: the client keeps it in its message list, but a UI only
+        # renders activity types it registered a renderer for. `@ag-ui/client` doesn't send activities
+        # back, so only a frontend that re-adds them restores the messages on the next run.
+        enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
+        if not enqueued:
+            return
+        messages = AGUIAdapter.dump_messages(
+            enqueued, ag_ui_version=self.ag_ui_version, preserve_file_data=self.preserve_file_data
+        )
+        yield ActivitySnapshotEvent(
+            message_id=event.enqueue_id,
+            activity_type=ENQUEUED_MESSAGES_ACTIVITY_TYPE,
+            content={
+                'messages': [message.model_dump(mode='json', by_alias=True, exclude_none=True) for message in messages]
+            },
+        )
+
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
@@ -514,7 +553,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
         # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
         # result event because the reducer does not queue metadata for an entity that does not exist.
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+        # A non-success outcome carries the return's `tool_kind` with it, as `dump_messages` does; a
+        # successful return needs no event, as loading falls back to the call's claim.
+        tool_kind = part.tool_kind if part.outcome != 'success' else None
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

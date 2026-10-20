@@ -20,7 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.compaction import ReportContextUsage
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
+from pydantic_clai2._app import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import _herdr_client, herdr
 from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
 from pydantic_clai2.config import Settings
@@ -36,6 +36,7 @@ from pydantic_clai2.plugins import (
     load_plugin,
 )
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 
 class RecordingClient:
@@ -68,16 +69,19 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> RecordingClient:
 
 
 def make_host() -> PluginHost[None]:
-    return PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={})
+    return PluginHost(name='herdr', console=Console(file=io.StringIO(), force_terminal=True), settings={})
 
 
-@pytest.mark.parametrize('missing', ['HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_PANE_ID', 'windows'])
+@pytest.mark.parametrize('missing', ['HERDR_ENV', 'HERDR_SOCKET_PATH', 'HERDR_PANE_ID', 'windows', 'terminal'])
 async def test_inactive(missing: str, recorded: RecordingClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside herdr, on Windows, or in a session without a terminal, such as one the browser runs."""
+    host = make_host()
     if missing == 'windows':
         monkeypatch.setattr(herdr.sys, 'platform', 'win32')
+    elif missing == 'terminal':
+        host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={})
     else:
         monkeypatch.delenv(missing)
-    host = make_host()
     loaded = load_plugin(herdr.HerdrPlugin, host)
     assert isinstance(loaded.plugin, herdr.HerdrPlugin) and loaded.plugin.reporter is None
     assert loaded.capabilities == ()
@@ -137,7 +141,9 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
 async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store)
-    host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
+    host = PluginHost(
+        name='herdr', console=Console(file=io.StringIO(), force_terminal=True), settings={}, conversation=session
+    )
     loaded = load_plugin(herdr.HerdrPlugin, host)
     session.on_change = loaded.dispatch
     session.plugins = loaded.capabilities
@@ -212,7 +218,7 @@ async def test_loader_enable_disable(tmp_path: Path, recorded: RecordingClient) 
         usage_limits=None,
         settings=None,
         project=ProjectSettings(),
-        console=Console(file=io.StringIO()),
+        console=Console(file=io.StringIO(), force_terminal=True),
         store=SettingsStore(tmp_path / 'settings.db'),
         builtin_plugins=[plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'herdr'],
     )

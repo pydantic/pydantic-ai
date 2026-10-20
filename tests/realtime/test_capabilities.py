@@ -62,18 +62,20 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
+from ..realtime_connections import InferredConnection
 
-class _Connection(RealtimeConnection):
+
+class _Connection(InferredConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
 
     def __init__(self, events: Sequence[RealtimeCodecEvent] = (ResponseDone(),)) -> None:
         self._events = events
         self.sent: list[RealtimeInput] = []
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
 
@@ -983,7 +985,7 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     mid_reply = asyncio.Event()
 
     class _ParkedMidReply(_Connection):
-        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='cut off mid-', is_final=False)
             mid_reply.set()
             await asyncio.Event().wait()

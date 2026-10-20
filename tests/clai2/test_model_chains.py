@@ -20,12 +20,11 @@ from pydantic_clai2.ui.menus.model_picker import (
     build_model_picker,
     model_command,
 )
-from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 
 ADD = chain_menu._Row.ADD  # pyright: ignore[reportPrivateUsage]
 SAVE = chain_menu._Row.SAVE  # pyright: ignore[reportPrivateUsage]
 TYPE = chain_menu._Row.TYPE  # pyright: ignore[reportPrivateUsage]
-Member = chain_menu._Member  # pyright: ignore[reportPrivateUsage]
 Move = chain_menu._Move  # pyright: ignore[reportPrivateUsage]
 Remove = chain_menu._Remove  # pyright: ignore[reportPrivateUsage]
 CLOSE = MenuResult(cancelled=True)
@@ -61,7 +60,7 @@ async def test_create_a_chain_and_select_it_in_the_model_picker(tmp_path: Path) 
         choices=[],
         texts=[typed('best '), typed(' openai@work:gpt-5')],
     )
-    assert await model_command(context, [], runners=script.runners) == (
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == (
         'Saved chain:best (openai:gpt-5 -> openai@work:gpt-5).\nSaved model. Applied.'
     )
     assert context.store.chains() == {'best': ['openai:gpt-5', 'openai@work:gpt-5']}
@@ -73,14 +72,14 @@ async def test_leaving_a_new_chain_saves_nothing(tmp_path: Path) -> None:
     unnamed = Script(
         lists=[pick(ModelPickerAction.NEW_CHAIN), CLOSE], choices=[], texts=[TextInputResult(cancelled=True)]
     )
-    assert await model_command(context, [], runners=unnamed.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=unnamed.runners) == 'No changes.'
     # An add that is cancelled, at the list or at the typed name, adds nothing.
     unsaved = Script(
         lists=[pick(ModelPickerAction.NEW_CHAIN), pick(ADD), CLOSE, pick(ADD), pick(TYPE), CLOSE, CLOSE],
         choices=[],
         texts=[typed('draft'), TextInputResult(cancelled=True)],
     )
-    assert await model_command(context, [], runners=unsaved.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=unsaved.runners) == 'No changes.'
     assert context.store.chains() == {}
 
 
@@ -88,17 +87,17 @@ async def test_edit_a_chains_models_and_their_order(tmp_path: Path) -> None:
     context = chain_context(tmp_path)
     context.store.save_chain(name='best', models=['a:1', 'b:2', 'c:3'])
     script = Script(
-        lists=[pick(EditChain(name='best')), pick(Move(0, 1)), pick(Remove(2)), pick(Member(0)), pick(SAVE), CLOSE],
+        lists=[pick(EditChain(name='best')), pick(Move(0, 1)), pick(Remove(2)), pick(SAVE), CLOSE],
         choices=[],
         texts=[],
     )
-    assert await model_command(context, [], runners=script.runners) == 'Saved chain:best (b:2 -> a:1).'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Saved chain:best (b:2 -> a:1).'
     assert context.store.chains()['best'] == ['b:2', 'a:1']
     # Esc leaves the editor without saving its changes.
     discarded = Script(
         lists=[pick(EditChain(name='best')), pick(Remove(0)), pick(Remove(0)), CLOSE, CLOSE], choices=[], texts=[]
     )
-    assert await model_command(context, [], runners=discarded.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=discarded.runners) == 'No changes.'
     assert context.store.chains()['best'] == ['b:2', 'a:1']
 
 
@@ -106,26 +105,26 @@ async def test_rename_a_chain_with_its_settings(tmp_path: Path) -> None:
     context = chain_context(tmp_path)
     context.store.save_model_settings('chain:best', {'max_tokens': 10})
     script = Script(lists=[pick(RenameChain(name='best')), CLOSE], choices=[], texts=[typed('top')])
-    assert await model_command(context, [], runners=script.runners) == 'Renamed chain:best to chain:top.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Renamed chain:best to chain:top.'
     assert context.store.chains() == {'top': ['openai:gpt-5', 'anthropic:claude-sonnet-4-5']}
     assert 'chain:top' in context.store.models() and 'chain:best' not in context.store.models()
     assert context.store.model_settings('chain:top') == {'max_tokens': 10}
     assert context.store.model_settings('chain:best') == {}
     unchanged = Script(lists=[pick(RenameChain(name='top')), CLOSE], choices=[], texts=[typed('top')])
-    assert await model_command(context, [], runners=unchanged.runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=unchanged.runners) == 'No changes.'
 
 
 async def test_a_chain_in_use_is_not_renamed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     context = chain_context(tmp_path)
-    await model_command(context, ['chain:best'])
+    await model_command(context, ['chain:best'], console=QUIET)
     keys(monkeypatch, 'model_picker', ['ctrl-r', 'escape'])
-    assert await model_command(context, []) == 'No changes.'
+    assert await model_command(context, [], console=QUIET) == 'No changes.'
     assert 'Select another model before renaming' in capsys.readouterr().out
 
     # It also stays when another session makes it the saved default while the name is typed.
-    await model_command(context, ['openai:gpt-5'])
+    await model_command(context, ['openai:gpt-5'], console=QUIET)
 
     def rename_after_default_changes(widget: TextInput) -> TextInputResult:
         context.store.set('model', 'chain:best')
@@ -133,14 +132,14 @@ async def test_a_chain_in_use_is_not_renamed(
 
     script = Script(lists=[pick(RenameChain(name='best')), CLOSE], choices=[], texts=[])
     runners = Runners(run_list=script.run_list, run_choice=script.run_choice, run_text=rename_after_default_changes)
-    assert await model_command(context, [], runners=runners) == 'No changes.'
+    assert await model_command(context, [], console=QUIET, runners=runners) == 'No changes.'
     assert 'best' in context.store.chains()
 
 
 async def test_delete_a_chain_from_the_model_picker(tmp_path: Path) -> None:
     context = chain_context(tmp_path)
     script = Script(lists=[pick(DeleteModel(name='chain:best')), CLOSE], choices=[pick(True)], texts=[])
-    assert await model_command(context, [], runners=script.runners) == 'Deleted chain:best.'
+    assert await model_command(context, [], console=QUIET, runners=script.runners) == 'Deleted chain:best.'
     assert context.store.chains() == {} and 'chain:best' not in context.store.models()
 
 
@@ -153,12 +152,12 @@ async def test_model_chains_opens_the_picker_on_its_chains(tmp_path: Path) -> No
         return CLOSE
 
     runners = Runners(run_list=run_list, run_choice=TERMINAL.run_choice, run_text=TERMINAL.run_text)
-    assert await model_command(context, ['chains'], runners=runners) == 'No changes.'
+    assert await model_command(context, ['chains'], console=QUIET, runners=runners) == 'No changes.'
     context.store.save_chain(name='best', models=['openai:gpt-5', 'openai@work:gpt-5'])
-    assert await model_command(context, ['chains'], runners=runners) == 'No changes.'
+    assert await model_command(context, ['chains'], console=QUIET, runners=runners) == 'No changes.'
     assert highlighted == [ModelPickerAction.NEW_CHAIN, 'chain:best']
     with pytest.raises(ValueError, match=r'^Usage: /model chains\. Create, edit, rename, and delete'):
-        await model_command(context, ['chains', 'best'])
+        await model_command(context, ['chains', 'best'], console=QUIET)
 
 
 def test_picker_lists_chains_after_models_with_their_keys(
@@ -192,6 +191,10 @@ def test_chain_editor_keys_and_details(
         (1, ['['], Move(1, -1)),
         (1, ['d'], Remove(1)),
         (2, ['a'], ADD),
+        (2, ['enter'], ADD),
+        (3, ['enter'], SAVE),
+        # Enter on a model has no action, and the editor stays open until Esc.
+        (0, ['enter', 'escape'], None),
         # Keys that cannot apply to a row do nothing: the first model up, the last down, or a row that is not a model.
         (0, ['[', 'escape'], None),
         (1, [']', 'escape'], None),
