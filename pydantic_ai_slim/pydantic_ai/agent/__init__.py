@@ -1598,6 +1598,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_output_retries = override_output_retries.value
         effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
+        # Resolve the effective per-output-tool default: run arg > spec > agent init default
+        effective_output_toolset_max_retries = (
+            effective_output_retries if effective_output_retries is not None else self._max_output_retries
+        )
+
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
 
@@ -1658,6 +1663,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 prompt=selection_prompt,
                 messages=selection_messages,
                 usage=usage,
+                max_retries=effective_output_toolset_max_retries,
             )
             model_used, model_id = await self._evaluate_model_contribution(
                 model_contribution,
@@ -1678,11 +1684,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # may change the result type from the restricted type to something else. Therefore, we consider the following
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = self._output_validators
-
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
-        )
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
@@ -2562,6 +2563,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     prompt=selection_prompt,
                     messages=selection_messages,
                     usage=usage,
+                    max_retries=self._max_output_retries,
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx
