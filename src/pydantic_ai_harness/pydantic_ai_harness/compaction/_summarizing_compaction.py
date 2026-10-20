@@ -524,12 +524,18 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
-        fields = {name for _, name, _, _ in Formatter().parse(self.summary_prompt) if name is not None}
+        invalid_prompt = (
+            'summary_prompt must contain a `{messages}` placeholder and no other replacement field; '
+            'write a literal brace as `{{` or `}}`.'
+        )
+        try:
+            fields = {name for _, name, _, _ in Formatter().parse(self.summary_prompt) if name is not None}
+            # A trial render catches what parsing alone accepts, such as an unknown conversion.
+            self.summary_prompt.format(messages='')
+        except (AttributeError, IndexError, KeyError, ValueError) as e:
+            raise ValueError(invalid_prompt) from e
         if fields != {'messages'}:
-            raise ValueError(
-                'summary_prompt must contain a `{messages}` placeholder and no other replacement field; '
-                'write a literal brace as `{{` or `}}`.'
-            )
+            raise ValueError(invalid_prompt)
 
     def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:
         """Return a copy whose summary prompt prioritizes `focus`.

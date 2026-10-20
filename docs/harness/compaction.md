@@ -364,7 +364,7 @@ agent = Agent(
 )
 ```
 
-By default `preserve_first_user_message=True` keeps the first user turn (in addition to system prompts) even when it falls outside the window, so the agent does not lose the original task. Pass `keep_tokens` instead of `keep_messages` to retain a minimum amount of original message text rather than a message count.
+By default `preserve_first_user_message=True` keeps the first user turn (in addition to system prompts) even when it falls outside the window, so the agent does not lose the original task. `keep_messages=0` still keeps the newest message, the request being answered. Pass `keep_tokens` instead of `keep_messages` to retain a minimum amount of original message text rather than a message count.
 
 ### Token retention after automatic compaction
 

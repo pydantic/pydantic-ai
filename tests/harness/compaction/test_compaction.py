@@ -1044,7 +1044,13 @@ class TestCompaction:
 
     @pytest.mark.parametrize(
         'summary_prompt',
-        ['Summarize the conversation.', 'Summarize {messages} as {format}.', 'Return {"summary": ...} for {messages}'],
+        [
+            'Summarize the conversation.',
+            'Summarize {messages} as {format}.',
+            'Return {"summary": ...} for {messages}',
+            '{messages!z}',
+            '{messages} }',
+        ],
     )
     def test_validation_summary_prompt_fields(self, summary_prompt: str):
         with pytest.raises(ValueError, match=r'summary_prompt must contain a `\{messages\}` placeholder'):
@@ -1057,11 +1063,16 @@ class TestCompaction:
         assert comp.with_focus('the {config} file').summary_prompt.endswith('the {{config}} file')
 
     async def test_keeps_tool_call_with_its_retry_prompt(self):
-        comp = SummarizingCompaction(model=FunctionModel(_summary_response), max_messages=1, keep_messages=5)
+        comp = SummarizingCompaction(
+            model=FunctionModel(_summary_response), max_messages=1, keep_messages=5, preserve_first_user_message=False
+        )
         messages = _retry_history()
-        result = await comp.compact(messages, _make_ctx(messages))
-        assert result != messages
-        assert _orphan_free(result)
+        summary, *kept = await comp.compact(messages, _make_ctx(messages))
+        assert isinstance(summary, ModelRequest)
+        assert [part.content for part in summary.parts if isinstance(part, SystemPromptPart)] == [
+            f'{_SUMMARY_PREFIX}summary'
+        ]
+        assert kept == messages[1:]
 
     async def test_keep_zero_keeps_the_request_being_answered(self):
         comp = SummarizingCompaction(

@@ -368,7 +368,8 @@ TieredCompaction(
 
 `SlidingWindowCompaction` keeps the last `keep_messages` down to a tail; pass `keep_tokens` instead to retain
 a minimum amount of original message text rather than a message count. By default `preserve_first_user_message=True` keeps the first user
-turn even when it falls outside the window, so the agent does not lose the original task.
+turn even when it falls outside the window, so the agent does not lose the original task. `keep_messages=0` still keeps
+the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. Set `clear_tool_inputs=True` to also blank the
 arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
