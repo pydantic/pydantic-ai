@@ -114,6 +114,7 @@ async def run_persistent_command(
     env: Mapping[str, str] | None,
     mode: CommandMode,
     timeout: float,
+    log_limit: int | None = None,
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
@@ -124,7 +125,7 @@ async def run_persistent_command(
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
     # Before launching: a toolset used outside its capability fails here, and must not leave a job running.
     events = event_ctx(ctx, 'Shell')
-    job = await Job.launch(ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True)
+    job = await Job.launch(ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit)
     output = _CommandOutput(job, events)
 
     try:

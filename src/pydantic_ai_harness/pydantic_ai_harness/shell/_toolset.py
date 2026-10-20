@@ -26,7 +26,12 @@ from pydantic_ai_harness._output import truncate_tail
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import metadata_dir, require_workspace, supports_commands
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, Job
-from pydantic_ai_harness.shell._limits import file_limit_status, limited_script, validate_file_limit
+from pydantic_ai_harness.shell._limits import (
+    file_limit_status,
+    limited_script,
+    validate_byte_limit,
+    validate_file_limit,
+)
 from pydantic_ai_harness.shell._persistent import MAX_FOREGROUND_WAIT, CommandMode, run_persistent_command
 from pydantic_ai_harness.shell._policy import is_interactive_command, recoverable
 
@@ -73,6 +78,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         persist_cwd: bool,
         allow_interactive: bool,
         max_file_bytes: int | None = None,
+        max_log_bytes: int | None = None,
         env: Mapping[str, str] | None = None,
         denied_env_patterns: Sequence[str] = (),
         tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES,
@@ -96,6 +102,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 'max_file_bytes is not supported with persist_cwd; cwd capture writes a file in the child.'
             )
         self._max_file_bytes = max_file_bytes
+        validate_byte_limit('max_log_bytes', max_log_bytes)
+        self._max_log_bytes = max_log_bytes
         self._persist_cwd = persist_cwd
         self._allow_interactive = allow_interactive
         self._env = dict(env) if env is not None else None
@@ -151,6 +159,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             default_timeout=self._default_timeout,
             max_output_chars=self._max_output_chars,
             max_file_bytes=self._max_file_bytes,
+            max_log_bytes=self._max_log_bytes,
             persist_cwd=self._persist_cwd,
             allow_interactive=self._allow_interactive,
             env=self._env,
@@ -438,6 +447,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             env=self._resolve_env(),
             mode=mode,
             timeout=self._default_timeout if timeout is None else timeout,
+            log_limit=self._max_log_bytes,
         )
 
     @recoverable
@@ -469,6 +479,7 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
             env=self._resolve_env(),
             combined=False,
             file_limit=self._max_file_bytes,
+            log_limit=self._max_log_bytes,
             job_id=job_id,
         )
         return f'Started background command: {command!r}\nID: {posixpath.basename(job.directory)}'

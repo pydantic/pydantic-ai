@@ -44,6 +44,16 @@ dir=$1
 publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
+watch_logs() {{
+  while sleep 1 2> /dev/null; do
+    for log in "$out" "$err"; do
+      if [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
+        : > "$log"
+        printf '[Log exceeded max_log_bytes=%s; earlier output was cleared.]\\n' "$1" >> "$log"
+      fi
+    done
+  done
+}}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
 publish null
@@ -55,13 +65,21 @@ if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else 
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
 fi
+watcher=
+if [ -n "$6" ]; then watch_logs "$6" & watcher=$!; fi
 (
   [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
-publish $?
+code=$?
+[ -z "$watcher" ] || kill "$watcher" 2> /dev/null
+publish $code
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, and the launcher's PID.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID, and the log limit.
+
+With a log limit, a watcher checks each log once a second and empties one that has grown past it, leaving a
+notice. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the
+end of it and stops, instead of copying the log into itself until the disk is full.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
@@ -100,10 +118,10 @@ else
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
@@ -154,6 +172,7 @@ class Job:
         env: Mapping[str, str] | None,
         combined: bool,
         file_limit: int | None = None,
+        log_limit: int | None = None,
         job_id: str | None = None,
     ) -> Job:
         directory = posixpath.join(base, job_id or uuid.uuid4().hex)
@@ -166,6 +185,7 @@ class Job:
                 ('mode', mode),
                 ('cmd', command),
                 ('limit', '' if file_limit is None else str(file_limit)),
+                ('log_limit', '' if log_limit is None else str(log_limit)),
                 ('wrapper', _WRAPPER),
             )
         )

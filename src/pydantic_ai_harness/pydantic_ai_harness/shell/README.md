@@ -126,6 +126,25 @@ Use filesystem quotas or OS isolation for aggregate disk protection and
 untrusted commands. No additional telemetry spans are emitted; the existing
 tool-call result carries the failure and limit context.
 
+## Limit command logs
+
+The output logs of `start_command` and `shell` commands are bounded by
+`Shell(max_log_bytes=...)`, 100 MB by default. While a command runs, each log is
+checked once a second; a log past the limit is emptied and gets the notice
+`[Log exceeded max_log_bytes=<n>; earlier output was cleared.]`. The command
+keeps running, so a dev server that logs a lot is not stopped, and later output
+is logged as usual. Pass `max_log_bytes=None` to turn it off.
+
+This also stops a command that reads its own log, such as
+`cat .pydantic-ai-harness/shell/*/output.log | grep failed`. Its output is
+appended to a log it is still reading, so without a limit it never reaches the
+end and the log grows until the disk is full. Once the log is emptied, the
+command reads to the end and exits.
+
+Unlike `max_file_bytes`, this works with `tools=['shell']` and only applies to
+the logs, not to files the command writes. A log can grow by up to one second
+of output past the limit before it is emptied.
+
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
@@ -261,6 +280,7 @@ Shell(
     default_timeout=30.0,          # seconds, per run_command
     max_output_chars=50_000,       # output cap returned to the model
     max_file_bytes=None,           # per-file size limit for commands (None = no limit)
+    max_log_bytes=100_000_000,     # background and `shell` log size limit (None = no limit)
     persist_cwd=False,             # make cd sticky across calls
     allow_interactive=False,       # allow TTY-style commands
     env=None,                      # variables added to the workspace's environment
