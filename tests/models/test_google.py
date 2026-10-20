@@ -94,7 +94,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import request_json, single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
+from ..conftest import IsDatetime, IsInstance, IsList, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 from .citation_utils import IsCitationList, citations_from_messages
 
@@ -4541,7 +4541,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
 **Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
 """,
                         provider_name='google-cloud',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={'thought_signature': IsStr(), 'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
                     NativeToolCallPart(

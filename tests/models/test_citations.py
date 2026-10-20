@@ -558,13 +558,11 @@ def _web_citation_agent(
         )
         tool = WebSearchTool(max_uses=1)
     elif case.provider == 'anthropic-web-fetch':
-        # Web Fetch only returns citations when asked, which `include_citations` does.
+        # Web Fetch only returns citations when asked.
         model = AnthropicModel(
-            'claude-sonnet-4-5',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=ModelSettings(max_tokens=4096, include_citations=True),
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
-        tool = WebFetchTool(max_uses=1)
+        tool = WebFetchTool(max_uses=1, enable_citations=True)
         # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
         # the cited ranges that tie a citation to the fetched page.
         prompt = (
@@ -973,6 +971,43 @@ async def test_anthropic_tool_return_document_citations(allow_model_requests: No
                     DocumentCitationSource(
                         excerpts=['Orders ship within two business days.'],
                     )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=37),
+            ),
+        ]
+    )
+
+
+# Cassetter writes body-matched interactions sorted by body, which puts this conversation's two turns out of order;
+# `test_bedrock_tool_return_document_citations_request` in `test_bedrock.py` pins the request instead.
+@pytest.mark.vcr()
+async def test_bedrock_tool_return_document_citations(
+    allow_model_requests: None, request: pytest.FixtureRequest
+) -> None:
+    """Bedrock cites documents in both the user prompt and a tool result."""
+    if not bedrock_available():
+        pytest.skip('bedrock dependencies not installed')
+
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+    )
+    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+
+    result = await agent.run(TOOL_DOCUMENT_PROMPT)
+
+    assert citations_from_messages(result.all_messages()) == snapshot(
+        [
+            Citation(
+                sources=[
+                    DocumentCitationSource(
+                        title='Document 1', excerpts=['The return window is thirty days from purchase.']
+                    )
+                ],
+                anchor=ContentCitationAnchor(start=0, end=47),
+            ),
+            Citation(
+                sources=[
+                    DocumentCitationSource(title='Document 2', excerpts=['Orders ship within two business days.'])
                 ],
                 anchor=ContentCitationAnchor(start=0, end=37),
             ),

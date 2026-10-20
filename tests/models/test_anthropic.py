@@ -4131,7 +4131,7 @@ async def test_document_binary_content_input(
 
 @pytest.mark.parametrize('include_citations', [False, True])
 async def test_anthropic_include_citations_request_setting(allow_model_requests: None, include_citations: bool) -> None:
-    """The shared setting changes every Anthropic document block and nothing when disabled."""
+    """The shared setting changes every Anthropic document block, but not Web Fetch, and nothing when disabled."""
     response = completion_message(
         [BetaTextBlock(text='The policy allows thirty days.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=6),
@@ -4166,7 +4166,7 @@ async def test_anthropic_include_citations_request_setting(allow_model_requests:
     web_fetch_tool = next(
         tool for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools'] if tool['name'] == 'web_fetch'
     )
-    assert web_fetch_tool.get('citations') == ({'enabled': True} if include_citations else None)
+    assert web_fetch_tool.get('citations') is None
 
 
 @pytest.mark.parametrize('include_citations', [False, True])

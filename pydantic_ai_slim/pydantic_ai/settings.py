@@ -596,11 +596,12 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, and Web Fetch)
-    * Bedrock (TXT and PDF documents in user prompts, with Anthropic models)
+    * Anthropic (documents, including those returned by tools)
+    * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models)
     * xAI (inline citations)
 
-    Providers that always return citations ignore this setting.
+    Providers that always return citations ignore this setting. Citations for fetched pages are enabled on the
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] itself, with `enable_citations`.
     """
 
     cache: CacheSetting
