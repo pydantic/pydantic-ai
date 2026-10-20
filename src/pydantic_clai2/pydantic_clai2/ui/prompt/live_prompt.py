@@ -17,7 +17,6 @@ from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
-from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import holding_output
@@ -26,7 +25,7 @@ from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
-from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer
+from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -704,9 +703,10 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
     `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
     """
-    if is_command_input(text):
+    kind = input_kind(text)
+    if kind == 'command':
         name = text.split(maxsplit=1)[0].removeprefix('/')
-        return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
-    if shell_command(text) is not None:
-        return {'kind': 'shell', 'chars': len(text)}
-    return {'kind': 'prompt', 'chars': len(text), **telemetry.prompt_text(text)}
+        return {'kind': kind, 'command': name if name in commands else 'unknown', 'chars': len(text)}
+    if kind == 'shell':
+        return {'kind': kind, 'chars': len(text)}
+    return {'kind': kind, 'chars': len(text), **telemetry.prompt_text(text)}
