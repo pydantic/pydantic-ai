@@ -8,7 +8,7 @@ This PR changes only `PLAN.md`. Implement only after agreement on this design an
 
 Keep existing job, request, time, account and concurrency limits, models, token settings and provider retry policy. Add no investigation cutoff, replacement timer or retry allowance. Preserve existing admission/reserves: outstanding child-request reservations, the parent's final request tenth, and child timeout bounded by remaining run time minus the five-minute parent reserve. Preserve the prompt's final-20-percent guidance. These are source behavior, not new enforcement phases.
 
-Two explicit policy changes are proposed: replace blanket redispatch prohibition with cause-specific recovery; replace wait-for-all with consumption of settled evidence and concurrent verification preparation. Neither permits a broad duplicate review or bypasses admission.
+Explicit policy changes: replace blanket redispatch prohibition with cause-specific recovery; replace wait-for-all with settled evidence and concurrent verification preparation; make parent admission reservation-aware while background children run. None permits a broad duplicate review, a new allowance or a new cutoff. Existing child admission/reserve boundaries remain unchanged.
 
 ## Evidence and implementation boundary
 
@@ -74,6 +74,8 @@ Keep complete baseline coverage: every non-generated changed source file has exa
 For a streaming change, one owner can inspect changed implementation, another wire-format compatibility, while the parent prepares cancellation/reproduction checks. Share head-bound source artifacts and prior-thread facts; preserve independent judgments. A shared conclusion cannot satisfy both checks. If no slot is available, queue the question under existing admission.
 
 For parallel CI Review assignments, launch managed background work and return task receipts instead of holding the parent tool batch open. Attach `DelegationReports` to deliver settled reports into the active parent. Keep the task owner inside the workspace/tool resource lifetime; drain all owned work before releasing resources. Existing slot/request reservations remain held until the child settles.
+
+Background execution newly allows parent model calls while children spend. Parent admission must therefore subtract outstanding child reservations from the original remaining shared allowance, including compaction spend. When requests are reserved rather than spent, wait for a report/reservation release instead of declaring exhaustion or issuing another request. On settlement, replace the reservation with actual child usage exactly once, including failure/cancellation. This extends reservation awareness to the new parent execution path without changing child grants, reserves or total limits.
 
 Consume settled reports while unrelated work continues. Validate coverage/evidence and prepare targeted verification immediately. For each surviving finding, the parent still inspects surrounding source, verifies trigger/reproduction and severity, checks false-positive rules/prior threads, and validates the commentable location. Reuse exact source artifacts/receipts instead of repeating all searches and baseline investigation. Before final output, require all assigned work/checks to settle or record recovery infeasibility, drain remaining tasks and mark gaps incomplete. The root needs this explicit join: managed reports alone do not join root children. Unresolved independent checks stay pending even when another reviewer agrees.
 
