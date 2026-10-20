@@ -1378,6 +1378,26 @@ def test_interrupt_whose_send_fails_records_the_cut(mode: str, finished: bool, f
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_interrupt_racing_the_end_of_the_reply_records_the_cut(dialect: str) -> None:
+    """The reply ends on the provider while `interrupt(played_ms=...)` is on its way: the truncation still applies.
+
+    The cancel comes too late to stop the reply, which the provider reports as completed, but the listener heard only
+    what they heard, so history records it as cut off, as it does a reply that had ended before the interrupt.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.speak()
+        sim.finish(deliver=False)
+        sim.interrupt(mode='played_ms')
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, turn_detection='manual', transcription=False)),  # pyright: ignore[reportArgumentType]
+        scenario,
+    )
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
 def test_cancel_after_a_cut_keeps_the_cut(dialect: str) -> None:
     """A plain `interrupt()` after one that truncated the reply: the reply stays cut where the first one cut it."""
 
