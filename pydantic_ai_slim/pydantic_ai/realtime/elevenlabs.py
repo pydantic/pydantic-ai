@@ -72,7 +72,7 @@ from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
 from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
-from ._lifecycle import LifecycleEvent
+from ._lifecycle import LifecycleEvent, ResponseEnded
 from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
@@ -83,7 +83,7 @@ from ._openai_protocol import (
     turn_detection_config,
     with_realtime_query,
 )
-from .codec import OutputTranscript, RealtimeCodecEvent, ResponseDone, ToolResult
+from .codec import OutputTranscript, RealtimeCodecEvent, ToolResult
 from .model import RealtimeModel, WebRTCAnswer
 from .openai import (
     OpenAIRealtimeConnection,
@@ -301,6 +301,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         decoded = await super()._decode_frame(raw)
         if self._strip_audio_tags:
             decoded.codec = self._strip_transcript_tags(decoded.codec)
+            decoded.after = self._with_audio_tags(decoded.after)
         if abandoned:
             decoded.codec.append(
                 RealtimeSessionErrorEvent(
@@ -348,7 +349,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         self._lifecycle.requests_dropped([input_index])
 
     def _strip_transcript_tags(self, events: list[RealtimeCodecEvent]) -> list[RealtimeCodecEvent]:
-        """Remove expressive audio tags from output transcripts, keeping each response's in its `provider_details`."""
+        """Remove expressive audio tags from output transcripts, collecting each response's (see `_with_audio_tags`)."""
         stripped: list[RealtimeCodecEvent] = []
         for event in events:
             if isinstance(event, OutputTranscript):
@@ -363,10 +364,17 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
                     if not text:
                         continue
                 event = replace(event, text=text)
-            elif isinstance(event, ResponseDone) and (tags := self._audio_tags.pop(event.provider_response_id, None)):
-                event = replace(event, provider_details={**(event.provider_details or {}), 'audio_tags': tags})
             stripped.append(event)
         return stripped
+
+    def _with_audio_tags(self, events: list[LifecycleEvent]) -> list[LifecycleEvent]:
+        """Record the tags a response's transcripts held on the `ResponseEnded` that files it in history."""
+        return [
+            replace(event, provider_details={**(event.provider_details or {}), 'audio_tags': tags})
+            if isinstance(event, ResponseEnded) and (tags := self._audio_tags.pop(event.response_id, None))
+            else event
+            for event in events
+        ]
 
 
 class _ElevenLabsOpenAIProvider(OpenAIProvider):

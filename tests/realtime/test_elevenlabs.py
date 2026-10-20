@@ -566,17 +566,24 @@ async def test_audio_tags_are_stripped_from_transcripts() -> None:
             done('resp_1'),
         )
     )
-    events = await collect_codec_events(ElevenLabsRealtimeConnection(ws))  # type: ignore[arg-type]
+    # The tags go on the `ResponseEnded` that files the response in history, as its `provider_details`.
+    events = [event async for event in lifecycle_events(ElevenLabsRealtimeConnection(ws))]  # type: ignore[arg-type]
     assert events == snapshot(
         [
+            ResponseStarted(response_id='resp_1'),
             OutputTranscript(text='Hello', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text=' there!', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text=' How are you?', item_id='item_1', response_id='resp_1'),
             OutputTranscript(text='Hello there! How are you?', is_final=True, item_id='item_1', response_id='resp_1'),
-            ResponseDone(
-                provider_response_id='resp_1',
+            ResponseDone(provider_response_id='resp_1', finish_reason='stop', provider_details={'status': 'completed'}),
+            ResponseEnded(
+                response_id='resp_1',
+                status='completed',
                 finish_reason='stop',
                 provider_details={'status': 'completed', 'audio_tags': ['cheerful', 'happy']},
+            ),
+            RealtimeSessionErrorEvent(
+                message='ElevenLabs Realtime connection closed: received 1000', recoverable=False
             ),
         ]
     )
