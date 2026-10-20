@@ -1092,12 +1092,12 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
         ({'then': {'$ref': '#/$defs/Item'}}, {'then': {'$ref': '#/$defs/SchemaB_Item_1'}}),
         ({'else': {'$ref': '#/$defs/Item'}}, {'else': {'$ref': '#/$defs/SchemaB_Item_1'}}),
         (
-            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/Item'}, 'other': False}},
-            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/SchemaB_Item_1'}, 'other': False}},
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/Item'}, 'allowed': True, 'denied': False}},
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/SchemaB_Item_1'}, 'allowed': True, 'denied': False}},
         ),
         (
-            {'items': [{'$ref': '#/$defs/Item'}, True]},
-            {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True]},
+            {'items': [{'$ref': '#/$defs/Item'}, True, False]},
+            {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True, False]},
         ),
     ],
     ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items'],
@@ -1108,7 +1108,7 @@ def test_merge_json_schema_defs_nested_subschemas(body: dict[str, Any], expected
         **body,
         'title': 'SchemaA',
         'properties': {'payload': {'$ref': '#/$defs/Wrapper'}},
-        '$defs': {'Item': {'type': 'integer'}, 'Wrapper': body},
+        '$defs': {'Item': {'type': 'integer'}, 'Wrapper': copy.deepcopy(body)},
     }
     schema_b: dict[str, Any] = copy.deepcopy(schema_a)
     schema_b['title'] = 'SchemaB'
