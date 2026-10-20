@@ -1944,12 +1944,10 @@ async def test_event_stream_citations():
                                         'url': 'https://github.com/pydantic/pydantic-ai',
                                         'title': 'pydantic/pydantic-ai',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -1957,19 +1955,16 @@ async def test_event_stream_citations():
                                         'url': 'https://github.com/pydantic/pydantic-ai',
                                         'title': 'pydantic/pydantic-ai',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     },
                                     {
                                         'url': 'https://pydantic.dev/docs/ai/',
                                         'title': 'Pydantic AI docs',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     },
                                 ],
                                 'anchor': {'start': 26, 'end': 45, 'kind': 'content'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -1977,12 +1972,10 @@ async def test_event_stream_citations():
                                         'document_id': 'file-1',
                                         'title': 'notes.txt',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'document',
                                     }
                                 ],
                                 'anchor': None,
-                                'provider_details': None,
                             },
                         ],
                         'parts': [
@@ -1996,12 +1989,10 @@ async def test_event_stream_citations():
                                                 'url': 'https://github.com/pydantic/pydantic-ai',
                                                 'title': 'pydantic/pydantic-ai',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             }
                                         ],
                                         'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                        'provider_details': None,
                                     }
                                 ],
                             },
@@ -2015,19 +2006,16 @@ async def test_event_stream_citations():
                                                 'url': 'https://github.com/pydantic/pydantic-ai',
                                                 'title': 'pydantic/pydantic-ai',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             },
                                             {
                                                 'url': 'https://pydantic.dev/docs/ai/',
                                                 'title': 'Pydantic AI docs',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             },
                                         ],
                                         'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
-                                        'provider_details': None,
                                     },
                                     {
                                         'sources': [
@@ -2035,12 +2023,10 @@ async def test_event_stream_citations():
                                                 'document_id': 'file-1',
                                                 'title': 'notes.txt',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'document',
                                             }
                                         ],
                                         'anchor': None,
-                                        'provider_details': None,
                                     },
                                 ],
                             },
@@ -2093,12 +2079,10 @@ def test_dump_and_load_citations():
                                         'url': 'https://github.com/pydantic/pydantic-ai',
                                         'title': 'pydantic/pydantic-ai',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -2106,19 +2090,16 @@ def test_dump_and_load_citations():
                                         'url': 'https://github.com/pydantic/pydantic-ai',
                                         'title': 'pydantic/pydantic-ai',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     },
                                     {
                                         'url': 'https://pydantic.dev/docs/ai/',
                                         'title': 'Pydantic AI docs',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     },
                                 ],
                                 'anchor': {'start': 26, 'end': 45, 'kind': 'content'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -2126,12 +2107,10 @@ def test_dump_and_load_citations():
                                         'document_id': 'file-1',
                                         'title': 'notes.txt',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'document',
                                     }
                                 ],
                                 'anchor': None,
-                                'provider_details': None,
                             },
                         ],
                         'parts': [
@@ -2145,12 +2124,10 @@ def test_dump_and_load_citations():
                                                 'url': 'https://github.com/pydantic/pydantic-ai',
                                                 'title': 'pydantic/pydantic-ai',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             }
                                         ],
                                         'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
-                                        'provider_details': None,
                                     }
                                 ],
                             },
@@ -2164,19 +2141,16 @@ def test_dump_and_load_citations():
                                                 'url': 'https://github.com/pydantic/pydantic-ai',
                                                 'title': 'pydantic/pydantic-ai',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             },
                                             {
                                                 'url': 'https://pydantic.dev/docs/ai/',
                                                 'title': 'Pydantic AI docs',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'web',
                                             },
                                         ],
                                         'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
-                                        'provider_details': None,
                                     },
                                     {
                                         'sources': [
@@ -2184,12 +2158,10 @@ def test_dump_and_load_citations():
                                                 'document_id': 'file-1',
                                                 'title': 'notes.txt',
                                                 'excerpts': [],
-                                                'provider_details': None,
                                                 'kind': 'document',
                                             }
                                         ],
                                         'anchor': None,
-                                        'provider_details': None,
                                     },
                                 ],
                             },
@@ -2322,12 +2294,24 @@ def test_load_citations_outside_text():
 
 
 def _anthropic_web_search_parts() -> list[TextPart]:
-    """Text parts shaped like an Anthropic web search answer: plain and cited parts alternate, and the citations have
-    no anchor, so the part a citation is on is the only record of where it applies."""
+    """Text parts shaped like an Anthropic web search answer: plain and cited parts alternate, and each citation covers
+    the whole part it's on."""
 
     def cited(text: str, url: str, excerpt: str) -> TextPart:
+        raw_citation = {
+            'type': 'web_search_result_location',
+            'url': url,
+            'title': 'Pydantic AI',
+            'cited_text': excerpt,
+            'encrypted_index': 'EpIBCioIBhgC',
+        }
         source = WebCitationSource(url, title='Pydantic AI', excerpts=[excerpt])
-        return TextPart(text, citations=[Citation([source], provider_details={'encrypted_index': 'EpIBCioIBhgC'})])
+        return TextPart(
+            text,
+            provider_name='anthropic',
+            provider_details={'citations': [raw_citation]},
+            citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=len(text)))],
+        )
 
     return [
         TextPart('I found the docs. '),
@@ -2339,14 +2323,22 @@ def _anthropic_web_search_parts() -> list[TextPart]:
 
 
 def _bedrock_document_parts() -> list[TextPart]:
-    """Text parts shaped like a Bedrock document answer: a cited part has one citation covering all of its text,
-    which is the only shape Bedrock replays natively."""
+    """Text parts shaped like a Bedrock document answer: a cited part has one citation covering all of its text."""
     excerpt = 'Refunds are accepted within 30 days.'
-    location = {'documentChar': {'documentIndex': 0, 'start': 0, 'end': len(excerpt)}}
-    source = DocumentCitationSource(title='policy', excerpts=[excerpt], provider_details={'location': location})
+    raw_citation = {
+        'title': 'policy',
+        'sourceContent': [{'text': excerpt}],
+        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': len(excerpt)}},
+    }
+    source = DocumentCitationSource(title='policy', excerpts=[excerpt])
     return [
         TextPart('Per the policy: '),
-        TextPart('Thirty days.', citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=12))]),
+        TextPart(
+            'Thirty days.',
+            provider_name='bedrock',
+            provider_details={'citations': [raw_citation]},
+            citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=12))],
+        ),
     ]
 
 
