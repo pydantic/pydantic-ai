@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import warnings
 from contextlib import AbstractAsyncContextManager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,8 +21,10 @@ from inline_snapshot import snapshot
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     BinaryContent,
+    InstructionDeltaPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -134,6 +136,26 @@ class _StubSource:
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
         return self._histories[run_id]
+
+
+@dataclass
+class _Todo:
+    status: str = 'pending'
+
+
+_todos = Capability[_Todo](id='todos')
+"""Appends a change to its instruction when `finish_todo` runs, as core's `on_change='append'` docs show."""
+
+
+@_todos.instructions(name='state', on_change='append')
+def _todo_state(ctx: RunContext[_Todo]) -> str:
+    return f'Todo status: {ctx.deps.status}.'
+
+
+@_todos.tool
+def finish_todo(ctx: RunContext[_Todo]) -> str:
+    ctx.deps.status = 'done'
+    return 'Saved.'
 
 
 class TestSnapshotHistorySource:
@@ -356,6 +378,29 @@ class TestSnapshotHistorySource:
         assert history == [reply, follow_up, latest]
         assert 'ONYX' in await _search(SnapshotHistorySource(store), 'ONYX')
         assert 'No matches' in await _search(SnapshotHistorySource(store), 'ZEBRA')
+
+    async def test_an_appended_instruction_change_does_not_duplicate_the_run(self) -> None:
+        """Core adds an instruction change to a request an earlier snapshot already holds.
+
+        The overlap must still match, and the record must keep the later copy so the change
+        itself stays searchable.
+        """
+
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(), deps_type=_Todo, capabilities=[_todos, StepPersistence(store=store)])
+        result = await agent.run('Finish the PELICAN todo.', deps=_Todo(), conversation_id='c1')
+        run_id = (await store.list_runs())[0].run_id
+        assert len(await store.list_snapshots(run_id=run_id)) == 2
+
+        history = await SnapshotHistorySource(store).run_history(run_id=run_id)
+
+        assert [message_hash(message) for message in history] == [
+            message_hash(message) for message in result.all_messages()
+        ]
+        assert any(isinstance(part, InstructionDeltaPart) for message in history for part in message.parts)
+        source = SnapshotHistorySource(store)
+        assert (await _search(source, 'PELICAN', scope='conversation', conversation_id='c1')).count('[score:') == 1
+        assert 'Todo status: done.' in await _search(source, 'done', scope='conversation', conversation_id='c1')
 
 
 class TestConversationSearch:
