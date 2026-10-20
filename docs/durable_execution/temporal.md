@@ -658,7 +658,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 
-def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+def continue_as_new_args(ctx: RunContext) -> dict[str, Any]:
     return {
         'args': [
             None,
