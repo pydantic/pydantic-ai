@@ -6,27 +6,28 @@ description: "Connect a Pydantic AI agent to ElevenLabs: Eleven Realtime speech-
 
 Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) in two ways:
 
-- [ElevenLabs Agents](#elevenlabs-agents) runs the conversation on an agent hosted and configured on the
-  ElevenLabs platform (its voice, LLM, knowledge base, and tools), which Pydantic AI takes over per conversation.
+- [ElevenLabs Agents](#elevenlabs-agents) runs the conversation on an agent hosted and configured on
+  [ElevenAgents](https://elevenlabs.io/docs/eleven-agents/overview), ElevenLabs' agent platform (its voice, LLM,
+  knowledge base, and tools), which Pydantic AI takes over per conversation.
 - [Eleven Realtime](#eleven-realtime) runs ElevenLabs' speech-to-speech models directly, with the instructions,
   tools, and history coming from your Pydantic AI agent, as with every other
   [realtime provider](overview.md#provider-support).
 
-The difference is where the agent is defined. Use Eleven Realtime unless you need the ElevenLabs platform: your
+The difference is where the agent is defined. Use Eleven Realtime unless you need ElevenAgents: your
 Pydantic AI agent defines the conversation, as it does with any other realtime provider, and a reconnect replays
-the history. Use ElevenLabs Agents when the agent lives on the platform, for its knowledge bases, workflows, and
-guardrails, or to run a cascaded pipeline with an LLM of your choice. Pydantic AI then overrides the
-agent's instructions and settings per conversation, while its tools have to match the agent's client tools (see
-[Configuration ownership](#configuration-ownership)). An ElevenLabs agent can also run on an Eleven Realtime model,
-in [Realtime voice mode](#configuration-ownership): that's configured on the agent, and you connect to it through
-ElevenLabs Agents.
+the history. Use ElevenLabs Agents when the agent lives on ElevenAgents, for its knowledge bases, workflows, and
+guardrails, or to run a cascaded pipeline with an LLM of your choice. Pydantic AI then overrides the agent's
+instructions and settings per conversation, and by default checks its client tools against your agent's tools, or can
+[syncs them](#tool-synchronization) to match (see [Configuration ownership](#configuration-ownership)). An
+ElevenAgents agent can also run on an Eleven Realtime model, in [Realtime voice mode](#configuration-ownership):
+that's configured on the agent, and you connect to it through ElevenLabs Agents.
 
 ## ElevenLabs Agents
 
 Use an `elevenlabs-agents:<agent_id>` model string, or
 [`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] for
 model-level configuration, to connect an agent to the
-[ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview), where the conversation runs on a
+[ElevenAgents](https://elevenlabs.io/docs/eleven-agents/overview) platform, where the conversation runs on a
 hosted agent. Start with the [realtime quickstart](overview.md#quickstart).
 
 ElevenLabs Agents runs a cascaded pipeline (realtime ASR, a configurable LLM, ElevenLabs TTS, and
