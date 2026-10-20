@@ -19,6 +19,7 @@ from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
+    CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentUrl,
@@ -2543,6 +2544,47 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert not any(
         isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
+
+
+async def test_run_stream_with_message_history_strips_unresolved_tool_calls():
+    """End-to-end: with server-side `message_history`, an unresolved client tool call is still
+    stripped when other client messages before and after it are not kept, so the agent makes a
+    normal model request instead of running the call.
+    """
+    executed: list[int] = []
+    captured: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
+        yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def refresh_cache(key: int) -> str:
+        executed.append(key)  # pragma: no cover
+        return 'refreshed'  # pragma: no cover
+
+    request = DummyUIRunInput(
+        messages=[
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 42}, tool_call_id='call-1')]),
+            ModelRequest(parts=[SystemPromptPart(content='client system prompt')]),
+            ModelResponse(parts=[CompactionPart(content='client summary')]),
+        ]
+    )
+    adapter = DummyUIAdapter(agent=agent, run_input=request)
+
+    # Two warnings fire here (system-prompt strip + dangling call); assert on the dangling one.
+    with pytest.warns(UserWarning) as record:
+        async for _ in adapter.run_stream(message_history=[ModelRequest.user_text_prompt('server context')]):
+            pass
+    assert any('unresolved tool call' in str(w.message) and 'refresh_cache' in str(w.message) for w in record)
+
+    assert executed == []
+    assert len(captured) == 1
+    parts_seen_by_model = [part for message in captured[0] for part in message.parts]
+    assert not any(isinstance(part, (ToolCallPart, CompactionPart)) for part in parts_seen_by_model)
+    assert any(isinstance(part, UserPromptPart) and part.content == 'server context' for part in parts_seen_by_model)
 
 
 async def test_run_stream_strips_file_urls_with_disallowed_schemes():

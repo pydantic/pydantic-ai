@@ -15,6 +15,7 @@ from typing import Annotated, Protocol, TypeGuard
 from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, ValidationError
+from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, infer_model
@@ -65,17 +66,17 @@ def supports(provider: str, *, profile: str | None) -> bool:
     return provider in CONNECTIONS or (profile is not None and keyed_provider(provider) is not None)
 
 
-async def login(*, provider: str, profile: str | None, dialogs: Dialogs | None = None) -> str:
+async def login(*, provider: str, profile: str | None, console: Console, dialogs: Dialogs | None = None) -> str:
     """Ask for the connection or key privately and save it under the profile's account.
 
     With `dialogs`, the key is a `/keys` entry, picked or typed there and saved under a name
-    such as `OPENAI_WORK`; a connection is set up in the terminal only.
+    such as `OPENAI_WORK`; a connection is set up in the terminal only, printing through `console`.
     """
     name = account(provider, profile)
     if provider in CONNECTIONS:
         if dialogs is not None:
             raise ValueError(f'Connect {name} in the terminal: /login {name}.')
-        saved = await _connect(provider=provider, name=name)
+        saved = await _connect(provider=provider, name=name, console=console)
     elif dialogs is not None:
         token = await choose_key(name=_key_name(name), label=f'{provider} API key for {name}', dialogs=dialogs)
         saved = token is not None and await _save_token(provider=provider, name=name, token=token)
@@ -88,11 +89,11 @@ async def login(*, provider: str, profile: str | None, dialogs: Dialogs | None =
     return f'{name} connected, {storage}. Use {name}:MODEL.'
 
 
-async def _connect(*, provider: str, name: str) -> bool:
+async def _connect(*, provider: str, name: str, console: Console) -> bool:
     if provider == 'openrouter':
         from pydantic_clai2.models import openrouter
 
-        connection = await openrouter.prompt_connection()
+        connection = await openrouter.prompt_connection(console=console)
         if connection is None:
             return False
         await to_thread.run_sync(partial(openrouter.save_connection, connection, account=name))

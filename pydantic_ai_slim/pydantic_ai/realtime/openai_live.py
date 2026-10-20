@@ -1053,8 +1053,15 @@ class OpenAILiveConnection(RealtimeConnection):
                     # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
                     lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
-                        yield lost
-                        raise dropped
+                        # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
+                        # error and end the stream, as the other providers do, rather than raising the
+                        # `websockets` exception. The read started above is on the dead socket.
+                        self._cancel_read()
+                        error = RealtimeSessionErrorEvent(
+                            message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
+                        )
+                        yield [*lost, error]
+                        return
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     reconnected = await self._try_reconnect()

@@ -466,8 +466,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # The adapter module imports this one to build its stream.
         from ._adapter import AGUIAdapter
 
-        # An activity rather than chat messages: the client keeps it in its message list and sends it
-        # back, but a UI only renders activity types it registered a renderer for.
+        # An activity rather than chat messages: the client keeps it in its message list, but a UI only
+        # renders activity types it registered a renderer for. `@ag-ui/client` doesn't send activities
+        # back, so only a frontend that re-adds them restores the messages on the next run.
         enqueued = enqueued_messages_for_client(event.messages, manage_system_prompt=self.manage_system_prompt)
         if not enqueued:
             return
@@ -547,8 +548,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
         # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
         # result event because the reducer does not queue metadata for an entity that does not exist.
+        # A non-success outcome carries the return's `tool_kind` with it, as `dump_messages` does; a
+        # successful return needs no event, as loading falls back to the call's claim.
+        tool_kind = part.tool_kind if part.outcome != 'success' else None
         cause = part.cause if isinstance(part, ToolReturnPart) else None
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome, cause)):
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome, cause)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

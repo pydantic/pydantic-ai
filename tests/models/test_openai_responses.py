@@ -17,7 +17,7 @@ from typing import Any, Literal, cast
 import httpx2
 import pytest
 from cassetter import Cassette, RecordMode
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -69,12 +69,14 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     ModelMessagesTypeAdapter,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models._continuation import merge_responses
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
@@ -4760,6 +4762,13 @@ def _text_reply(response_id: str, text: str) -> resp.Response:
     return response_message([message]).model_copy(update={'id': response_id})
 
 
+def _digested(request: ModelMessage, response: ModelResponse) -> bytes:
+    """What a response's digest covers: the history it was created from, then each of its parts."""
+    part_adapter: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
+    parts = (b'\n' + part_adapter.dump_json(part, exclude_none=True) for part in response.parts)
+    return ModelMessagesTypeAdapter.dump_json([request], exclude_none=True) + b''.join(parts)
+
+
 def _redact_secret(messages: list[ModelMessage]) -> list[ModelMessage]:
     return [
         replace(
@@ -4794,6 +4803,29 @@ async def test_openai_previous_response_id_auto_resends_a_history_changed_before
     assert [item.get('content') for item in second_request['input']] == snapshot(
         ['[redacted]', [{'text': 'one', 'type': 'output_text', 'annotations': []}], 'What did I say?']
     )
+
+
+async def test_openai_previous_response_id_auto_resends_after_the_response_itself_changed(
+    allow_model_requests: None,
+):
+    """The server holds the response as it was created, so a response edited since is resent rather than continued."""
+    mock_client = MockOpenAIResponses.create_mock([_text_reply('resp_1', 'secret'), _text_reply('resp_2', 'two')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, model_settings=settings).run('Hello')
+
+    def redact_replies(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[TextPart('[redacted]')]) if isinstance(message, ModelResponse) else message
+            for message in messages
+        ]
+
+    redacting = Agent(model, model_settings=settings, capabilities=[ProcessHistory(redact_replies)])
+    await redacting.run('What did you say?', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert 'secret' not in json.dumps(second_request['input'])
 
 
 async def test_openai_previous_response_id_auto_resends_after_a_request_scoped_prompt(allow_model_requests: None):
@@ -4919,12 +4951,7 @@ async def test_openai_previous_response_id_keys_the_history_digest_when_given_a_
     first = await Agent(keyed, model_settings=settings).run('Hello')
     request, response = first.all_messages()
     assert isinstance(response, ModelResponse)
-    assert (
-        response.history_digest
-        == hmac.new(
-            b'secret', ModelMessagesTypeAdapter.dump_json([request], exclude_none=True), hashlib.sha256
-        ).hexdigest()
-    )
+    assert response.history_digest == hmac.new(b'secret', _digested(request, response), hashlib.sha256).hexdigest()
 
     await Agent(keyed, model_settings=settings).run('Again', message_history=first.all_messages())
     other = OpenAIResponsesModel(
@@ -4996,10 +5023,7 @@ async def test_openai_previous_response_id_records_the_history_on_a_streamed_res
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert (
-        response.history_digest
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude_none=True)).hexdigest()
-    )
+    assert response.history_digest == hashlib.sha256(_digested(request, response)).hexdigest()
 
 
 async def test_openai_previous_response_id_unset_never_chains(openai_api_key: str):
@@ -17075,10 +17099,30 @@ async def test_background_response_keeps_its_history_across_the_resume(allow_mod
 
     request, response = result.all_messages()
     assert isinstance(response, ModelResponse)
-    assert (
-        response.history_digest
-        == hashlib.sha256(ModelMessagesTypeAdapter.dump_json([request], exclude_none=True)).hexdigest()
+    assert response.history_digest == hashlib.sha256(_digested(request, response)).hexdigest()
+
+
+async def test_background_response_resumed_after_its_history_changed_is_not_continued(allow_model_requests: None):
+    """The server answers a background response from the history it was created from, not one redacted while it ran."""
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('You said secret.', background=True)],
     )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    settings = OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto')
+    parameters = ModelRequestParameters()
+    suspended = await model.request([ModelRequest.user_text_prompt('secret')], settings, parameters)
+    assert suspended.state == 'suspended'
+
+    redacted = ModelRequest.user_text_prompt('[redacted]')
+    resumed = await model.request([redacted, suspended], settings, parameters)
+    merged = merge_responses(suspended, resumed)
+
+    assert resumed.history_digest is None
+    history: list[ModelMessage] = [redacted, merged, ModelRequest.user_text_prompt('Again')]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    assert previous_response_id is None
+    assert messages is history
 
 
 async def test_background_in_progress_then_completed(allow_model_requests: None):

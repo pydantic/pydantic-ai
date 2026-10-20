@@ -481,6 +481,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         tool_name=call.tool_name,
         content=content,
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -2217,6 +2218,7 @@ class RealtimeSession:
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
+                tool_kind=call_part.tool_kind,
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))

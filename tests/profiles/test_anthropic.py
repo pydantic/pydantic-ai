@@ -17,10 +17,14 @@ See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
 from __future__ import annotations as _annotations
 
 import warnings
+from enum import Enum, IntEnum
 from typing import Annotated, Any
 
 import pytest
 from pydantic import BaseModel, Field
+
+from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
+from pydantic_ai.tools import GenerateToolJsonSchema
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -135,6 +139,93 @@ def test_strict_true_nested_model():
             'properties': {'name': {'type': 'string'}, 'address': {'$ref': '#/$defs/Address'}},
             'additionalProperties': False,
             'required': ['name', 'address'],
+        }
+    )
+
+
+class Area(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    billing = 'billing'
+    """Charges and invoices."""
+    bug = 'bug'
+    """Something is broken."""
+
+
+class Priority(UseEnumMemberDocstrings, IntEnum):
+    low = 1
+    """Can wait a week."""
+    high = 2
+    """Needs attention today."""
+
+
+class Weight(UseEnumMemberDocstrings, Enum):
+    half = 0.5
+    """Half the usual weight."""
+    unknown = 'unknown'
+    """Not weighed yet."""
+
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become typed one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
+    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
+    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+    on the generated schema, which is where the error was raised, so no request is needed.
+    """
+
+    class Ticket(BaseModel):
+        area: Area
+        priority: Priority
+        weight: Weight
+        team: Annotated[str, Choices({'finance': 'Money matters.', 'eng': 'Engineering.'})]
+        urgent: Annotated[bool, BoolCriteria(true='The customer is blocked.', false='The customer can wait.')]
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
+    transformed = transformer.walk()
+
+    assert transformed == snapshot(
+        {
+            '$defs': {
+                'Area': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['billing'], 'description': 'Charges and invoices.'},
+                        {'type': 'string', 'enum': ['bug'], 'description': 'Something is broken.'},
+                    ]
+                },
+                'Priority': {
+                    'anyOf': [
+                        {'type': 'integer', 'enum': [1], 'description': 'Can wait a week.'},
+                        {'type': 'integer', 'enum': [2], 'description': 'Needs attention today.'},
+                    ]
+                },
+                'Weight': {
+                    'anyOf': [
+                        {'type': 'number', 'enum': [0.5], 'description': 'Half the usual weight.'},
+                        {'type': 'string', 'enum': ['unknown'], 'description': 'Not weighed yet.'},
+                    ]
+                },
+            },
+            'type': 'object',
+            'properties': {
+                'area': {'$ref': '#/$defs/Area'},
+                'priority': {'$ref': '#/$defs/Priority'},
+                'weight': {'$ref': '#/$defs/Weight'},
+                'team': {
+                    'anyOf': [
+                        {'type': 'string', 'enum': ['finance'], 'description': 'Money matters.'},
+                        {'type': 'string', 'enum': ['eng'], 'description': 'Engineering.'},
+                    ]
+                },
+                'urgent': {
+                    'anyOf': [
+                        {'type': 'boolean', 'enum': [True], 'description': 'The customer is blocked.'},
+                        {'type': 'boolean', 'enum': [False], 'description': 'The customer can wait.'},
+                    ]
+                },
+            },
+            'additionalProperties': False,
+            'required': ['area', 'priority', 'weight', 'team', 'urgent'],
         }
     )
 

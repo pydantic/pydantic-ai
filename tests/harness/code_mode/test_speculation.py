@@ -85,7 +85,7 @@ def _run_code_return_metadata(messages: list[ModelMessage]) -> dict[str, Any]:
     parts = [
         part
         for message in messages
-        for part in getattr(message, 'parts', [])
+        for part in message.parts
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
     assert parts, 'no run_code ToolReturnPart in history'

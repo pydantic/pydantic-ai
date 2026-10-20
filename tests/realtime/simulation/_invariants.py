@@ -245,6 +245,7 @@ class Checker:
     ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
         """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
         checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
+        self.lifecycle.brackets_responses = True
 
         def observe(event: RealtimeCodecEvent | LifecycleEvent | None) -> None:
             self._codec_issues += checker.finish() if event is None else checker.feed(event)
@@ -866,19 +867,28 @@ class Checker:
             if wrong
             else [],
         )
+        # A response the server identified is recorded with exactly the usage reported under its id: none, if the client
+        # read no report for it, rather than another response's.
+        billed_by_id = {
+            message.provider_response_id: truth.usage_read.get(message.provider_response_id, (0, 0))
+            for message in messages
+            if isinstance(message, ModelResponse)
+            and message.provider_response_id is not None
+            and (message.provider_response_id in truth.usage_read or message.provider_response_id in truth.responses)
+        }
         self.report(
             'usage.attribution',
             [
                 (
                     f'{message.provider_response_id} is recorded with {message.usage.input_tokens} / '
-                    f'{message.usage.output_tokens} tokens, but was billed {truth.usage_read[message.provider_response_id]}',
+                    f'{message.usage.output_tokens} tokens, but was billed {billed_by_id[message.provider_response_id]}',
                     {'response': message.provider_response_id},
                 )
                 for message in messages
                 if isinstance(message, ModelResponse)
-                and message.provider_response_id in truth.usage_read
+                and message.provider_response_id in billed_by_id
                 and (message.usage.input_tokens, message.usage.output_tokens)
-                != truth.usage_read[message.provider_response_id]
+                != billed_by_id[message.provider_response_id]
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.

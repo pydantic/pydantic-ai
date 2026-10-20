@@ -848,7 +848,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                                 # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
                                 part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
                                 )
 
                         reevaluated_message_parts.append(part)
