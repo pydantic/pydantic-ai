@@ -353,6 +353,15 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     Takes precedence over the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]
     setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
     that model."""
+    reasoning_summary: Literal['detailed', 'concise', 'auto']
+    """A summary of the backend model's reasoning, as
+    [`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+    requests on a direct Responses request.
+
+    The reasoning recorded ahead of a web search the backend runs then carries the summary, where the
+    backend wrote one, as its [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] content. Check the
+    [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
+    for more details."""
     verbosity: Literal['low', 'medium', 'high']
     """How much detail the backend generates. Does not affect the Live model's spoken delivery."""
     service_tier: Literal['auto', 'default', 'flex', 'priority']
@@ -1027,8 +1036,15 @@ class OpenAILiveConnection(RealtimeConnection):
                     # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
                     lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
-                        yield lost
-                        raise dropped
+                        # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
+                        # error and end the stream, as the other providers do, rather than raising the
+                        # `websockets` exception. The read started above is on the dead socket.
+                        self._cancel_read()
+                        error = RealtimeSessionErrorEvent(
+                            message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
+                        )
+                        yield [*lost, error]
+                        return
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     reconnected = await self._try_reconnect()
@@ -1324,7 +1340,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return [RealtimeSessionErrorEvent(message=message, code=code)]
         events: list[RealtimeCodecEvent] = []
         for delegation in in_flight:
-            events.extend(self._response_ended_without_usage())
+            events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
         events.append(
             RealtimeSessionErrorEvent(
@@ -1426,7 +1442,7 @@ class OpenAILiveConnection(RealtimeConnection):
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if not events:
-                    events = self._response_ended_without_usage()
+                    events = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
                 self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
             if not isinstance(event, ResponseCompletedEvent):
                 events.append(_delegation_stopped(event))
@@ -1487,14 +1503,17 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     @staticmethod
-    def _response_ended_without_usage() -> list[RealtimeCodecEvent]:
-        """The empty usage report a backend response that ended without one still makes.
+    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[RealtimeCodecEvent]:
+        """The usage report a backend response that ended without mapped usage still makes.
 
         Every backend response is reported exactly once, usage or not: it is a request the backend made
         (see `responses_are_requests` on the profile), and the calls it asked for are reported as
         `response_usage_follows`, so their `ModelResponse` stays open until it arrives.
+
+        Args:
+            unmeasured_requests: Number of responses whose terminal omitted usage information.
         """
-        return [SessionUsage(RequestUsage())]
+        return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
     def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.
@@ -1940,8 +1959,13 @@ class OpenAILiveModel(RealtimeModel):
         parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
         if parallel_tool_calls is not None:
             responses['parallel_tool_calls'] = parallel_tool_calls
+        reasoning: dict[str, str] = {}
         if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
-            responses['reasoning'] = {'effort': effort}
+            reasoning['effort'] = effort
+        if (summary := delegation_settings.get('reasoning_summary')) is not None:
+            reasoning['summary'] = summary
+        if reasoning:
+            responses['reasoning'] = reasoning
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 

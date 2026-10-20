@@ -1201,6 +1201,22 @@ async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() 
     assert extra_body == {}
 
 
+@pytest.mark.parametrize('model_name', ['z-ai/glm-5.3', 'z-ai/glm-5.2'])
+def test_openrouter_glm_thinking_false(model_name: str) -> None:
+    """GLM schema quirks must not change OpenRouter's reasoning translation.
+
+    This inspects the prepared payload directly because cassette matching does not pin its body.
+    """
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='mock-api-key'))
+    settings = OpenRouterModelSettings(thinking=False)
+
+    prepared, params = model.prepare_request(settings, ModelRequestParameters())
+
+    assert params.thinking is False
+    assert prepared is not None
+    assert prepared.get('extra_body') == {'reasoning': {'effort': 'none'}}
+
+
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
     """Repeated `prepare_request` calls must not mutate the caller's settings.
 

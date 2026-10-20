@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '10 */6 * * *'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
   workflow_call:
     secrets:
       ZAI_API_KEY:
@@ -25,6 +30,13 @@ network:
     - defaults
     - python
     - api.z.ai
+    # Logfire ingestion endpoints used by shared/otel-logfire.md.
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 tools:
   bash: []
   cli-proxy: false
@@ -136,6 +148,7 @@ pre-agent-steps:
       retention-days: 1
       overwrite: true
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md

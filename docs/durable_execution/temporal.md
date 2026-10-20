@@ -405,14 +405,20 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent
-    from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import (
+        AgentEventStream,
+        PydanticAIWorkflow,
+        TemporalDurability,
+    )
 
 durability = TemporalDurability(event_stream_topic='agent-events')
 agent = Agent('{{ openai:medium }}', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
-class AssistantWorkflow:
+class AssistantWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]  # registers the agent's activities with the worker
+
     @workflow.init
     def __init__(self, prompt: str) -> None:
         self.events = AgentEventStream()
@@ -425,7 +431,8 @@ class AssistantWorkflow:
 ```
 
 A consumer that holds only a workflow handle then observes the run as it happens, with
-[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]:
+[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events].
+This and the following snippets continue the workflow module above (they use its `agent`, `durability` and workflow classes) and take a `client` connected with [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin], as in the [first example](#durable-agent):
 
 ```python {title="temporal_workflow_streams_consumer.py" test="skip" lint="skip"}
 from uuid import uuid4
@@ -457,7 +464,9 @@ The adapter's two jobs split across the boundary: the HTTP handler turns the req
 
 ```python {title="temporal_workflow_streams_ui_workflow.py" test="skip" lint="skip"}
 @workflow.defn
-class ChatWorkflow:
+class ChatWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.init
     def __init__(self, body: bytes) -> None:
         self.events = AgentEventStream()
@@ -635,7 +644,7 @@ from temporalio import workflow
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ResolveModelId
-from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
@@ -672,7 +681,9 @@ agent = Agent(
 
 
 @workflow.defn
-class MultiModelWorkflow:
+class MultiModelWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.run
     async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
         if use_reasoning:

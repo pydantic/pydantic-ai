@@ -99,6 +99,8 @@ result["value"]   # not result.value
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
 
+An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run. A workflow script cannot do either, so the catalog leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with it raises a `RuntimeError` in the script, like any other sub-agent failure.
+
 ## How results come back
 
 The value of the script's last expression becomes the tool result -- the model does not `print()` it.

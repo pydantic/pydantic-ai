@@ -111,6 +111,9 @@ SESSION_CREATED_EVENT = 'session.created'
 SESSION_UPDATE_EVENT = 'session.update'
 SESSION_UPDATED_EVENT = 'session.updated'
 CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
+CONVERSATION_ITEM_DELETE_EVENT = 'conversation.item.delete'
+CONVERSATION_ITEM_ADDED_EVENTS = frozenset({'conversation.item.added', 'conversation.item.created'})
+"""The frames that say an item joined the conversation: GA's `.added`, and the beta protocol's `.created`."""
 INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
 INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
 INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
@@ -383,6 +386,8 @@ class ProtocolConversationItem(BaseModel):
     type: str
     role: str | None = None
     call_id: str | None = None
+    name: str | None = None
+    """The tool a function call item calls."""
     content: list[_ProtocolItemContent] | None = None
 
 
@@ -1025,6 +1030,16 @@ def client_item_id(input_index: int) -> str:
     return f'pydantic_ai_item_{input_index}'
 
 
+def tool_content_item_id(input_index: int) -> str:
+    """The id of the user message item carrying content a tool returned besides its output.
+
+    The connection chooses it so it can delete the item with the tool call (`openai_prune_tool_items`). It names no
+    input on purpose: under a `client_item_id`, `client_item_input` would take the item's joining the conversation for
+    input `input_index` being placed there, which the tool's output already reports.
+    """
+    return f'pydantic_ai_content_{input_index}'
+
+
 def client_item_input(item_id: str | None) -> int | None:
     """The input an item was created by, when its id is one `client_item_id` chose."""
     if item_id is None or (match := _CLIENT_ITEM_ID_RE.fullmatch(item_id)) is None:
@@ -1253,16 +1268,25 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     }
 
 
-def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
-    """Whether the session's configured VAD makes the server cancel the active response on speech onset.
+def _config_turn_detection(session_config: dict[str, Any]) -> dict[str, Any] | None:
+    """The `turn_detection` payload of an OpenAI-protocol session config.
 
-    Reads the `turn_detection` payload from either place an OpenAI-protocol session config carries
-    it: nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
+    It is nested under `audio.input` (OpenAI GA, Azure) or at the top level (xAI, Azure Voice Live).
     """
-    turn_detection = session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
+    return session_config.get('turn_detection') or session_config.get('audio', {}).get('input', {}).get(
         'turn_detection'
     )
+
+
+def config_interrupts_response_on_speech(session_config: dict[str, Any]) -> bool:
+    """Whether the session's configured VAD makes the server cancel the active response on speech onset."""
+    turn_detection = _config_turn_detection(session_config)
     return turn_detection is not None and bool(turn_detection.get('interrupt_response'))
+
+
+def config_has_manual_turns(session_config: dict[str, Any]) -> bool:
+    """Whether the session's config turns turn detection off, leaving the client to commit every turn."""
+    return _config_turn_detection(session_config) is None
 
 
 def tool_choice_config(tool_choice: ResolvedToolChoice) -> str:

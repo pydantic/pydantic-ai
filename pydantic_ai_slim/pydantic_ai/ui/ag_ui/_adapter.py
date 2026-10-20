@@ -299,8 +299,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ([`FilePart`][pydantic_ai.messages.FilePart]) or uploaded-file references
     ([`UploadedFile`][pydantic_ai.messages.UploadedFile]), so when this is `True` they are
     serialized as sidecar activity messages on `dump_messages` and reconstructed on
-    `load_messages`. A frontend only completes the round-trip if it echoes these activity
-    messages back on the next request.
+    `load_messages`. A frontend only completes the round-trip if it sends these activity
+    messages back on the next request, which `@ag-ui/client` doesn't do; see
+    [Records carried as activity messages](../ui/ag-ui.md#activity-records).
 
     This is a representation setting, not a security one: honoring a reconstructed inbound
     `UploadedFile` still requires
@@ -512,8 +513,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             tool_calls[tool_call_id] = tool_name
 
                             # The claim is client-supplied, so it's set on the base part and promoted
-                            # best-effort by the final `narrow_message_parts` pass (which strips it if
-                            # it doesn't validate against the typed subclass).
+                            # best-effort by the final `narrow_message_parts` pass. A claim whose data
+                            # doesn't validate leaves a base part; only core's kinds are then stripped.
                             tool_kind = (
                                 parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
                             )
@@ -552,11 +553,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     content = rehydrate_tool_return_content(tool_msg.content)
 
                     # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
-                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. Error
-                    # results stay untyped — typed return parts imply success to their readers.
-                    # A non-success outcome claim (the return would otherwise reload as `'success'`,
-                    # changing how it serializes to the provider) also keeps the return untyped.
-                    tool_kind = None
+                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. A
+                    # non-success return keeps its kind too: it is never promoted to a typed return
+                    # part, so the kind can't pass it off as a success. A non-success outcome claim
+                    # keeps the return from reloading as `'success'`, which would change how it
+                    # serializes to the provider.
+                    encrypted_tool_kind = (
+                        parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
                     outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
@@ -565,11 +570,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         outcome = encrypted_outcome
                     elif tool_msg.error is not None:
                         outcome = 'failed'
-                    else:
-                        encrypted_tool_kind = (
-                            parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                        )
-                        tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
 
                     builtin_id = parse_builtin_tool_call_id(tool_call_id)
                     if builtin_id is not None:
@@ -586,8 +586,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     else:
                         # The final `narrow_message_parts` pass parses the rehydrated content into a typed
-                        # return subclass when the `tool_kind` claim validates, and leaves the base
-                        # `ToolReturnPart` (dropping the claim) when it doesn't.
+                        # return subclass when the return succeeded and the `tool_kind` claim validates,
+                        # and otherwise leaves the base `ToolReturnPart` (which keeps the claim, unless
+                        # it is one of core's kinds).
                         builder.add(
                             ToolReturnPart(
                                 tool_name=tool_name,
@@ -605,7 +606,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
                         metadata = {}
                     builder.add(
                         ThinkingPart(
@@ -748,6 +749,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 if part.scope != 'request':
                     system_content.append(part.content)
             elif isinstance(part, UserPromptPart):
+                # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
+                # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
+                # as one user message instead of one per prompt.
+                flush_user_content()
                 if isinstance(part.content, str):
                     user_content.append(TextInputContent(type='text', text=part.content))
                 else:
@@ -826,6 +831,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                     )
                 else:
+                    flush_user_content()
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
@@ -1004,13 +1010,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `NativeToolReturnPart.provider_details` is lost.
         - `tool_kind` is lost when `ag_ui_version < '0.1.11'` (before its `encrypted_value` carrier
           existed), so typed tool parts reload as their base classes.
-        - `tool_kind` is not restored on error/denied tool returns (a typed return implies
-          success to its readers), so those reload as plain `ToolReturnPart`.
+        - A failed, denied or interrupted (native) tool return keeps its `tool_kind`, but reloads as a
+          plain `ToolReturnPart` / `NativeToolReturnPart`: only successful returns are promoted to typed parts.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - Each `UserPromptPart` (and each `RetryPromptPart` without a tool name) is dumped as its own
+          `UserMessage`, so a request's prompts reload as the same separate parts rather than merged into one.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only

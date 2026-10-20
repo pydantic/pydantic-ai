@@ -669,6 +669,19 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'timeout',
+        }
+    )
+
     _model_name: BedrockModelName = field(repr=False)
     _provider: Provider[BaseClient] = field(repr=False)
     _client: BaseClient | None = field(default=None, repr=False)
@@ -1937,6 +1950,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+    _usage_received: bool | None = field(default=False, init=False)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
@@ -1968,8 +1982,11 @@ class BedrockStreamedResponse(StreamedResponse):
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
-                            self._usage += _map_usage(
-                                metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                            self._add_usage(
+                                _map_usage(
+                                    metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                                ),
+                                reported=True,
                             )
                         if 'trace' in metadata:
                             # `messageStop` usually precedes `metadata`, but AWS documents no strict event

@@ -43,22 +43,31 @@ import pathlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Annotated, Any, TypeAlias, cast
 
 import httpx2
 import logfire
-from anthropic import AsyncAnthropic
+from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import TypeAdapter, ValidationError
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span
+from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai import Agent, AgentRunResult, ModelRequestContext, ModelRetry, RunContext, UsageLimitExceeded
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    ProcessEventStream,
+    ProcessHistory,
+    WrapModelRequestHandler,
+    WrapRunHandler,
+)
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -164,6 +173,46 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
         return f'error: {message}'
 
 
+def _mark_timed_out(span: Span) -> None:
+    span.set_attribute('error.type', 'timeout')
+    span.set_status(Status(StatusCode.ERROR, 'timeout'))
+
+
+def _wall_clock_cap_expired() -> bool:
+    return any(expired() for expired in _wall_clock_caps.get())
+
+
+@dataclass
+class _MarkTimedOutSpans(AbstractCapability[object]):
+    """Mark the agent-run and model-request spans that one of the shim's wall-clock caps cuts off.
+
+    OpenTelemetry does not record `asyncio.CancelledError` as an error, so a run or request that
+    `task`'s or `_run_with_timeout`'s cap cancels ends its span `UNSET`, like work that finished.
+    A cut-off request also has no finish reason, and no usage when the provider reports it only at
+    the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
+    failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
+    Each hook runs inside the span pydantic-ai opens for it.
+    """
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        try:
+            return await handler()
+        except asyncio.CancelledError:
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
+            raise
+
+    async def wrap_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        except asyncio.CancelledError:
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
+            raise
+
+
 # pydantic-ai's built-in request_limit default of 50 is too low for the
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
 REQUEST_LIMIT = 400
@@ -172,9 +221,13 @@ SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
+def _is_attention_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+
+
 def run_request_limit() -> int:
     """Return the workflow-specific cap on model requests."""
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+    if _is_attention_run():
         return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
 
@@ -208,18 +261,77 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
-def safe_output_pending() -> bool:
-    """Whether this is a gh-aw run whose safe-outputs sink is still empty."""
+def _safe_output_status() -> tuple[bool, list[int] | None]:
+    """Return whether output is pending and any Attention candidate IDs still missing decisions."""
+    is_attention = _is_attention_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        return False
+        if is_attention:
+            raise ValueError('Attention safe-output sink is not configured')
+        return False, None
     sink = pathlib.Path(path)
-    return not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    if not is_attention or sink_empty:
+        return sink_empty, None
+
+    workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+    snapshot_path = workspace / 'attention-candidates.json'
+    if not snapshot_path.is_file():
+        raise ValueError('Attention candidate snapshot is missing')
+
+    snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+    candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+    candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+        [candidate['number'] for candidate in candidate_rows]
+    )
+    if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+        raise ValueError('Attention snapshot contains too many or duplicate candidates')
+    candidates = set(candidate_numbers)
+    if not candidates:
+        return sink_empty, []
+
+    recorded: set[int] = set()
+    entry_adapter = TypeAdapter(dict[str, object])
+    for line in sink.read_text(encoding='utf-8').splitlines():
+        try:
+            entry = entry_adapter.validate_json(line)
+        except ValidationError:
+            continue
+        item_number = entry.get('item_number')
+        if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+            try:
+                parsed_number = int(item_number)
+            except ValueError:
+                continue
+            if parsed_number > 0 and str(parsed_number) == item_number:
+                recorded.add(parsed_number)
+    missing = sorted(candidates - recorded)
+    return bool(missing), missing
+
+
+def safe_output_pending() -> bool:
+    """Whether a gh-aw run is missing safe output or Attention decisions."""
+    try:
+        output_pending, _ = _safe_output_status()
+    except (KeyError, OSError, ValueError):
+        if _is_attention_run():
+            return True
+        raise
+    return output_pending
 
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    if not safe_output_pending():
+    output_pending, missing = _safe_output_status()
+    if missing:
+        missing_ids = ', '.join(str(number) for number in missing)
+        logger.warning('attention decisions missing for candidate IDs %s; requesting completion', missing_ids)
+        raise ModelRetry(
+            'Record an attention decision for each missing candidate ID: '
+            f'{missing_ids}. Keep the decisions already recorded and call '
+            '`record_attention_decision` only for these missing IDs.'
+        )
+    if not output_pending:
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
@@ -349,6 +461,30 @@ TIME_BUDGET_NOTICE = (
 
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
 _run_deadline: float | None = None
+
+# Whether each wall-clock cap the current work runs under has expired, innermost last.
+_wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+
+
+@asynccontextmanager
+async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
+    """`asyncio.timeout` that marks the span holding it when it expires.
+
+    It is registered so `_MarkTimedOutSpans` can tell the cancellations it causes from others, and a
+    `TimeoutError` raised by the work it caps leaves it unexpired. `task`'s cap marks the
+    `execute_tool Task` span, which otherwise looks like a successful call.
+    """
+    cap = asyncio.timeout(seconds)
+    token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+    try:
+        async with cap:
+            yield
+    except TimeoutError:
+        if cap.expired():
+            _mark_timed_out(get_current_span())
+        raise
+    finally:
+        _wall_clock_caps.reset(token)
 
 
 def _run_seconds_left() -> float | None:
@@ -811,7 +947,10 @@ def configure_observability() -> None:
             token=write_token or None,
         )
         logfire.instrument_pydantic_ai(include_content=True, include_binary_content=True)
-        logfire.instrument_httpx(capture_all=True)
+        # Also instruments `httpx2`, the model client's library, by patching its
+        # `AsyncHTTPTransport`: every attempt `rate_limit_retry_transport` makes gets its own
+        # span. Request bodies would repeat each `chat` span's `gen_ai.input.messages`.
+        logfire.instrument_httpx(capture_headers=True, capture_response_body=True)
         logfire.instrument_mcp()
         logger.info('Logfire/OTLP instrumentation enabled (pydantic_ai + httpx + mcp)')
     except Exception as exc:
@@ -873,14 +1012,15 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 
 
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
-    """Allow-list + `plan`-mode filter for the Claude Code toolset."""
+    """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
+    attention_read_only = _is_attention_run()
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
-        if plan and name in MUTATING_TOOLS:
+        if (plan or attention_read_only) and name in MUTATING_TOOLS:
             return False
         return True
 
@@ -973,6 +1113,8 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
     elif isinstance(error, RunTimeLimitExceeded):
         kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, (APITimeoutError, httpx2.TimeoutException)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
@@ -1114,6 +1256,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
+            _MarkTimedOutSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1123,10 +1266,10 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     sub_usage = RunUsage()
     _subagent_requests_in_flight += sub_request_limit
     try:
-        result = await asyncio.wait_for(
-            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=timeout,
-        )
+        async with _wall_clock_cap(timeout):
+            result = await sub.run(
+                RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage
+            )
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
@@ -1164,10 +1307,8 @@ async def _run_with_timeout(
         async with AsyncExitStack() as stack:
             if isinstance(model, AnthropicModel):
                 await stack.enter_async_context(model.client)
-            return await asyncio.wait_for(
-                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-                timeout=budget,
-            )
+            async with _wall_clock_cap(budget):
+                return await run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage)
     except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
@@ -1218,6 +1359,7 @@ async def run(
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
+            _MarkTimedOutSpans(),
         ],
     )
     agent.output_validator(require_safe_output)
@@ -1288,7 +1430,7 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        task_tool = None if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW else task
+        task_tool = None if _is_attention_run() else task
         claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(

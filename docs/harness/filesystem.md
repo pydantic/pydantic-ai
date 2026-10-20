@@ -261,10 +261,15 @@ applies the same rule to absolute symlink targets.
   `root_dir` are still rejected, but a symlink leading outside is not detected,
   and a link to `.env` does not match the patterns. That is exact for storage
   without symlinks, such as an object store.
-- **A guardrail, not isolation.** The checks run before each operation, so a
-  symlink swapped in between the check and the use is not caught, and `Shell`
-  commands ignore `root_dir` entirely. Use a sandbox workspace when the agent or
-  the tree is untrusted.
+- **A guardrail, not isolation.** Containment and allow, deny, and read-only
+  patterns are functional guardrails. `LocalWorkspace` does not establish a
+  security isolation boundary, even with command execution disabled. Bypasses
+  within the workspace process's existing OS authority are correctness bugs.
+  The checks run before each operation, so a symlink swapped between the check
+  and the use is not caught, and `Shell` commands ignore `root_dir` entirely.
+  For isolation, use a sandbox workspace and configure its boundary to protect
+  the required resources. Files inside that boundary are not automatically
+  confidential from the agent.
 - **Bounded walks.** `search_files` and `find_files` stop after 10,000
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.

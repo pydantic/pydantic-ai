@@ -64,7 +64,7 @@ async def orchestrating(messages: list[ModelMessage], info: AgentInfo) -> AsyncI
 
 
 def orchestrated(make: MakeWeb, *, workspaces: bool = True) -> Web:
-    """A web UI whose session's model, which the orchestrator uses, is `orchestrating`."""
+    """A web UI whose agent model, which the orchestrator uses while no default is saved, is `orchestrating`."""
     agent = Agent(FunctionModel(stream_function=orchestrating), deps_type=type(None))
     return make(agent, extra=[WORKSPACES if workspaces else WORKSPACES.model_copy(update={'enabled': False})])
 
@@ -90,7 +90,9 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
     """A message runs the orchestrator's own agent; its tool cards stream tagged for its chat, and it asks there."""
     web_ = orchestrated(make_web)
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
-        assert opened(socket) == OrchestratorState(enabled=True, running=False, items=[], questions=[])
+        assert opened(socket) == OrchestratorState(
+            enabled=True, running=False, model='function::orchestrating', items=[], questions=[]
+        )
         assert web_.post('/api/orchestrator/input', {'text': '  '}).status_code == 400
         assert web_.post('/api/orchestrator/input', {'text': 'What is there?'}).status_code == 204
         seen, asked = orchestrator_until(socket, QuestionAsked)
@@ -134,7 +136,7 @@ def test_the_orchestrator_chat_streams_asks_and_is_saved(make_web: MakeWeb, tmp_
 def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
     """The turn reports the failed save and leaves no temporary file; the chat keeps it until a save succeeds."""
     web_ = orchestrated(make_web)
-    path = web_.plugin.remote.orchestrator.path
+    path = web_.plugin.service.orchestrator.path
     path.mkdir(parents=True)  # A folder where the file goes: it reads as no conversation, and cannot be replaced.
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
@@ -153,7 +155,7 @@ def test_a_conversation_it_cannot_save(make_web: MakeWeb) -> None:
 
 def test_stopping_failing_and_starting_over(make_web: MakeWeb, tmp_path: Path) -> None:
     web_ = orchestrated(make_web)
-    orchestrator = web_.plugin.remote.orchestrator
+    orchestrator = web_.plugin.service.orchestrator
     assert web_.post('/api/orchestrator/interrupt').json() == {'interrupted': False}
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
         opened(socket)
@@ -219,17 +221,29 @@ def test_the_session_agent_gets_no_workspace_tools(make_web: MakeWeb) -> None:
     assert not [name for name in offered if name.startswith(('workspace_', 'session_', 'sessions_'))]
 
 
+def test_its_state_names_the_saved_default_model_not_the_sessions(make_web: MakeWeb) -> None:
+    """The pane shows the model the orchestrator runs on: the saved default, not the session's own."""
+    web_ = orchestrated(make_web)
+    web_.shell.process.store.set('model', 'test')
+    assert web_.get('/api/state').json()['status']['model'] == 'agent default'
+    assert web_.get('/api/orchestrator/state').json()['model'] == 'test'
+    # Named, not built: a saved chain since deleted still shows, and the page still connects.
+    web_.shell.process.store.set('model', 'chain:gone')
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        assert opened(socket).model == 'chain:gone'
+
+
 def test_a_conversation_it_cannot_read_or_without_a_model(make_web: MakeWeb) -> None:
     web_ = make_web(Agent(deps_type=type(None)), extra=[WORKSPACES])
-    orchestrator = web_.plugin.remote.orchestrator
+    orchestrator = web_.plugin.service.orchestrator
     orchestrator.path.parent.mkdir(parents=True)
     orchestrator.path.write_text('not json')
     assert web_.portal.call(orchestrator.load).messages == []
     with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
-        opened(socket)
+        assert opened(socket).model is None
         assert web_.post('/api/orchestrator/input', {'text': 'Hi'}).status_code == 204
         ended = orchestrator_until(socket, TurnEnded)[1]
-    assert ended == TurnEnded(outcome='failed', error='Choose a model for this session first.')
+    assert ended == TurnEnded(outcome='failed', error='Choose a model with /model first.')
 
 
 def test_a_turn_another_clai_overtook_is_not_kept(make_web: MakeWeb) -> None:
