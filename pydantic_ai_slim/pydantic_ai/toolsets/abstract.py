@@ -226,11 +226,22 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """
         return True
 
+    @property
+    def _instruction_key(self) -> str | None:
+        """The id this toolset's instruction parts are keyed by, as `toolset:<key>`.
+
+        Its [`id`][pydantic_ai.toolsets.AbstractToolset.id] by default. A toolset that can name its
+        instructions' source without an `id`, such as an `MCPToolset` by its server's host, overrides
+        this rather than defaulting `id`, which also names durable operations.
+        """
+        return self.id
+
     def _instruction_source(self) -> ToolsetInstructionSource | None:
         """Read this toolset's source without validating an id that contributes no instructions."""
-        if self.id is None or ':' in self.id:
+        key = self._instruction_key
+        if key is None or ':' in key:
             return None
-        return ToolsetInstructionSource(self.id)
+        return ToolsetInstructionSource(key)
 
     def _framework_appended_instruction_ids(self) -> frozenset[InstructionId]:
         """The ids of this toolset's blocks that use `on_change='append'` by the framework's choice.

@@ -39,6 +39,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavi
 from pydantic_ai.messages import (
     InstructionDeltaPart,
     InstructionId,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -54,7 +55,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import CombinedToolset
-from pydantic_ai.toolsets._instruction_collection import framework_appended_instruction_ids
+from pydantic_ai.toolsets._instruction_collection import (
+    flatten_instruction_contributions,
+    framework_appended_instruction_ids,
+    make_contribution,
+)
 from pydantic_ai.usage import RunUsage
 
 from .conftest import IsStr, try_import
@@ -810,7 +815,7 @@ class TestMCPToolsetIntegration:
         assert part is not None
         assert part.content == 'You are an MCP test server.'
         assert part.dynamic is False
-        # Without an `id` there's nothing to address the block by, so it keeps rewriting the prefix.
+        # An in-process server without an `id` has no key to address the block by, so it keeps rewriting.
         assert part.on_change == 'rewrite'
 
     async def test_get_instructions_append_with_an_id(self, fastmcp_server: FastMCP[None], run_context: RunContext):
@@ -870,7 +875,10 @@ A later <context> element with the same id replaces the earlier one and stays in
         for previous, current in zip(sent, sent[1:]):
             assert current[: len(previous)] == previous
 
-    async def test_server_instructions_without_an_id_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
+    async def test_server_instructions_without_an_id_or_url_rewrite_the_prefix(
+        self, fastmcp_server: FastMCP[None], caplog: pytest.LogCaptureFixture
+    ):
+        """An in-process server without an `id` has nothing to key its instructions by, so they keep rewriting."""
         prefixes: list[str | None] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -880,11 +888,18 @@ A later <context> element with the same id replaces the earlier one and stays in
         agent = Agent(FunctionModel(model_fn), toolsets=[MCPToolset(fastmcp_server, include_instructions=True)])
 
         history: list[ModelMessage] = []
-        for instructions in ['First instructions.', 'Second instructions.']:
-            fastmcp_server.instructions = instructions
-            history = (await agent.run('Continue.', message_history=history)).all_messages()
+        with caplog.at_level('DEBUG', logger='pydantic_ai.mcp'):
+            for instructions in ['First instructions.', 'Second instructions.']:
+                fastmcp_server.instructions = instructions
+                history = (await agent.run('Continue.', message_history=history)).all_messages()
 
         assert prefixes == ['First instructions.', 'Second instructions.']
+        # Suggested once per toolset, not on every request.
+        assert [record.getMessage() for record in caplog.records if record.name == 'pydantic_ai.mcp'] == [
+            IsStr(
+                regex=r'.* has no `id` or URL to key its server instructions by, .* Pass `id=` to append changes instead\.'
+            )
+        ]
         assert not any(
             isinstance(part, InstructionDeltaPart)
             for message in history
@@ -892,8 +907,8 @@ A later <context> element with the same id replaces the earlier one and stays in
             for part in message.parts
         )
 
-    async def test_server_instructions_under_a_url_derived_id_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
-        """An id the `MCP` capability derived from the URL can carry a credential, so it's never sent as a `<context>` id."""
+    async def test_mcp_capability_server_instructions_are_keyed_by_its_derived_id(self, fastmcp_server: FastMCP[None]):
+        """The `MCP` capability's default id is the URL's hostname, so its server's instructions append under it."""
         prefixes: list[str | None] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -901,16 +916,84 @@ A later <context> element with the same id replaces the earlier one and stays in
             return ModelResponse(parts=[TextPart('done')])
 
         capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=fastmcp_server)
-        assert capability.id is not None and 'SENTINEL-path' in capability.id
-        result = await Agent(FunctionModel(model_fn), capabilities=[capability]).run('Continue.')
+        assert capability.id == 'mcp.example.test'
+        await Agent(FunctionModel(model_fn), capabilities=[capability]).run('Continue.')
 
-        assert prefixes == ['You are an MCP test server.']
-        assert not any(
-            isinstance(part, InstructionDeltaPart)
-            for message in result.all_messages()
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+        assert prefixes == [
+            snapshot("""\
+<context id="toolset:mcp.example.test">
+You are an MCP test server.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+        ]
+
+    async def test_server_instructions_without_an_id_are_keyed_by_the_url_host(self):
+        """A remote server's instructions append under its hostname when the toolset has no `id`."""
+        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
+
+        @server.tool
+        async def ping() -> str:
+            return 'pong'
+
+        prefixes: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+        toolset = MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True)
+        assert toolset.id is None
+        agent = Agent(FunctionModel(model_fn), toolsets=[toolset])
+
+        history: list[ModelMessage] = []
+        deltas: list[tuple[str, str | None]] = []
+        try:
+            async with app.router.lifespan_context(app):
+                for instructions in ['Remote guidance.', 'Newer remote guidance.']:
+                    server.instructions = instructions
+                    result = await agent.run('Continue.', message_history=history)
+                    history = result.all_messages()
+                    deltas += [
+                        (str(part.id), part.content)
+                        for message in result.new_messages()
+                        if isinstance(message, ModelRequest)
+                        for part in message.parts
+                        if isinstance(part, InstructionDeltaPart)
+                    ]
+        finally:
+            await client.aclose()
+
+        assert deltas == [('toolset:testserver', 'Newer remote guidance.')]
+        assert (
+            prefixes
+            == [
+                snapshot("""\
+<context id="toolset:testserver">
+Remote guidance.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+            ]
+            * 2
         )
+
+    def test_two_toolsets_without_ids_on_one_host_need_ids(self):
+        part = InstructionPart(content='Guidance.', on_change='append')
+        first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
+        second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
+        assert first.parts[0].id == InstructionId(ToolsetInstructionSource('mcp.example.com'))
+        with pytest.raises(
+            UserError,
+            match=re.escape("instructions keyed 'toolset:mcp.example.com', at least one of them without an `id`"),
+        ):
+            flatten_instruction_contributions([first, second])
 
     async def test_server_instructions_in_a_deferred_capability_do_not_warn(self, fastmcp_server: FastMCP[None]):
         """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly."""

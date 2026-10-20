@@ -34,9 +34,10 @@ def make_contribution(
     resolved_part = part
     if part.name is not None:
         validate_instruction_name(part.name)
-    if source.id is not None:
-        validate_instruction_id_segment(source.id, kind='Toolset id')
-        source_id = ToolsetInstructionSource(source.id)
+    key = source._instruction_key  # pyright: ignore[reportPrivateUsage]
+    if key is not None:
+        validate_instruction_id_segment(key, kind='Toolset id')
+        source_id = ToolsetInstructionSource(key)
         if part.id is None or part.id.source != source_id:
             # A part claiming a key that isn't this source's is re-keyed beneath the source that
             # actually contributed it, keeping the name its author declared relative to itself.
@@ -74,7 +75,13 @@ def flatten_instruction_contributions(
     for contribution in contributions:
         if contribution.source_id is not None:
             source_id = contribution.source_id
-            if owners.setdefault(source_id, contribution.source) is not contribution.source:
+            if (owner := owners.setdefault(source_id, contribution.source)) is not contribution.source:
+                if owner.id is None or contribution.source.id is None:
+                    raise UserError(
+                        f'Two toolsets contribute instructions keyed {str(source_id)!r}, at least one of them '
+                        'without an `id`, such as two `MCPToolset`s for servers on one host, which key their '
+                        "instructions by the server's hostname. Pass a distinct `id` to each."
+                    )
                 raise UserError(
                     f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
                     f'instructions, so {str(source_id)!r} would address parts from each. '

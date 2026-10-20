@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import functools
+import logging
 import os
 import re
 import ssl
@@ -25,6 +26,7 @@ from typing import (
     cast,
     overload,
 )
+from urllib.parse import urlparse
 
 import anyio
 import pydantic_core
@@ -97,6 +99,7 @@ from ._unsupported_settings import suppress_warnings as suppress_unsupported_set
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
+_logger = logging.getLogger(__name__)
 _JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
 _EXTENSIONS_ADAPTER = TypeAdapter(dict[str, dict[str, Any]])
@@ -842,13 +845,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     Off by default. The server writes this text, and the model receives it with the same authority
     as instructions you write yourself, so only enable this for servers you trust.
 
-    The instructions are read each time the toolset connects. On a toolset with an
-    [`id`][pydantic_ai.toolsets.AbstractToolset.id], they're keyed `toolset:<id>` and use
+    The instructions are read each time the toolset connects, and use
     [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: if a later connection
     brings different instructions, the new text is appended to the conversation rather than
-    rewriting the cached instruction prefix. Without an `id`, or with one the
-    [`MCP`][pydantic_ai.capabilities.MCP] capability derived from the server URL, changed
-    instructions rewrite the prefix, so a URL-derived id never reaches the prompt.
+    rewriting the cached instruction prefix. They're keyed `toolset:<id>`, or `toolset:<host>` by
+    the server URL's hostname on a toolset without an [`id`][pydantic_ai.toolsets.AbstractToolset.id],
+    and the model sees that key with them. A server with neither, such as a stdio or in-process
+    server without an `id`, has nothing to key them by, so changed instructions rewrite the prefix.
     """
 
     include_return_schema: bool | None
@@ -893,6 +896,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
     _telemetry_url_derived_id: str | None
+    _reported_unkeyed_instructions: bool
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1008,6 +1012,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # the process into that extension and a pre-built but not-yet-entered Client still sees it.
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
         self._telemetry_url_derived_id = None
+        self._reported_unkeyed_instructions = False
 
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
@@ -1315,25 +1320,33 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return None
         # Instructions are captured during `__aenter__` and don't change while the toolset stays
         # entered, so they're static for prompt caching. A later connection can bring different text,
-        # which appends as a change rather than rewriting the prefix.
-        return messages.InstructionPart(
-            content=self._instructions,
-            dynamic=False,
-            on_change='append' if self._appends_instructions else 'rewrite',
-        )
+        # which appends as a change rather than rewriting the prefix. Appending addresses the block by
+        # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
+        if self._instruction_source() is None:
+            if not self._reported_unkeyed_instructions:
+                self._reported_unkeyed_instructions = True
+                _logger.debug(
+                    '%s has no `id` or URL to key its server instructions by, so a change to them rewrites the '
+                    'instruction prefix. Pass `id=` to append changes instead.',
+                    self.label,
+                )
+            return messages.InstructionPart(content=self._instructions, dynamic=False)
+        return messages.InstructionPart(content=self._instructions, dynamic=False, on_change='append')
 
     @property
-    def _appends_instructions(self) -> bool:
-        """Whether the server's instructions use `on_change='append'`, keyed by this toolset's `id`.
+    def _instruction_key(self) -> str | None:
+        """The `id`, or else the server URL's hostname, so a remote server's instructions always have a key.
 
-        Appending sends the key to the model in each block's `<context id="...">` tag. That needs an
-        `id`, and one the caller chose: an id the `MCP` capability derived from the server URL can
-        carry a credential from the URL path, which telemetry masks and the prompt must not reveal.
+        `id` itself isn't defaulted: it also names durable operations, which require one chosen
+        explicitly.
         """
-        return self.id is not None and self.id != self._telemetry_url_derived_id
+        if self.id is not None:
+            return self.id
+        url = getattr(getattr(self.client, 'transport', None), 'url', None)
+        return urlparse(url).hostname if isinstance(url, str) else None
 
     def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
-        if self.include_instructions and self._appends_instructions and (source := self._instruction_source()):
+        if self.include_instructions and (source := self._instruction_source()) is not None:
             return frozenset({messages.InstructionId(source)})
         return frozenset()
 
