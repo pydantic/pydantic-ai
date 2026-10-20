@@ -288,11 +288,13 @@ def _message_element(
 def _harness_data_origin(part: UserPromptPart) -> str | None:
     """The `origin` of user-channel content a harness capability added, or `None` for anything else.
 
-    Only a part that is a single `TextContent` whose metadata names a harness origin counts, so a part
-    that also holds what the user wrote is never relabeled.
+    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
+    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
+    that only mentions such content later, after what the user wrote, is never relabeled.
     """
+    # TODO: switch to the core provenance field once it exists.
     match part.content:
-        case [TextContent(metadata=metadata)] if (
+        case [TextContent(metadata=metadata), *_] if (
             is_str_dict(metadata)
             and isinstance(origin := metadata.get('origin'), str)
             and origin.startswith(_HARNESS_ORIGIN_PREFIX)
