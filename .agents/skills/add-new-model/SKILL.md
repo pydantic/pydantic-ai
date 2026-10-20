@@ -24,6 +24,8 @@ Image-only models use a separate public surface from conversational models. If t
 
 Keep common, provider-agnostic controls in `images/settings.py`, but import provider-specific setting types from the official SDK. Put model-specific size and aspect-ratio validation or mapping in the private `images/_<provider>_geometry.py` helper, and update the public support matrix in `docs/image-generation.md`. Verify geometry against official documentation; if the provider does not publish exact output shapes, probe every documented aspect-ratio and resolution combination for every supported model and record the evidence. Prefer deterministic table tests for the full matrix, adding one representative VCR cassette only when the new model or wire behavior needs integration coverage rather than recording every image combination.
 
+For OpenAI, the [image generation guide](https://developers.openai.com/api/docs/guides/image-generation) documents each GPT Image family's size limits and quality values. When a new family shares an existing family's limits, as GPT Image 2.5 shares GPT Image 2's, add its ids to that family's tuple in `images/_openai_geometry.py` rather than writing a new table. A new quality value has to reach every copy of the quality `Literal`: `ImageGenerationTool.quality`, the `ImageGeneration` capability (field, `__init__` and `from_spec`) and `OpenAIImageGenerationSettings.openai_quality`, which `tests/test_capability_spec.py` snapshots.
+
 ## Step 1 — Verify the model exists at the provider
 
 Never trust marketing names, news articles, or guesses. Hit the provider's model-listing endpoint:

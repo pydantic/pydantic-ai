@@ -56,6 +56,8 @@ KnownImageGenerationModelName = TypeAliasType(
         'openai:gpt-image-1-mini',
         'openai:gpt-image-1.5',
         'openai:gpt-image-2',
+        'openai:gpt-image-2.5-flare',
+        'openai:gpt-image-2.5-sunburst',
         'xai:grok-imagine-image',
         'xai:grok-imagine-image-2.0',
         'xai:grok-imagine-image-quality',

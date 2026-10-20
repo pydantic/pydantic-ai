@@ -49,7 +49,17 @@ The direct image API takes the wider
 ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
 """Supported sizes for image generation tools."""
 
-ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
+ImageGenerationModelName = (
+    Literal[
+        'gpt-image-2.5-flare',
+        'gpt-image-2.5-sunburst',
+        'gpt-image-2',
+        'gpt-image-1.5',
+        'gpt-image-1',
+        'gpt-image-1-mini',
+    ]
+    | str
+)
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
 
 AdvisorModelName = (
@@ -543,8 +553,8 @@ class ImageGenerationTool(AbstractNativeTool):
     Supported by:
 
     * OpenAI Responses. Defaults to the provider's image generation model selection.
-      Known image generation models include `gpt-image-2`, `gpt-image-1.5`,
-      `gpt-image-1`, and `gpt-image-1-mini`.
+      Known image generation models include `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`,
+      `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`, and `gpt-image-1-mini`.
 
     This selects the underlying image generation model used by the tool; it does
     not change the agent's conversational model.
@@ -578,12 +588,12 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses. Supports 0 to 3.
     """
 
-    quality: Literal['low', 'medium', 'high', 'auto'] = 'auto'
+    quality: Literal['low', 'medium', 'high', 'xhigh', 'max', 'auto'] = 'auto'
     """The quality of the generated image.
 
     Supported by:
 
-    * OpenAI Responses
+    * OpenAI Responses. `xhigh` and `max` require a GPT Image 2.5 model.
     """
 
     size: ImageSize | None = None
