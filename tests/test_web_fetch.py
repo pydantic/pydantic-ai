@@ -47,6 +47,20 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
 
 
 class TestWebFetchLocalTool:
+    async def test_html_conversion_task_creation_failure_releases_slot(self):
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response('<p>x</p>'),
+            ),
+            patch('pydantic_ai.common_tools.web_fetch.asyncio.create_task', side_effect=RuntimeError('cannot spawn')),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(RuntimeError, match='cannot spawn'):
+                await tool('https://example.com')
+        assert _HTML_CONVERSION_LIMITER.get().value == 4
+
     async def test_cancelled_html_conversion_error_is_observed(self):
         loop = asyncio.get_running_loop()
         started = asyncio.Event()
