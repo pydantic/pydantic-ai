@@ -225,9 +225,12 @@ def test_analysis_does_not_hide_other_threads_warnings(monkeypatch: pytest.Monke
 
     real_parse = ast.parse
 
-    # Coverage's 3.14 `sysmon` core also calls `ast.parse(source)` the first time it sees a branch in a
-    # file, so the patch must keep working for every caller, not just `parse_code`.
     def concurrent_parse(source: str, filename: str = '<unknown>', mode: str = 'exec') -> ast.AST:
+        # Coverage's 3.14 `sysmon` core also calls `ast.parse(source)`, without a filename, the first time it
+        # sees a branch in a file -- before `parse_code` installs its filter. Only the analysis parse, which
+        # always passes a filename, may emit the other thread's warning.
+        if filename == '<unknown>':  # pragma: lax no cover
+            return real_parse(source, filename=filename, mode=mode)
         thread = threading.Thread(target=warn_elsewhere)
         thread.start()
         thread.join()
