@@ -790,6 +790,7 @@ async def test_wrapper_models_forward_the_batch_api() -> None:
     assert model.batch_decode(result, request).text == 'success (no tool calls)'
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: CaptureLogfire) -> None:
     """Shared batch work is traced once, in the batch's own trace, rather than under whichever run started it.
 
@@ -843,6 +844,7 @@ async def test_a_batch_has_its_own_trace_linked_to_the_requests_in_it(capfire: C
         assert [link.context.span_id for link in chat.links] == [batch.context.span_id]
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_a_resumed_run_checks_the_batch_in_its_trace(capfire: CaptureLogfire) -> None:
     """The pending response records the `batch` span's trace context, so a later run's checks join the batch's trace."""
     wrapped = SlowBatchTestModel(pending_checks=1)
@@ -880,6 +882,7 @@ async def test_a_resumed_run_checks_the_batch_in_its_trace(capfire: CaptureLogfi
     assert [link.context.span_id for link in check.links] == [chat.context and chat.context.span_id]
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_a_batch_submitted_without_tracing_is_still_recorded_on_a_traced_check(capfire: CaptureLogfire) -> None:
     wrapped = SlowBatchTestModel(pending_checks=1)
     pending = await _pending_response(_batched(wrapped, **FAST_BATCH_SETTINGS))
