@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
@@ -267,9 +268,15 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
 async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr('pydantic_ai_harness.step_persistence._store._BUSY_TIMEOUT_SECONDS', 0.01)
     database = tmp_path / 'sessions.db'
     other = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
+    connect = sqlite3.connect
+
+    def connect_without_waiting(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        # Give up on the lock at once instead of waiting out the stores' busy timeout.
+        return connect(*args, **{**kwargs, 'timeout': 0.01})
+
+    monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
 
     def run_command() -> str:
         # Another CLAI sharing `sessions.db` starts a long write while the tool runs.

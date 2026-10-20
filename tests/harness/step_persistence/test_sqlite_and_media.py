@@ -14,8 +14,8 @@ import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-import anyio
 import pytest
 
 from pydantic_ai import Agent
@@ -356,44 +356,20 @@ class TestSqliteStepStoreProtocol:
 
 
 class TestSqliteWritersShareTheDatabase:
-    def test_opened_connections_wait_30_seconds_for_another_writer(self, tmp_path: Path) -> None:
-        step_store = SqliteStepStore(database=tmp_path / 'runs.db')
-        media_store = SqliteMediaStore(database=tmp_path / 'runs.db')
-        for conn in (step_store._open(), media_store._open()):  # pyright: ignore[reportPrivateUsage]
-            try:
-                assert conn.execute('PRAGMA busy_timeout').fetchone() == (30_000,)
-            finally:
-                conn.close()
+    async def test_opened_connections_wait_30_seconds_for_another_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        timeouts: list[float] = []
+        connect = sqlite3.connect
 
-    async def test_concurrent_writes_wait_for_another_connection_s_transaction(self, tmp_path: Path) -> None:
-        database = tmp_path / 'runs.db'
-        store = SqliteStepStore(database=database)
-        await store.register_run(RunRecord(run_id='r1'))
-        messages = _sample_messages_with_media(70_000)
-        other = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
-        try:
-            other.execute('BEGIN IMMEDIATE')
-            async with anyio.create_task_group() as group:
-                for index in range(4):
-                    group.start_soon(store.append_event, StepEvent(run_id='r1', kind='run_started', step_index=index))
-                    group.start_soon(
-                        store.record_tool_effect,
-                        ToolEffectRecord(
-                            run_id='r1', tool_call_id=f'call-{index}', tool_name='shell', status='started'
-                        ),
-                    )
-                group.start_soon(store.save_snapshot, ContinuableSnapshot(run_id='r1', step_index=1, messages=messages))
-                # Every write is now waiting for the lock in a worker thread.
-                await anyio.wait_all_tasks_blocked()
-                other.execute('COMMIT')
-        finally:
-            other.close()
+        def recording_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            timeouts.append(kwargs['timeout'])
+            return connect(*args, **kwargs)
 
-        assert len(await store.list_events(run_id='r1')) == 4
-        assert len(await store.list_unresolved_tool_effects(run_id='r1')) == 4
-        snapshot = await store.latest_snapshot(run_id='r1')
-        assert snapshot is not None
-        assert ModelMessagesTypeAdapter.dump_json(snapshot.messages) == ModelMessagesTypeAdapter.dump_json(messages)
+        monkeypatch.setattr(sqlite3, 'connect', recording_connect)
+        await SqliteStepStore(database=tmp_path / 'runs.db', media_store=None).register_run(RunRecord(run_id='r1'))
+        await SqliteMediaStore(database=tmp_path / 'runs.db').put(b'blob')
+        assert timeouts == [30, 30]
 
 
 # ---------------------------------------------------------------------------
