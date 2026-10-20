@@ -325,6 +325,8 @@ agent = Agent(
 
 Set `clear_tool_inputs=True` to also blank the arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never cleared.
 
+With `max_messages`, the count starts after the last cleared result, because clearing blanks content but removes no messages. Clearing then happens in batches: after a clear, the next one waits until more than `max_messages` messages follow the last cleared result, so the requests in between extend the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear, about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
+
 ## `DeduplicateFileReads`: drop superseded reads
 
 When the same file is read more than once, only the latest read keeps its content; earlier reads are blanked with a placeholder, with pairing preserved.
@@ -430,7 +432,7 @@ value orphans recorded operations for in-flight workflows, so keep it fixed once
 
 ## `WarnNearLimits`: warn instead of rewrite
 
-`WarnNearLimits` never edits history. As the run approaches a configured limit, it injects an URGENT (then CRITICAL) warning as a trailing user turn, so the model wraps up rather than having its context rewritten under it. Models tend to pay more attention to user messages than system messages, which is why the warning is a user turn. Previous warnings from this capability are stripped before deciding whether to inject a new one.
+`WarnNearLimits` never edits history. As the run approaches a configured limit, it adds an URGENT (then CRITICAL) warning to each request, so the model wraps up rather than having its context rewritten under it. Each warning is a [request-scoped system prompt](../message-history.md#request-scoped-system-prompts): the model sees it for its own request only, and it stays in the message history, so earlier requests are sent unchanged and the prompt cache and the model's earlier reasoning stay valid. Warnings that older versions sent as user prompts are left out of requests when a saved history still holds them. They are recognized by metadata on the part, not by their text, so a user prompt that quotes a warning is never removed.
 
 ```python
 from pydantic_ai import Agent

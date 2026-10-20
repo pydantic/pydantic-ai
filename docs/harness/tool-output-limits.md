@@ -271,6 +271,11 @@ a size band that compact JSON would not. Strings and binary returns are never se
 returns below the smallest band pass through untouched, and a serializer that raises or
 returns non-text warns and falls back to compact JSON rather than losing the tool output.
 
+`bytes` inside a structured return render as the text they decode to. When one of them is not
+UTF-8 (a file read in binary mode, raw command output), every `bytes` value in the rendered
+JSON is base64-encoded instead, which is how Pydantic AI encodes `bytes` in the tool returns it
+sends to the model. `json_lines` makes that switch per record.
+
 ## Spill store
 
 The default `WorkspaceStore` writes each spill as a file in the run's workspace, under

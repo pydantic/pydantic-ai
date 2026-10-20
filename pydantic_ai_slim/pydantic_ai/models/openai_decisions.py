@@ -14,6 +14,7 @@ from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import get_user_agent
+from ._sdk_retries import with_max_retries
 from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -208,7 +209,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 )
             decision_input = [DecisionInputMessageParam(role='user', content=content)]
         try:
-            response = await self.client.decisions.with_raw_response.create(
+            response = await with_max_retries(self.client, model_settings).decisions.with_raw_response.create(
                 model=self._model_name,
                 input=decision_input,
                 questions=[_question(name, question) for name, question in request.questions.items()],

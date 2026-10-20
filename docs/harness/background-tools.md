@@ -101,7 +101,16 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
+Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] containing a
+[`UserPromptPart`][pydantic_ai.messages.UserPromptPart] whose first content item is
+[`TextContent`][pydantic_ai.messages.TextContent] with
+`metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`, including handled
+failure notifications. This identifies the entire completion part, including any files and extra
+content. The metadata is not sent to the model and survives native message serialization and merging
+consecutive requests. The Vercel AI and AG-UI message conversions omit this metadata.
+
+Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
+is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
 other tool exception ends the run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`

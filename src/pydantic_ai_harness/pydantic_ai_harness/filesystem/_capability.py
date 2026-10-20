@@ -46,8 +46,9 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     symlinks, and `read_only_patterns` guard what may be written. This is a
     guardrail checked before each operation, not isolation: a symlink swapped in
     between the check and the use is not caught, and `Shell` commands are not
-    bounded at all. The workspace is the isolation boundary. Walks do not descend
-    into a directory whose real path is outside `root_dir`.
+    bounded at all. Isolation depends on the configured workspace backend;
+    `LocalWorkspace` provides none. Walks do not descend into a directory whose
+    real path is outside `root_dir`.
     """
 
     root_dir: str | Path | None = None

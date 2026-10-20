@@ -145,7 +145,7 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
+The retry policy belongs to the channel and can't change per request, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on xAI. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 

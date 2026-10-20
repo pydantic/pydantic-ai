@@ -3682,6 +3682,21 @@ async def test_resolve_model_id_alias_unusable_outside_run() -> None:
     assert result.output == 'ok'
 
 
+def test_resolve_model_id_string_override_sets_mcp_sampling_model() -> None:
+    """MCP sampling setup accepts a string model override with a resolver capability installed.
+
+    Sync because `set_mcp_sampling_model()` imports the MCP module on first use.
+    """
+    pytest.importorskip('fastmcp')
+
+    def resolver(ctx: ModelResolutionContext[object], model_id: str) -> FunctionModel | None:
+        return None  # pragma: no cover
+
+    agent = Agent('test', capabilities=[ResolveModelId(resolver)])
+    with agent.override(model='test'):
+        agent.set_mcp_sampling_model()
+
+
 # --- ResolveModelId capability tests ---
 
 

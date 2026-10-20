@@ -10,21 +10,18 @@ A `SignInMethod` is one service's sign-in. `pydantic_clai2.mcp.OAuthSignIn` is t
 OAuth; `pydantic_clai2.pkce.PKCESignIn` and Logfire's device sign-in are others.
 """
 
-import asyncio
-import threading
 from collections.abc import Callable
 from typing import Protocol
 
 from anyio import to_thread
 from rich.console import Console
-from termflow.tui import MenuBuilder, MenuItem
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.commands import Command
+from pydantic_clai2.plugins.menus import Dialogs
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 __all__ = (
     'SUBCOMMANDS',
@@ -117,13 +114,16 @@ async def warn_if_signed_out(method: SignInMethod, console: Console) -> bool:
 
 
 RUNNERS: Runners = TERMINAL
-"""How the waiting screen is shown when a caller passes no runners; tests swap in scripted ones."""
+"""How the terminal shows the waiting screen when a caller passes no dialogs; tests swap in scripted ones."""
 
 
-async def sign_in_now(method: SignInMethod, runners: Runners | None = None) -> str:
-    """Sign in behind the waiting screen, and say how it went. Esc cancels; nothing here raises a sign-in failure."""
+async def sign_in_now(method: SignInMethod, dialogs: Dialogs | None = None) -> str:
+    """Sign in behind the waiting screen, and say how it went. Esc cancels; nothing here raises a sign-in failure.
+
+    `dialogs` shows the screen, such as the one a settings menu action gets; `None` means the terminal.
+    """
     try:
-        finished = await wait_for_sign_in(method, runners)
+        finished = await wait_for_sign_in(method, dialogs)
     except Exception as exc:  # noqa: BLE001 -- every sign-in fails its own way; each leaves the service signed out.
         return f'Could not sign in to {method.service}: {str(exc).rstrip(".")}. Run {method.setup} to try again.'
     if not finished:
@@ -141,11 +141,11 @@ SUBCOMMANDS = ('login', 'logout', 'status')
 """What `run_subcommand` handles, for a command's completion."""
 
 
-async def run_subcommand(method: SignInMethod, args: list[str], runners: Runners | None = None) -> str | None:
+async def run_subcommand(method: SignInMethod, args: list[str], dialogs: Dialogs | None = None) -> str | None:
     """`login`, `logout`, or `status` (also no arguments); `None` for anything else, so a command can add its own."""
     match args:
         case ['login']:
-            return await sign_in_now(method, runners)
+            return await sign_in_now(method, dialogs)
         case ['logout']:
             return await sign_out_now(method)
         case [] | ['status']:
@@ -171,52 +171,19 @@ def sign_in_command(name: str, method: SignInMethod) -> Command:
     )
 
 
-_REDRAW = 'sign-in:changed'
-"""A key no keyboard sends and no handler takes: termflow repaints after it, showing the new lines."""
-
-
-async def wait_for_sign_in(method: Signing, runners: Runners | None = None) -> bool:
-    """Run `method.sign_in` behind a waiting screen; whether it finished. Esc cancels it; its errors propagate.
+async def wait_for_sign_in(method: Signing, dialogs: Dialogs | None = None) -> bool:
+    """Run `method.sign_in` behind `dialogs`' waiting screen; whether it finished. Esc cancels it; its errors propagate.
 
     The screen closes by itself when the sign-in returns, and shows the latest text the sign-in passed to `show`.
+    `None` shows it in the terminal.
     """
-    lines = [
-        f'Finish signing in to {method.service} in your browser.',
-        f'Esc cancels; CLAI keeps working without {method.service}.',
-    ]
-    shown: list[str] = []
-    changed = threading.Event()
-
-    def show(text: str) -> None:
-        shown[:] = [text]
-        changed.set()
-
-    def read_key() -> str:
-        # Termflow calls this on the menu's own thread every 50 ms, so a repaint here never races a paint.
-        if changed.is_set():
-            changed.clear()
-            return _REDRAW
-        return menu_key()
-
-    screen = (
-        MenuBuilder(f'Signing in to {method.service}')
-        .style(markdown_style())
-        .items([MenuItem('Cancel sign-in', value=None)])
-        .preview(lambda item: '\n\n'.join([*lines, *shown]))
-        .footer_hint('Enter or Esc cancel')
-        .key_source(read_key)
-        .build()
+    if dialogs is None:
+        dialogs = TerminalDialogs(RUNNERS)
+    return await dialogs.wait(
+        title=f'Signing in to {method.service}',
+        description=(
+            f'Finish signing in to {method.service} in your browser.\n\n'
+            f'Esc cancels; CLAI keeps working without {method.service}.'
+        ),
+        task=lambda show: method.sign_in(show=show),
     )
-    signing = asyncio.ensure_future(method.sign_in(show=show))
-    shown_with = runners or RUNNERS
-    waiting = asyncio.ensure_future(run_worker(lambda: shown_with.run_choice(screen)))
-    try:
-        await asyncio.wait({signing, waiting}, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        signing.cancel()
-        waiting.cancel()
-        await asyncio.gather(signing, waiting, return_exceptions=True)
-    if signing.cancelled():
-        return False
-    signing.result()
-    return True

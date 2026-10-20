@@ -5,7 +5,7 @@ import functools
 import inspect
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import KW_ONLY, dataclass, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, TypeAlias, assert_never, cast
 
 import anyio
@@ -471,6 +471,24 @@ class EnqueueGuard(list[PendingMessage]):
         raise UserError(self._message)
 
 
+@dataclass
+class DispatchSnapshots:
+    """The dispatch-time snapshots a reconstructed durable run context carries outside `RunContext`'s fields.
+
+    `RunContext` derives these from live run state that cannot cross a process boundary, so the
+    Temporal and Render contexts carry the values resolved at dispatch and read them back through
+    property overrides. `dataclasses.replace` rebuilds a context from its instance
+    `__dataclass_fields__` alone, so those contexts add these fields to that set whenever the
+    payload carried them. Otherwise each copy made inside a durable unit, such as a tool's
+    `prepare` context, would lose them. The fields are `repr=False` because `RunContext.__repr__`
+    walks the same instance fields: without it, every reconstructed context would print all three sets.
+    """
+
+    available_tool_names: set[str] = field(repr=False)
+    active_capability_ids: set[str] = field(repr=False)
+    _deferred_capability_ids: set[str] = field(repr=False)
+
+
 def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
     """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
 
@@ -515,10 +533,12 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
     """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
 
-    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
-    the durable unit. Temporal reconstructs its context across the activity boundary and installs
-    the enqueue guard in `deserialize_run_context` instead (its `cancel` protection is
-    structural: the live controller is never serialized).
+    Every engine's durable units go through it: on the live context for the in-process engines
+    (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
+    Render child tasks. Temporal skips it for the units that go through
+    `TemporalDurability._tool_run_context_scope` (function and dynamic toolset activities, MCP
+    tool listing): their context gets the enqueue guard in `deserialize_run_context` instead (its
+    `cancel` protection is structural: the live controller is never serialized).
     """
     return replace(
         ctx,

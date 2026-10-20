@@ -8,12 +8,14 @@ settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 """
 
 from collections.abc import Sequence
+from functools import partial
 
 from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_clai2.commands import Command
 from pydantic_clai2.mcp._command import HELP, MCPCommand
 from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp._menu import ServersSource, servers_menu
 from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
 from pydantic_clai2.mcp._settings import (
     OAUTH_TIMEOUT,
@@ -50,6 +52,7 @@ __all__ = [
     'ServerEntry',
     'ServerForm',
     'ServerSettings',
+    'ServersSource',
     'SignIn',
     'State',
     'StdioServer',
@@ -60,6 +63,7 @@ __all__ = [
     'http_client',
     'install_form',
     'run_form',
+    'servers_menu',
 ]
 
 
@@ -67,9 +71,9 @@ class MCPPlugin(Plugin[MCPSettings]):
     """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
 
     def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
-        """`store` defaults to the user's `mcp.json`; tests pass their own."""
+        """`store` defaults to the user's `mcp.json`, with the session's project files; tests pass their own."""
         super().__init__(host, settings)
-        self.servers = MCPServers(store or MCPStore(), settings.servers)
+        self.servers = MCPServers(store or MCPStore(workspace=host.workspace), settings.servers)
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),)
@@ -82,6 +86,7 @@ class MCPPlugin(Plugin[MCPSettings]):
                 description='Manage MCP servers: install, start, stop, status, logs, and more (/mcp help).',
                 handler=command,
                 complete=command.complete,
+                menu=partial(servers_menu, command),
             ),
         )
 

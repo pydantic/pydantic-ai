@@ -58,6 +58,13 @@ OpenAI-shaped and use Chat Completions.
 
 ## What actually runs
 
+The engine first reads the safe-outputs file gh-aw names in `GH_AW_SAFE_OUTPUTS`. If a
+`steps:` or `pre-agent-steps:` entry already wrote a `noop` there, the engine exits with
+status 0 without starting CLAI 2, as gh-aw's built-in engines do; gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. A missing or unreadable file, and lines that are not JSON, do not
+count as a `noop`.
+
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,

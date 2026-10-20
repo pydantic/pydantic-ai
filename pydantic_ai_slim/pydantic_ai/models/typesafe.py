@@ -47,6 +47,7 @@ try:
         Noul as TypeSafeNoul,
         NoulAnswer as TypeSafeNoulAnswer,
         NoulCriteria as TypeSafeNoulCriteria,
+        RetryPolicy as TypeSafeRetryPolicy,
         Score as TypeSafeScore,
         ScoreAnswer as TypeSafeScoreAnswer,
         TypeSafeAPIConnectionError,
@@ -220,11 +221,13 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
             raise UserError('TypeSafe does not support image input.')
         questions = {name: _to_typesafe_question(question) for name, question in request.questions.items()}
         timeout = model_settings.get('timeout')
+        max_retries = model_settings.get('max_retries')
         try:
             response = await self.client.system_one(
                 cast(JSONContent, request.state),
                 questions,
                 model=self._model_name,
+                retry=None if max_retries is None else TypeSafeRetryPolicy(max_retries=max_retries),
                 timeout=None if timeout is None else to_httpx2_timeout(timeout),
                 extra_headers=model_settings.get('extra_headers'),
                 extra_body=cast('Mapping[str, JsonValue] | None', model_settings.get('extra_body')),

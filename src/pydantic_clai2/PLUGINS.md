@@ -68,7 +68,8 @@ separately.
   into the form and written into the JSON.
 - **JSON Configuration** opens `$VISUAL` or `$EDITOR` (default `vi`) on the
   server's JSON, with a one-line input as a fallback when no editor runs. The
-  preview says whether it is valid and why not.
+  preview says whether it is valid and why not. In the web UI it is a multi-line
+  field in the page.
 - **OAuth sign-in** appears for `http` and `sse` servers. Switching it on sets
   `"auth": "oauth"`, allows 330 seconds for the handshake, and drops any
   `Authorization` header. After saving, `/mcp auth NAME` signs in: FastMCP runs
@@ -92,6 +93,17 @@ between prompts. A server that cannot connect is marked `error` and left out of
 the prompt instead of failing it; `/mcp logs NAME` shows why. `/mcp stop`
 disconnects the server and disables it until `/mcp start`. The model sees tools
 prefixed by server name, for example `local_search`.
+
+In the web UI, the Settings window's **MCP servers** section (`#settings/mcp`, or bare
+`/mcp` typed in the composer) is the same command in the page. It lists each server with
+its state (`running`, `ready`, `stopped`, `error`, or needing its OAuth sign-in), what it
+runs, and where it is defined. **Add server** opens the form above as dialogs, and a
+server's **Manage** offers the subcommands that apply to it: start or connect, stop,
+restart, its tools, its recent logs, sign in or out, edit, and remove (after a
+confirmation). Each runs as typing it would, and the terminal prints the result. When the
+repository has project MCP files, a banner shows whether they are trusted, and **Review**
+shows each file's contents before you trust or revoke them. The section is `/mcp`'s
+declared menu, `pydantic_clai2.mcp.servers_menu`, asking through `Dialogs`.
 
 Only install servers you trust. Stdio servers run programs with your user
 permissions, launched as an executable plus arguments without a shell. Remote
@@ -122,7 +134,7 @@ cannot produce the same name.
 ### Project servers and trust
 
 A repository can commit either or both of these project files. Each is found by
-looking in the working directory, then each parent up to the git root:
+looking in the session's directory, then each parent up to the git root:
 
 | Path | Shape |
 | --- | --- |
@@ -215,7 +227,7 @@ in the configured keyring backend, not plugin settings. Plugins that need an API
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
-[Codex authentication](README.md#codex-authentication) for storage and security
+[Codex authentication](docs/reference.md#codex-authentication) for storage and security
 details.
 
 ### GitHub Copilot subscriptions
@@ -266,7 +278,8 @@ Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
 `/plugins disable herdr` to release the pane and stop reporting. No herdr-side
 integration install is needed. The plugin requires `HERDR_ENV=1`,
 `HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
-Outside herdr, or on Windows, it contributes nothing and starts no worker.
+Outside herdr, on Windows, or in a session without a terminal (such as `clai2 --web`),
+it contributes nothing and starts no worker.
 
 It reports `working` while agent runs are in flight, `blocked` while `AskUser`
 waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
@@ -443,10 +456,10 @@ declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
 `/plugins reload observability`. `/plugins configure observability` (or `c` on
-`observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
-setup described below, and the other rows edit the options listed here. Each edit
-saves at once, and the plugin is loaded again when you close the menu, so the next
-run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
+`observability` in `/plugins`) opens its settings menu, which the web UI's plugins
+panel also shows: **Logfire project** runs the setup described below, and the other
+rows edit the options listed here. Each edit saves at once, and the plugin is loaded
+again when you close the menu (in the web UI, after each edit), so the next run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
 credentials file was found. Scripts can replace the declaration instead:
 
 ```text
@@ -486,8 +499,19 @@ clears `token`, `base_url`, and `account` again): it asks which Logfire, runs
 Logfire's own device sign-in there (the one behind `logfire auth`, not
 the Logfire plugin's MCP OAuth, whose tokens only the MCP server accepts), reads your
 account's email, lists the projects you can write to, and saves a new write
-token for the one you pick in `/keys`. The sign-in token is used only during
+token for the one you pick in `/keys`. The sign-in waits behind a screen that shows
+its link, where Esc cancels it. From the web UI's plugins panel, **Change…** on the
+row asks each step as a dialog in the page. The sign-in token is used only during
 setup. The flow lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+In the [web UI](#web-this-session-in-your-browser), the plugin adds a **Logfire live view** side
+panel: the project's live view filtered to the current conversation's trace
+(`?q=trace_id='...'`), with the latest run's details open (`traceId` and `spanId`), so it follows
+each new turn. The project's page comes from Logfire's `/v1/info` for the write token the plugin
+sends with, asked once per load when the panel first shows; without a token, or with sending off,
+the panel says how to set a project up. Logfire's `frame-ancestors` admits no `http://127.0.0.1`
+port today, so the panel opens the live view in a window beside the web UI. The panel lives in
+`pydantic_clai2.builtin_plugins.logfire_live`.
 
 Agent runs and UI records nest under a `CLAI session` root whose
 `agent_session_id` is the saved conversation ID. `/clear` selects a new root;
@@ -540,7 +564,7 @@ helpers; those hooks are not removed on unload. Core's normal
 instrumentation precedence applies: the plugin's explicit per-run capability
 wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
-to stock built-ins. See [telemetry](README.md#telemetry-and-references).
+to stock built-ins. See [telemetry](docs/reference.md#telemetry-and-references).
 
 ## Linear: issues and projects
 
@@ -573,6 +597,9 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 Enter edits a row, R resets it to the default, and Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.
+The same rows show in the [web UI](#web-this-session-in-your-browser)'s plugins
+panel, where Sign-in, API key, and Access have a **Change…** button: their pickers,
+key prompt, and sign-in open as dialogs in the page.
 Read-only is the default because tools that create or change issues act on a
 workspace your team shares. These rows are the settings harness `Linear` takes
 from a user. Linear's hosted server has a single URL (with a read-only variant)
@@ -591,7 +618,9 @@ rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
 variable is not read.
 
 With browser sign-in, the key row is hidden. Choosing it signs in right away,
-behind a waiting screen that Esc cancels; `/linear login` signs in again later,
+behind a waiting screen that Esc cancels, unless you are already signed in.
+Tokens belong to one endpoint, so choosing an Access you are not signed in for
+signs in again the same way. `/linear login` signs in again later,
 `/linear logout` signs out, and `/linear` shows whether you are signed in. Tokens
 go to the keyring the way `/mcp` OAuth tokens do. Loading and prompts never open
 the browser: until you sign in, runs have no Linear tools and the session start
@@ -615,11 +644,13 @@ settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
 `/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes, so the next turn uses the new settings.
+menu closes, so the next turn uses the new settings. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where picking
+the key and the browser sign-in open as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
-| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Key | none | the `/keys` entry to connect with: pick a saved key by name, or type a new one into a masked field; `R` clears the choice |
 | Sign-in | browser | browser uses the browser sign-in, and choosing it signs in if needed; key only uses the chosen key and never the browser. Choosing a key switches to key only, and `R` on the key switches back |
 | Tools | read and write | read-only keeps only the tools the server marks as read-only |
 | Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
@@ -677,7 +708,9 @@ CLAI builds sharing your settings still store it under, so `/plugins enable logf
 keeps meaning `observability`. Its command is `/logfire`; `/logfire_mcp` still works.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
 opens its settings menu; reopen the menu any time with
-`/plugins configure logfire_mcp` or `c` in `/plugins`.
+`/plugins configure logfire_mcp` or `c` in `/plugins`. The same menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where **API key**
+and **Which Logfire** open their pickers and fields as dialogs in the page.
 
 Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
 the menu, and the plugin loads again with the new settings. Esc backs out of any
@@ -721,22 +754,24 @@ without changing anything.
 Whichever Logfire you last chose in either plugin is remembered, in
 `~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
-before any of its settings were saved also switches it to that Logfire, and says so,
-when it is Logfire US or EU; any other Logfire is only highlighted, so a key you
-already use is never sent to a server you did not pick for it.
+in the terminal before any of its settings were saved also switches it to that
+Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
+highlighted, so a key you already use is never sent to a server you did not pick
+for it. The web UI's panel only highlights it: the plugin switches when you pick it.
 
 ### Keys live in `/keys`
 
 Plugin settings are stored as plaintext in SQLite, so they hold only the key's
-name, never its value. Enter on **API key** opens the same picker as
-`/model add`:
+name, never its value. Enter on **API key** (**Change…** in the web UI) offers:
 
 - **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
   connections can name one key, so one Logfire API key saved once serves them all.
 - **Enter a different API key**: a masked field. The value is saved in `/keys`
   as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
-  existing `LOGFIRE_API_KEY`, since other plugins may use it.
-- **No API key**: clears the choice.
+  existing `LOGFIRE_API_KEY`, since other plugins may use it. With nothing in
+  `/keys` yet, the masked field opens straight away.
+
+`R` on the row (**Reset** in the web UI) clears the choice.
 
 The plugin uses the first credential that is available:
 
@@ -912,8 +947,9 @@ shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulti
 to keep. This includes existing linked worktrees. Removal uses Git without
 `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
-and `/reload` keep the checkout in use. Plugins do not own worktree cleanup.
-See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
+and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
+elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
+See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup.
 
 ## The built-in plugins
 
@@ -1018,21 +1054,48 @@ are skipped; `[]` disables disk agents. The stock CLI uses `["agents"]`. Saved
 upgrade never loads new definitions without your say. Old
 `pydantic_ai_harness.coder:Coder` declarations load through this module and are
 not rewritten. `/plugins configure coder` edits this list; see
-[Agent folders](README.md#agent-folders).
+[Agent folders](docs/reference.md#agent-folders). The same settings menu also opens in
+the [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Agent
+folders row's **Change…** button asks the folder list, its edits, and the
+directory browser as dialogs in the page.
 
-`skill_folders` is a JSON list of [Agent Skills](README.md#agent-skills) folders,
+`skill_folders` is a JSON list of [Agent Skills](docs/reference.md#agent-skills) folders,
 in precedence order. It defaults to `[".agents/skills", ".claude/skills",
 "~/.agents/skills", "~/.claude/skills"]`, including for saved `coder`
 declarations that omit it; `~/` means your home directory, a relative path is in
-the project, and `[]` turns skills off. `coder` binds harness `Skills` with
+the project, and `[]` turns skills off. Each relative folder is followed by the
+same folder in each directory above the launch directory, up to the git root,
+nearest first (`CoderSettings.skill_libraries(parents=...)`); outside a git
+repository only the launch directory is used. `coder` binds harness `Skills` with
 `missing_directories='skip'` and `duplicate_names='keep_first'`, so a missing
-folder is skipped and the earlier of two skills with one name wins. It reads the
+folder is skipped, a folder that is a file or a single skill package is skipped
+with a notice, and the earlier of two skills with one name wins. It reads the
 folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
-model's catalog. A folder setting that fails, such as a path to one skill
-instead of its parent folder, prints `Skills are off: ...` and leaves skills
-out. The setting is tagged `coder-skill-folders`, so a CLAI build without it
+model's catalog. With a plugin's capability function in the run, the run's
+workspace is chosen after `Skills` reads its catalog, so `coder` reads the
+catalog from the project directory. A `/skill-name` command reads them again
+when it runs, so it sends the current `SKILL.md`, and fails with a message when
+the skill is gone.
+Only skills with `user_invocable` (no `user-invocable: false`) get a command;
+harness leaves skills with `disable-model-invocation: true` out of the model's
+catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
+other clients sharing the folders, so `coder` does not report them, and CLAI
+hides harness's run-start warning about them. A folder that cannot be
+read when `coder` loads prints `Skills are off: ...` and leaves skills out. The
+setting is tagged `coder-skill-folders`, so a CLAI build without it
 ignores a saved value instead of failing to load `coder`.
+
+`disabled_skills` is a JSON list of skill names that are off, `[]` by default.
+Names are saved NFKC-normalized, the form harness compares skill names in.
+A skill that is off is left out of the model's catalog and gets no `/command`.
+`coder` passes the list as harness `Skills(exclude=...)` with
+`unknown_names='skip'`: the list applies in every project, so a name no folder
+here has is skipped rather than failing the run. The commands and the settings
+menu read every skill, including the ones that are off. The **Skills** row in `/plugins configure coder` lists the skills `coder` found when
+it loaded, plus any name that is off but not found, and each pick turns one on
+or off. The setting is tagged `coder-disabled-skills`, so a build without it
+offers every skill instead of failing to load `coder`.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
@@ -1043,7 +1106,7 @@ update the task inspector rather than entering the parent's transcript. Core hoo
 and guardrails bound to the stock agent still run on general-purpose children.
 Explore/Plan are separate read-only agents and do not inherit plugin tools.
 
-See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+See [managed tasks](docs/reference.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
 Ctrl+B, independent histories, explicit resume, completion-report provenance, and
 workspace restrictions. Supplied agents and headless calls are unchanged. Do not
 hold a parent's `RunContext` or call its event emitter after that run has ended;
@@ -1070,7 +1133,7 @@ A repository can declare plugins too, in `.clai/settings.json`; they show as
 `(project)` and rank just above the built-ins. They start off, because a
 repository must not run code as you just because you opened it: CLAI names the
 ones waiting at startup, and `/plugins enable NAME` approves one. See
-[Project settings](README.md#project-settings).
+[Project settings](docs/reference.md#project-settings).
 
 Some plugins already include others. `coder` includes task delegation, so while
 `coder` is on, a harness `SubAgents` row (such as `subagents`) stays off unless
@@ -1093,7 +1156,7 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. `/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`; see the README) and reloads it for the next turn. A
+`summarization_model`; see the [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 
 ```text
@@ -1115,7 +1178,9 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-`/plugins disable ask_user` takes the tool away.
+`/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
+`clai2 --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
+is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -1163,6 +1228,374 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 show a "waiting for you" state) returns a `Hooks` capability with
 `hooks.on.event(EventClass)`, or overrides `render`, without being the answerer.
 
+### `web`: this session in your browser
+
+The built-in `web` plugin (`pydantic_clai2.builtin_plugins.web`) starts disabled. Enable it with
+`/plugins enable web`, then run `/web`: it starts a local server and opens the browser on a web
+UI for your sessions. `clai2 --web` starts CLAI with only the browser to drive it, loading
+`web` for that launch without saving anything. `/web stop` ends the server and `/web status`
+shows its address and how many browsers are connected. `web` is
+[process-scoped](#one-instance-for-the-whole-process-scope--process): one server for the whole
+CLAI, however many sessions are live.
+
+Everything the browser does in a session goes through that session's prompt, as typing there
+would (its `send_input`, reached through `host.live`): prompts and `/commands` run in that
+session, in order with what the terminal enters, and both show them. A capability the plugin
+binds gives the browser each live session's runs as turns, with their stream events (text,
+thinking, tool calls and results, shell output, diffs), but not a background `/fork`'s, though
+it fires the turn moments too. Command results come from `on_command_end` and history from each
+session's `conversation`. The sidebar lists `host.sessions`, the store `/resume` uses, grouped as
+`/resume` groups them: by repository, then by checkout, with a session from a removed worktree
+under its repository by the checkout saved with it (`ConversationSummary.checkout`), archived ones
+left out unless its archive button is on (`GET /api/sessions?include_archived=true`;
+`POST /api/sessions/ID/archive` and `/unarchive`).
+
+Under `clai2 --web`, clicking a session opens it live (`POST /api/sessions/ID/open`, which calls
+`host.live.open`), even while other sessions run turns: it is resumed in a session of its own, in
+the directory it was saved in, with that directory's `.clai/settings.json` and its own instance of
+each session plugin, so the coding tools, `repo_context`, skills, and MCP project files refer to
+it. **New session** does the same in the folder the user picks (`POST /api/sessions/new`, which
+calls `host.live.new`). The page watches the session it shows (`LiveSession.watch`), so that one
+is never closed for being idle; any other live session closes after an idle hour, and clicking it
+again resumes it. The sidebar marks each live session that runs a turn, has input queued behind
+one, or waits for an answer, from the `live` message. Esc and the stop button interrupt the shown
+session only. The process's working directory never changes: each session reads its own as
+`host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
+was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
+there (`host.sessions.follows_workspace`); its session-scoped plugins load again, each getting
+`on_session_end` and then `on_session_start`, as on `/plugins reload`, and process-scoped ones
+stay loaded. Nothing moves while a turn, a background
+`/fork`, or a delegated task runs. `clai2 --web --resume ID` starts in that session's directory.
+The [wire protocol](clai2_web_README.md#wire-protocol) names each message's session and lists the
+routes for one session.
+
+A session whose directory is gone opens read-only. With `/web` from a terminal, the browser opens
+sessions beside the terminal's in the same way, except that a session saved in another directory
+opens read-only, since the terminal's `/resume ID` refuses it. The terminal shows one live session
+at a time: `/resume ID` there of a session live in the browser shows that session, even mid-turn,
+instead of copying it, and the session shown before stays live. Shell lines (`!`) run only in the
+terminal. A bare
+command that declares its menu (`host.command_menu`), such as `/set`, `/theme`, or `/spinner`,
+opens that menu in the page instead and runs nothing: `/set` and `/settings` open the Settings
+window's General section, `/system_prompt` its System prompt section, `/update` its About section,
+the others a dialog, except where a section lists the command, as Keys & accounts lists `/keys`,
+`/login`, and `/accounts`, and MCP servers lists `/mcp`. Its edits go through the menu's own
+source, as in the terminal, which prints what each one saved. Any other bare command that opens a
+terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
+`/model NAME` instead.
+
+The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
+`host.tasks` and `on_task_event`: each delegated task under the one that started it, with its
+agent, model, elapsed time, and last action, and a link from the tool call that started it.
+Clicking one opens its transcript in the main pane, streamed as its run goes; a browser that
+connects meanwhile gets each running task's transcript so far. Its own box steers it
+(`host.tasks.steer`), and Stop, Background, and Resume act as `/tasks` does; Resume asks the
+agent to continue a finished task, as a prompt. Once a task finishes, the page shows its saved
+history (`GET /api/tasks/ID`), and the server keeps no live copy of it.
+
+The page follows `/theme`: the `default` theme is Pydantic's own colours, in the
+browser's light or dark mode, and any other palette paints the page as it paints the terminal,
+with the same colour for each role. The picker in the sidebar's footer sends `/theme NAME`,
+which applies at once, even while a turn runs, and a change made in the terminal shows in the
+browser once the command ends.
+
+The **Monty** panel (⌘J, or the terminal button at the top right) shows code mode's `run_code`
+cells, which run in Monty, its sandboxed Python interpreter: each cell's code as the model writes
+it, the tools it calls from the sandbox as they run (speculative launches marked), and what it
+printed and returned. Code mode keeps Monty's state with the session between turns and on resume,
+so cells are numbered across the session, as a notebook numbers them, until a `restart: true`
+clears it. Its input runs your own cell with `/monty` between turns, shown as yours; your next
+prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
+the calls found in their code.
+
+Images pasted or dropped into the composer go with the next prompt: the page shows each as a
+thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
+`images`, base64-encoded), which the server checks and converts to PNG as the terminal does a pasted
+image, then enters with `send_input(text, images=...)`. A prompt may be images alone; a `/command`
+takes none. A prompt's transcript item lists its images by ID (`images`, the SHA-256 of the bytes),
+and the page fetches each from `GET /api/sessions/ID/images/IMAGE_ID` with the token header,
+showing it as a thumbnail in the message.
+
+The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
+`run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
+typing it would; a running turn keeps the tools it started with. While speculation is on, code
+mode is on too, so its toggle stays lit. A change made with Ctrl+X Ctrl+S in the terminal shows in
+the browser at its next status update, which an idle session sends only when a prompt or command
+runs; reloading the page shows it at once.
+
+The **Settings** window (the gear in the sidebar's footer, or ⌘,) lists its sections on the
+left; each has its own address, such as `#settings/general` or `#settings/plugins`. **General** is `/set`'s
+menu, from `host.command_menu('set')`, grouped by the part of each key before its dot.
+**MCP servers** (`#settings/mcp`) is `/mcp`'s menu, from `host.command_menu('mcp')`: one row
+per server, each an action whose dialogs run `/mcp`'s subcommands; see
+[Connect MCP servers](#connect-mcp-servers).
+**System prompt** is `/system_prompt`'s menu, the one the terminal runs: your instructions in a
+multi-line dialog (`Dialogs.text(multiline=True)`), a paragraph to append, and the full system
+prompt the model last received in a read-only one (`Dialogs.view`). **About** is `/update`'s
+menu: the running version, whose **Update…** asks before it enters `/update` (bare `/update` in
+the terminal still installs at once), and the `updates.channel` setting. `/usage` and `/cost`
+results carry their figures (`Notice.usage`, from the `session_usage` the commands report), which
+the page shows as a card; the terminal prints them as before. The command palette (⌘⇧P, or bare
+`/help` in the composer) lists every command `host.complete('/')` offers, plugin and skill
+commands included, with its description and the arguments it shows there; Enter runs one as typing
+it bare would, and one that needs an argument goes to the composer to finish. Bare `/tasks` and
+`/resume` in the composer focus the sidebar's Workers tree and session search instead of opening
+their terminal pickers.
+The **Plugins** section (the puzzle button in the sidebar's footer, or `/plugins` typed in the
+composer), called the plugins panel below, is `/plugins` in the browser, reading `host.plugins`. It lists every plugin with its
+status, origin, and description, and a switch that turns it on or off as `/plugins enable` and
+`/plugins disable` do, without opening its settings menu. A plugin that is on shows its settings:
+
+- A plugin that [declares its settings menu](#offer-a-settings-menu-def-settings_menuself)
+  shows that menu's rows, as the terminal lists them: a switch for a yes/no row, a list for one
+  with choices, and a field for the rest. Each change is checked and saved at once, as the
+  terminal menu saves it, and the plugin loads again with it; a value the menu rejects shows its
+  reason beside the row and is not saved. A row that opens more, such as picking a `/keys`
+  entry or signing in, has a **Change…** button: what its action asks (`Dialogs`) opens as
+  dialogs in the page, only there, and the terminal is left alone. A secret typed into one goes
+  to the plugin alone, never to another browser.
+- Any other plugin with settings shows a form built from its settings model's JSON Schema: a
+  switch for each boolean, a list for each choice, fields for text and numbers, one line per item
+  for a list of strings, and JSON for anything else. Each change is validated by the model and
+  saved at once, then the plugin is loaded again with it. A menu of its own (`configure`) opens
+  in the terminal from the panel's **Open its menu**; `clai2 --web` has no terminal to open it in.
+
+Plugins' [side panels](#show-a-page-beside-the-conversation-get_side_panels) each get a button
+at the top right; Cmd/Ctrl+Shift+L toggles the first one, such as `observability`'s Logfire live
+view. A panel sits on the right, resized by dragging its left edge; the browser remembers which
+one is open and how wide. A page that allows the web UI to frame it shows inside the panel;
+others open in a window beside this one, which follows the panel as its page changes. The page's
+own `Content-Security-Policy` admits frames from `https:` and loopback `http:` pages only.
+
+One menu edits a plugin at a time: while the terminal shows its menu, or an action's dialogs
+are open in the page, other edits to that plugin are refused until it closes. The panel cannot
+turn off, reload, or reconfigure `web` itself, which would end the page; change those from the
+terminal.
+
+While `web` is loaded it answers `ask_user_question` itself, in the browser and in the
+terminal picker at once, whichever answers first; the `ask_user` plugin stays off meanwhile,
+as `/plugins` shows. Settings, as `/plugins add web pydantic_clai2.builtin_plugins.web '{...}'`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `host` | `127.0.0.1` | One address to listen on, not `0.0.0.0`. Anything but loopback lets other machines reach it. |
+| `port` | `0` | Port to listen on; `0` picks a free one each launch. |
+| `open_browser` | `true` | Open the browser when the server starts. |
+| `ask_user` | `true` | Answer questions in the browser too, taking over from the `ask_user` plugin. |
+
+Security: the browser can make the agent run commands as you. The server binds `127.0.0.1` by
+default and checks every request. The `Host` header must name the server's own address, which
+stops DNS rebinding. Every request must carry a random token, new each launch but kept across
+`/update`'s restart (see below): API calls in a
+header that another site's page cannot set, the page and its files in the address, as the
+printed link does, and the WebSocket as a query parameter, from the server's own origin. No
+cookie holds it, since browsers send a host's cookies to all of its ports. `/web` opens the
+browser through a page only you can read, so the token never appears on a command line. Model
+output is rendered as sanitized Markdown. Anyone with the link can drive the session, so keep it
+private. `/web stop` is refused under `clai2 --web`, where the browser is the only way in.
+
+The UI is a React app in `web-ui/` in the CLAI source tree. Its built files ship inside the
+package, so running it needs no Node. After changing it, run `npm ci && npm run build` there and
+commit the rebuilt `pydantic_clai2/builtin_plugins/web/static/`.
+
+`/update`, typed in the terminal or confirmed with **Update…** in the page's About section (bare
+`/update` in the composer opens that section), shows in the page: uv's latest line while it
+installs (`on_update_progress`), then all it printed and the command's result. A failed install,
+or nothing to install, says so and changes nothing. After a successful one, CLAI restarts as the
+new build serving the web UI again on the same port with the same token, and resumes the session;
+the page says it is restarting, reconnects by itself, and names the new version. That holds for
+`clai2 --web`, with its `--port` and `--token-file`, and for `/web` started from a terminal, which
+restarts as a terminal session with the web UI running, though the browser does not open again.
+The port and token go to the new build in the `CLAI_RELAUNCH_WEB` environment variable, which only
+you can read and CLAI removes before anything else runs, never on its command line, which `ps`
+shows every user. Like any command, `/update` entered while a turn runs waits for the turn to end.
+In a terminal, `/update` and `/reload` are refused while other live sessions run turns, which
+the restart would end, and in a session from another folder the terminal shows, as CLAI
+restarts in the folder it started in.
+
+`clai2 --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
+PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
+by you alone (mode 0600), and hold one URL-safe token of at least 32 characters. That is for a
+program that starts CLAI and talks to it, such as the `workspaces` plugin: CLAI then listens on
+127.0.0.1 whatever address is saved, prints `Web UI running at http://127.0.0.1:PORT/` without the
+token, which tells that program the port, and opens no browser.
+
+#### Driving another CLAI from Python: `web.client`
+
+`pydantic_clai2.builtin_plugins.web.client` makes the page's calls from Python, for a plugin or
+program that drives another CLAI's web UI, such as a workspace's:
+
+```python
+from pydantic_clai2.builtin_plugins.web.client import SessionView, WebClient
+
+async with WebClient(url='http://127.0.0.1:8765/', token=token) as client:
+    view = SessionView(client)
+    async with anyio.create_task_group() as group:
+        group.start_soon(view.follow)  # Keeps `view` current from the WebSocket.
+        await view.ready()
+        await view.send('Fix the failing test')
+        if await view.wait(timeout=600) == 'asking':
+            [asked] = view.questions.values()
+            await view.answer(asked.id, None)  # Or one `AskUserAnswer` per question.
+        print(view.items[-1].text, view.last_turn)
+        group.cancel_scope.cancel()
+```
+
+`WebClient(url=, token=)`, an async context manager, has `state()` (the page's `Snapshot`),
+`send(text)` (a prompt or `/command`), `interrupt()`, `transcript(session_id)`,
+`answer(request_id, answers)`, `answer_dialog(dialog_id, value)`, and `messages()`, the WebSocket's
+`ServerMessage`s. It sends the token in the header, and as the WebSocket's query parameter with the
+server's own `Origin`, never through a proxy. Failures raise what the server raised: `LookupError`
+(404), `RuntimeError` (409), `ValueError` (400 and 422), and `PermissionError` (403, a wrong token).
+A bare command that declares its menu (`host.command_menu`), such as `/set`, would open that menu
+in a page, so `send` raises `ValueError` for it and nothing runs; send it with arguments instead.
+
+`SessionView(client)` follows the stream as the page does: `items` (the transcript, the running turn
+included), `running`, `questions`, `dialogs`, `notices` (command results), `last_turn` (how it ended,
+with its usage), and `session`. `wait(timeout=)` returns `'idle'` once no turn runs and nothing sent
+through the view is still queued, `'asking'` while a question or dialog waits, `'timeout'`, or
+`'closed'` once the connection ended. `send`, `answer`, and `answer_dialog` go through the view so
+`wait` counts what they started or closed.
+
+### `workspaces`: checkouts with their own CLAI
+
+The built-in `workspaces` plugin (`pydantic_clai2.builtin_plugins.workspaces`) starts disabled.
+Enable it with `/plugins enable workspaces`. A workspace is a checkout of a repository on its own
+branch, with its own CLAI running there as `clai2 --web`.
+
+| Command | Does |
+|---|---|
+| `/workspaces` or `/workspaces list` | every workspace: its ID, status (`ready`, `running at URL`, `stopped`), kind, branch, and folder |
+| `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
+| `/workspaces open ID` | start the workspace's CLAI unless it runs, and open its page in your browser |
+| `/workspaces stop ID` | stop its CLAI as Ctrl-C would, killing it after ten seconds |
+| `/workspaces destroy ID` | stop its CLAI, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
+
+**Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
+the settings menu (`/plugins configure workspaces`, or the web UI's plugins panel), which also adds
+and removes kinds. `local-worktree` is the only backend so far: a linked Git worktree on this
+machine. Its CLAI runs as you, in your environment, with your CLAI settings and sign-ins, so nothing
+is copied into it. The default settings have one kind of that name:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `repo` | empty | the repository when `create` names none: a local path, or a URL |
+| `ref` | empty | the branch, tag, or commit to start from when `create` names none; empty is the repository's `HEAD` |
+| `root` | empty | the folder checkouts go in, an absolute path; empty is `.worktrees/` in the repository, as for `clai2 --worktree` |
+| `branch_prefix` | `clai-` | each workspace's branch is this prefix and its ID |
+| `teardown` | `remove` | `destroy` removes the checkout, uncommitted changes included, or `keep`s it |
+| `model` | empty | the model the workspace's CLAI starts with; empty is your saved default |
+
+A local path is checked out from that repository. A URL is cloned once into
+`$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
+your own Git credentials; a REF names `origin`'s branch first. The new branch tracks nothing, so the
+first push names its remote branch.
+
+**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
+(`~/.local/state/...` by default), readable by you alone: `workspace.json` (kind, repository, ref,
+branch, folder, status, creation time, teardown, and its CLAI's process ID and port), and while its
+CLAI runs, `token` and `session.log`. Every CLAI reads the same folders, so a workspace made in one
+session can be opened and destroyed from another, and its CLAI keeps running when the CLAI that
+started it quits or unloads the plugin. A workspace whose CLAI has ended reads as `stopped`.
+
+**Security.** A workspace's CLAI listens on 127.0.0.1 only, on a port it binds itself (`--port 0`),
+so no other program can take that port first; the launcher reads the port from its log. It has its own random
+token, written to its `token` file (mode 0600) and passed with `--token-file`, never on a command
+line or in a log; `/workspaces` never prints it. `open` hands the browser the address through a
+page in the same folder that only you can read. `stop` signals a process only after it answered
+with its token, so a process ID the system gave to another program is left alone. `destroy` removes
+only a checkout named after the workspace directly inside the folder it was made in, through
+`git worktree remove`, which also refuses anything that is not a worktree. The child runs as
+`python -P -m pydantic_clai2`, so a module committed in the checkout cannot stand in for CLAI, and
+with `PYTHON_DOTENV_DISABLED=1`, so a `.env` committed there cannot point your API keys elsewhere.
+Starting, stopping, and destroying a workspace hold a lock file in its folder, so CLAIs in several
+processes take turns. Workspace sessions run on macOS and Linux.
+
+**From another plugin.** `pydantic_clai2.builtin_plugins.workspaces` exports `Workspaces`, what
+`/workspaces` calls, built from the kinds: `Workspaces(kinds=settings.kinds)`. Read the user's kinds
+from `host.plugins` (the `workspaces` row's `settings`, a `WorkspacesSettings`). Its methods:
+`listing()`, `get(id)`, `create(kind=, repo=, ref=, base=host.workspace)` (a relative `repo` is in
+`base`), `start(id)`, `stop(id)`, `destroy(id)`, each
+returning a `Workspace` record, and `token(id)`, the running CLAI's token, for a client that talks to
+it; never show it to the model. A new backend implements `backend.Backend`: `create`, `start`,
+`alive`, `stop`, and `destroy`. `configured(host.plugins)` builds that `Workspaces` from the loaded
+plugin's settings, or returns `None` while it is off.
+
+**In the web UI.** While `workspaces` is on, the sidebar shows a **Workspaces** section above the
+projects: each workspace's ID, branch, and status, refreshed every five seconds, and **Open**, which
+starts its CLAI if needed (`POST /api/workspaces/ID/open`) and opens its own page in a new tab. Only
+that response carries the workspace's token, to the page that already has its own; `GET
+/api/workspaces` never does.
+
+### Orchestrator: an agent that runs workspaces
+
+The web UI (`/web`, or `clai2 --web`) has an **Orchestrator** button in the sidebar, right below
+**New session**. It opens the orchestrator chat in the main pane; clicking a session goes back. The
+orchestrator is an agent of its own, separate from the session's: its own conversation, its own
+instructions (manage workspaces, give their agents tasks, watch, steer, report back, ask before
+destroying one, clean up saved sessions by archiving them), and only the tools below plus
+`ask_user_question`. It has no shell, file, code mode, or other CLAI tools, and the session's agent,
+in the terminal or the browser, gets none of these.
+
+It works over the `workspaces` plugin's registry and kinds, so it needs that plugin on; while it is
+off, the chat says so and **Enable workspaces** turns it on. It works for the whole CLAI, not one
+session, so it runs on the model a new session starts with (`host.default_model()`: the saved
+default, which `/set model NAME` changes, else the agent's own). One turn runs at a time, with a small
+dot on the sidebar entry meanwhile; the stop button or Esc stops it, keeping what ran so far. **New
+chat** starts over; the workspaces stay. Each workspace's CLAI is driven through its web UI with
+[`web.client`](#driving-another-clai-from-python-webclient), over one connection per workspace kept
+between tool calls and closed when `web` unloads; the CLAIs keep running. A tool card that names a
+workspace has an **Open** link to its page, as the sidebar's Workspaces section has.
+
+| Tool | Does |
+|---|---|
+| `workspace_list()` | every workspace, and the kinds the model may make |
+| `workspace_create(kind, repo='', ref='')` | a new workspace; nothing runs in it yet |
+| `workspace_destroy(workspace)` | stop its CLAI and remove it, only once the user confirmed (below) |
+| `session_start(workspace, prompt)` | start its CLAI unless it runs, and send `prompt` |
+| `session_send(workspace, text)` | another prompt, queued behind a running turn |
+| `session_read(workspace, last=5)` | in short: whether a turn runs, how the last one ended, what is asked, and the last items, each cut to 600 characters |
+| `session_wait(workspace, timeout=300)` | wait, up to an hour, until the turn ends (then its final answer) or the session asks something |
+| `session_interrupt(workspace)` | stop the running turn |
+| `session_answer(workspace, request, answers=None, value=None)` | answer a question request (`answers`, none declines) or a dialog (`value`) |
+| `sessions_find(query='', project='', older_than_days=None, include_archived=False, limit=50)` | saved sessions of every project, from `host.sessions`, as a table: ID, title, project, worktree, last active, archived |
+| `sessions_archive(ids)` | archive them, reporting each one archived and each refused (the current session, running ones) with the reason |
+| `sessions_unarchive(ids)` | list them again |
+
+**Cleaning up sessions is archiving.** Archiving can be undone, so it needs no confirmation; the
+orchestrator is told to archive when asked to clean up or delete sessions. No tool deletes a
+session, and archiving removes no folder or worktree; only `workspace_destroy` removes a checkout,
+that of a workspace the orchestrator made. Each change refreshes the sidebar.
+
+**Destroying asks you.** `workspace_destroy` refuses until an `ask_user_question` answer in the
+orchestrator's conversation picked the option `Destroy ID` for that workspace; the model is told to
+ask that way. Its questions show only in the orchestrator chat and only you answer them there,
+never the terminal, so the model cannot give the answer itself.
+`session_start` and `session_send` send prompts only: a `/command` would run in the workspace's CLAI
+with no one there to confirm it (`/workspaces destroy` there, for one), so the tools refuse it and
+the model asks you to type it in the workspace's page.
+
+The model never sees a token: tools return addresses without one, and problems (an unknown
+workspace, a CLAI that stopped) come back as `Error: ...` lines rather than failing the run.
+
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
+among the saved sessions or in `/resume`. Every CLAI with the web UI, a workspace's own included,
+has the same chat: each turn starts from the file as it is then, which an open page catches up to,
+and saves it when it ends, unless another CLAI changed the file meanwhile: that turn then fails and
+is not kept, rather than writing over the other CLAI's.
+A turn the file cannot take fails with the reason; until a save works, this CLAI's chat goes on from
+it rather than from the file. That save replaces the file unless another CLAI changed it meanwhile,
+in which case the turns not saved are dropped in favour of the file.
+`/web stop` stops a running turn, since no page is left to watch it or answer it.
+
+**From another program.** `GET /api/orchestrator/state` returns the chat (`enabled`, `running`,
+`items`, `questions`); `POST /api/orchestrator/input` (`{"text": ...}`) starts a turn,
+`/interrupt` stops it, `/answer` (`{"id": ..., "answers": [...]}`, or `null` to decline) answers its
+question, and `/clear` starts over. They take the same token and `Host` checks as the rest of the
+API. Its messages come on the page's WebSocket, each wrapped as `{"type": "orchestrator",
+"message": ...}`, the state first after the session's snapshot.
+
 ### `github`: tools from GitHub's hosted MCP server
 
 The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
@@ -1170,7 +1603,8 @@ The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model 
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
 settings menu. To change the settings later, run `/plugins configure github` or
-press `c` on it in `/plugins`.
+press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
+panel, with the sign-in, key, and host steps shown as dialogs in the page.
 You never need to reinstall it.
 
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
@@ -1195,11 +1629,12 @@ GitHub's hosted MCP server does not support dynamic client registration, so an
 MCP client can only use OAuth with an OAuth App registered to that client. CLAI
 doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
 Choosing **GitHub CLI (browser)** under Sign-in runs
-`gh auth login --hostname HOST --web --clipboard`. The menu shows the one-time
-code (`gh` also copies it to your clipboard) and opens
-`https://github.com/login/device` in your browser. Once you approve the code,
-the screen closes by itself. Enter opens the page again, and Esc stops `gh` and
-leaves the setting unchanged. If `gh` already has a login for the host, choosing
+`gh auth login --hostname HOST --web --clipboard`. A waiting screen shows the
+one-time code (`gh` also copies it to your clipboard) and the link to
+`https://github.com/login/device`, which it also opens in your browser. Once you
+approve the code, the screen closes by itself. Cancelling it (Esc in the
+terminal, or closing the dialog in the web UI) stops `gh` and leaves the setting
+unchanged. If `gh` already has a login for the host, choosing
 it just switches the plugin over. `HOST` is `github.com`, or the ghe.com host for
 GitHub Enterprise Cloud.
 
@@ -1252,12 +1687,15 @@ The settings menu is full-screen with one row per setting. Up/Down moves, Enter
 edits a row, `r` puts a row back to its default, and **Save & close** or Esc
 leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
-to change a setting or pick a different key.
+to change a setting or pick a different key. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where Access token key
+and Products have a **Change…** button: the key picker, the masked token prompt,
+and the products checklist open as dialogs in the page.
 
 | Row | Stored as | Default | Does |
 |---|---|---|---|
 | Access token key | the key's name, in the credential store | `GOOGLE_ACCESS_TOKEN` | which `/keys` entry holds the Google OAuth access token |
-| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one, and at least one stays on |
+| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one and saves it, **Done** or Esc goes back, and at least one stays on |
 | Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
 | Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
 
@@ -1268,8 +1706,8 @@ CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it 
 plugin settings, which are plain SQLite and reject a `token` or `auth` entry.
 Enter on the key row lists your saved key names so you can pick one (type to
 filter; Esc leaves the choice unchanged). **Enter a different API key** asks for a
-new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`,
-replacing any value already stored under that name. Only the chosen key's name is
+new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`.
+If a value is already stored under that name, it asks before replacing it. Only the chosen key's name is
 remembered, in the credential store. Several plugins and connections can share one
 named key, such as GitHub integrations all using `GITHUB_TOKEN`. While the plugin
 refers to a key, `/keys` refuses to rename it; pick another key here first. To
@@ -1311,12 +1749,15 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 #### Configuring Pylon
 
 Turning the plugin on opens its settings menu, like any plugin with a
-[`configure`](#offer-a-settings-menu-async-def-configureself) menu. `c` in
+[settings menu](#offer-a-settings-menu-def-settings_menuself). `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
 change anything, including the key. Type to filter the rows. Enter edits a row,
 `R` restores its default, and **Save & close** or Esc leaves the menu. Each
 change is saved to the plugin's settings as soon as you make it and applies from
-the next run, with no reinstall.
+the next run, with no reinstall. The same rows show in the
+[web UI](#web-this-session-in-your-browser)'s plugins panel, where the Sign-in
+and Key rows' **Change…** buttons open the sign-in choice, the key picker, and
+the browser sign-in's waiting screen as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1340,9 +1781,9 @@ and user the agent acts as.
 #### Keys: `/keys` holds the secret, Pylon holds its name
 
 The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
-plaintext SQLite. The Key row uses the shared saved-key picker, which is
-searchable, and Esc cancels it. Choose an existing key, or choose **Enter a
-different API key** to type a masked token. CLAI saves that token in `/keys` as
+plaintext SQLite. The Key row uses the shared saved-key picker, and Esc cancels
+it. Choose an existing key, or choose **Enter a different API key** to type a
+masked token; an empty one changes nothing. CLAI saves that token in `/keys` as
 `PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
 exists, CLAI asks before replacing it, since other connections may use it. The
 name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
@@ -1378,8 +1819,11 @@ meeting context, and draft emails. It needs a paid Day AI Agent tier.
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
 Type to filter the rows, press Enter to change one, `R` to reset it to its
 default, and Esc to close. Each change is saved as soon as you make it, and the
-plugin loads again with the new settings when the menu closes. The menu has
-one row for each option harness `DayAI` takes:
+plugin loads again with the new settings when the menu closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the Sign-in row's **Change…** button asks for a key or runs the browser sign-in
+as dialogs in the page. The menu has one row for each option harness `DayAI`
+takes:
 
 | Row | Setting | Choices |
 | --- | --- | --- |
@@ -1440,7 +1884,9 @@ later, so you can change anything without reinstalling. It is the same field
 editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
 **Save & close** or Esc closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
-menu closes.
+menu closes. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked token input, and the browser
+sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1462,7 +1908,7 @@ will not rename a key while Ordinal uses it. Several plugins and providers can
 name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
 
 `/ordinal login` (or choosing browser sign-in in the menu) signs in through the
-browser, behind a waiting screen that Esc cancels. CLAI keeps the OAuth tokens in
+browser, behind a waiting screen that Esc cancels (a dialog, from the web UI). CLAI keeps the OAuth tokens in
 the OS keyring (the private credential file when no keyring exists), as `/mcp`
 does for OAuth servers, so later launches reuse them. It only works on the
 machine you run CLAI on. Loading and prompts never open the browser: until you
@@ -1490,7 +1936,11 @@ settings is left as it is.
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
 or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
+highlighted row, `R` resets it, and **Save & close** or Esc closes. The same menu
+shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
+the User token, Slack app, and Browser sign-in rows have a **Change…** button and
+their steps (the key picker, the Client ID, the sign-in's waiting screen) open as
+dialogs in the page. Every change is saved as you make it:
 
 | Row | Choices | Saved in |
 |---|---|---|
@@ -1517,8 +1967,9 @@ key is chosen or the chosen key is gone from `/keys`.
 serves only apps installed in your workspace, so browser sign-in goes through your
 own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
 then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
-CLAI's manifest. Pick your workspace, click **Create**, and paste the app's **Client
-ID** (Basic Information, App Credentials). CLAI then opens Slack's sign-in page and
+CLAI's manifest; the Client ID prompt shows the same link, in case no browser
+opened. Pick your workspace, click **Create**, and paste the app's **Client
+ID** (Basic Information, App Credentials); the prompt refuses anything else. CLAI then opens Slack's sign-in page and
 waits up to five minutes behind a screen that shows the URL, in case no browser
 opens (over SSH, for example); Esc cancels. You never copy a token or a client
 secret: the manifest enables PKCE, so Slack treats the app as a public client and
@@ -1573,7 +2024,9 @@ settings later, run `/plugins configure posthog` or press `c` on it in
 The menu is the shared field editor that `/set` uses: type to filter, Enter to
 edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
-new settings.
+new settings. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the `/keys` picker, the masked key input, the feature-group
+list, and the browser sign-in show as dialogs in the page.
 
 | Row | Default | Does |
 |---|---|---|
@@ -1581,7 +2034,7 @@ new settings.
 | Sign-in | API key from `/keys` | or browser sign-in, with tokens kept in the keyring |
 | Region | US cloud | US (`mcp.posthog.com`), EU (`mcp-eu.posthog.com`), or a typed `https://` URL for a PostHog MCP server you run (`http://` only for localhost) |
 | Tools | read-only | read-only, or read and write (for example editing feature flags) |
-| Feature groups | every group | a searchable list of PostHog's feature groups; Enter toggles one and saves it |
+| Feature groups | every group | a searchable list of PostHog's feature groups; each pick toggles one and saves it, until **Done** or Esc |
 | Server mode | server default | one `posthog` tool driven by commands, or one tool per operation |
 | Project ID | not set | pin every request to one project (`x-posthog-project-id`) |
 | Organization ID | not set | pin every request to one organization (`x-posthog-organization-id`) |
@@ -1610,7 +2063,7 @@ plugin still loads with a warning and keeps its menu, and each run fails with an
 error naming the fix instead of connecting without the key.
 
 With browser sign-in, `/posthog login` (or choosing browser sign-in in the menu)
-opens the browser behind a waiting screen that Esc cancels. Loading and prompts
+opens the browser behind a waiting screen that Esc cancels (a dialog, from the web UI). Loading and prompts
 never open the browser: until you sign in, runs have no PostHog tools and the
 session start says how to sign in. The tokens go to the keyring (the
 `mcp-posthog_plugin` entry under `pydantic-clai2`), the same storage `/mcp` uses
@@ -1630,14 +2083,16 @@ calls appear in core's spans.
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
 the Grain meetings, transcripts, and notes you can see. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
-settings menu. Until you have opened the menu once or picked a key, loading it
-prints a line pointing there.
+settings menu. Until you have closed the menu in the terminal once, changed a
+setting, or chosen the token source, loading it prints a line pointing there.
 
 `/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
 menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
 close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
-different key:
+different key. The same menu shows in the [web UI](#web-this-session-in-your-browser)'s
+plugins panel, where the Token row's **Change…** button asks its steps (the key
+picker, the masked token, the browser sign-in's waiting screen) as dialogs in the page:
 
 ```text
  Grain
@@ -1662,15 +2117,16 @@ the first of these that applies:
 1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
    it overrides the choice there while it is set.
 2. A [saved API key](#saved-api-keys) picked on the Token row, or with
-   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
-   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
-   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   `/grain key`: choose "A /keys entry", then pick one of your `/keys` entries by
+   name or type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents, after asking before it replaces a saved
+   `GRAIN_ACCESS_TOKEN`. CLAI keeps only the key's name and looks
    the key up on every run, so replacing it in `/keys` takes effect on the next
    prompt, deleting it makes Grain fail rather than connect without it, and
    `/keys` refuses to rename it while Grain uses it. Several plugins can share one
    named key, the way `vllm` and `openrouter` connections can. Choose "No API
-   key" to go back to the browser sign-in.
-3. A browser sign-in, made with `/grain login`, behind a waiting screen that
+   key" to go back to the browser sign-in, which starts then unless you are signed in.
+3. A browser sign-in, made with `/grain login` or "No API key", behind a waiting screen that
    shows the sign-in URL in case the browser does not open (over SSH, for
    example) and that Esc cancels. The tokens go to the OS keyring (or CLAI's
    private credential file when there is no keyring), the way `/mcp` OAuth
@@ -1709,7 +2165,7 @@ for `/agent` and `/mcp`:
    Save & close                  │ provides 1 capability
                                  │ settings press c to configure
 
- / search · space on/off · c configure · r reload · d remove · esc close
+ / search - Enter/Space on/off - c configure - r reload - d remove - Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1722,18 +2178,18 @@ paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
 plugin that is off runs no code to describe itself.
 
-Space turns the highlighted plugin on or off; `c` configures it, `r` reloads
-it, and `d` removes it. Press `/` to search: while searching, every key you type
+Enter or Space turns the highlighted plugin on or off; `c` configures it, `r`
+reloads it, and `d` removes it. Press `/` to search: while searching, every key you type
 filters the list (including `c`, `r`, `d`, `q`, and Space), matching ignores case,
 Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so the **Save & close** row, Enter, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
 close.
 
-Turning a plugin on with Space opens its settings menu straight away when it
-offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
+Turning a plugin on with Enter or Space opens its settings menu straight away when it
+offers one (see [settings menu](#offer-a-settings-menu-def-settings_menuself)).
 When you leave that menu, `/plugins` comes back with the plugin's message in
 the details panel. `c` opens the settings menu of a plugin that is already on.
 Turning a plugin off never opens a menu, and a plugin without a settings menu
@@ -1825,7 +2281,7 @@ export EXA_API_KEY=...
 ```
 
 With `uv tool`, extra packages installed using `--with` must be added again after
-`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+`/update`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
@@ -1897,26 +2353,33 @@ contributes nothing:
 | `get_status_segments()` | text appended to the status row |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
+| `get_side_panels()` | pages the web UI shows beside the conversation |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_plugin_load_failed` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_conversation_changed` / `on_command_end` / `on_plugin_load_failed` / `on_task_event` / `on_update_progress` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
-runtime: the console, the conversation, the status row, the full screen, and its
-saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
-first.
+runtime: the console, the conversation, the status row, the full screen, its
+saved settings, the prompt through `send_input`/`interrupt`/`complete`, the
+saved `sessions`, and the session's folder, `workspace`. Set up state in `__init__`;
+call `super().__init__(host, settings)` first. Each live session gets its own
+instance unless the class sets `scope = 'process'`; see
+[Several live sessions](#several-live-sessions).
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_plugin_load_failed`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress`
 
-Six `async` methods fire outside the agent run, in the shell:
+Nine `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
-| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session | `agent`, `settings`, `conversation_chosen` | no |
-| `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
-| `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
+| `on_session_start` | CLAI has started, before the first prompt, or the plugin loaded mid-session; for a session-scoped plugin, also when a live session opens (`host.live.open` or `new`, as the web UI does) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `agent`, `settings`, `conversation_chosen` | no |
+| `on_session_end` | CLAI is quitting, or the plugin is unloading; for a session-scoped plugin, also when its session closes (idle for an hour, or `host.live.close`, with `reason='exit'`) or moves to another folder under `clai2 --web` ([Several live sessions](#several-live-sessions)) | `reason`: `exit`, `eof`, or `error` | no |
+| `on_turn_start` | you pressed Enter on a prompt, or a plugin sent one with `send_input` | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
 | `on_conversation_changed` | the shell switched conversations, or the current one got a new title | `conversation_id`, `title` | no |
+| `on_command_end` | a `/command` finished | `text`, `output`, `error` | no |
 | `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+| `on_task_event` | a delegated task of the current conversation started, streamed an event, or finished | `task`, `event` | no |
+| `on_update_progress` | `/update` started installing a newer CLAI, uv printed a line, or the install ended | `stage`, `target`, `text` | no |
 
 `on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
 name and original exception. Every successfully loaded plugin receives it, regardless
@@ -1927,13 +2390,43 @@ startup or preventing other handlers from running.
 
 `on_conversation_changed` receives a `ConversationChanged` event after `/new`, `/clear`,
 and `/resume`, when the first prompt of a new conversation gives it a title, and when
-background naming or a rename in the `/resume` browser retitles the current conversation.
+background naming, a rename in the `/resume` browser, or `host.sessions.rename` retitles the current
+conversation.
 `title` is `None` until the first prompt is saved. A startup `--resume SESSION-ID`, `--session-id`,
 or `--fork-session` is applied before plugins load, so `on_session_start` already sees that
 conversation in `host.conversation`, and `SessionStart.conversation_chosen` says so; a session
 picked from the `--resume` browser arrives as this event. The event fires once per change,
 never for a background `/fork`, and a name from background naming waits until no turn or
 command is running.
+
+`on_command_end` receives a `CommandEnd` event once a `/command` has run, typed at the prompt,
+opened mid-turn, or entered with `host.send_input`: `text` is the command as entered, `output`
+the text the command returned, which the shell printed (empty when it returned none, as for a
+menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
+command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
+instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
+with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
+handler cannot cancel it. Use it to show command results somewhere other than
+the terminal; the shell has already printed them.
+
+`on_task_event` receives a `TaskEvent` for everything a task the agent delegated does, and its
+descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the
+event from the task's own run (text, thinking, tool calls and results), its
+`DelegationStartEvent` or `DelegationEndEvent`, or `None` when only the task changed, such as when
+it started or finished. These events never reach the main run's hooks: they are the feed `/tasks`
+shows. It fires for every stream event of every running task, down to each text and thinking
+delta, and the task waits for it, so keep the handler cheap, such as queueing the event for
+elsewhere. A failure is printed and the task goes on.
+
+`on_update_progress` receives an `UpdateProgress` event while `/update` installs a newer CLAI with
+uv: `target` is the version, or on the `main` channel the short commit, being installed, and
+`stage` says how far it got: `installing` first, then `output` for each line uv prints, with the
+line in `text`, then `failed` when uv failed, `installed` when CLAI must be started again by hand,
+or `restarting` when CLAI is about to exit and start the new build in its place, and
+`on_session_end` follows. `output` comes only while the web UI serves: reading uv's output turns
+its progress bars into plain lines, which CLAI still prints, so it does that only for a page that
+has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
+install runs after CLAI exits.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
@@ -2070,6 +2563,23 @@ named after something the user names, such as a skill, sets `overridable=True`:
 it gives way to any other command with its name, registered before or after it,
 and CLAI prints one line saying which command is hidden.
 
+A command whose bare form opens a menu can declare `menu=`, a zero-argument callable
+returning a `SettingsMenu` (see
+[Offer a settings menu](#offer-a-settings-menu-def-settings_menuself)) over what the
+command changes. The terminal still runs `handler`, and its own menu may offer more;
+the web UI shows the declared menu in the page when the bare command is typed there,
+with its actions asking through the page's dialogs, so its edits must save and apply as
+the command's do. `/set` declares the `/set` menu itself; `/theme` and `/spinner`
+declare its `display.theme` and `display.spinner` rows, without the terminal pickers'
+previews or `/spinner`'s speed. `/model` declares the saved models, each opening the
+menu `/model settings NAME` shows, without its picker's fallback-chain editors, and
+`/effort` the active model's `/model settings` menu.
+`/keys`, `/accounts`, and `/login` declare theirs too: their actions ask through
+`Dialogs` in the terminal and the page alike.
+A plugin's own settings belong in `settings_menu`, which the plugins panel shows and
+which loads the plugin again after an edit; `menu=` is for a command's menu over
+something else.
+
 A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
 editor, and goes through `on_turn_start` like typed input, without being echoed.
@@ -2096,6 +2606,98 @@ class Standup(Plugin):
 
 `submit_prompt` raises `RuntimeError` on a host built without a shell, such as
 in a test, unless you pass `submit_prompt=` to `PluginHost`.
+
+### Type at the prompt from elsewhere: `host.send_input`, `host.interrupt`, `host.complete`, `host.command_menu`, `host.sessions`, `host.setting`, `host.default_model`, `host.default_model_name`, `host.plugins`, `host.tasks`
+
+A plugin that is another way to use CLAI, such as a remote UI, drives the same
+prompt the keyboard does:
+
+- `self.host.send_input(text)` enters `text` as Enter at the prompt does, at any time from the
+  shell's event loop: it is trimmed, a bare `clear` runs `/clear`, and blank text does nothing. A
+  prompt runs as a turn and a `/command` as a command, each echoed in the transcript; while a turn
+  runs it queues behind it like a typed follow-up, and a `during_turn` command such as `/plugins`
+  opens over it at once. Input entered before the prompt opens, such as from `on_session_start`,
+  waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
+  `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
+  A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
+  where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead,
+  or show the menu the command declares (`command_menu`, below) yourself.
+  `send_input(text, images=[...])` attaches `BinaryContent` images to a prompt, as images pasted at
+  the prompt are: the model gets them after the text, which may be blank. It raises `ValueError` for
+  a `/command` or `!` line, which take no images, and when images waiting to be sent would pass 32 MiB.
+  A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
+  prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
+  which reads its prompts line by line. A `PluginHost` you build yourself calls its `send_input=`
+  callback with two arguments, the text and the images, `(text, images)`.
+- `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
+  `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
+  `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
+  CLAI's settings, such as one built in a test without `setting=`.
+- `await self.host.default_model()` is the model a new session starts with: the saved `model`
+  setting, resolved as `/model NAME` does, else the agent's own. Use it for an agent of your own
+  that works for the whole process rather than one session. It returns `None` on a host without
+  CLAI's settings, such as one built in a test without `default_model=`. To show that model,
+  `await self.host.default_model_name()` names it as `/model` does (`chain:NAME`,
+  `PROVIDER@PROFILE:NAME`) without building it, so it needs no sign-in and cannot fail.
+- `self.host.command_menu(NAME)` builds the `SettingsMenu` bare `/NAME` opens, as the command
+  declares it with `Command.menu`, or returns `None` for a command that declares none, an unknown
+  or unavailable one, and on a host without a shell. Edit it as the terminal would, through its
+  `source` (`problem`, `apply`, `reset`, off the event loop) and its `actions` with your own
+  `Dialogs`; edits apply at once, as the terminal's menu applies them.
+- `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
+  `False` when nothing was running. A menu open over the cancelled turn or command closes with
+  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
+- `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
+  for command names (with their descriptions), their arguments, and `@` paths. As in the
+  editor, they are computed in a worker thread, at most 100 of them, and none when a completer
+  fails.
+- `self.host.sessions` is the saved conversations `/resume` lists, or `None` without
+  session persistence: `listing(query=..., archived=False)`, `saved(ID)` for one with its history,
+  `rename(ID, TITLE)`, `fork(ID)` to save a copy under a new ID, and `delete(ID)`, which
+  refuses the current conversation and one running in another CLAI. `archive(ID)` hides a session
+  from `listing` and `/resume` without deleting anything, refusing the same two, and returns its
+  `ConversationSummary` (with `archived_at` set); `unarchive(ID)` lists it again, and so do
+  resuming it (not `--fork-session`) and a new turn in it. `listing(archived=True)` lists only
+  archived sessions, and `archived=None` both. As in `/resume`, a fork gets its own copy of the session's
+  Monty state, and a deleted session's state is deleted with it. Like opening `/resume`, `listing`
+  queues the newest untitled sessions for background naming, which calls the
+  naming model. Renaming the current conversation fires `on_conversation_changed` at once, even
+  while a turn runs, unlike background naming. `follows_workspace` says whether `/resume ID`
+  moves the session into the directory it was saved in (its `host.workspace`; the process's working
+  directory never changes), as under `clai2 --web`, rather than
+  refusing a session saved elsewhere.
+- `self.host.plugins` is what `/plugins` manages, or `None` on a host built outside the loader:
+  `listing()` returns a `PluginInfo` per plugin (name, description, origin, source, status, error,
+  what it provides, whether it has its own settings menu, and, while it is on, its settings model and
+  saved settings); `enable(NAME)`, `disable(NAME)`, and `reload(NAME)` act as the `/plugins`
+  subcommands do, saved at once, but `enable` opens no settings menu; and
+  `save_settings(NAME, SETTINGS)` saves a loaded plugin's settings, an instance of its own settings
+  model, as its menu would with `host.save_settings`, then loads it again if they changed.
+  `settings_menu(NAME)` is a loaded plugin's declared `SettingsMenu`, or `None`, and
+  `await edit_settings(NAME, edit)` runs `edit(menu)` (apply or reset a row through its
+  `source`, or run one of its `actions` with your own `Dialogs`), then loads the plugin again if
+  its settings changed; it refuses while that plugin's menu is open elsewhere. Adding and removing
+  declarations, and a menu a plugin did not declare, go through the prompt:
+  `send_input('/plugins configure NAME')`.
+- `self.host.tasks` is what `/tasks` shows: the tasks the agent delegated in the current
+  conversation. It is a property, `None` while no task owner runs them: before the prompt opens,
+  such as in `on_session_start`, and after it closes, such as in `on_session_end`; in a headless
+  `-p` run; with an agent other than CLAI's stock one; and on a host built outside the shell. Read
+  it each time you need it rather than keeping it. `listing()` returns a `TaskInfo` per task,
+  each parent before its children: its ID, `parent_id`, `agent`, `model`, `prompt`, `status`
+  (`running` or `finished`), `outcome`, start and finish times, whether it runs in the
+  `background`, whether it is `resumable`, its last `activity`, and its `usage`. `history(ID)` is
+  its messages so far. `stop(ID)`, `background(ID)`, and `resume(ID)` act as `/tasks stop`,
+  `background`, and `resume` do; `resume` enters the prompt asking the agent to resume it, as
+  `send_input` would. `steer(ID, TEXT)` sends a running task a message, which it reads at its
+  next model request, and returns `False` once it has finished, when `resume` is the way to go
+  on. An ID from another conversation raises `LookupError`.
+
+| | `send_input(text)` | `submit_prompt(text)` |
+|---|---|---|
+| Called from | anywhere on the shell's event loop | a `/command` handler, between turns |
+| Runs | a prompt as a turn, a `/command` as a command | always a prompt, after the command returns |
+| Echoed in the transcript | yes, like typed input | no |
 
 Path-like input is not dispatched to commands. A slash, dot, or backslash in the
 first token after the leading `/` makes it a prompt instead, so screenshot paths
@@ -2293,7 +2895,7 @@ your plugin. A plugin with an agent dependency type names it second, as
 
 `self.settings` is what the plugin loaded with. To edit settings from inside the
 plugin, call `self.host.save_settings(model)` (see
-[`configure`](#offer-a-settings-menu-async-def-configureself));
+[settings menu](#offer-a-settings-menu-def-settings_menuself));
 `self.host.settings(Model)` returns them from then on. Read them per run (for
 example in a capability function returned from `get_capabilities`) so an edit
 also reaches the next turn from a plugin command, without a reload.
@@ -2383,47 +2985,90 @@ returns a `KeyReference` to a saved key, a masked new value for you to
 `save_key(name=..., value=...)`, or `None` when cancelled. Then call
 `self.host.save_settings(settings)` with the new reference. It saves your plugin's
 declaration as `plugins add` would, and `self.host.settings(Model)` returns the new
-values from then on.
+values from then on. From a settings menu, `choose_key` (below) asks through the
+menu's `Dialogs` and saves the new value for you.
 
-### Offer a settings menu: `async def configure(self)`
+### Offer a settings menu: `def settings_menu(self)`
 
-Override `configure` with an async method that shows a settings menu and returns
-a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
-`/plugins`, `/plugins enable`, or `/plugins add`), on `c` in `/plugins`, and on
-`/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
-the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
-and save only a key's name: let the user pick one with
-`prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
-it. When the saved settings changed, CLAI loads the plugin again afterwards, so a
-fresh instance is built from them.
+Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
+CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
+or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
+the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
+it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
+not tied to the terminal.
 
-Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
-`pydantic_clai2.ui.menus.field_menu`, run through `run_worker` from
-`pydantic_clai2.ui.menus.menu_worker`), the same one `/set` uses. Its last row is
-**Save & close**: every edit is already saved, so choosing it, like Esc, just
-leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
-treats a result as closed when `picked(result)` is `None`.
+A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 
-The built-in `logfire_mcp` plugin is a complete example.
+- `source`, your `FieldSource`: its `title`, its `rows()` (a `FieldRow` each), and
+  `current`, `problem`, `apply`, and `reset` for a row. Each method is synchronous
+  and may block, such as on the keyring, so CLAI calls them off the event loop.
+  The typed editor opens holding `current(row)` unless it equals the row's `default`,
+  so return text the user could type back, or the default, and mark a row whose
+  value must stay hidden `secret=True`.
+  `apply` and `reset` save the change with `self.host.save_settings(model)` as the
+  user makes it and return a line to show.
+- `actions`, for rows that need more than one value typed or picked, such as
+  choosing a `/keys` entry or signing in: the row's key maps to an async function
+  that takes a `Dialogs`, asks through it, saves, and returns the lines to show.
+- `menus`, for rows that open another `SettingsMenu`, such as each saved model's
+  settings in `/model`'s menu: the row's key maps to a zero-argument callable that
+  builds it when it opens. Leaving it returns to this menu, in the terminal and in
+  the web UI, which shows it beneath the row. The keys are read as the menu opens, so
+  a row an action adds meanwhile opens its menu once the menu opens again.
+- `searchable`, whether typing filters the list (default `True`).
+
+`Dialogs` asks the user wherever the menu was opened, and every method waits for the
+answer. Backing out returns `None` or `False`, never raises:
+
+| Method | Asks for |
+|---|---|
+| `choose(title=..., options=[Option(value=..., label=..., description=...)], current=...)` | one of the options; returns its `value` |
+| `text(title=..., label=..., placeholder=..., initial=..., secret=..., check=..., description=..., multiline=...)` | typed text, masked when `secret`; `check` says why non-empty text is not acceptable, and `description` says more above the input, such as where to find the value. `multiline=True` takes text with line breaks, never masked: `$VISUAL`, `$EDITOR`, or a built-in editor in the terminal (reopened with `check`'s reason until it accepts the text), a text area in the web UI |
+| `confirm(title=..., yes=..., no=..., description=...)` | `yes` or `no`, with `no` selected first |
+| `wait(title=..., description=..., task=...)` | nothing: it runs `task(show)` behind a screen the user can cancel, showing the latest text passed to `show` (a sign-in link, a code), and returns whether it finished |
+| `view(title=..., text=...)` | nothing: it shows `text` read-only, scrollable (a pager in the terminal), until the user closes it |
+
+A `FieldRow` with an action may set `button`, what the web UI's button for it says, such as
+`View…`; otherwise it says **Change…** for a row with a value or a secret, else **Open…**. A
+`Dialogs` of your own, such as one passed to
+`host.command_menu`'s actions, needs `view` and `text`'s `multiline` too.
 
 ```python
+from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
+
+
 class Notify(Plugin[NotifySettings]):
-    async def configure(self) -> str:
+    def settings_menu(self) -> SettingsMenu:
         # `NotifySource` is your `FieldSource`: rows, current values, validation, apply, and reset.
-        messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(self.host))))
-        return '\n'.join(messages) or 'Notify settings unchanged.'
+        return SettingsMenu(source=NotifySource(self.host), actions={'sound': self._pick_sound})
+
+    async def _pick_sound(self, dialogs: Dialogs) -> list[str]:
+        sound = await dialogs.choose(
+            title='Notification sound',
+            options=[Option(value='bell', label='Bell'), Option(value='chime', label='Chime')],
+            current=self.settings.sound,
+        )
+        if sound is None:
+            return []
+        self.host.save_settings(self.settings.model_copy(update={'sound': sound}))
+        return [f'Sound set to {sound}.']
 ```
 
-For a row that opens something other than a plain value, pass `submenus` to
-`run_flow` to map the row's key to a function that returns messages. When that
-function is itself async, such as `api_keys.prompt_api_key`, await
-`field_menu.run_flow_async` from the `configure` function instead of running
-`run_flow` in a worker: it runs each widget in its own `run_worker`, so the
-submenu can open its own.
+When the saved settings changed, CLAI loads the plugin again after the menu closes,
+so a fresh instance is built from them. The built-in `compaction` plugin is a
+complete example. In the terminal the whole menu, its actions' dialogs included,
+keeps the screen to itself until it closes.
 
-The built-in `github`, `grain`, `linear`, `notion`, and [`pylon`](#configuring-pylon) plugins are
-complete examples; `linear` uses `run_flow_async`, and `pylon` steps out of the menu
-worker to run the async key picker.
+A menu that cannot be declared this way can still override `async def
+configure(self) -> str` instead, show its own widgets, and return a line to show.
+It opens only in a terminal. Build it with the shared field editor (`FieldMenu` and
+`run_flow` from `pydantic_clai2.ui.menus.field_menu`, run through `run_worker`
+from `pydantic_clai2.ui.menus.menu_worker`) so it ends with the same **Save &
+close** row; a list you build yourself ends with `save_and_close_item()` and treats
+a result as closed when `picked(result)` is `None`. For a row that opens something
+other than a plain value, pass `submenus` to `run_flow`, or await
+`field_menu.run_flow_async` when the submenu is itself async, such as
+`api_keys.prompt_api_key`.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -2433,12 +3078,16 @@ the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
 
-For a token row, `pydantic_clai2.plugins.keys.choose_key(name=..., label=..., runners=...)`
-shows the searchable `/keys` picker, or a masked input when no keys are saved.
-It saves a new value under `name` only after confirming a replacement, and
-returns a `KeyReference` to persist in place of the secret. Call it through
-`plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
-is a complete example.
+For a token row, `await pydantic_clai2.plugins.keys.choose_key(name=..., label=..., dialogs=...)`
+offers the saved `/keys` by name, or a masked input when no keys are saved. Pass
+the `Dialogs` your settings menu action receives, so it asks wherever the menu was
+opened. `check`, if given, raises `ValueError` for a picked or typed value the
+service would reject. It saves a new value under `name` only after confirming a
+replacement, and returns a `KeyReference` to persist in place of the secret, or
+`None` when the user backed out. The built-in `slack` plugin is a complete
+example. A `configure` menu of your own passes `TerminalDialogs()` from
+`pydantic_clai2.ui.menus.dialogs` and calls it through `plugin_keys.on_loop` from
+the menu's worker thread.
 
 ### Sign in only when the user asks: `plugins.sign_in`
 
@@ -2455,9 +3104,11 @@ menu or a command, and runs use only what is already stored.
   as `/mcp` keeps them). Its `client()` builds a run's connection, which uses and
   refreshes the stored tokens and raises `SignInRequired` instead of opening a
   browser.
-- `await sign_in_now(method)` signs in behind a waiting screen that shows what
-  `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
-  message to show: signed in, cancelled, or why it failed.
+- `await sign_in_now(method, dialogs)` signs in behind a waiting screen that shows
+  what `sign_in` passes to `show` (a link, a code). Esc cancels it. It returns the
+  message to show: signed in, cancelled, or why it failed. Pass the `Dialogs` your
+  settings menu action receives, so the screen shows wherever the menu was opened;
+  without one, it shows in the terminal.
 - `sign_in_command('NAME', method)` is `/NAME [login | logout | status]`.
   `run_subcommand(method, args)` handles the same words inside a command that has
   more of its own.
@@ -2486,9 +3137,9 @@ client = PublicClient(
 sign_in = PKCESignIn(client=client, account='example-oauth', service='Example', setup='/plugins configure example')
 ```
 
-`await plugin_keys.browser_sign_in(sign_in, runners)` signs in from a settings
-menu behind a waiting screen that shows the URL, and returns `False` when the user
-presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
+`await plugin_keys.browser_sign_in(sign_in, dialogs)` signs in from a settings
+menu behind a waiting screen that shows the URL, through the `Dialogs` the menu's
+action receives, and returns `False` when the user presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
 Before each run, `await sign_in.token()` returns an access token, refreshing it
 first when it expires within five minutes and saving a rotated refresh token. It
 raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can
@@ -2531,6 +3182,15 @@ background fork. It is `None` while startup resume is selecting a conversation,
 or for a host without session persistence. Custom hosts can supply a
 `session_id` callback to read their current ID.
 
+`host.workspace` is the directory the session works in: where its runs' file and
+shell tools work, and where its `AGENTS.md`, skills, `.clai/settings.json`, and MCP
+project files are read. Never read `Path.cwd()` or call `os.chdir`: CLAI does not
+change the process's working directory after startup, and under `clai2 --web` each
+session has its own directory. Resolve a relative path against `host.workspace`,
+and start a subprocess with `cwd=host.workspace`. A host built outside the shell,
+such as in a test, has the current directory, unless it was built with
+`workspace=`, a function returning another.
+
 `host.status` is the footer's state: `context_tokens` and `context_window`
 render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 `context_window` for a known capacity, not an assumed fallback. Set
@@ -2555,7 +3215,6 @@ plugin unloads. The built-in row accents output-token counts and tool names usin
 the selected theme; plugin fragments stay muted.
 
 ```python
-import os
 from collections.abc import Sequence
 
 from pydantic_clai2.plugins import Plugin
@@ -2564,7 +3223,7 @@ from pydantic_clai2.ui.rendering.status import StatusSegment
 
 class Where(Plugin):
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (os.getcwd,)
+        return (lambda: self.host.workspace.name,)
 ```
 
 The row is repainted about ten times a second while CLAI works and once a second
@@ -2574,6 +3233,43 @@ Fragments are truncated from the right on a narrow terminal and are readable
 text only; the colours in the row belong to CLAI. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+### Show a page beside the conversation: `get_side_panels()`
+
+The [web UI](#web-this-session-in-your-browser) shows each `SidePanel` as a button at the top
+right that opens a resizable panel on the right. A panel names itself (`id`, `title`, and
+`icon`, `panel` or `traces`) and has a `view`: an async function returning a `PanelView`, an
+`http` or `https` `url` to show, or a `note` saying why there is none, such as how to set the
+plugin up. With no `url`, the panel shows the note and a button that opens the plugin's settings.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import PanelView, Plugin, SidePanel
+
+
+class Dashboard(Plugin):
+    def get_side_panels(self) -> Sequence[SidePanel]:
+        return (SidePanel(id='board', title='Dashboard', view=self.board),)
+
+    async def board(self) -> PanelView:
+        return PanelView(url=f'https://dash.example.com/sessions/{self.host.session_id}')
+```
+
+The page asks for every view when it connects, when the conversation changes, when a turn starts
+or ends, after each command, and, while a turn runs with a panel or its window open, every few
+seconds, so the page can follow the conversation. Keep `view` quick: cache what needs the network.
+A view that raises, or takes more than ten seconds, shows that in the panel instead, and a `url`
+that is not a well-formed `http` or `https` address with a host is refused.
+
+Only `https` pages, or `http` pages on `127.0.0.1` or `localhost`, can be framed: the web UI's
+own `Content-Security-Policy` allows no others. For those, the server reads the response headers,
+at the page's address without the query, until it has them once, and frames the page only when
+its `Content-Security-Policy` `frame-ancestors`, or without one its `X-Frame-Options`, lets the
+web UI's address show it; a browser would draw an error box instead. The server follows no
+redirect, so a page that redirects or answers an error is not framed, nor one that does not
+answer within five seconds; those are read again next time. Otherwise the panel offers to open the page in a
+window beside CLAI's, and points that window at the view's new `url` as it changes.
 
 ### Offer a spinner: `get_spinners()`
 
@@ -2691,6 +3387,42 @@ Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
 `names`) are added to the saved model list, so `/model` and `/model settings`
 offer them without adding them first. A failed sign-in adds nothing.
 
+### Ask for one line under printed output: `read_line`
+
+A sign-in often prints a URL and then asks for something to paste back, such as
+the address the browser ended on. Print with `host.console`, then ask with
+`read_line` from `pydantic_clai2.ui.prompt.line_input`:
+
+```python
+from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.ui.prompt.line_input import read_line
+
+
+async def sign_in(host: PluginHost, authorization_url: str) -> str:
+    host.console.print(authorization_url, markup=False, highlight=False)
+    pasted = await read_line(
+        'Or paste the address your browser ended on (Esc cancels): ', console=host.console, hidden=True
+    )
+    if pasted is None:
+        return 'Sign-in cancelled.'
+    ...
+```
+
+The prompt and the typed answer are pinned under the transcript, the way
+`ask_user` shows its questions, so the URL stays on screen above them. It returns
+the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
+characters were typed instead of the text, for an answer that carries a secret
+such as an authorization code. Cancelling the task that awaits it, because the
+browser's callback won the race, closes the prompt. A slash command or
+`/login` handler can call it directly; a tool or hook asking mid-run takes the
+screen first, inside `async with host.full_screen()`. Without the live editor it
+is a plain terminal prompt.
+
+Do not draw a prompt yourself from a `run_worker` operation. By default
+`run_worker` takes the live panel, and the transcript with your URL, off the
+screen while the operation runs.
+
 ### Several accounts: `resolve_profile` and `profile_handler`
 
 Users can sign in to more than one account per provider. An account other than
@@ -2724,6 +3456,11 @@ reaches your `resolve`, never `resolve_profile`. CLAI cannot see your tokens, so
 lists an account from the time it signed in until the user removes it there;
 removing one does not sign it out of your plugin, and the menu says so. Offer your
 own logout for that.
+
+The web UI's **Keys & accounts** section lists your accounts too, and renames,
+reorders, and removes them there. `handler` and `profile_handler` take no `Dialogs`,
+so signing in to your accounts from the page asks the user to run `/login NAME` in
+the terminal instead.
 
 ### Account usage: `usage`
 
@@ -2775,6 +3512,150 @@ panel shows a bar and reset time for each.
   plugin loaded later goes to the end of the line.
 - Anything you print, print through `self.host.console`, so it stays in step with
   streaming output.
+- Follow the rules in [Several live sessions](#several-live-sessions): CLAI may run
+  your plugin in many sessions at once.
+
+## Several live sessions
+
+The terminal runs one session at a time. The web UI (`clai2 --web`, or `/web` from a
+terminal) keeps several sessions live in one CLAI process, each with its own
+conversation, folder, plugins, queued input, and running turn. A plugin that follows
+these rules works the same in both.
+
+1. **An instance belongs to one live session.** CLAI builds one instance of your
+   plugin for each live session, so under the web UI several exist at once. Each is
+   loaded and unloaded on its own: `on_session_start` when its session opens or the
+   plugin is turned on, `on_session_end` when its session closes or the plugin is
+   turned off. Under `clai2 --web`, moving a session to another folder (`/resume ID`,
+   `/workspace`) ends and starts its instances again. A session closes after it has sat idle for an hour: no turn, no queued
+   input, no fork or delegated task, and no browser or terminal showing it. Only the
+   session `clai2 --web` started with never closes this way. Opening a closed session
+   again resumes it in a new session, with new instances.
+2. **Use `host.workspace`, never the process's directory.** Each session works in its
+   own folder. CLAI never changes the process's working directory after startup, so
+   `Path.cwd()` is the folder CLAI started in, not the session's. Never call
+   `os.chdir`: it would move every session at once. Resolve a relative path against
+   `self.host.workspace`, and start a subprocess with `cwd=self.host.workspace`.
+3. **No module-level mutable state.** An installed module is imported once per
+   process, so a dict, list, cache, or client at module level is shared by every live
+   session. A drop-in or Git plugin file runs again for each session, so its module
+   state is not shared at all. Either way, keep state on `self`, set up in `__init__`
+   or `on_session_start`. When sessions
+   should share one thing, make the plugin process-scoped (below).
+4. **Do not assume a terminal.** A session the browser opened may have none: its
+   console writes to a log or nowhere, and nobody can press a key in it. Check
+   `self.host.console.is_terminal` before reading keys or drawing on the screen, such
+   as a menu in `host.full_screen()`, and skip that work when it is `False`. The
+   built-in `ask_user` and `herdr` plugins do this.
+5. **`on_session_end` may come from idle closing.** An idle session closes with
+   `reason='exit'`, as quitting does, while CLAI and the other sessions go on. Keep
+   cleanup quick: stop what the instance started and wait for no one. Leave the saved
+   conversation alone; the user may resume it later.
+6. **Keep background tasks bounded per instance.** A task, timer, or connection an
+   instance starts runs once per live session, so a hundred sessions run a hundred of
+   them. Start each in `on_session_start` (or when a command needs it) and stop it in
+   `on_session_end`. A plugin that connects to an MCP server over HTTP has one
+   connection per live session.
+
+### One instance for the whole process: `scope = 'process'`
+
+Some things should exist once per process, whatever the number of sessions: one
+server on one port, one global tracing setup, one registry every session shares. Set
+`scope = 'process'` on the class. The built-in `web`, `observability`, and `workspaces`
+plugins are process-scoped. Any other plugin should keep the default, `'session'`.
+
+```python
+from collections import Counter
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, TurnEnd
+from pydantic_clai2.ui.rendering.status import StatusSegment
+
+
+class Turns(Plugin):
+    """Count finished turns across every live session, per folder, and show how many run now."""
+
+    scope = 'process'
+
+    def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
+        super().__init__(host, settings)
+        self.finished: Counter[str] = Counter()  # One instance, so every session adds to it.
+
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        # Fires for each session's turns; `host.workspace` is the folder of the session that ran it.
+        self.finished[str(self.host.workspace)] += 1
+
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (self._running,)
+
+    def _running(self) -> str:
+        live = self.host.live
+        running = 0 if live is None else sum(session.running for session in live.listing())
+        return f'{running} running, {sum(self.finished.values())} done'
+```
+
+What changes for a process-scoped plugin:
+
+- **One start, one end.** The first session that loads it builds it and runs
+  `on_session_start`. Every other live session, and each one opened later, joins that
+  same instance without another `on_session_start`. `on_session_end` runs once: when
+  the plugin is turned off (after every running turn that uses it ends), or when the
+  last session closes, as when CLAI quits. One session closing for being idle does not
+  end it.
+- **Its contributions join every session.** Its capabilities, commands, status
+  segments, and renderers are in every live session. Turning it off, reloading it, or
+  changing its settings applies to all of them at once.
+- **Other moments come once per session.** `on_turn_start`, `on_turn_end`,
+  `on_conversation_changed`, `on_command_end`, `on_task_event`, and the rest reach it
+  each time any session fires them. `self.host.live.current()` names that session.
+- **The host follows the session being handled.** `self.host.session_id`, `workspace`,
+  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `host.live.current()`: the session whose moment, command, or agent run is being
+  handled. A task started meanwhile, such as a server started from a command, keeps
+  that session. Outside one, they act on the session that loaded the plugin, or the
+  oldest live session once that one has closed; a status segment, painted outside
+  any moment, sees that session too. Its other attributes, such as
+  `conversation`, `status`, and `console`, always belong to the session that loaded it.
+  Reach any other session through `host.live`.
+
+`self.host.live` is a `LiveSessions`; a plugin with the default scope gets `None`:
+
+| Member | Does |
+|---|---|
+| `listing()` | every live session, oldest first, each a `LiveSession` |
+| `get(live_id)` | the live session with that `LiveSession.id`; raises `LookupError` when none is live |
+| `current()` | the session being handled now, or `None` outside a moment, command, or run |
+| `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
+| `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
+| `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+
+Never await `open` or `new` from `on_session_start`: the new session waits for the
+plugins still loading.
+
+A `LiveSession` is one live session:
+
+| Member | Is or does |
+|---|---|
+| `id` | its ID, stable while it is live, even when its conversation changes with `/new` or `/resume` |
+| `session_id` | its current saved conversation's ID, as its `host.session_id` reads it |
+| `workspace` | the folder it works in |
+| `conversation` | its history, as its `host.conversation` |
+| `status` | its status row |
+| `sessions` | the saved conversations its `/resume` lists |
+| `tasks` | its delegated tasks, or `None` |
+| `running` | whether a turn runs in it now |
+| `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
+| `queued` | how many inputs wait for its running turn or command to end |
+| `watchers` | how many `watch()` calls have not stopped yet |
+| `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
+| `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
+| `interrupt()` | cancel its running turn or command; `False` when nothing was running |
+| `await complete(text)` | what Tab offers at its prompt for `text` |
+
+With one session, as in a terminal where the web UI opened no other, `host.live`
+lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
+other sessions, such as a headless `clai2 -p` run.
 
 ## Testing a plugin
 
@@ -2826,7 +3707,7 @@ The connection is saved in the configured Python keyring backend after selection
 
 ## Saved API keys
 
-Startup [`.env` loading](README.md#environment-variables) makes values available to
+Startup [`.env` loading](docs/reference.md#environment-variables) makes values available to
 providers and plugins that read the environment. It does not import credentials
 into `/keys` or replace a plugin's saved-key picker.
 
@@ -3044,7 +3925,7 @@ this native shape still needs custom parameters. Custom parameters win over the
 generated body on conflict.
 
 Open `custom_params` for Code Puppy-style **Custom Params**. Enter adds or edits
-`key = value`; editing the key renames it. `d` deletes a pair and Esc goes back.
+`key = value`; editing the key renames it, and clearing the text removes the pair. Esc goes back.
 Dotted keys nest in the request body's `extra_body`, for example:
 
 ```text
@@ -3100,7 +3981,7 @@ The browser groups existing Git worktrees by repository and labels session cards
 with the current branch or detached worktree name. This is display metadata only;
 saved workspace paths are unchanged. Selecting a session resumes immediately in
 the current directory, without confirmation. See
-[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
+[Saved sessions](docs/reference.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
@@ -3110,7 +3991,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
 API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
-paths attaches local files. See [Pasting images](README.md#pasting-images) for
+paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 
 `turn_start.text` and `turn_end.text` contain the text caption with attachment
@@ -3141,4 +4022,4 @@ with `plugin_settings` merged over their stock settings. Saved, drop-in, and pro
 plugins never load. Each plugin gets `session_start` when the context opens and
 `session_end` when it closes, with reason `error` if the block raised. No turn hooks
 fire, no `/commands` run, and nothing renders: the host runs the agent. See
-[The stock agent in your own code](README.md#the-stock-agent-in-your-own-code).
+[The stock agent in your own code](docs/reference.md#the-stock-agent-in-your-own-code).

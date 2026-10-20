@@ -237,6 +237,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price

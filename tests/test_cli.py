@@ -521,6 +521,32 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
+async def test_streaming_ignores_skipped_tool_calls(live_frames: list[str]):
+    """A function tool skipped because an output tool already produced the final result is not reported.
+
+    Under `end_strategy='early'` the skipped call still streams `FunctionToolCallEvent(args_valid=None)` and
+    a `FunctionToolResultEvent` with its stub return, but the tool never ran.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+            1: DeltaToolCall(name='final_result', json_args='{"name": "Lisbon"}', tool_call_id='call_2'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=_City, end_strategy='early')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        # Skipped: the output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
+
+    assert not any('Calling tool' in frame or 'Called tool' in frame for frame in _distinct_frames(live_frames))
+
+
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 

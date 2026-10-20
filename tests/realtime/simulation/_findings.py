@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from ._simulation import InvariantViolation, Operation, Simulation
-    from ._truth import TruthInput, TruthResponse
+    from ._simulation import InvariantViolation, Simulation
+    from ._truth import TruthResponse
 
 Predicate = Callable[['Simulation', 'InvariantViolation'], bool]
 
@@ -68,17 +68,9 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-def _inserted_user_speech(sim: Simulation, violation: InvariantViolation) -> bool:
-    from ._invariants import is_user_speech_request
-
-    return is_user_speech_request(violation.context['message'])
-
-
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live'})
+ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
 OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
-LEGACY_CORE = ALL - OPENAI_PROTOCOL
-"""The providers whose sessions still run the current session core: the new one (`_core.py`) fixed the finding for
-the others."""
+GEMINI = frozenset({'gemini'})
 
 
 def _late_cancel(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -101,61 +93,6 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     matches=_late_cancel,
 )
 
-ANCHORED_USER_TURNS = Finding(
-    id='E',
-    title='a user turn is inserted into already-recorded history where it started (snapshots are not prefixes of later ones)',
-    tracked_by='history projected from an append-only event log, so snapshots are prefixes of later ones',
-    evidence='live-stress',
-    codes=frozenset({'history.inserted'}),
-    providers=LEGACY_CORE,
-    matches=_inserted_user_speech,
-)
-
-
-def _stray_terminal(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A repeated or late `response.done` for the response the violation names, or for one before it.
-
-    (A stray terminal lands on whatever response the session is assembling when it's read, which can be any later one.)
-    """
-    truth = sim.truth
-    stray = truth.repeated_terminals | getattr(getattr(sim, 'server', None), 'late_terminals', set[str]())
-    responses = _context_responses(sim, violation)
-    if responses is None:
-        return bool(stray)
-    first = min((truth.responses[key].number for key in stray), default=None)
-    return first is not None and any(response.number >= first for response in responses)
-
-
-REPEATED_TERMINAL = Finding(
-    id='8801',
-    title=(
-        "a cancelled response's `response.done` (and its usage) arriving after the next response started lands on "
-        'whichever response the session is assembling: stamped onto the next response, or recorded as an empty one '
-        '(8801 #1, #4, #7). The simulator also sends a `response.done` twice, a robustness fault no provider was '
-        'recorded doing, which lands the same way'
-    ),
-    tracked_by='#8801 (per-response-id session state; adapters report one terminal per response)',
-    evidence='live-stress',
-    codes=frozenset(
-        {
-            'codec.content_after_terminal',
-            'codec.duplicate_terminal',
-            'codec.overlapping_responses',
-            'history.order',
-            'history.tool_round_order',
-            'response.duplicated',
-            'response.mixed',
-            'response.truncated',
-            'usage.total',
-            'usage.attribution',
-            'usage.requests',
-            'wait.early',
-            'wait.hang',
-        }
-    ),
-    providers=OPENAI_PROTOCOL,
-    matches=_stray_terminal,
-)
 
 LOST_RESPONSE_RESERVATION = Finding(
     id='SIM-1',
@@ -166,7 +103,8 @@ LOST_RESPONSE_RESERVATION = Finding(
     tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
-    providers=ALL,
+    # Fixed for Gemini and GPT-Live by their lifecycle tracker: a drop loses every reply still owed.
+    providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: (
         any(response.lost and response.answers for response in sim.truth.responses.values())
         or any(input_.answer_lost for input_ in sim.truth.inputs)
@@ -229,92 +167,23 @@ def _sent_before_reply_content(sim: Simulation, violation: InvariantViolation) -
     return response.content_read is None or response.content_read > issued or response.status == 'cancelled'
 
 
-SENT_BEFORE_REPLY_STARTED = Finding(
-    id='SIM-2a',
+UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
+    id='SIM-39',
     title=(
-        'a turn sent while a reply is requested or already started, but before any of its content arrived, is recorded '
-        'ahead of that reply, though the reply never saw it: the session learns a response exists only from its content'
+        'Gemini Live, GPT-Live, and ElevenLabs Agents neither acknowledge an input nor say when a response starts, so '
+        "an input that asks for no reply (context, an image), sent before any of a reply's content arrived, is placed "
+        'by what the client knew when it sent it: after the reply it owed, before one it had no word of yet, where '
+        'the server may have had it the other way around'
     ),
     tracked_by=(
-        'an explicit response-started event from the adapters, and history ordered by causality; found by this simulator'
+        "the inferred lifecycle's documented inference (`_inferred_lifecycle.py`): an input sent while the model "
+        'owes a reply reached it while it was working on that reply'
     ),
-    evidence='recorded',
+    evidence='simulated',
     codes=frozenset({'history.order'}),
-    providers=LEGACY_CORE,
+    providers=GEMINI | {'gpt-live', 'elevenlabs-agents'},
     matches=_sent_before_reply_content,
-)
-
-
-def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A spoken turn committed after a response ended, which the user started before that response was over: their
-    voiced audio started streaming before any of its content arrived."""
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    response = sim.truth.responses.get(violation.context.get('response', ''))
-    if input_ is None or response is None or input_.kind != 'speech' or response.seq_end is None:
-        return False
-    if input_.seq <= response.seq_end:  # pragma: lax no cover (the other way round)
-        return False
-
-    content_read, ended, cancelled = response.content_read, response.seq_end, response.status == 'cancelled'
-
-    def before_reply(operation: Operation) -> bool:
-        # Audio a failed send never delivered is no one's turn.
-        return (
-            operation.name == 'send_audio'
-            and operation.error is None
-            and (content_read is None or operation.issued < content_read or (cancelled and operation.issued < ended))
-        )
-
-    # Audio for this turn: streamed since the spoken turn before it was committed.
-    earlier = [other.seq for other in sim.truth.inputs if other.kind == 'speech' and other.seq < input_.seq]
-    since = max(earlier, default=0)
-    if any(before_reply(operation) and operation.issued > since for operation in sim.operations):
-        return True
-    # Or more audio went out before the reply than the turns before this one account for: the session gives each
-    # stretch of audio a turn of its own (each `send_audio` is one here), though the provider may commit several
-    # stretches as one turn and this one later.
-    return sum(before_reply(operation) for operation in sim.operations) > len(earlier)
-
-
-SPEAKING_ORDER = Finding(
-    id='SIM-11',
-    title=(
-        'a spoken turn the user started before a response was over (VAD heard them start, or their audio began '
-        'before the response said anything), but which the provider committed after that response ended, is '
-        "recorded before it (speaking order, since #8764), while the provider's conversation has it after (history "
-        "follows the provider's order, decided 2026-09-28)"
-    ),
-    tracked_by=(
-        "history in the provider's conversation order: the session holds the reply back until the user turn before "
-        'it is final, and never inserts into what it recorded; found by this simulator'
-    ),
-    evidence='recorded',
-    codes=frozenset({'history.order'}),
-    providers=LEGACY_CORE,
-    matches=_spoken_before_reply,
-)
-
-
-def _waited_before_reply_content(sim: Simulation, violation: InvariantViolation) -> bool:
-    """The wait began after the client read that a response started, but before any of its content."""
-    response = sim.truth.responses.get(violation.context.get('response', ''))
-    started = violation.context.get('started')
-    if response is None or started is None:
-        return False
-    return response.content_read is None or response.content_read > started
-
-
-WAIT_BEFORE_REPLY_CONTENT = Finding(
-    id='SIM-2b',
-    title=(
-        '`wait_for_reply()` returns at once while a response the provider started on its own (server VAD, a GPT-Live '
-        'delegation) has produced no content yet: the session learns a response exists only from its content'
-    ),
-    tracked_by='an explicit response-started event from the adapters opens the exchange; found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'wait.early'}),
-    providers=LEGACY_CORE,
-    matches=_waited_before_reply_content,
+    accepted=True,
 )
 
 
@@ -369,27 +238,15 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
 )
 
 KNOWN_FINDINGS: list[Finding] = [
-    WAIT_BEFORE_REPLY_CONTENT,
     RESERVATION_TAKEN_BY_OTHER_RESPONSE,
-    ANCHORED_USER_TURNS,
-    REPEATED_TERMINAL,
     LATE_CANCEL_DROPS_CONTENT,
-    SENT_BEFORE_REPLY_STARTED,
-    SPEAKING_ORDER,
     RECEIVE_LOOP_SEND_FAILURE,
 ]
 """Checked in order: the more specific findings for a code come before the more general ones."""
 
 
-def _parallel_calls(sim: Simulation, violation: InvariantViolation) -> bool:
-    return any(len(response.tool_calls) > 1 for response in sim.truth.responses.values())
-
-
 def _gemini_behavior(sim: Simulation, name: str) -> bool:
     return bool(getattr(getattr(sim, 'behavior', None), name, False))
-
-
-GEMINI = frozenset({'gemini'})
 
 
 def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -477,20 +334,6 @@ ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
 )
 
 
-ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT = Finding(
-    id='SIM-33',
-    title=(
-        "with asynchronous Gemini tool calls, the `interrupted` + `turn_complete` the batch's result cuts in with "
-        'ends `wait_for_reply()` before the model has answered the result'
-    ),
-    tracked_by='turn boundaries mapped to the exchange they close (#8760 is parked); found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'wait.early'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: _gemini_behavior(sim, 'talks_through_tool_calls') and bool(sim.truth.tool_calls),
-)
-
-
 GEMINI_ASYNC_TOOL_ROUND = Finding(
     id='8760',
     title=(
@@ -502,93 +345,6 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
     codes=frozenset({'response.duplicated', 'history.tool_round_order', 'wait.hang'}),
     providers=GEMINI,
     matches=_spoke_after_calling,
-)
-
-
-def _results_answered_together(sim: Simulation, violation: InvariantViolation) -> bool:
-    """One reply answered the results of several tool calls: parallel calls, or the calls of separate delegations."""
-    truth = sim.truth
-    return _parallel_calls(sim, violation) or any(
-        sum((input_ := truth.input(key)) is not None and input_.kind == 'tool_output' for key in response.answers) > 1
-        for response in truth.responses.values()
-    )
-
-
-LIVE_BATCH_RESERVATIONS = Finding(
-    id='SIM-6',
-    title=(
-        "GPT-Live answers the results of several tool calls (a delegation's parallel calls, or the calls of "
-        'delegations in a row) with one reply, but the session reserves a reply per result, so `wait_for_reply()` '
-        'hangs'
-    ),
-    tracked_by='reply obligations resolved by the reply that answers them (#8765 fixed this for the other providers, but not GPT-Live); found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_results_answered_together,
-)
-
-
-def _answered_together(sim: Simulation, violation: InvariantViolation) -> bool:
-    """Some reply answered a typed turn and something else it was asked to answer, at once."""
-    truth = sim.truth
-
-    def answered(response: TruthResponse) -> list[TruthInput]:
-        # The session reserves a reply for every soliciting send and every tool result.
-        inputs = [truth.input(key) for key in response.answers]
-        return [input_ for input_ in inputs if input_ is not None and (input_.solicits or input_.kind == 'tool_output')]
-
-    return any(
-        len(inputs) > 1 and any(input_.kind == 'text' for input_ in inputs)
-        for inputs in map(answered, truth.responses.values())
-    )
-
-
-LIVE_QUEUED_TEXT_RESERVATIONS = Finding(
-    id='SIM-7',
-    title=(
-        'GPT-Live answers text turns sent before it speaks with one reply (text is context on its timeline), but each '
-        'keeps a reservation, so `wait_for_reply()` hangs (the one-reply answer is a guess, unconfirmed live)'
-    ),
-    tracked_by='reply obligations resolved by the reply that answers them; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_answered_together,
-)
-
-LIVE_ABANDONED_CALL_RESERVATIONS = Finding(
-    id='SIM-9',
-    title=(
-        "when a GPT-Live delegation's backend gives up, the results of the calls it had asked for are dropped by the "
-        'connection, but the session still reserved a reply for each, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='adapters report the reply obligations a provider voids; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'gpt-live'}),
-    matches=lambda sim, violation: getattr(getattr(sim, 'server', None), 'backends_failed', 0) > 0,
-)
-
-
-def _raw_transport_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from websockets.exceptions import WebSocketException
-
-    errors = [operation.error for operation in sim.operations] + [sim.consumer_error]
-    return any(isinstance(error, WebSocketException) for error in errors)
-
-
-LIVE_RAW_CLOSE_ERROR = Finding(
-    id='SIM-8',
-    title=(
-        'an abnormal close of a GPT-Live connection escapes as a raw `websockets.ConnectionClosedError` (from iterating '
-        'the session and from the next send) instead of `RealtimeError`: the connection only handles a clean close'
-    ),
-    tracked_by='an adapter-local fix in `OpenAILiveConnection.__aiter__`; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'api.unexpected_error'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_raw_transport_error,
 )
 
 
@@ -617,45 +373,6 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
 )
 
 
-def _pair_answered_with_the_turn_that_cut_it_off(sim: Simulation) -> bool:
-    """Two calls whose turn a user turn (typed or spoken) cut off, answered by one response together with that turn."""
-    truth = sim.truth
-    for cut in truth.responses.values():
-        if len(cut.tool_calls) != 2 or cut.status != 'cancelled':
-            continue
-        # (A spoken turn is committed after it cut the response off, so only its start bounds it.)
-        turns = {
-            input_.key for input_ in truth.inputs if input_.kind in ('text', 'speech') and input_.seq > cut.seq_start
-        }
-        if any(
-            set(cut.tool_calls) <= set(answer.answers) and turns & set(answer.answers)
-            for answer in truth.responses.values()
-        ):
-            return True
-    return False
-
-
-ASYNC_BATCH_OF_THREE = Finding(
-    id='SIM-19',
-    title=(
-        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, a `tool_call` message of three or more calls leaves '
-        'a reservation after the model answered the batch, so `wait_for_reply()` hangs (two calls are fine, unless a '
-        'user turn, typed or spoken, cut their turn off and one answer covers both with it; no '
-        'recording has an async batch, so the fake answering one once may be what is wrong)'
-    ),
-    tracked_by='one reply per batch (#8765) also for asynchronous calls; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: (
-        _gemini_behavior(sim, 'talks_through_tool_calls')
-        and (
-            any(len(response.tool_calls) > 2 for response in sim.truth.responses.values())
-            or _pair_answered_with_the_turn_that_cut_it_off(sim)
-        )
-    ),
-)
-
 LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
@@ -668,20 +385,6 @@ LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
     providers=frozenset({'gpt-live'}),
     matches=_reply_continued_across_a_round,
-)
-
-EXTENDED_THINKING_PARALLEL_CALLS = Finding(
-    id='SIM-17',
-    title=(
-        'on `gemini-3.8-live-extended-thinking` (which runs every call asynchronously), a batch of parallel calls '
-        'leaves a reservation after the model answered it, so `wait_for_reply()` hangs (no recording has an async '
-        'batch: the fake answers one once, after its last result, where the adapter expects an answer per result)'
-    ),
-    tracked_by='#8765 follow-up (one reply per batch, also for async calls); found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=GEMINI,
-    matches=lambda sim, violation: _gemini_behavior(sim, 'stalls_in_progress') and _parallel_calls(sim, violation),
 )
 
 
@@ -959,22 +662,16 @@ KNOWN_FINDINGS.extend(
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         PARKED_ERROR_LEAVES_REQUEST_OWED,
-        EXTENDED_THINKING_PARALLEL_CALLS,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
-        ASYNC_BATCH_OF_THREE,
-        LIVE_BATCH_RESERVATIONS,
-        LIVE_QUEUED_TEXT_RESERVATIONS,
-        LIVE_RAW_CLOSE_ERROR,
-        LIVE_ABANDONED_CALL_RESERVATIONS,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
-        ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT,
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
+        UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
     ]
 )
 

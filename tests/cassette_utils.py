@@ -415,8 +415,8 @@ def get_bedrock_tool_names_from_cassette(cassette: Cassette) -> list[str]:
     return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
 
 
-def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
-    """Extract Cohere tool definition names from the first recorded POST request body."""
+def get_function_tool_names_from_cassette(cassette: Cassette) -> list[str]:
+    """Extract `tools[].function.name` values (Cohere, Mistral) from the first recorded POST request body."""
     tools: list[dict[str, Any]] = get_first_post_body(cassette).get('tools', [])
     return [tool['function']['name'] for tool in tools if 'function' in tool]
 

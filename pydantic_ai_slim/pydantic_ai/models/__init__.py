@@ -19,9 +19,10 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
+from pydantic import Field
 from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -39,9 +40,11 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
+from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
 from ..messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
@@ -78,6 +81,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -94,12 +98,14 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
+from ._request_timeout import RequestDeadline
+from ._speech import assistant_speech_text
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -165,6 +171,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'fireworks',
         'meta',
         'nebius',
+        'openai-chatgpt',
         'openai-codex',
         'openrouter',
         'ovhcloud',
@@ -192,6 +199,18 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    _telemetry_mcp_url_ids: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """URL-derived MCP identities to mask in telemetry; `None` means provenance is unknown."""
+    _telemetry_mcp_url_toolset_ids: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
+    )
+    """URL-derived local MCP toolset identities to mask in telemetry."""
+    _telemetry_mcp_url_tool_names: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -352,6 +371,11 @@ class ModelRequestContext:
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
+    To add a message the model sees now and that stays in the conversation, such as a steering message
+    or a reminder, call [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] from
+    `before_model_request`: it goes into this request and into the message history. See
+    [Changing what the model sees](../capabilities/custom.md#steering-messages-and-reminders).
+
     Messages a `before_model_request` hook appends here with `append`, `extend` or `+=` are also
     added to the message history, but this is deprecated and emits a warning.
 
@@ -409,8 +433,9 @@ class ModelRequestContext:
     def _usage_responses(self) -> tuple[ModelResponse, ...]:
         """The model responses whose usage was counted for this request.
 
-        Empty until the model responds. It includes responses a hook later replaced, and can hold more
-        than one response when a continued response was partly billed before an error hook recovered.
+        Empty until the model responds. It includes responses a hook later replaced and the partial response
+        of a stream the consumer stopped, and can hold more than one response when a continued response was
+        partly billed before an error hook recovered.
         Request contexts copied with `dataclasses.replace()` see the same responses.
 
         Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
@@ -520,6 +545,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
+    unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
+    """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
+
+    When a request sets one of them that changes what the request guarantees, like `timeout` or
+    `stop_sequences`, [`prepare_request`][pydantic_ai.models.Model.prepare_request] emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
+    like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
+
+    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
+    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
+    listed here.
+
+    It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
+    SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
+    [`openai_unsupported_model_settings`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_unsupported_model_settings].
+    """
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -561,6 +602,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Exit the model context, closing the provider's HTTP client if it owns one."""
         if self.provider is not None:
             await self.provider.__aexit__(exc_type, exc_val, exc_tb)
+
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client the provider created if it can't be used on the running event loop.
+
+        An agent calls this at the start of each run, so that a model the run uses without entering it gets a new
+        client when the run is on a different event loop than the client was last used on. See
+        [`Provider`][pydantic_ai.providers.Provider]. A model that wraps others calls it on each of them.
+        """
+        if (provider := self.provider) is not None:
+            provider._refresh_http_client()  # pyright: ignore[reportPrivateUsage]
 
     @property
     def settings(self) -> ModelSettings | None:
@@ -614,6 +665,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+
+        A model that makes its requests through other models, each under a deadline of its own, overrides this to
+        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        """
+        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -878,8 +937,34 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `self.prepare_request(...)` at the start of their `request` (and related) methods.
         """
         model_settings = merge_model_settings(self.settings, model_settings)
+        self._warn_unsupported_settings(model_settings, model_request_parameters)
 
-        params = self.customize_request_parameters(model_request_parameters)
+        customized_params = self.customize_request_parameters(model_request_parameters)
+        from pydantic_ai._instrumentation import model_request_telemetry_url_ids
+
+        custom_tool_names = customized_params._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        original_tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        tool_names = (
+            custom_tool_names | (original_tool_names or set()) if custom_tool_names is not None else original_tool_names
+        )
+
+        # A model may rebuild the request parameters in this hook. Retain trace-only provenance
+        # without mutating its return value, which a custom model may reuse across requests.
+        params = replace(
+            customized_params,
+            _telemetry_mcp_url_ids=(
+                model_request_telemetry_url_ids(
+                    customized_params,
+                    known_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                )
+                | model_request_telemetry_url_ids(model_request_parameters)
+            ),
+            _telemetry_mcp_url_toolset_ids=(
+                customized_params._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+                | model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+            ),
+            _telemetry_mcp_url_tool_names=tool_names,
+        )
         params = prepare_return_schemas(
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
@@ -967,6 +1052,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_settings, params
 
+    def _unsupported_settings(self) -> frozenset[str]:
+        """The settings this model ignores: its class's `unsupported_settings`, plus any its profile adds."""
+        return self.unsupported_settings
+
+    def _warn_unsupported_settings(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> None:
+        """Warn about each set setting that changes what the request guarantees and that this model ignores."""
+        if not model_settings:
+            return
+        unsupported = self._unsupported_settings()
+        suppressed = SUPPRESSED_WARNINGS.get()
+        for name, hint in GUARANTEE_SETTINGS.items():
+            if name not in model_settings or name not in unsupported or name in suppressed:
+                continue
+            # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
+            if name == 'parallel_tool_calls' and (
+                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
+            ):
+                continue
+            warnings.warn(
+                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored.{hint}',
+                UnsupportedSettingWarning,
+                stacklevel=2,
+            )
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
@@ -982,10 +1093,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
+        [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
+        and moves the current request's ones to the end of the last request.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume.
+        `TextPart`s that any model can consume, and puts the tool results in each request in the
+        order of the calls they answer, so the request bytes (and the provider's prompt cache)
+        don't depend on the order a history happened to store them in. When the profile sets
+        `tool_call_id_length`, tool call IDs that don't fit it are replaced with stable hashes that do.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1006,6 +1124,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
         standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
+
+        clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
+        if not clears_request_scoped_prompts:
+            messages = _drop_superseded_request_scoped_prompts(messages)
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -1061,8 +1183,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
+        if not clears_request_scoped_prompts:
+            messages = _move_request_scoped_prompts_to_tail(messages)
+
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
+
+        messages = _order_tool_results_by_call(messages)
+
+        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
+            messages = _fit_tool_call_ids(messages, tool_call_id_length)
 
         return messages
 
@@ -1117,6 +1247,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return resolve_request_tools(
             params,
             self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
+            unsupported_settings=self.unsupported_native_tool_settings,
             can_withhold_tool_schemas=self._can_withhold_tool_schemas,
             tool_addition_mode=self.tool_addition_mode,
         )
@@ -1144,6 +1275,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return the names of the settings set on `native_tool` that this model can't apply.
+
+        Only [`restricting_settings`][pydantic_ai.native_tools.AbstractNativeTool.restricting_settings] count:
+        a native tool with any of them is treated as unsupported for the request, so its local fallback is used
+        when one is provided, it is left out when it is `optional`, and
+        [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+
+        Subclasses that send a native tool without one of its restricting settings should override this.
+        The default is an empty set, meaning every restricting setting is applied.
+        """
+        return frozenset()
+
     @property
     def context_window(self) -> int | None:
         """The resolved profile's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]."""
@@ -1160,6 +1304,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
+          3b. Defaults for this model instance from `_instance_profile_defaults()`, such as narrowing that
+             depends on the provider's SDK client. Unlike narrowing in a subclass's `profile` override,
+             which runs after the user's layer, the user's `profile=` can still override these.
           4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
@@ -1183,6 +1330,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
+        # Step 3b: defaults that depend on this model instance (such as its SDK client), which the user can override
+        resolved = self._instance_profile_defaults(resolved)
+
         # Step 4: user override
         if user is None:
             pass
@@ -1204,6 +1354,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
+
+        Override this for defaults that depend on more than the model name, such as the SDK client the provider
+        was built with, so that a value the user sets explicitly in either `profile=` form still wins.
+        """
+        return profile
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
@@ -1271,6 +1429,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
+    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+
+    Set before iteration starts by whoever opened the stream under that deadline."""
 
     @cached_property
     def _parts_manager(self) -> ModelResponsePartsManager:
@@ -1379,10 +1541,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            self._event_iterator = iterator_with_cancel_guard(
-                iterator_with_part_end(iterator_with_final_event(self._get_event_iterator()))
-            )
+            events = self._get_event_iterator()
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
+        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
+        self._request_deadline = deadline
 
     async def cancel(self) -> None:
         """Cancel local stream consumption and request provider shutdown.
@@ -1938,8 +2106,9 @@ def infer_model(  # noqa: C901
 
         return OpenAICodexModel(model_name, provider=provider)
     # Meta's Chat Completions API doesn't return reasoning or accept the `phase` and encrypted reasoning that
-    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API.
-    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta'):
+    # keep multi-turn Muse runs on track, so `meta:` uses the Responses API. ChatGPT plan usage only serves
+    # the Responses API.
+    elif model_kind in ('openai', 'openai-responses', 'azure-responses', 'meta', 'openai-chatgpt'):
         from .openai import OpenAIResponsesModel
 
         return OpenAIResponsesModel(model_name, provider=provider)
@@ -2167,14 +2336,84 @@ def _customize_output_object(
     )
 
 
+def _supported_native_tools(
+    params: ModelRequestParameters,
+    supported_types: frozenset[type[AbstractNativeTool]],
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None,
+) -> list[AbstractNativeTool]:
+    """Return the native tools this model supports, raising for an unsupported one with no local fallback.
+
+    An unsupported tool that has a local fallback or is `optional` is left out without raising.
+    """
+    supported_natives: list[AbstractNativeTool] = []
+    unsupported_natives: list[AbstractNativeTool] = []
+    unapplied_settings: dict[str, frozenset[str]] = {}
+    for native_tool in params.native_tools:
+        if not isinstance(native_tool, tuple(supported_types)):
+            unsupported_natives.append(native_tool)
+        elif unsupported_settings is not None and (settings := unsupported_settings(native_tool)):
+            unsupported_natives.append(native_tool)
+            unapplied_settings[native_tool.unique_id] = settings
+        else:
+            supported_natives.append(native_tool)
+
+    unsupported_ids = {t.unique_id for t in unsupported_natives}
+    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    if without_fallback - unapplied_settings.keys():
+        unsupported_names = [
+            type(t).__name__
+            for t in unsupported_natives
+            if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
+        ]
+        supported_names = [t.__name__ for t in supported_types]
+        raise UserError(
+            f'Native tool(s) {unsupported_names} not supported by this model. '
+            f'Supported: {supported_names}. '
+            f'To use these tools with this model, provide a local fallback via '
+            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+            f'MCP(local=True), ImageGeneration(local=my_func)). '
+            f'Some capabilities require an optional install group for the local fallback '
+            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+        )
+    if without_fallback:
+        unapplied = ', '.join(
+            f'`{type(t).__name__}.{name}`'
+            for t in unsupported_natives
+            if t.unique_id in without_fallback
+            for name in sorted(unapplied_settings[t.unique_id])
+        )
+        raise UserError(
+            f'Native tool setting(s) {unapplied} not supported by this model. '
+            f'Sending the tool without them would drop the restriction they set. '
+            f'Remove the settings, use a model that supports them, or provide a local fallback that applies them '
+            "itself (e.g. `WebFetch(allowed_domains=[...], local=True)`). `WebSearch`'s own constraint fields "
+            'disable its `local` fallback, '
+            'so for a search fallback put them on the native tool: '
+            '`WebSearch(native=WebSearchTool(allowed_domains=[...]), local=...)`.'
+        )
+
+    return supported_natives
+
+
 def resolve_request_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
     *,
+    unsupported_settings: Callable[[AbstractNativeTool], frozenset[str]] | None = None,
     can_withhold_tool_schemas: Callable[[Sequence[AbstractNativeTool]], bool] | None = None,
     tool_addition_mode: ToolAdditionMode | None = None,
 ) -> ModelRequestParameters:
     """Resolve native tools, their local fallbacks, and deferred-tool visibility for the given supported-native-tool set.
+
+    A native tool is supported when it is an instance of one of `supported_types` and
+    `unsupported_settings` (the model's `unsupported_native_tool_settings`) returns no setting
+    for it. A tool whose restricting settings the model can't apply is handled like a tool of an
+    unsupported type: its local fallback runs instead, or the request is rejected naming the
+    settings, rather than sending the tool with a domain filter or usage limit the provider would ignore.
 
     Three rules drive the per-tool filter:
 
@@ -2204,28 +2443,7 @@ def resolve_request_tools(
     `_can_withhold_tool_schemas` and `tool_addition_mode`) and the realtime session path can
     share it — `RealtimeModel` is not a `Model` subclass.
     """
-    supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-    unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-    supported_ids = {t.unique_id for t in supported_natives}
-    unsupported_ids = {t.unique_id for t in unsupported_natives}
-    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-
-    without_fallback = unsupported_ids - fallback_ids - optional_ids
-    if without_fallback:
-        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-        supported_names = [t.__name__ for t in supported_types]
-        raise UserError(
-            f'Native tool(s) {unsupported_names} not supported by this model. '
-            f'Supported: {supported_names}. '
-            f'To use these tools with this model, provide a local fallback via '
-            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
-            f'MCP(local=True), ImageGeneration(local=my_func)). '
-            f'Some capabilities require an optional install group for the local fallback '
-            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
-        )
+    supported_natives = _supported_native_tools(params, supported_types, unsupported_settings)
 
     # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
     # the searchable deferred tools as corpus members, so a run whose deferred tools are all
@@ -2238,8 +2456,8 @@ def resolve_request_tools(
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
 
-    # Recomputed after the two steps above so it names the native tools this request really
-    # sends: rule 1 must not drop a local fallback for a native tool that just left.
+    # Computed after the drop above so it names the native tools this request really sends:
+    # rule 1 must not drop a local fallback for a native tool that just left.
     supported_ids = {t.unique_id for t in supported_natives}
 
     can_defer = can_withhold_tool_schemas(supported_natives) if can_withhold_tool_schemas is not None else False
@@ -2380,25 +2598,12 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
             if request_parts:
                 new_messages.append(replace(message, parts=request_parts))
         else:
-            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
-            # short. Without an inline `[Interrupted]` marker, a standard model reads the fragment as a
-            # complete utterance and may repeat itself. The marker is written here, on the way to the
-            # model, and never persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
-            last_speech = max(
-                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
-                default=None,
-            )
             response_parts: list[ModelResponsePart] = []
             for index, part in enumerate(message.parts):
                 if isinstance(part, SpeechPart):
-                    lines = [part.transcript] if part.transcript else []
-                    if part.interrupted_at_ms is not None:
-                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
-                    elif message.state == 'interrupted' and index == last_speech:
-                        # The provider reported the interruption without an offset.
-                        lines.append('[Interrupted]')
-                    if lines:
-                        response_parts.append(TextPart(content='\n'.join(lines)))
+                    # The transcript, marked where a barge-in cut it off (see `assistant_speech_text`).
+                    if text := assistant_speech_text(message, index):
+                        response_parts.append(TextPart(content=text))
                     # Assistant audio without a transcript has nothing to send.
                 else:
                     response_parts.append(part)
@@ -2418,10 +2623,13 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     mid-conversation instruction into the provider's top-level system parameter rewrites the first
     cache section of every later request, which is the exact invalidation that leaving it in place
     exists to avoid.
+
+    A request-scoped part ends the standing prompt too: the top-level system parameter is sent with every
+    request, and a request-scoped part has to stop being sent once its request has been answered.
     """
     count = 0
     for part in request.parts:
-        if not isinstance(part, SystemPromptPart):
+        if not isinstance(part, SystemPromptPart) or part.scope == 'request':
             break
         count += 1
     return count
@@ -2517,6 +2725,136 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
+_REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
+"""Key in a prepared request's `__pydantic_ai__` metadata: how many of its trailing parts render request-scoped prompts."""
+
+
+def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Leave out the request-scoped `SystemPromptPart`s whose request has been answered, for a model that can't clear them itself.
+
+    A request emptied this way is left out too: it held nothing but prompts the model no longer sees.
+    Returns the original list when nothing changed.
+    """
+    start = _current_request_start(messages)
+    if not any(
+        isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)
+        for message in messages[:start]
+    ):
+        return messages
+    kept_messages: list[ModelMessage] = []
+    for message in messages[:start]:
+        if isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts):
+            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+                kept_messages.append(replace(message, parts=parts))
+        else:
+            kept_messages.append(message)
+    return [*kept_messages, *messages[start:]]
+
+
+def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Send the current request's request-scoped prompts last, and record that they're there.
+
+    Runs after `_drop_superseded_request_scoped_prompts`, so every request-scoped part left is current. They
+    move to the end of the last request, where adapters that place cache breakpoints automatically can
+    leave them out of the cached prefix: the next request won't contain them, so a breakpoint on one
+    would write a cache entry nothing ever reads. How many trailing parts they are is recorded under
+    `_REQUEST_SCOPED_TAIL_KEY` in the request's `__pydantic_ai__` metadata, which `_request_scoped_tail_texts`
+    reads back. Moving them is free, because every part of the current request precedes the same response.
+
+    Returns the original list when there's nothing to move.
+    """
+    request_scoped = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if _is_request_scoped(part)
+    ]
+    if not request_scoped:
+        return messages
+    last_index = max(index for index, message in enumerate(messages) if isinstance(message, ModelRequest))
+    moved: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            moved.append(message)
+            continue
+        parts = [part for part in message.parts if not _is_request_scoped(part)]
+        if index != last_index:
+            if len(parts) == len(message.parts):
+                moved.append(message)
+            elif parts:
+                moved.append(replace(message, parts=parts))
+            continue
+        namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+        metadata = {
+            **(message.metadata or {}),
+            _PYDANTIC_AI_METADATA_KEY: {
+                **(namespace if _utils.is_str_dict(namespace) else {}),
+                _REQUEST_SCOPED_TAIL_KEY: len(request_scoped),
+            },
+        }
+        moved.append(replace(message, parts=[*parts, *request_scoped], metadata=metadata))
+    return moved
+
+
+def _current_request_start(messages: Sequence[ModelMessage]) -> int:
+    """The index of the first message of the history's current request.
+
+    The current request is the trailing run of `ModelRequest`s no response has answered yet, together with
+    any `ModelResponse`s after them that continue it (a suspended response being resumed). A
+    [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] part in one of those requests is still
+    current; one in any earlier request has been superseded. Adjacent `ModelRequest`s are one request because
+    they're sent as one: `_clean_message_history` merges them.
+    """
+    index = len(messages)
+    while index and isinstance(messages[index - 1], ModelResponse):
+        index -= 1
+    while index and isinstance(messages[index - 1], ModelRequest):
+        index -= 1
+    return index
+
+
+_SuffixItemT = TypeVar('_SuffixItemT')
+
+
+def _request_scoped_suffix_start(  # pyright: ignore[reportUnusedFunction]
+    items: Sequence[_SuffixItemT], texts: tuple[str, ...], text_of: Callable[[_SuffixItemT], str | None]
+) -> tuple[int, tuple[str, ...]]:
+    """Where the wire items rendering the request-scoped `texts` start at the end of `items`, and the texts left unmatched.
+
+    `texts` come from `_request_scoped_tail_texts`, in order, and end the request, so they're matched from the end,
+    each once: a lasting item with the same text as a reminder, ahead of it, stays before the returned index.
+    `text_of` reads an item's text the way the adapter renders a request-scoped prompt, or `None` if it can't be one.
+    """
+    end = len(items)
+    remaining = len(texts)
+    while end and remaining and text_of(items[end - 1]) == texts[remaining - 1]:
+        end -= 1
+        remaining -= 1
+    return end, texts[:remaining]
+
+
+def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, ...]:  # pyright: ignore[reportUnusedFunction]
+    """The texts the current request's request-scoped prompts render as, in order, for a model that can't clear them itself.
+
+    They end the request, so adapters that place a cache breakpoint automatically skip the wire blocks at
+    the end of the request carrying these texts, matched from the end in order, and the breakpoint lands on
+    the last block the next request will still contain. Matching only that suffix keeps lasting content
+    with the same text as a reminder in the cached prefix. Empty for a model that clears request-scoped
+    prompts itself; its adapter recognizes them on the wire instead.
+    """
+    request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
+    namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY) if request else None
+    count = namespace.get(_REQUEST_SCOPED_TAIL_KEY) if _utils.is_str_dict(namespace) else None
+    if request is None or not isinstance(count, int) or count <= 0:
+        return ()
+    return tuple(
+        part.content
+        for part in request.parts[-count:]
+        if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str)
+    )
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
@@ -2553,6 +2891,127 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Order the tool results in each request by the order of the calls they answer.
+
+    The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
+    tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
+    provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
+    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
+    keeps its position, and results answering the same call keep their relative order.
+
+    Returns the original list when nothing changed so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    previous: ModelMessage | None = None
+    for message in messages:
+        if isinstance(message, ModelRequest) and isinstance(previous, ModelResponse):
+            call_order: dict[str, int] = {}
+            for part in previous.parts:
+                if isinstance(part, ToolCallPart):
+                    call_order.setdefault(part.tool_call_id, len(call_order))
+            answers = [
+                (index, part)
+                for index, part in enumerate(message.parts)
+                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+            ]
+            slots = [index for index, _ in answers]
+            results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
+            if any(message.parts[index] is not result for index, result in zip(slots, results)):
+                parts = list(message.parts)
+                for index, result in zip(slots, results):
+                    parts[index] = result
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+        previous = message
+
+    return new_messages if changed else messages
+
+
+_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
+    """The low-order `length` base62 digits of the SHA-256 of `tool_call_id`."""
+    number = int.from_bytes(hashlib.sha256(tool_call_id.encode()).digest())
+    digits: list[str] = []
+    for _ in range(length):
+        number, remainder = divmod(number, 62)
+        digits.append(_BASE62_ALPHABET[remainder])
+    return ''.join(digits)
+
+
+def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
+    """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
+
+    Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
+    replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
+    provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
+    so a call, its result or retry prompt, and the `<tool_result>` tags rendered from the result's ID keep
+    pairing up.
+
+    IDs are assigned in history order, and an ID whose replacement is already taken by an earlier,
+    different ID (a hash collision, or a hash that equals an ID that fits) is rehashed with a counter
+    until it is free. An earlier ID's replacement therefore never changes as the history grows.
+
+    Native tool parts keep their IDs: those belong to the provider that executed them. Returns the
+    original list when nothing changed, so the identity check in `_make_request` can skip the redundant
+    `_clean_message_history` pass.
+    """
+    if length < 1:
+        raise UserError(f'`tool_call_id_length` must be at least 1, got {length}.')
+    replacements: dict[str, str] = {}
+    taken: set[str] = set()
+
+    def fit(tool_call_id: str) -> str:
+        if (replacement := replacements.get(tool_call_id)) is not None:
+            return replacement
+        # Without a free value left, rehashing below would never end.
+        if len(taken) >= 62**length:
+            raise UserError(
+                f'The message history has more distinct tool call IDs than fit in {length} alphanumeric characters '
+                "(the profile's `tool_call_id_length`)."
+            )
+        fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
+        replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
+        attempt = 0
+        while replacement in taken:
+            attempt += 1
+            replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
+        replacements[tool_call_id] = replacement
+        taken.add(replacement)
+        return replacement
+
+    def fit_request_part(part: ModelRequestPart) -> ModelRequestPart:
+        if (
+            isinstance(part, ToolReturnPart | RetryPromptPart)
+            and (replacement := fit(part.tool_call_id)) != part.tool_call_id
+        ):
+            return replace(part, tool_call_id=replacement)
+        return part
+
+    def fit_response_part(part: ModelResponsePart) -> ModelResponsePart:
+        if isinstance(part, ToolCallPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id:
+            return replace(part, tool_call_id=replacement)
+        return part
+
+    def fit_message(message: ModelMessage) -> ModelMessage:
+        if isinstance(message, ModelRequest):
+            request_parts = [fit_request_part(part) for part in message.parts]
+            changed = any(new is not old for new, old in zip(request_parts, message.parts))
+            return replace(message, parts=request_parts) if changed else message
+        response_parts = [fit_response_part(part) for part in message.parts]
+        changed = any(new is not old for new, old in zip(response_parts, message.parts))
+        return replace(message, parts=response_parts) if changed else message
+
+    new_messages = [fit_message(message) for message in messages]
+    return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
 def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]

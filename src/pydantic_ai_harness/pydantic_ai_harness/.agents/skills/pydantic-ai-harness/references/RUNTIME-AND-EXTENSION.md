@@ -69,7 +69,8 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 - `InMemoryStepStore()`: process-local; tests.
 - `FileStepStore(directory)`: `<directory>/<run_id>/` with JSON/JSONL files.
 - `SqliteStepStore(database='runs.db')`, or `connection=` a `sqlite3.Connection` opened with
-  `check_same_thread=False`.
+  `check_same_thread=False`. Stores each message once rather than repeating the history in every
+  snapshot, and deletes stored messages along with the last snapshot that references them.
 - `MongoStepStore(client=AsyncMongoClient | db_url=..., database=...)`: needs `uv add
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
@@ -117,15 +118,16 @@ async def resume(run_id: str):
 Gotchas:
 
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
-  ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives the
-  last user prompt as `[text, CachePoint(...)]` plus a plan-reminder `UserPromptPart` (neither is
-  stored). Assert on the parts you need, not exact message shapes.
+  ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives a
+  plan-reminder `UserPromptPart` led by a `CachePoint` at the end of the last request (not stored).
+  Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.
   `FileStepStore` only accepts ids matching `[A-Za-z0-9_.-]{1,200}`.
 - Events are never pruned. Snapshots are pruned only with `max_snapshots_per_run`, and pruning never
-  deletes media blobs.
+  deletes media blobs. `PostgresStepStore` and `MongoStepStore` store each message once too, but keep
+  stored messages when the snapshots referencing them are pruned.
 - Put `StepPersistence` before capabilities whose `after_run` rewrites history. After-hooks run in
   reverse order.
 - The default `id` is `'step_persistence'`, and store writes are durable operations, so it works
@@ -532,14 +534,16 @@ set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is 
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
 `Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
 `Agent`, because the engine's `-m` overrides it. Writes go through safe outputs (for example the
-`safeoutputs_add_comment` tool). Install extra dependencies with a workflow `steps:` `pip install --user`.
+`safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
+`$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
+without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
 The provider key is a repository secret, never `engine.env`. A spec agent **cannot** use harness
 capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/step-persistence/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
 - https://pydantic.dev/docs/ai/harness/absurd/
 - https://pydantic.dev/docs/ai/harness/pgtask/

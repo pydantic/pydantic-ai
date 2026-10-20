@@ -46,19 +46,19 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Annotated, Any, TypeAlias, cast
 
 import httpx2
 import logfire
-from anthropic import AsyncAnthropic
+from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -171,9 +171,13 @@ SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
+def _is_attention_run() -> bool:
+    return os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW
+
+
 def run_request_limit() -> int:
     """Return the workflow-specific cap on model requests."""
-    if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW:
+    if _is_attention_run():
         return ATTENTION_REQUEST_LIMIT
     return REQUEST_LIMIT
 
@@ -207,18 +211,77 @@ def request_budget_notice(ctx: RunContext[object]) -> str | None:
 NO_SAFE_OUTPUT_RETRIES = 3
 
 
-def safe_output_pending() -> bool:
-    """Whether this is a gh-aw run whose safe-outputs sink is still empty."""
+def _safe_output_status() -> tuple[bool, list[int] | None]:
+    """Return whether output is pending and any Attention candidate IDs still missing decisions."""
+    is_attention = _is_attention_run()
     path = os.environ.get('GH_AW_SAFE_OUTPUTS')
     if not path:
-        return False
+        if is_attention:
+            raise ValueError('Attention safe-output sink is not configured')
+        return False, None
     sink = pathlib.Path(path)
-    return not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    sink_empty = not (sink.is_file() and sink.read_text(encoding='utf-8').strip())
+    if not is_attention or sink_empty:
+        return sink_empty, None
+
+    workspace = pathlib.Path(os.environ.get('GITHUB_WORKSPACE', '.'))
+    snapshot_path = workspace / 'attention-candidates.json'
+    if not snapshot_path.is_file():
+        raise ValueError('Attention candidate snapshot is missing')
+
+    snapshot = TypeAdapter(dict[str, object]).validate_json(snapshot_path.read_text(encoding='utf-8'))
+    candidate_rows = TypeAdapter(list[dict[str, object]]).validate_python(snapshot['candidates'])
+    candidate_numbers = TypeAdapter(list[Annotated[int, Field(ge=1, strict=True)]]).validate_python(
+        [candidate['number'] for candidate in candidate_rows]
+    )
+    if len(candidate_numbers) > 10 or len(candidate_numbers) != len(set(candidate_numbers)):
+        raise ValueError('Attention snapshot contains too many or duplicate candidates')
+    candidates = set(candidate_numbers)
+    if not candidates:
+        return sink_empty, []
+
+    recorded: set[int] = set()
+    entry_adapter = TypeAdapter(dict[str, object])
+    for line in sink.read_text(encoding='utf-8').splitlines():
+        try:
+            entry = entry_adapter.validate_json(line)
+        except ValidationError:
+            continue
+        item_number = entry.get('item_number')
+        if entry.get('type') == 'record_attention_decision' and isinstance(item_number, str):
+            try:
+                parsed_number = int(item_number)
+            except ValueError:
+                continue
+            if parsed_number > 0 and str(parsed_number) == item_number:
+                recorded.add(parsed_number)
+    missing = sorted(candidates - recorded)
+    return bool(missing), missing
+
+
+def safe_output_pending() -> bool:
+    """Whether a gh-aw run is missing safe output or Attention decisions."""
+    try:
+        output_pending, _ = _safe_output_status()
+    except (KeyError, OSError, ValueError):
+        if _is_attention_run():
+            return True
+        raise
+    return output_pending
 
 
 def require_safe_output(output: str) -> str:
     """Send the model back to work when it ends the run before emitting any safe output."""
-    if not safe_output_pending():
+    output_pending, missing = _safe_output_status()
+    if missing:
+        missing_ids = ', '.join(str(number) for number in missing)
+        logger.warning('attention decisions missing for candidate IDs %s; requesting completion', missing_ids)
+        raise ModelRetry(
+            'Record an attention decision for each missing candidate ID: '
+            f'{missing_ids}. Keep the decisions already recorded and call '
+            '`record_attention_decision` only for these missing IDs.'
+        )
+    if not output_pending:
         return output
     logger.warning('run ended with no safe output emitted; sending the model back')
     raise ModelRetry(
@@ -869,14 +932,15 @@ def build_mcp_servers(args: Args) -> list[AbstractToolset[object]]:
 
 
 def _claude_code_tool_predicate(allowed: frozenset[str] | None, permission_mode: str | None) -> ToolPredicate:
-    """Allow-list + `plan`-mode filter for the Claude Code toolset."""
+    """Apply allow-list and read-only filters to the Claude Code toolset."""
     plan = permission_mode == 'plan'
+    attention_read_only = _is_attention_run()
 
     def predicate(_ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
         name = tool_def.name
         if allowed is not None and name not in allowed:
             return False
-        if plan and name in MUTATING_TOOLS:
+        if (plan or attention_read_only) and name in MUTATING_TOOLS:
             return False
         return True
 
@@ -969,6 +1033,8 @@ def _failure_details(error: BaseException | None) -> dict[str, object]:
     elif isinstance(error, RunTimeLimitExceeded):
         kind = 'time_limit'
     elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelAPIError) and isinstance(error.__cause__, (APITimeoutError, httpx2.TimeoutException)):
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
@@ -1284,7 +1350,7 @@ def main() -> int:
             emit_result('empty prompt', usage=None, session_id=session_id, is_error=True)
             return 1
         model, label = build_model(args)
-        task_tool = None if os.environ.get('GITHUB_WORKFLOW') == ATTENTION_WORKFLOW else task
+        task_tool = None if _is_attention_run() else task
         claude_code_toolset = select_claude_code_toolset(args.allowed_tools, args.permission_mode, task=task_tool)
         mcp_servers = build_mcp_servers(args)
         logger.info(
