@@ -540,15 +540,14 @@ def model_request_telemetry_url_ids(
     """Resolve URL-derived MCP IDs, retaining known provenance across rebuilt parameters."""
     from pydantic_ai.native_tools import MCPServerTool
 
-    if parameters._telemetry_mcp_url_ids is not None:  # pyright: ignore[reportPrivateUsage]
-        return parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
-    if known_ids is not None:
-        return known_ids
-    return {
+    marked_ids = {
         tool.id
         for tool in parameters.native_tools
         if isinstance(tool, MCPServerTool) and tool._telemetry_url_derived_id == tool.id  # pyright: ignore[reportPrivateUsage]
     }
+    if parameters._telemetry_mcp_url_ids is not None:  # pyright: ignore[reportPrivateUsage]
+        return parameters._telemetry_mcp_url_ids | marked_ids  # pyright: ignore[reportPrivateUsage]
+    return (known_ids or set()) | marked_ids
 
 
 def mcp_telemetry_history_ids(messages: Iterable[ModelMessage], known_ids: frozenset[str]) -> frozenset[str]:

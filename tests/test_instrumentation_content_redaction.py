@@ -278,6 +278,36 @@ def test_model_parameter_customization_preserves_explicit_native_id() -> None:
     assert json.loads(serialized)['native_tools'][0]['url'] == '[REDACTED]'
 
 
+def test_model_parameter_customization_classifies_added_url_derived_native_id() -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-added-tool', native=True, local=False)
+    assert capability.id is not None
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+
+    class AddsTool(TestModel):
+        def customize_request_parameters(
+            self, model_request_parameters: ModelRequestParameters
+        ) -> ModelRequestParameters:
+            return ModelRequestParameters(
+                native_tools=[*model_request_parameters.native_tools, tool], _telemetry_mcp_url_ids=set()
+            )
+
+    _, prepared = AddsTool().prepare_request(None, ModelRequestParameters(_telemetry_mcp_url_ids=set()))
+    serialized = model_request_parameters_attributes(prepared)['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert prepared._telemetry_mcp_url_ids == {capability.id}  # pyright: ignore[reportPrivateUsage]
+    assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
+    assert tool.id == capability.id
+
+    settings, exporter = redacted_setup(True)
+    response = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{capability.id}', tool_call_id='call-1')])
+    with settings.tracer.start_as_current_span('chat') as span:
+        settings.handle_messages([], response, span, prepared)
+    attributes = exporter.get_finished_spans()[0].attributes
+    assert attributes is not None
+    assert 'SENTINEL-added-tool' not in str(attributes['gen_ai.output.messages'])
+
+
 def test_url_derived_mcp_tool_call_name_is_masked_in_request_span() -> None:
     capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=True, local=False)
     tool = next(iter(capability.get_native_tools()))
