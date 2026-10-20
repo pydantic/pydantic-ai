@@ -134,7 +134,7 @@ example a decision model) needs `model=` set or the first compaction raises `Use
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
-contain `{messages}`), `instructions`, `bridge_prefix=False`, `receipts=False`,
+contain `{messages}` and no other replacement field), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.

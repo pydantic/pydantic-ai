@@ -235,6 +235,23 @@ def _tool_return(tool_name: str, call_id: str, content: str = 'ok') -> ModelRequ
     return ModelRequest(parts=[ToolReturnPart(tool_name=tool_name, content=content, tool_call_id=call_id)])
 
 
+def _summary_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('summary')])
+
+
+def _retry_history() -> list[ModelMessage]:
+    """A tool call rejected with a retry prompt, its successful retry, and a new user turn."""
+    return [
+        _user('start'),
+        _tool_call('lookup', 'a'),
+        ModelRequest(parts=[RetryPromptPart('bad args', tool_name='lookup', tool_call_id='a')]),
+        _tool_call('lookup', 'b'),
+        _tool_return('lookup', 'b'),
+        _assistant('done'),
+        _user('next'),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # estimate_token_count
 # ---------------------------------------------------------------------------
@@ -403,6 +420,15 @@ class TestIsSafeCutoff:
         # Cutting at 2: both call and return are before cutoff (discarded together).
         assert _is_safe_cutoff(msgs, 2) is True
 
+    def test_unsafe_when_splitting_call_from_its_retry_prompt(self):
+        msgs: list[ModelMessage] = [
+            _user('a'),
+            _tool_call('fn', 'tc1'),
+            ModelRequest(parts=[RetryPromptPart('bad args', tool_name='fn', tool_call_id='tc1')]),
+            _user('b'),
+        ]
+        assert _is_safe_cutoff(msgs, 2) is False
+
 
 # ---------------------------------------------------------------------------
 # find_safe_cutoff
@@ -410,9 +436,9 @@ class TestIsSafeCutoff:
 
 
 class TestFindSafeCutoff:
-    def test_keep_zero_returns_length(self):
+    def test_keep_zero_keeps_the_newest_message(self):
         msgs: list[ModelMessage] = [_user('a'), _assistant('b')]
-        assert find_safe_cutoff(msgs, 0) == 2
+        assert find_safe_cutoff(msgs, 0) == 1
 
     def test_fewer_messages_than_keep(self):
         msgs: list[ModelMessage] = [_user('a')]
@@ -609,6 +635,18 @@ class TestSlidingWindowCompaction:
         result = await sw.before_model_request(ctx, rc)
         # Should not split the tool pair.
         assert _orphan_free(result.messages)
+
+    async def test_keeps_tool_call_with_its_retry_prompt(self):
+        sw = SlidingWindowCompaction(max_messages=1, keep_messages=5, preserve_first_user_message=False)
+        messages = _retry_history()
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert result == messages[1:]
+
+    async def test_keep_zero_keeps_the_request_being_answered(self):
+        sw = SlidingWindowCompaction(max_messages=1, keep_messages=0)
+        messages: list[ModelMessage] = [_user('first'), _assistant('ok'), _user('the question now')]
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert _request_texts(result) == ['first', 'the question now']
 
     async def test_keep_tokens_mode(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_tokens=10, preserve_first_user_message=False)
@@ -1003,6 +1041,35 @@ class TestCompaction:
     def test_tool_return_max_chars_none_is_accepted(self):
         comp = SummarizingCompaction(model='test', max_messages=10, tool_return_max_chars=None)
         assert comp.tool_return_max_chars is None
+
+    @pytest.mark.parametrize(
+        'summary_prompt',
+        ['Summarize the conversation.', 'Summarize {messages} as {format}.', 'Return {"summary": ...} for {messages}'],
+    )
+    def test_validation_summary_prompt_fields(self, summary_prompt: str):
+        with pytest.raises(ValueError, match=r'summary_prompt must contain a `\{messages\}` placeholder'):
+            SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)
+
+    def test_summary_prompt_with_escaped_braces_is_accepted(self):
+        comp = SummarizingCompaction(
+            model='test', max_messages=10, summary_prompt='Return {{"summary": ...}} for {messages}'
+        )
+        assert comp.with_focus('the {config} file').summary_prompt.endswith('the {{config}} file')
+
+    async def test_keeps_tool_call_with_its_retry_prompt(self):
+        comp = SummarizingCompaction(model=FunctionModel(_summary_response), max_messages=1, keep_messages=5)
+        messages = _retry_history()
+        result = await comp.compact(messages, _make_ctx(messages))
+        assert result != messages
+        assert _orphan_free(result)
+
+    async def test_keep_zero_keeps_the_request_being_answered(self):
+        comp = SummarizingCompaction(
+            model=FunctionModel(_summary_response), max_messages=1, keep_messages=0, preserve_first_user_message=False
+        )
+        messages: list[ModelMessage] = [_user('first'), _assistant('ok'), _user('the question now')]
+        result = await comp.compact(messages, _make_ctx(messages))
+        assert _request_texts(result) == ['the question now']
 
     async def test_no_compaction_below_threshold(self):
         comp = SummarizingCompaction(model='test', max_messages=100)
@@ -1445,6 +1512,16 @@ class TestWarnNearLimitsMarkerDetection:
         # Marker message removed; user and assistant remain.
         assert len(result.messages) == 2
         assert isinstance(result.messages[1], ModelResponse)
+
+    async def test_strip_keeps_the_request_fields_of_a_mixed_request(self):
+        legacy = _legacy_warning().parts[0]
+        request = ModelRequest(
+            parts=[UserPromptPart('keep me'), legacy], instructions='Be careful.', run_id='run-1', metadata={'k': 'v'}
+        )
+        rc = _make_request_context([request])
+        result = await WarnNearLimits(max_iterations=100).before_model_request(_make_ctx(requests=5), rc)
+        [stripped] = result.messages
+        assert stripped == dataclasses.replace(request, parts=[request.parts[0]])
 
 
 class TestWarnNearLimitsTotalTokensBelowThreshold:
@@ -2070,7 +2147,7 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
 
 
 def _orphan_free(messages: list[ModelMessage]) -> bool:
-    """True if every kept tool return has its matching tool call among *messages*."""
+    """True if every kept tool return or tool retry prompt has its matching tool call among *messages*."""
     call_ids: set[str] = set()
     return_ids: set[str] = set()
     for m in messages:
@@ -2080,7 +2157,7 @@ def _orphan_free(messages: list[ModelMessage]) -> bool:
                     call_ids.add(p.tool_call_id)
         else:
             for p in m.parts:
-                if isinstance(p, ToolReturnPart):
+                if isinstance(p, ToolReturnPart) or (isinstance(p, RetryPromptPart) and p.tool_name is not None):
                     return_ids.add(p.tool_call_id)
     return return_ids <= call_ids
 

@@ -476,7 +476,7 @@ when it falls outside the window. Pass `keep_tokens` to retain a minimum amount 
 instead of using `keep_messages`.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
-must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,
+must contain a `{messages}` placeholder and no other replacement field), and `instructions` sets the internal agent's static instructions,
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
@@ -534,8 +534,7 @@ from pydantic_ai.messages import ToolCallPart
 def my_file_key(call: ToolCallPart) -> str | None:
     if call.tool_name != 'read_file':
         return None
-    args = call.args
-    return args.get('path') if isinstance(args, dict) else None
+    return call.args_as_dict().get('path')
 ```
 
 ## Tracing

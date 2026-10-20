@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai.messages import (
@@ -688,6 +688,11 @@ _TOOL_PAIR_SEARCH_RANGE = 5
 """Number of messages to search around a cutoff point for tool-call pairs."""
 
 
+def _is_tool_reply(part: ModelRequestPart) -> TypeGuard[ToolReturnPart | RetryPromptPart]:
+    """Whether *part* answers a tool call, so it is sent paired with that call."""
+    return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+
+
 def _is_safe_cutoff(
     messages: list[ModelMessage],
     cutoff: int,
@@ -696,8 +701,9 @@ def _is_safe_cutoff(
     """Return True if cutting at *cutoff* does not orphan any tool-call pair.
 
     A tool-call pair is a `ToolCallPart` in a `ModelResponse` together with
-    the corresponding `ToolReturnPart` in a subsequent `ModelRequest`.  Both
-    sides must end up on the same side of the cut.
+    the corresponding `ToolReturnPart`, or the `RetryPromptPart` that rejected
+    it, in a subsequent `ModelRequest`.  Both sides must end up on the same
+    side of the cut.
     """
     if cutoff >= len(messages):
         return True
@@ -723,7 +729,7 @@ def _is_safe_cutoff(
             if not isinstance(later, ModelRequest):
                 continue
             for rpart in later.parts:
-                if isinstance(rpart, ToolReturnPart) and rpart.tool_call_id in call_ids:
+                if _is_tool_reply(rpart) and rpart.tool_call_id in call_ids:
                     call_before = i < cutoff
                     return_before = j < cutoff
                     if call_before != return_before:
@@ -735,10 +741,10 @@ def _is_safe_cutoff(
 def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
     """Find a cutoff index that keeps *keep* tail messages without splitting tool pairs.
 
-    Returns 0 if trimming is unnecessary (fewer messages than *keep*).
+    The newest message is always kept, since in a run it is the request being answered, so a
+    *keep* of 0 keeps one. Returns 0 if trimming is unnecessary (no more messages than *keep*).
     """
-    if keep == 0:
-        return len(messages)
+    keep = max(keep, 1)
     if len(messages) <= keep:
         return 0
 
@@ -762,9 +768,7 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
-                if isinstance(part, ToolReturnPart) or (
-                    isinstance(part, RetryPromptPart) and part.tool_name is not None
-                ):
+                if _is_tool_reply(part):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)
 

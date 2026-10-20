@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
+from string import Formatter
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.agent import EventStreamHandler
@@ -425,7 +426,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     registry cannot resolve."""
 
     keep_messages: int = 20
-    """Number of tail messages to preserve after compaction (message-count trigger)."""
+    """Number of tail messages to preserve after compaction (message-count trigger).
+
+    The newest message is always kept, so `0` keeps one.
+    """
 
     keep_tokens: int | None = None
     """Minimum original message-content tokens to retain in an unchanged recent suffix.
@@ -437,7 +441,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     summary_prompt: str = _DEFAULT_SUMMARY_PROMPT
     """Prompt template for generating summaries.
 
-    Must contain a `{messages}` placeholder.
+    Must contain a `{messages}` placeholder and no other replacement field. Write a literal
+    brace as `{{` or `}}`.
     """
 
     instructions: str = field(default=_DEFAULT_INSTRUCTIONS, kw_only=True)
@@ -519,6 +524,12 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
+        fields = {name for _, name, _, _ in Formatter().parse(self.summary_prompt) if name is not None}
+        if fields != {'messages'}:
+            raise ValueError(
+                'summary_prompt must contain a `{messages}` placeholder and no other replacement field; '
+                'write a literal brace as `{{` or `}}`.'
+            )
 
     def with_focus(self, focus: str) -> SummarizingCompaction[AgentDepsT]:
         """Return a copy whose summary prompt prioritizes `focus`.
