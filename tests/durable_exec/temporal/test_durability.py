@@ -77,6 +77,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelRetry,
+    ModelTimeoutError,
     SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -119,6 +120,7 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
@@ -363,6 +365,10 @@ def _broken_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     raise ValueError('not a model error')
 
 
+def _timeout_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelTimeoutError('timeout-model', 'Request timed out.', phase='read')
+
+
 def _describe(error: Exception) -> str:
     if isinstance(error, ModelHTTPError):
         return f'{type(error).__name__} {error.status_code} {error.retry_after} {error.body}'
@@ -396,6 +402,26 @@ streamed_model_error_agent = _model_error_agent(
     'durability_streamed_model_error', FunctionModel(stream_function=_overloaded_stream_fn), streamed=True
 )
 other_error_agent = _model_error_agent('durability_other_error', FunctionModel(_broken_model_fn))
+timeout_agent = Agent(
+    FunctionModel(_timeout_model_fn),
+    name='durability_timeout_error',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await timeout_agent.run('hello')).output
+        except ModelTimeoutError as error:
+            # What a retry policy's `non_retryable_error_types` matched, on the activity failure the error rebuilt from.
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {error.phase} {application_error.type}'
 
 
 @workflow.defn
@@ -430,6 +456,18 @@ async def test_durability_model_error_reaches_workflow_with_its_type(client: Cli
             task_queue=TASK_QUEUE,
         )
     assert output == "ModelHTTPError 503 7.0 {'error': 'overloaded'}"
+
+
+async def test_durability_categorized_model_error_reaches_workflow_as_its_category(client: Client):
+    """Workflow code catches a model activity's `ModelTimeoutError` as itself, while the retry policy sees the
+    `ModelAPIError` type it saw before error categories existed."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelTimeoutWorkflow], plugins=[AgentPlugin(timeout_agent)]
+    ):
+        output = await client.execute_workflow(
+            ModelTimeoutWorkflow.run, id=ModelTimeoutWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == 'ModelTimeoutError read ModelAPIError'
 
 
 async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):

@@ -57,7 +57,15 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    ModelTimeoutError,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolAvailabilityDeltaPart,
@@ -4416,7 +4424,8 @@ async def test_bedrock_stream_transport_error_mid_stream(
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is (ModelTimeoutError if error_kind == 'read-timeout' else ModelConnectionError)
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.__cause__ is error
 
 
@@ -4449,7 +4458,7 @@ async def test_bedrock_stream_first_event_error_falls_back(
                 model_name='us.amazon.nova-micro-v1:0',
                 provider_name='bedrock',
                 outcome='error',
-                error='ModelAPIError: An error occurred (throttlingException) when calling the ConverseStream operation: slow down',
+                error="ModelRateLimitError: status_code: 429, model_name: us.amazon.nova-micro-v1:0, body: {'Error': {'Code': 'throttlingException', 'Message': 'slow down'}}",
                 timestamp=IsDatetime(),
                 duration=IsInstance(timedelta),
             )

@@ -8,6 +8,7 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from pydantic_ai._instructions import (
     AgentInstructions,
+    InstructionFunc,
     SourcedInstruction,
     normalize_instructions,
     validate_instruction_id_segment,
@@ -19,6 +20,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     InstructionChangePolicy,
     InstructionId,
+    InstructionPart,
     ToolKind,
     ToolKindLike,
     ToolPartKind,
@@ -32,7 +34,6 @@ from pydantic_ai.tools import (
     KindContentT,
     KindedToolDecorator,
     KindedToolPlainDecorator,
-    SystemPromptFunc,
     Tool,
     ToolFuncContext,
     ToolFuncEither,
@@ -392,17 +393,37 @@ class Capability(AbstractCapability[AgentDepsT]):
 
     @overload
     def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | InstructionPart | None], /
+    ) -> Callable[[], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
         self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT] | None = None,
+        func: InstructionFunc[AgentDepsT] | None = None,
         /,
         *,
         name: str | None = None,
         on_change: InstructionChangePolicy = 'rewrite',
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]] | InstructionFunc[AgentDepsT]:
         """Decorator to register an instructions function on this capability.
 
         Mirrors `Agent.instructions`: the function may take
@@ -439,14 +460,15 @@ class Capability(AbstractCapability[AgentDepsT]):
             validate_instruction_name(name)
 
         def decorator(
-            func_: SystemPromptFunc[AgentDepsT],
-        ) -> SystemPromptFunc[AgentDepsT]:
+            func_: InstructionFunc[AgentDepsT],
+        ) -> InstructionFunc[AgentDepsT]:
             source = CapabilityInstructionSource(self.id) if self.id is not None else None
             self._instructions.append(
                 SourcedInstruction(
                     func_,
                     name=name,
                     id=InstructionId(source, name=name) if source is not None else None,
+                    source=source,
                     dynamic=True,
                     on_change=on_change,
                 )

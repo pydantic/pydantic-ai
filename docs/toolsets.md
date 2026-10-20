@@ -152,7 +152,7 @@ print(first_request.instructions)
 
 _(This example is complete, it can be run "as is")_
 
-You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
+You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context. Like [`@agent.instructions`][pydantic_ai.agent.Agent.instructions], it takes `name=` and [`on_change='append'`](agent.md#appending-instruction-changes), which keeps the cached prefix when the instructions change mid-conversation:
 
 ```python {title="toolset_instructions_decorator.py"}
 from pydantic_ai import Agent, FunctionToolset, ModelRequest, RunContext
