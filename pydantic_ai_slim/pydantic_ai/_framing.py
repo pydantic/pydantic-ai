@@ -41,17 +41,22 @@ CONTEXT_DIFF_TAG: Final = 'context_diff'
 """Frames a unified diff from an instruction block's previous text to its new text."""
 
 _CLOSING_TAG_OPENERS: Final = {
-    tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]))', re.IGNORECASE) for tag in get_args(FramingTag)
+    tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]|$))', re.IGNORECASE) for tag in get_args(FramingTag)
 }
 """Per tag, a pattern matching only the `<` of its closing tag, in every spelling a model might reach for.
 
-That covers any case, whitespace around the `/`, and a closing tag that carries attributes or ends in
-`/>`, but not a longer tag name that merely starts with this one.
+That covers any case, whitespace around the `/`, a closing tag that carries attributes or ends in
+`/>`, and one cut off at the end of the text, which the wrapper's own closing tag or newline would
+otherwise complete, but not a longer tag name that merely starts with this one.
 """
 
 
-_VOICE_TAG_OPENERS: Final = re.compile(rf'<(?=\s*/?\s*{SYSTEM_TAG}(?=[\s/>]))', re.IGNORECASE)
-"""Matches only the `<` of an opening or closing `<system>` tag, in the same spellings as `_CLOSING_TAG_OPENERS`."""
+_VOICE_TAG_OPENERS: Final = re.compile(rf'<(?=\s*(?:/\s*)?{SYSTEM_TAG}(?=[\s/>]|$))', re.IGNORECASE)
+"""Matches only the `<` of an opening or closing `<system>` tag, in the same spellings as `_CLOSING_TAG_OPENERS`.
+
+The whitespace after the `/` is only tried when there is one, so a `<` followed by a long run of
+whitespace costs linear time rather than quadratic.
+"""
 
 
 def neutralize_closing_tag(text: str, *tags: FramingTag) -> str:
