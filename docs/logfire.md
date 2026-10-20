@@ -112,7 +112,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 ```
 
-On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire projects new` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire, and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_*` environment variables, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` only when developing locally.
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire projects new` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
