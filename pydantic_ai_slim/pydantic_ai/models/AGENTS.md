@@ -5,20 +5,21 @@
 ## API Design
 
 <!-- rule:912 -->
-- Document unsupported model settings in docstrings and silently ignore at runtime — prevents breaking client code when models have different capabilities — Different model providers support different features; failing noisily when a setting is unsupported would break code portability across models, while silent degradation with clear documentation lets users make informed choices
+- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one)
 <!-- rule:81 -->
 - Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `NativeToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
 <!-- rule:598 -->
 - Expose provider-specific data via `ModelResponse.provider_details` or `TextPart.provider_details` — prevents API bloat and maintains consistent provider integration patterns — Keeps the core response interface clean while allowing providers to expose logprobs, safety filters, content filtering, and usage metrics without breaking consistency across integrations
 <!-- rule:26 -->
-- Verify provider limitations through testing before implementing workarounds in `pydantic_ai/models/` — defer validation to runtime API responses rather than preemptive client-side checks — Prevents degrading functionality with unnecessary workarounds based on outdated assumptions, and lets the underlying API return clear error messages about actual incompatibilities
+- Don't add preemptive client-side guards that reject provider-namespaced settings (`google_*`, `openai_*`, …) based on assumed capability limits; forward the setting the user opted into and let the provider API surface the actual incompatibility — the API is the authority on what it currently supports, so a client-side guard degrades functionality on outdated assumptions
 <!-- rule:478 -->
 - Token counting must mirror actual request parameters (`tools`, `system_prompt`, configs) and use identical message formatting — Ensures token count estimates match actual API usage, preventing billing surprises and quota errors
+- Per-request injections or mutations of request content (message blocks, tool defs, instructions, cache breakpoints) must land on a set of positions chosen by message identity, not by history length (e.g. every user message). Never anchor to a position *defined as* the tail — "the last message", or any length-based index — because that position moves every turn, which shifts the cacheable prefix, so the provider silently re-processes the tail instead of reading from cache, a cost/latency regression that surfaces no error. Covering the last message is correct when it falls out of an identity rule that covers the others too; what is forbidden is making the tail itself the anchor. Stability is necessary but not sufficient: pinning to the first user message alone is stable and still wrong when the wire needs the injection later in the conversation. Cover every position the API acts on *and will accept the injection at*, then check each one is identity-anchored
 
 ## Error Handling
 
 <!-- rule:562 -->
-- Raise explicit errors for unsupported model features/content/parameters — never silently skip or degrade — Prevents silent failures and makes capability limits discoverable to users at runtime rather than producing unexpected behavior
+- Raise explicit errors for unsupported model features (e.g. function tools, JSON/native output modes) that can't be formed for a given model — never silently skip or degrade — makes capability limits discoverable at runtime; unsupported settings are governed by the settings rules above, and unrepresentable content/message-part types by the rule below
 <!-- rule:65 -->
 - Use exhaustive pattern matching for message part/content types in model adapters; raise explicit errors for unsupported types instead of filtering or assertions — Prevents silent data loss during message mapping and provides clear feedback when model APIs don't support certain content types (e.g., `FileContent`), making integration failures debuggable rather than mysterious
 <!-- rule:433 -->
@@ -37,3 +38,5 @@
 - Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
 
 <!-- /braindump -->
+- When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py`.
+- Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates — that is the line `isinstance` already draws. Probe the gateway leg (a `gateway/<provider>:<model>` model string) rather than reasoning about it.

@@ -53,9 +53,9 @@ Read the local context before scoping:
 - `CLAUDE.md` and `CLAUDE.local.md`
 - `agent_docs/index.md`
 - `.claude/skills/branch-context/issue-brief.md` and `.claude/skills/branch-context/pr-decisions.md`, if present
-- `.claude/skills/pyai-knowledge/feature-map.md` for the affected feature group
-- `.claude/skills/pyai-knowledge/internals-model.md` for layer ownership
-- `.claude/skills/pyai-knowledge/maintainer-mindset.md` for review tells
+- `agent_docs/pydantic-ai-slim.md` (**Ownership** section) and `pydantic_ai_slim/pydantic_ai/native_tools/AGENTS.md` for the affected feature group
+- `pydantic_ai_slim/pydantic_ai/{profiles,providers,models}/AGENTS.md`, `pydantic_ai_slim/pydantic_ai/AGENTS.md`, and the **Design Rules** section of `agent_docs/pydantic-ai-slim.md` for layer ownership
+- the root `CLAUDE.md` / `AGENTS.md` ethos ("channel your inner Samuel Colvin") and `agent_docs/index.md` for review tells
 
 If the investigation spans multiple surfaces or subagents, create a short working note under `local-notes/`, for example `local-notes/complete-partial-pr.md`. Keep facts, sources, and open questions there. Do not put research prose in `issue-brief.md`.
 
@@ -143,7 +143,7 @@ Push back on expanding the PR only when the broader behavior is genuinely a sepa
 
 If choosing broader scope or explicitly deferring an adjacent surface, append a concise entry to `.claude/skills/branch-context/pr-decisions.md` with the source that justified the decision.
 
-If the broader fix changes public API, provider semantics, durable behavior, or safety posture in a non-obvious way, ask David before coding or draft a PR comment/proposal instead of silently expanding the branch.
+If the broader fix changes public API, provider semantics, durable behavior, or safety posture in a non-obvious way, ask a maintainer before coding or draft a PR comment/proposal instead of silently expanding the branch.
 
 ### 8. Implement Conservatively
 
@@ -178,7 +178,7 @@ git branch -vv
 git status --short --branch
 ```
 
-If posting a GitHub comment, start with `David's AICA here: `. Summarize:
+If posting a GitHub comment, summarize:
 
 - What the original PR covered.
 - What additional integration surfaces were checked.
