@@ -85,7 +85,7 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 Every store over one `directory` in a process shares a lock around each manifest update, so agents in the same process do not lose each other's updates. Separate processes are not coordinated: point each `directory` at one process at a time.
 
-Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name already has a version that passed validation, that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
+Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name's current entry has no recorded error (its `last_error` is unset), that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
 
 ## Durable execution
 

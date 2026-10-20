@@ -115,9 +115,8 @@ class CapabilityStore:
 
         The code is validated before it replaces anything. Code that passes
         replaces `<name>.py` and its manifest entry. Code that fails is kept on
-        disk so it can be inspected: when `name` already has a version that
-        passed validation, that version and its manifest entry stay as they
-        are, the rejected code is saved as `<name>.rejected.py`, and the returned
+        disk so it can be inspected: when the current entry for `name` has no
+        recorded error, that version and its manifest entry stay as they are, the rejected code is saved as `<name>.rejected.py`, and the returned
         record (with that `module_file`) is not saved to the manifest. Otherwise
         the code is saved as `<name>.py` and recorded with `last_error` set, so
         `load_active` skips it.

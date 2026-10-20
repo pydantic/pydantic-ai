@@ -6,7 +6,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -403,18 +403,34 @@ class TestCapabilityStore:
 
     def test_stores_over_one_directory_share_a_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Two agents over one directory each build their own store; their manifest updates must not interleave.
-        saving = [threading.Event(), threading.Event()]
+        saving = threading.Event()
         release = threading.Event()
+        contended = threading.Event()
         real_replace = os.replace
 
+        class ContendedLock:
+            """A lock that records when a caller has to wait for it."""
+
+            def __init__(self) -> None:
+                self._lock = threading.Lock()
+
+            def __enter__(self) -> None:
+                if not self._lock.acquire(blocking=False):
+                    contended.set()
+                    self._lock.acquire()
+
+            def __exit__(self, *exc_info: object) -> None:
+                self._lock.release()
+
         def held_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-            if Path(dst).name == 'manifest.json':
-                first = not saving[0].is_set()
-                saving[0 if first else 1].set()
-                if first:
-                    release.wait(timeout=30)  # hang guard; the test sets it
+            if Path(dst).name == 'manifest.json' and not saving.is_set():
+                saving.set()
+                release.wait(timeout=30)  # hang guard; the test sets it
             real_replace(src, dst)
 
+        monkeypatch.setattr(
+            'pydantic_ai_harness.capability_creation._store.threading', SimpleNamespace(Lock=ContendedLock)
+        )
         monkeypatch.setattr(os, 'replace', held_replace)
         writers = [
             threading.Thread(target=CapabilityStore(tmp_path).write, args=('first', VALID_CODE)),
@@ -422,10 +438,9 @@ class TestCapabilityStore:
         ]
         writers[0].start()
         try:
-            assert saving[0].wait(timeout=30)
+            assert saving.wait(timeout=30)
             writers[1].start()
-            # Correct code never sets it; overlapping updates would within this window.
-            assert not saving[1].wait(timeout=0.2)
+            assert contended.wait(timeout=30)  # the second store waits for the update the first is making
         finally:
             release.set()
             for writer in writers:
