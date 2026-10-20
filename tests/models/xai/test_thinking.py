@@ -70,6 +70,22 @@ async def test_xai_grok_45_thinking(allow_model_requests: None, xai_provider: Xa
     assert any(isinstance(p, ThinkingPart) for p in response.parts)
 
 
+async def test_xai_grok_47_thinking(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end smoke test that Grok 4.7 reasons when `reasoning_effort` is omitted.
+
+    `thinking=True` omits `reasoning_effort` so xAI applies Grok 4.7's documented `high` default; the
+    mapping is asserted at the wire level by `test_xai_grok_47_unified_thinking_reasoning_effort`.
+    This confirms a real cassette-backed call succeeds and returns a thinking part.
+    """
+    m = XaiModel('grok-4.7', provider=xai_provider)
+    agent = Agent(m, model_settings={'thinking': True})
+
+    result = await agent.run('What is 2+2?')
+    assert '4' in result.output
+    response = next(m for m in result.all_messages() if isinstance(m, ModelResponse))
+    assert any(isinstance(p, ThinkingPart) for p in response.parts)
+
+
 @pytest.mark.parametrize(
     ('thinking', 'expected_reasoning_effort'),
     [
