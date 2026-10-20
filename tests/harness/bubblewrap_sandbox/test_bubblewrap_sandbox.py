@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -36,6 +37,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
+from pydantic_ai_harness.bubblewrap_sandbox._workspace import _ENSURE_LOGIN_PATHS  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
 from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
@@ -87,6 +89,10 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
         f'{_sandbox_args(working_dir)} --tmpfs /secrets --chdir {working_dir} --setenv GREETING hi -- '
         'sh -c printf "%s" "$GREETING"',
     ]
+    # Without its own session, the command stays in the backend's process group, so a timeout or
+    # cancellation that kills the group reaches its foreground descendants (`TestRealBubblewrap` checks
+    # that on a host with `bwrap`).
+    assert all('--new-session' not in call.split() for call in tools.bwrap_calls)
 
 
 class _FailedHome:
@@ -395,6 +401,74 @@ async def test_ssh_home_resolution_does_not_run_planted_helpers(tools: FakeRemot
 
     assert result.exit_code == 0
     assert not ran.exists()
+
+
+class _RacedLoginSetup(LocalWorkspaceBackend):
+    """Runs the login-path setup with `races` applied, so another caller acts between a check and a creation."""
+
+    def __init__(self, root: Path, *, races: Mapping[str, str]):
+        super().__init__(root)
+        self._races = races
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if not isinstance(command, str) and len(command) > 3 and command[2] == _ENSURE_LOGIN_PATHS:
+            script = command[2]
+            for creation, raced in self._races.items():
+                assert creation in script
+                script = script.replace(creation, raced)
+            command = [*command[:2], script, *command[3:]]
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_login_paths_created_by_another_workspace_meanwhile_are_accepted(tools: FakeRemoteTools) -> None:
+    """Each run's workspace sets up on its own, so a concurrent one on the same home may create a path first."""
+    # The first creation stands in for the other workspace; the second, ours, then finds the path there.
+    tcshrc = 'printf \'source ~/.cshrc\\n\' > "$path"'
+    races = {
+        '/bin/mkdir -- "$path" ||': '{ /bin/mkdir -- "$path"; /bin/mkdir -- "$path"; } ||',
+        f'{tcshrc} ||': f'{{ {tcshrc}; {tcshrc}; }} ||',
+        ': > "$path" ||': '{ : > "$path"; : > "$path"; } ||',
+    }
+    workspace = BubblewrapWorkspace(Workspace(_RacedLoginSetup(tools.home, races=races)))
+
+    assert (await workspace.run(['true'])).exit_code == 0
+
+    home = tools.home.resolve()
+    assert (home / '.ssh').is_dir()
+    assert (home / '.config' / 'fish').is_dir()
+    assert (home / '.tcshrc').read_text() == 'source ~/.cshrc\n'
+    assert (home / '.bashrc').read_text() == ''
+    assert f'--ro-bind {home}/.bashrc {home}/.bashrc' in tools.bwrap_calls[0]
+
+
+async def test_a_parent_symlinked_by_another_workspace_meanwhile_is_unavailable(
+    tools: FakeRemoteTools, tmp_path: Path
+) -> None:
+    """A parent that turns out to be a symlink after its creation failed would redirect what is created in it."""
+    home = tools.home.resolve()
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    config = shlex.quote(str(home / '.config'))
+    races = {
+        '/bin/mkdir -- "$path" ||': (
+            f'{{ [ "$path" != {config} ] || /bin/ln -s -- {shlex.quote(str(elsewhere))} "$path"; '
+            '/bin/mkdir -- "$path"; } ||'
+        ),
+    }
+    workspace = BubblewrapWorkspace(Workspace(_RacedLoginSetup(tools.home, races=races)))
+
+    with pytest.raises(WorkspaceUnavailableError, match=r'\.config is a symbolic link'):
+        await workspace.run(['true'])
+
+    assert list(elsewhere.iterdir()) == []
+    assert tools.bwrap_calls == []
 
 
 async def test_an_ssh_path_that_is_not_a_directory_is_unavailable(tmp_path: Path) -> None:

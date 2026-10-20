@@ -104,12 +104,15 @@ and fish its `~/.config/fish`. A trailing `/` marks a directory.
 
 _ENSURE_LOGIN_PATHS = r"""umask 077
 set -C
-for entry do
-  path=${entry#?:}
-  if [ -L "$path" ]; then
-    printf '%s is a symbolic link\n' "$path" >&2
+refuse_link() {
+  if [ -L "$1" ]; then
+    printf '%s is a symbolic link\n' "$1" >&2
     exit 2
   fi
+}
+for entry do
+  path=${entry#?:}
+  refuse_link "$path"
   case $entry in
     [pd]:*)
       if [ ! -d "$path" ]; then
@@ -117,13 +120,14 @@ for entry do
           printf '%s is not a directory\n' "$path" >&2
           exit 2
         fi
-        /bin/mkdir -- "$path" || exit 1
+        /bin/mkdir -- "$path" || [ -d "$path" ] || exit 1
       fi ;;
     f:*.tcshrc)
-      [ -e "$path" ] || printf 'source ~/.cshrc\n' > "$path" || exit 1 ;;
+      [ -e "$path" ] || printf 'source ~/.cshrc\n' > "$path" || [ -f "$path" ] || exit 1 ;;
     f:*)
-      [ -e "$path" ] || : > "$path" || exit 1 ;;
+      [ -e "$path" ] || : > "$path" || [ -f "$path" ] || exit 1 ;;
   esac
+  refuse_link "$path"
   case $entry in
     [df]:*)
       linked=$(/usr/bin/find "$path" '(' -type l -o '(' ! -type d -links +1 ')' ')' -print) || exit 1
@@ -144,6 +148,10 @@ paths, or a symlink or hard-linked file inside a protected one, is a failure: a 
 a command from replacing the link or writing through the target's other name. So is anything but a
 directory where one is expected. `set -C` keeps a symlink planted after the check from redirecting a new
 file, and `/usr/bin/find` is absolute so a writable `PATH` entry can't supply it.
+
+Another workspace on the same host may create a path between the check and the creation, since each
+workspace (and so each run of the capability) sets up on its own. A failed creation is fine when the
+path is then of the right kind, and every path is checked for a symlink again after it is created.
 """
 
 
@@ -330,6 +338,8 @@ class BubblewrapWorkspace(WrapperWorkspace):
         return anyio.Lock()
 
     async def _login_path_mounts(self, working_dir: str) -> tuple[str, ...]:
+        # The lock only saves this workspace's concurrent first calls repeating the setup; workspaces
+        # sharing a home don't share it, so `_ENSURE_LOGIN_PATHS` tolerates their races itself.
         if self._login_guard is not None:
             return self._login_guard
         async with self._login_guard_lock:
