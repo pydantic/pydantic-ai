@@ -171,7 +171,8 @@ def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
     """Cut `text` to about `limit` characters for display; `terms=None` keeps it whole for the index.
 
     A head cut alone would report a match whose term the excerpt never shows, so when the
-    first query term ends past `limit` the window is centred on that term instead.
+    first query term ends past `limit` the window is centred on that term instead, or ends
+    with the text when the term is near its end, so the excerpt keeps the full `limit`.
     """
     if terms is None or len(text) <= limit:
         return text
