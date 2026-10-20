@@ -520,20 +520,20 @@ class Checker:
             or any(loss >= waiter.started for loss in truth.connection_losses)
             # Every connection was lost and none replaced (GPT-Live doesn't reconnect): the session is over.
             or len(truth.connection_losses) >= truth.connections
-            or 'error' in sim.tools.settled.values()
             or sim.receive_ended
         ):
-            # The session ended, lost state to a drop, or a tool failure ended the exchange: returning is right.
+            # The session ended or lost state to a drop: returning is right. (A failure that ended only an exchange is
+            # judged per exchange, below.)
             return []
         context = {'waiter': waiter.index, 'started': waiter.started}
 
         def ended_by_failure(since: int) -> bool:
-            """Whether a failure raised from `async for` ended an exchange begun at `since` before the wait returned.
+            """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
 
-            A usage limit a tool's result would pass, or a tool result that failed to send, ends the exchange in
-            progress, though the session goes on receiving.
+            A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
+            exchange in progress, though the session goes on receiving.
             """
-            return any(since < at <= returned for at in sim.consumer_errors_at)
+            return any(since < at <= returned for at in sim.failures_parked_at)
 
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [

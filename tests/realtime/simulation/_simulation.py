@@ -191,8 +191,10 @@ class Simulation(ABC):
         self.events: list[RealtimeEvent] = []
         self.consumer_errors: list[BaseException] = []
         """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
-        self.consumer_errors_at: list[int] = []
-        """When each of `consumer_errors` was raised, on the shared clock."""
+        self.failures_parked_at: list[int] = []
+        """When the session parked each failure that ends the exchange in progress (a tool that raised, a usage limit a
+        tool's result would pass, a tool result that failed to send), on the shared clock: the moment the exchange
+        ended, which is before the failure is raised from `async for`."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -269,6 +271,7 @@ class Simulation(ABC):
                 async with realtime.session(handle_barge_in=self.options.handle_barge_in) as session:
                     self.session = session
                     self.checker.attach(session)
+                    self._record_parked_failures(session)
                     self.observe_connection(session._connection)  # pyright: ignore[reportPrivateUsage]
                     self._view = session.stream_audio()
                     ready.set()
@@ -299,6 +302,15 @@ class Simulation(ABC):
 
         return agent
 
+    def _record_parked_failures(self, session: RealtimeSession) -> None:
+        park = session._park_error  # pyright: ignore[reportPrivateUsage]
+
+        def park_and_record(error: BaseException) -> None:
+            self.failures_parked_at.append(self._now())
+            park(error)
+
+        session._park_error = park_and_record  # pyright: ignore[reportPrivateUsage]
+
     async def _consume(self) -> None:
         """Iterate the session as an app that reports a failure and keeps listening does, until receiving ends.
 
@@ -315,7 +327,6 @@ class Simulation(ABC):
                     return
                 except BaseException as e:
                     self.consumer_errors.append(e)
-                    self.consumer_errors_at.append(self._now())
                     # Iterate again while the session is still reading the provider. (Once closed, iterating again
                     # raises at once: stop rather than spin.)
                     if (
