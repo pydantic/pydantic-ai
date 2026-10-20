@@ -28,12 +28,12 @@ async def ask(question: str, conversation_id: str) -> str:
 
 ## Why
 
-Compaction keeps the live history inside the context window, so an exact detail (a file path, a value, a decision) can end up only in a summary's paraphrase, and nothing from earlier runs is in context at all. `ConversationSearch` writes nothing itself. It reads what `StepPersistence` stored, through a `HistorySource`, and lets the model pull exact excerpts back on demand. Give both capabilities the same store instance; they can be listed in any order.
+Compaction keeps the live history inside the context window, so an exact detail (a file path, a value, a decision) can end up only in a summary's paraphrase, and nothing from earlier runs is in context at all. `ConversationSearch` persists no history itself. It reads what `StepPersistence` stored, through a `HistorySource`, and lets the model pull exact excerpts back on demand; over a `SqliteStepStore` it keeps a search index in the same file. Give both capabilities the same store instance; they can be listed in any order.
 
-- Ranking is BM25, implemented in pure Python with no extra dependencies. Rare terms score higher, and each word of a multi-word query is scored independently.
+- Ranking is BM25, implemented in pure Python with no extra dependencies. Rare terms score higher, and each word of a multi-word query is scored independently. Over a `SqliteStepStore`, a SQLite FTS5 index finds the matching messages first; see [Full-text index on SQLite](#full-text-index-on-sqlite).
 - Each result names its run (`run: ... | conversation: ...`). The tool's optional `run_id` argument searches one run's full record, so a run a compaction receipt references is directly resolvable.
 - The tool reads the store when called, so it sees everything persisted so far, including earlier steps of the current run.
-- History a run inherits through `message_history` is indexed once, under the run that first persisted it, so threaded runs do not return the same message once per run.
+- History a run inherits through `message_history` is indexed once, under the run that first persisted it, so threaded runs do not return the same message once per run. The context lines around a hit stay within the hit's run and do not reach back into the history it inherited.
 - Instruction changes recorded in history (`on_change='append'`) are searchable as system text; the initial instructions are not indexed.
 - Long messages are clipped to 500 characters for display (200 for system text and tool-call arguments). When the matched term lies past the cutoff, the excerpt shows the text around it instead of the start. The index always holds the full text.
 
@@ -41,7 +41,7 @@ Compaction keeps the live history inside the context window, so an exact detail 
 
 `StepPersistence` saves the full history at every step. A compaction that persists its edits (like `SummarizingCompaction`) changes later snapshots only, so the earlier snapshots of the same run still hold the originals.
 
-`SnapshotHistorySource` replays a run's `complete` snapshots in order, drops summary artifacts, and appends only what each snapshot adds past its longest overlap with what it has collected so far. `interrupted` snapshots (unsettled tool work, synthesized tool returns) stay out. Overlap is matched on a content hash of each message, because durable executors (Temporal, DBOS) re-instantiate messages between steps. The hash leaves out what core adds to a message after it is first saved (timestamps, run ids, instruction changes appended by `on_change='append'`), and the later copy is kept.
+`SnapshotHistorySource` replays a run's `complete` snapshots in order, drops summary artifacts, and appends only what each snapshot adds past its longest overlap with what it has collected so far. `interrupted` snapshots (unsettled tool work, synthesized tool returns) stay out. Overlap is matched on a content hash of each message, because durable executors (Temporal, DBOS) re-instantiate messages between steps. The hash leaves out what core adds to a message after it is first saved (timestamps, run ids, instruction changes appended by `on_change='append'`, and the instruction baseline core records when an instruction window opens or closes), and the later copy is kept.
 
 `HistorySource` is the seam: a substrate that keeps an append-only entry log can implement it by replay and replace the snapshot adapter without touching the search layer.
 
@@ -54,13 +54,27 @@ A run's `conversation_id` is the explicit `conversation_id=` argument, else the 
 The value is trusted as given. UI adapters set it from client input (AG-UI's thread ID, Vercel AI's chat ID), so in a multi-tenant app derive it on the server from the authenticated user; see the [threat model](https://github.com/pydantic/pydantic-ai/blob/main/THREAT_MODEL.md#persistent-state-and-tenant-identity):
 
 ```python
+import json
+
+
 async def ask(question: str, user_id: str, chat_id: str) -> str:
     # Bind the conversation to the authenticated user, not a raw client-supplied id.
-    result = await agent.run(question, conversation_id=f'{user_id}:{chat_id}')
+    # A JSON pair keeps every (user, chat) pair distinct; joining with a separator would give
+    # user 'a' with chat 'b:c' the same id as user 'a:b' with chat 'c'.
+    result = await agent.run(question, conversation_id=json.dumps([user_id, chat_id]))
     return result.output
 ```
 
 Scoping applies to the `RunRecord`s a `HistorySource` returns, so a custom source must populate `conversation_id` on them. `scope='all'` searches every run the source enumerates and returns verbatim excerpts from any of them; use it only when the store holds a single principal's history.
+
+## Full-text index on SQLite
+
+When the source is a `SnapshotHistorySource` over a `SqliteStepStore`, the search keeps a SQLite [FTS5](https://www.sqlite.org/fts5.html) index in the same database file: the tables `conversation_search_runs` and `conversation_search_messages` and the FTS5 table `conversation_search_fts`. Every other store and any custom `HistorySource` scan the history on each call, as described above.
+
+- **Answers are the same.** The index holds each run's record as the scan builds it, one row per message. FTS5 `MATCH` only finds the messages that hold a query word; BM25 then scores them with the statistics of the in-scope messages alone, using `bm25_k1` and `bm25_b`. FTS5's own `bm25()` is not used, because it counts every conversation in the table, which would let other conversations change the scores. Scope, `run_id`, the inherited-history dedup, and excerpt clipping work as in the scan.
+- **Kept current on search.** Each search re-indexes the in-scope runs whose `complete` snapshots changed since they were indexed, so it sees everything persisted so far. The first search on an existing database indexes its in-scope runs once. Each run is written in its own short transaction, so indexing holds the database's write lock only briefly. Deleting a run's row removes its messages from the index.
+- **Query syntax is not interpreted.** The query is split into words exactly as the scan splits it, and each word is matched as a quoted FTS5 string. FTS5 operators (`AND`, `OR`, `NOT`, `NEAR`, `*`, `^`, quotes, column filters) are searched as ordinary words or skipped as punctuation, the same as in the scan.
+- **Falls back to the scan.** When Python's SQLite library was built without FTS5, the search logs a warning and scans, and that toolset stops trying the index. Any other SQLite error, such as `database is locked` after SQLite's busy timeout or a read-only file, makes that one search scan instead, and the next search tries the index again.
 
 ### Migrating from the `scope='all'` default
 
@@ -81,7 +95,7 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 | `source` | (required) | Where the corpus comes from. Use `SnapshotHistorySource(store)` over the store `StepPersistence` writes to. |
 | `scope` | `'conversation'` (unset warns) | Restricts search to the calling run's `conversation_id`. Use `'all'` only for a store isolated to one principal. |
 | `max_matches` | `10` | Maximum matching excerpts the search tool returns. |
-| `context_lines` | `5` | Messages shown around each match (within the match's run). |
+| `context_lines` | `5` | Messages shown around each match, within the match's run and not reaching into history it inherited. |
 | `bm25_k1` | `1.5` | BM25 term-frequency saturation. Lucene's `BM25Similarity` uses `1.2`. |
 | `bm25_b` | `0.75` | BM25 length normalization (Lucene default). |
 | `add_instructions` | `True` | Emit a short note telling the model the recall tool exists. |
@@ -89,7 +103,7 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 
 ## Telemetry
 
-`ConversationSearch` emits no spans of its own. Each search is a tool call, so core's tool-execution span already records its duration, the query, and the result (content behind the usual instrumentation settings).
+Each search is a tool call, so core's tool-execution span already records its duration, the query, and the result (content behind the usual instrumentation settings). `ConversationSearch` adds one zero-duration span, `conversation_search index fallback`, when a search over a `SqliteStepStore` cannot use the full-text index and scans instead. Its `conversation_search.fallback_reason` attribute names the error class (`Fts5Unavailable` or a `sqlite3` error such as `OperationalError`) and quotes no content.
 
 ## Limitations
 
@@ -97,8 +111,10 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 - Recovering compaction-dropped originals needs the pre-compaction snapshots. A store with bounded snapshot retention (a per-run snapshot cap) can prune them; the search then returns what the surviving snapshots carry.
 - If a snapshot that dropped a prefix also repeats the exchange that ends the accumulated history, the repeat is absorbed into the overlap and indexed once.
 - The tokenizer splits on word characters, so scripts written without spaces (Chinese, Japanese, Thai) match only a whole unbroken run, not a word inside it.
-- The corpus is rebuilt on each call from every in-scope run's snapshots, and every run record in the store is listed to apply the scope. A large store or history makes each search proportionally slower ([#9361](https://github.com/pydantic/pydantic-ai/issues/9361)).
-- Reading snapshots restores externalized media even though the index only names files; stores with remote media backends pay that fetch per search.
+- Without the full-text index, the corpus is rebuilt on each call from every in-scope run's snapshots. A large store or history makes each search proportionally slower ([#9361](https://github.com/pydantic/pydantic-ai/issues/9361)). With it, a search reads only the snapshots of runs that changed since the last one, but every run record in the store is still listed to apply the scope.
+- Reading snapshots restores externalized media even though the index only names files; stores with remote media backends pay that fetch per search, or per re-indexed run with the full-text index.
+- FTS5 keeps a word whole where the scan's tokenizer splits it at a combining mark, which appears in text written in decomposed Unicode form. With the full-text index, a search for a fragment of such a word can miss a message the scan finds.
+- Once the full-text index exists, deleting a run's row needs FTS5, so a process whose SQLite lacks FTS5 cannot delete runs from that database.
 
 ## Further reading
 

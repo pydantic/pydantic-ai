@@ -156,8 +156,10 @@ and callable namespaces need Python. Keep the default `id='memory'` for durable 
 ## ConversationSearch
 
 Adds one tool, `search_conversation_history(query, run_id=None)`, that BM25-ranks history a
-persistence capability already stored. It persists nothing itself. Pair it with `StepPersistence`
-on the same store instance via `SnapshotHistorySource`.
+persistence capability already stored. It persists no history itself. Pair it with `StepPersistence`
+on the same store instance via `SnapshotHistorySource`. Over a `SqliteStepStore` it keeps an FTS5
+index (`conversation_search_*` tables) in the same database file, refreshed on each search; it
+scans instead when SQLite lacks FTS5 or the index cannot be used, with the same answers either way.
 
 ```python
 from pydantic_ai import Agent

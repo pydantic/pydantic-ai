@@ -1145,6 +1145,19 @@ class SqliteStepStore:
         if self._connection is None:
             conn.close()
 
+    @contextmanager
+    def _connect(self) -> Generator[sqlite3.Connection]:
+        """A connection to the store's database with the schema in place, closed afterwards if the store opened it.
+
+        `conversation_search` keeps its full-text index in the same database through this.
+        """
+        conn = self._open()
+        try:
+            self._ensure_schema(conn)
+            yield conn
+        finally:
+            self._maybe_close(conn)
+
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         if self._schema_ready:
             return

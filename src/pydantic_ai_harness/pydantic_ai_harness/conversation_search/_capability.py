@@ -34,8 +34,9 @@ model out of the cross-conversation recall that opting into `all` exists to enab
 class ConversationSearch(AbstractCapability[AgentDepsT]):
     """Search persisted conversation history with a dependency-free BM25 tool.
 
-    This capability persists nothing itself: it reads whatever history a persistence
-    capability already stores, through a `HistorySource`. Pair it with
+    This capability persists no history itself: it reads whatever history a persistence
+    capability already stores, through a `HistorySource`. Over a `SqliteStepStore` it keeps
+    an FTS5 search index in the same database, which gives the same answers faster. Pair it with
     `StepPersistence` sharing the same store, and the model can recall what
     compaction dropped from the live context as well as anything from past runs in
     the same conversation:
