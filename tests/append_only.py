@@ -557,22 +557,14 @@ def _strip_item(item: Any, *, unwrap: bool, depth: int = 0) -> dict[str, Any]:
                 and not first.keys().isdisjoint(_CACHE_MARKERS)
             )
             parts = [_strip_item(part, unwrap=unwrap, depth=depth + 1) for part in parts]
-            # Only a part that carried a marker was wrapped for it; an unmarked array is what the request sends.
-            text = _single_text_part(parts) if marked else None
-            stripped[key] = parts if text is None else text
+            # Only a text part that carried a marker was wrapped for it; an unmarked array is what the request sends.
+            text_part = marked and parts[0].keys() == {'type', 'text'} and parts[0]['type'] in ('text', 'input_text')
+            stripped[key] = parts[0]['text'] if text_part else parts
     return stripped
 
 
 def _is_list(value: Any) -> TypeGuard[list[Any]]:
     return isinstance(value, list)
-
-
-def _single_text_part(content: Any) -> str | None:
-    if isinstance(content, list) and len(content) == 1:  # pyright: ignore[reportUnknownArgumentType]
-        part = content[0]  # pyright: ignore[reportUnknownVariableType]
-        if is_str_dict(part) and part.keys() == {'type', 'text'} and part['type'] in ('text', 'input_text'):
-            return part['text']
-    return None
 
 
 _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
