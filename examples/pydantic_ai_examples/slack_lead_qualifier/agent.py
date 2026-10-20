@@ -5,6 +5,7 @@ import logfire
 
 ### [imports]
 from pydantic_ai import Agent, NativeOutput
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool  ### [/imports]
 
 from .models import Analysis, Profile
@@ -37,6 +38,7 @@ agent = Agent(
     ),
     tools=[duckduckgo_search_tool()],
     output_type=NativeOutput([Analysis, NoneType]),
+    capabilities=[Caching()],
 )  ### [/agent]
 
 

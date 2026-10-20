@@ -25,6 +25,8 @@ For a checkpointed, side-effectful, approval-gated, or otherwise high-risk slice
 
 Classify each observed contract with the evidence statuses in [Verification and Cutover](VERIFICATION-AND-CUTOVER.md): `verified-equivalent`, `verified-adapter`, `intentional-change`, `external-owner`, `not-applicable`, `unverified`, or `blocked`. A promising native API remains `unverified` until its parity probe passes. A source behavior may be non-equivalent internally while a tested adapter earns `verified-adapter` at the public boundary.
 
+Deep Agents adds harness-level rows: profiles, backends and permissions, skills and memory injection, main and child middleware stacks, async subagents, rubric loops, interpreters, and hosts. Their candidate owners are in [Deep Agents Mapping](DEEP-AGENTS-MAPPING.md); classify them with the same statuses and probes.
+
 Never use "native" to mean "the names look similar." Do not leave `redesign` as the proposed solution: follow the affected row into [Validated Workaround Recipes](WORKAROUND-RECIPES.md), implement the smallest viable construction, and classify the resulting contract. Record installed versions and link each verified claim to an executable test; use traces, source lines, and official documentation as supporting evidence.
 
 ## Prompts and message history
@@ -231,4 +233,5 @@ At minimum, spike these when present:
 
 - LangChain: [middleware execution order](https://docs.langchain.com/oss/python/langchain/middleware/custom#execution-order), [structured output](https://docs.langchain.com/oss/python/langchain/structured-output), and [human-in-the-loop](https://docs.langchain.com/oss/python/langchain/human-in-the-loop)
 - LangGraph: [checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers), [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts), [fault tolerance](https://docs.langchain.com/oss/python/langgraph/fault-tolerance), and [streaming](https://docs.langchain.com/oss/python/langgraph/streaming)
+- Deep Agents: [customization and default stack](https://docs.langchain.com/oss/python/deepagents/customization), [human-in-the-loop](https://docs.langchain.com/oss/python/deepagents/human-in-the-loop), and [fault tolerance](https://docs.langchain.com/oss/python/deepagents/fault-tolerance)
 - Pydantic AI: [instructions](https://pydantic.dev/docs/ai/core-concepts/agent/#instructions), [message history](https://pydantic.dev/docs/ai/core-concepts/message-history/), [structured output](https://pydantic.dev/docs/ai/output/), [parallel tools](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency), [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/), and [streaming](https://pydantic.dev/docs/ai/core-concepts/agent/#streaming-events-and-final-output)

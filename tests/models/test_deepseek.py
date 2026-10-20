@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone, tzinfo
+import re
+from dataclasses import dataclass
+from datetime import UTC, datetime, tzinfo
 from decimal import Decimal
 
 import pytest
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -13,23 +16,28 @@ from pydantic_ai import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import Capability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.output import NativeOutput
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
+from .conftest import RequestCapture, json_objects
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -37,7 +45,7 @@ pytestmark = [
 @pytest.fixture
 def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make DeepSeek's time-of-day pricing deterministic for snapshot assertions."""
-    timestamp = datetime(2025, 4, 22, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 8, 13, tzinfo=UTC)
 
     class FrozenDatetime(datetime):
         @classmethod
@@ -51,13 +59,13 @@ def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
-    Loading a deferred capability injects a framework-synthesized `search_tools` assistant turn with
-    tool calls but no thinking; before the fix DeepSeek rejected it with a 400. A successful
-    recording confirms DeepSeek accepts the empty `reasoning_content` the fix sends. The
-    deterministic mapping guard is in
+    Loading a deferred capability used to inject a framework-synthesized `search_tools` assistant
+    turn with tool calls but no thinking, which DeepSeek rejected with a 400. The reveal now goes out
+    as `<system>`-tagged user text instead, so this recording guards the end-to-end deferred-capability
+    run rather than the empty `reasoning_content` backfill; the mapping guard for that is
     `test_openai.py::test_field_mode_thinking_backfill_on_synthetic_tool_search_turn`.
     """
-    model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
 
     def roll_dice() -> str:
         """Roll a six-sided die and return the result."""
@@ -95,10 +103,102 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     )
 
 
+_WEATHER_TURN: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('What is the weather in Paris and then London? One tool call per city.')]),
+    ModelResponse(
+        parts=[
+            ThinkingPart('Check Paris first.', id='reasoning_content', provider_name='openai'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1'),
+        ],
+        provider_name='openai',
+    ),
+    ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+    ModelResponse(
+        parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_2')], provider_name='openai'
+    ),
+    ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_2')]),
+]
+
+
+@dataclass(frozen=True)
+class AutoBackfillCase:
+    id: str
+    history: list[ModelMessage]
+    prompt: str | None
+    sent_reasoning: list[str | None]
+    output: str
+
+
+AUTO_BACKFILL_CASES = [
+    AutoBackfillCase(
+        id='current_turn',
+        history=_WEATHER_TURN,
+        prompt=None,
+        sent_reasoning=['Check Paris first.', ''],
+        output=snapshot("""\
+Here's the weather for both cities:
+
+- **Paris:** Sunny ☀️
+- **London:** Rainy 🌧️
+
+Let me know if you'd like the weather for any other cities.\
+"""),
+    ),
+    AutoBackfillCase(
+        id='earlier_turn',
+        history=[
+            *_WEATHER_TURN,
+            ModelResponse(
+                parts=[
+                    ThinkingPart('Both done.', id='reasoning_content', provider_name='openai'),
+                    TextPart('Paris is sunny and London is rainy.'),
+                ],
+                provider_name='openai',
+            ),
+        ],
+        prompt='Which city should I visit? One word.',
+        sent_reasoning=['Check Paris first.', None, 'Both done.'],
+        output=snapshot('Paris'),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', AUTO_BACKFILL_CASES, ids=lambda case: case.id)
+async def test_deepseek_auto_mode_thinking_backfill(
+    case: AutoBackfillCase, allow_model_requests: None, deepseek_api_key: str, request_capture: RequestCapture
+):
+    """DeepSeek through a generic `OpenAIProvider` accepts what `'auto'` sends for a tool call that had no thinking.
+
+    A generic provider leaves `openai_chat_send_back_thinking_parts` at `'auto'`. The London tool call
+    carries no `ThinkingPart`, as when another model served that step. In the current user turn DeepSeek
+    rejects it with a 400 unless it carries `reasoning_content`, so `'auto'` sends the field the Paris
+    call already carries, empty. DeepSeek's thinking-mode guide asks for the field on every earlier turn
+    too, but accepts that call without it once a newer user message follows, which is what `'auto'`
+    sends there. The run completing is the API accepting the request; the request assertion pins it.
+    """
+    provider = OpenAIProvider(
+        base_url='https://api.deepseek.com', api_key=deepseek_api_key, http_client=request_capture.client
+    )
+    agent = Agent(OpenAIChatModel('deepseek-v4-flash', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return 'sunny'  # pragma: no cover
+
+    result = await agent.run(case.prompt, message_history=case.history)
+
+    assert result.output == case.output
+    messages = request_capture.body('/chat/completions')['messages']
+    assert [
+        message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
+    ] == case.sent_reasoning
+
+
 async def test_deepseek_model_thinking_part(
     allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
 ):
-    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    deepseek_model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -115,25 +215,25 @@ async def test_deepseek_model_thinking_part(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=12,
-                    output_tokens=789,
+                    input_tokens=90,
+                    output_tokens=166,
                     details={
                         'prompt_cache_hit_tokens': 0,
-                        'prompt_cache_miss_tokens': 12,
-                        'reasoning_tokens': 415,
+                        'prompt_cache_miss_tokens': 90,
+                        'reasoning_tokens': 59,
                     },
-                    output_reasoning_tokens=415,
-                    cost=Decimal('0.00043557'),
+                    output_reasoning_tokens=59,
+                    cost=Decimal('0.00005908'),
                 ),
-                model_name='deepseek-reasoner',
+                model_name='deepseek-v4-flash',
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 4, 22, 14, 9, 11, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
+                provider_response_id='32beb152-2946-409a-8986-7f0e1e351ed2',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -145,7 +245,7 @@ async def test_deepseek_model_thinking_part(
 async def test_deepseek_model_thinking_stream(
     allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
 ):
-    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    deepseek_model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
     result: AgentRunResult | None = None
@@ -175,27 +275,101 @@ async def test_deepseek_model_thinking_stream(
                         id='reasoning_content',
                         provider_name='deepseek',
                     ),
-                    TextPart(content='Hello there! 😊 How can I help you today?'),
+                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=6,
-                    output_tokens=212,
-                    details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 6, 'reasoning_tokens': 198},
-                    output_reasoning_tokens=198,
-                    cost=Decimal('0.00011741'),
+                    input_tokens=90,
+                    output_tokens=303,
+                    details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 90, 'reasoning_tokens': 89},
+                    output_reasoning_tokens=89,
+                    cost=Decimal('0.00009744'),
                 ),
-                model_name='deepseek-reasoner',
+                model_name='deepseek-v4-flash',
                 timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 7, 10, 17, 41, 44, tzinfo=timezone.utc),
+                    'timestamp': IsDatetime(),
                 },
-                provider_response_id='33be18fc-3842-486c-8c29-dd8e578f7f20',
+                provider_response_id='fa23191e-e1bf-4fdc-9ba2-c33d951d7e32',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
+
+
+@dataclass(frozen=True)
+class ToolChoiceCase:
+    id: str
+    model_name: str
+    thinking_disabled: bool
+    expected_tool_choice: str
+    expected_reasoning_effort: str | None
+
+
+TOOL_CHOICE_CASES = [
+    ToolChoiceCase(
+        id='thinking_on_downgrades',
+        model_name='deepseek-v4-flash',
+        thinking_disabled=False,
+        expected_tool_choice='auto',
+        expected_reasoning_effort=None,
+    ),
+    ToolChoiceCase(
+        id='thinking_off_forces',
+        model_name='deepseek-v4-flash',
+        thinking_disabled=True,
+        expected_tool_choice='required',
+        expected_reasoning_effort='none',
+    ),
+    ToolChoiceCase(
+        id='thinking_off_forces_pro',
+        model_name='deepseek-v4-pro',
+        thinking_disabled=True,
+        expected_tool_choice='required',
+        expected_reasoning_effort='none',
+    ),
+]
+
+
+class Answer(BaseModel):
+    text: str
+
+
+@pytest.mark.parametrize('case', TOOL_CHOICE_CASES, ids=lambda c: c.id)
+async def test_deepseek_tool_choice_follows_thinking(
+    case: ToolChoiceCase,
+    allow_model_requests: None,
+    deepseek_api_key: str,
+    request_capture: RequestCapture,
+):
+    """DeepSeek rejects a forced tool choice only while thinking is on, so the downgrade is per request.
+
+    The wire assertion is what matters here: with thinking on, `tool_choice` must stay `'auto'` or the
+    API answers `Thinking mode does not support this tool_choice`; with thinking off, forcing must
+    survive, which is what makes tool-based structured output reliable on `deepseek-v4-pro`.
+    """
+    model = OpenAIChatModel(
+        case.model_name, provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    settings = OpenAIChatModelSettings(thinking=False) if case.thinking_disabled else None
+    agent = Agent(model, output_type=Answer, model_settings=settings)
+
+    result = await agent.run('Say hi.')
+
+    assert isinstance(result.output, Answer)
+    body = request_capture.body('/chat/completions')
+    assert body['tool_choice'] == case.expected_tool_choice
+    assert body.get('reasoning_effort') == case.expected_reasoning_effort
+
+
+async def test_deepseek_chat_native_output_refused(allow_model_requests: None, deepseek_api_key: str):
+    """Chat Completions has no `json_schema` tool choice, so `NativeOutput` must fail before any request."""
+    model = OpenAIChatModel('deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    agent = Agent(model, output_type=NativeOutput(Answer))
+
+    with pytest.raises(UserError, match=re.escape('Native structured output is not supported by this model.')):
+        await agent.run('Say hi.')

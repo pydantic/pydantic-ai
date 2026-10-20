@@ -1,0 +1,327 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: First say exactly "FIRST RESPONSE COMPLETE". After any later message,
+            follow its instruction exactly.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Begin.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: FIRST RESPONSE COMPLETE
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wP1W/4D+uv/C/U7+ff3k/Ej9s/xH/Qf9ufzR+3z9Ufva
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: jgvXCbIGpQMbAoQCHQRmBQEFuQJp/5j9+Pzf/Sv+vP0Z
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CwAHAAQA7f/j/+P/8/8CABkACQATACkA///r//f/DwAo
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GwAgABMAIAAYABoAIAAeACEAKAAmABkAIAAbABoAIQAd
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GQAdABoAHQAdAB0AGwAhACEAJwApAB4AIAAlACQAIwAo
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zv/N/8z/zP/F/8r/y//G/8j/wf+//83/y//H/8v/y//Q
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9//2//L/+//x//j/7v/t//T/9f/y/+n/8//n/+v/6f/n
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: IgHTAIoAVAA3ABIAJQBaAGsAeAAxABcALgAcABMAAgDN
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1138
+      responseTokenCount: 39
+      totalTokenCount: 1177
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1138
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 39
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: <system>Say exactly "QUEUED MARKER RECEIVED".</system>
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: QUEUED MARKER RECEIVED
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ///Z//H/8f/6/xEA9v/y//v/EwDw/8//7v/T/+f/xv++
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: du97C1n/o/l9+80MUvXn/GgIY/st+E0Llvoh+2sEYP+t
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: iRwv8hn95wck/Qv9PP0BCHTyRQYCCOrxQw7e+n39swnZ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: OwBQ/LEA5QCm/30BjgJvAEEAsgAiAbn/vP+p/98Bk/8p
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: RAYcBooGnwYKBtUFRgUbBUYEEQS8A80CjQP5AhgCwgGr
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SwHZAeYCKANkA+QC1wIMA14CJgSEA2AD8QIcA0ACZQIl
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Wv7R/oH++v6q/sX9ef1N/Yv9qv36/S/+Of7O/b398f0a
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: rwF4AXABNgEmARcB3wDQAIMAXwA9ACwA8f/g/7z/av9o
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Yv8J/wUAVf/YAFn+pv5t/pX/U/+v/mT/y/9NALMA+wAs
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAD6//7//P/+/+//8P/X/+P/7v/4//P/8v/q/9X/1P/d
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: U/7B/DoAk/7D/k8BHwTcBH0DMACq+8L5evue/rH+Pf9T
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: PP87/3v/b/9H/y//gv/C/ygAXwBVAEYAcgCHAGAAJAD7
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +/8EAAAABgAEAAUADQABABIACwATABsAHgAVABEAFAAZ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EAALAAsACAAGAAQA//8EAP7/AgAKAAYABgABAAoABgAE
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAHAAQAAQABAAEAAQABAAIAAQD0//7/AAABAAAAAQD/
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9P/3//j/+v/5//v/+f/9//z/AgAEAPz/+////wEA////
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAEAAQABAAFAAYAAwACAAMAAgD2//z/AQD//wEA/f/+
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +v/8//3//v/9//7/AAD//////P8HAAwAAgAGAAgACAAJ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1206
+      responseTokenCount: 48
+      totalTokenCount: 1254
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1205
+      - modality: AUDIO
+        tokenCount: 1
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 48

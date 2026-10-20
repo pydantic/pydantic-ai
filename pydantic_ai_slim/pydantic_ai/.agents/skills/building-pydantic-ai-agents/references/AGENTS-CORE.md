@@ -4,11 +4,18 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
 
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -46,6 +53,34 @@ If the user is choosing between output modes:
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
 
+## Picking One of a Run-Time Set
+
+Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
+way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
+schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
+or a tool parameter — there, write `Annotated[str, Intent]` so type checkers see a `str`. For a set you know when you write the code, use a `Literal` or an `Enum` (with
+`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
+
+```python
+from pydantic_ai import Agent, Choices
+
+agent = Agent('openai:gpt-5.2', name='triage_agent')
+
+result = agent.run_sync(
+    'The blender arrived smashed. Just send me another one.',
+    output_type=Choices(
+        {'refund': 'They want their money back.', 'replace': 'They want a working unit.'},
+        description='What the customer is asking for.',
+    ),
+)
+print(result.output)
+```
+
+`Choice(description, value=...)` makes an option stand for something other than its key. When that value is
+callable, picking it *calls* it — sync or async, with no arguments — so the run's output is what the action
+returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
+with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
+
 ## Dependency Injection
 
 Use `deps_type=...` plus `RunContext[...]` when tools or instructions need app state.
@@ -62,6 +97,18 @@ def add_user_name(ctx: RunContext[str]) -> str:
 ```
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
+
+For changing operator state, use `@agent.instructions(name='state', on_change='append')` to preserve the instruction prefix.
+The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
+Return `None` or an empty string to withdraw the block.
+Use the same decorator on an always-on capability with an explicit `id`.
+Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
+Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
+Compaction or loss of the baseline starts a new prefix from current instructions.
+Use a durable operation for instruction callbacks that read external state during durable execution.
+Deferred capabilities and realtime sessions do not support this update policy.
+Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 
 ## Define Agents Declaratively with Specs
 
@@ -103,6 +150,11 @@ Examples:
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
 
+Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
+
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
+
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
 ## Run Methods and Streaming
@@ -140,6 +192,33 @@ async def main():
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
 
+To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit()`. The payload can't reuse the envelope's own field names: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+
+`CustomEvent` is for application-owned code only. Code that lives inside a capability must define namespaced `CapabilityEvent` subclasses instead; emitting either family from the other's side raises `UserError`. See CAPABILITIES-AND-HOOKS.md.
+
+Custom events reach the AG-UI and Vercel AI frontends by default. For an event that should stay server-side (metrics, audit logs), declare the class `ui=False` — `class IndexProgressEvent(CustomEvent, ui=False)` — and every UI adapter skips it while in-process consumers still receive it. Declaring a `ui` field or `ClassVar` on an event class is rejected, since it would shadow that flag. The flag is class-level, not on the wire, so adapters also skip an `UnknownCustomEvent` (a class this process never imported): when events reach the frontend from another process, import their defining modules there or none of them are forwarded.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2', name='progress_agent')
+
+
+@dataclass(kw_only=True)
+class ProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def process(ctx: RunContext, count: int) -> str:
+    for i in range(count):
+        await ctx.emit(ProgressEvent(done=i + 1, total=count))
+    return 'done'
+```
+
 ## Handle Provider Failures
 
 Use `FallbackModel` when the user wants automatic provider or model failover.
@@ -163,3 +242,33 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+- `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
+  retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
+  with an `UnsupportedSettingWarning`, so with one of those in the chain set it on the other candidates' `settings`
+
+The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
+`'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on
+`FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
+cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
+`UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
+To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelContextWindowExceededError`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider.
+
+When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
+
+```python
+import warnings
+
+from pydantic_ai import UsageLimitUnavailableWarning
+
+warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+```
+
+
+To bound how long one model can hold up the fallback, set `model_settings={'request_timeout': seconds}`. Unlike
+`timeout`, which the provider SDK applies to each attempt and re-arms on every retry, it is one deadline enforced by
+Pydantic AI over all attempts at a request to one model, and over reading a streamed response through its last chunk
+(consumer time included). Expiry raises `ModelRequestTimeout` (a `ModelAPIError`), which `FallbackModel` falls back on
+by default; each model it tries gets a fresh deadline. It applies to any model, with or without a fallback. Under
+Temporal, a plain model's deadline runs as a workflow timer that cancels the model activity; a `FallbackModel`'s
+per-model deadlines run inside the activity instead.

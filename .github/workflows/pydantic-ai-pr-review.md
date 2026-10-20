@@ -15,9 +15,13 @@ on:
     workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
-  # Restricts this reviewer to collaborators: `roles:` compiles to a
-  # `check_membership` step on `github.actor`, which under `workflow_run` is
-  # whoever's push started the triggering CI run.
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
+  # The installed `pydantic-docs` GitHub App has no repository permission.
+  # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
@@ -25,6 +29,7 @@ on:
   # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
+  bots: [pydantic-docs]
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -56,7 +61,7 @@ concurrency:
 # `activation` skips and takes the whole graph with it. That is the live bug in
 # pydantic-ai-ui-security-review (#6766 item 7). Referencing the job in the prompt
 # is what hoists it above `activation` and wires it into `activation.needs`.
-if: ${{ needs.eligibility.outputs.eligible == 'true' }}
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.eligibility.outputs.eligible == 'true') }}
 tools:
   github:
     mode: gh-proxy
@@ -74,7 +79,15 @@ safe-outputs:
   needs: [eligibility]
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -103,16 +116,10 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-minimax.md
+  - shared/engine-zai.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
-pre-steps:
-  # Setting engine.command makes gh-aw skip ALL engine installation steps,
-  # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
-  # own installer (the same call it makes for non-custom-command jobs).
-  - name: Install AWF firewall binary (skipped by custom engine.command)
-    run: bash "${RUNNER_TEMP}/gh-aw/actions/install_awf_binary.sh" v0.27.42
-
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
@@ -124,13 +131,17 @@ pre-agent-steps:
   # does not backstop that: its "Restore agent config folders from base branch"
   # step is gated on *its* checkout having succeeded, so it never runs here, and
   # nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
+  #
+  # Fetched by commit, not by head branch: a PR merged in the minutes between
+  # `eligibility` and this step has its branch deleted, and the branch fetch then
+  # failed the whole run. GitHub serves any reachable commit by SHA, and the review
+  # still posts on the merged PR.
   - name: Check out the PR head
     env:
       HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
-      HEAD_REF: ${{ needs.eligibility.outputs.head_ref }}
     run: |
       set -euo pipefail
-      git fetch --no-tags origin "+refs/heads/${HEAD_REF}:refs/remotes/origin/${HEAD_REF}"
+      git fetch --no-tags origin "$HEAD_SHA"
       git checkout --detach "$HEAD_SHA"
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/`: pr-details, PR
   # comments, review threads (with annotated diff hunks + resolved/outdated
@@ -160,6 +171,38 @@ pre-agent-steps:
           || echo "::warning::${script} failed; reviewer will run with less context"
       else
         echo "::warning::${script} not present; reviewer will run with less context"
+      fi
+  # The agent job waits its turn in gh-aw's per-workflow agent slot (the compiled
+  # `gh-aw-<engine>-<workflow>` concurrency group, `queue: max`), which serves one
+  # review at a time across all PRs, and `eligibility` ran before that wait. A PR
+  # that has since closed or moved to a new head gets a `noop` here; gh-aw's engine
+  # harness finds it before starting the model, so the slot is held only for setup.
+  # The new head's CI run queues its own review. Any failure here fails open and the
+  # review goes ahead.
+  - name: Skip a PR that closed or moved on while queued
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
+      # gh-aw sets `GH_AW_SAFE_OUTPUTS` only on its own steps, despite its docs, so
+      # this reuses the expression it injects into the `Execute` step.
+      SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
+    run: |
+      set -uo pipefail
+      if [ -z "$SAFE_OUTPUTS" ]; then
+        echo "::warning::steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS is empty; cannot skip a stale review"
+        exit 0
+      fi
+      if ! live=$(gh api "$PR" --jq '"\(.state) at \(.head.sha)"'); then
+        echo "::warning::could not re-read the PR; reviewing ${HEAD_SHA} anyway"
+        exit 0
+      fi
+      [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
+      msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
+      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+        echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+      else
+        echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
       fi
 
 jobs:
@@ -277,8 +320,10 @@ jobs:
 
           [ "$(printf '%s' "$PR_JSON" | jq -r '.state')" = 'OPEN' ] || skip "PR #${PR_NUMBER} is not open"
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
-          # The checkout step fetches `refs/heads/<head_ref>` from origin, which a
-          # fork head is not; forks go through the `douwebot` label path instead.
+          # The checkout step fetches the head commit from this repository, where a
+          # fork head is reachable too, and runs workspace scripts over it with
+          # repository secrets in scope; forks go through the `douwebot` label path
+          # instead.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 
@@ -360,6 +405,31 @@ jobs:
             output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
           }' | gh api "repos/${REPO}/check-runs" --input -
 
+  flag_failed_review:
+    # Labels the PR when this run posted no review; a later run that does clears it.
+    needs: [agent, safe_outputs, eligibility]
+    if: (!cancelled()) && needs.agent.result != 'skipped'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+          LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
+          SHA: ${{ needs.eligibility.outputs.head_sha }}
+          FAILED: ${{ needs.safe_outputs.result != 'success' || !(contains(needs.agent.outputs.output_types, 'submit_pull_request_review') || contains(needs.agent.outputs.output_types, 'noop')) }}
+        run: |
+          # Runs for different heads overlap, so only the run for the current head owns the label.
+          head=$(gh api "$PR" -q .head.sha)
+          [ "$head" = "$SHA" ] || exit 0
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ci-review-failed" --silent || true
+          fi
+
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -385,6 +455,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ## The pull request under review
 

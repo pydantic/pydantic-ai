@@ -1,6 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from ._cancel import CancellationToken
+from ._json_schema import UseEnumMemberDocstrings
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -21,6 +22,7 @@ from .concurrency import (
     ConcurrencyLimit,
     ConcurrencyLimiter,
 )
+from .conversation import Conversation, ConversationTypeAdapter
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -38,20 +40,41 @@ from .exceptions import (
     IncompleteToolCall,
     MessageHistoryMutatedWarning,
     ModelAPIError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestTimeout,
     ModelRetry,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     PydanticAIDeprecationWarning,
     RunCancelled,
+    RunTimedOut,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
     ToolFailed,
+    TransportPhase,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
 )
 from .format_prompt import format_as_xml
+from .images import (
+    GeneratedImage,
+    ImageGenerationModel,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    ImageGenerator,
+)
 from .messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -64,8 +87,10 @@ from .messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
     CapabilityInstructionSource,
     CompactionPart,
+    CustomEvent,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentFormat,
@@ -82,12 +107,17 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionChangePolicy,
+    InstructionDeltaPart,
+    InstructionDigest,
     InstructionId,
     InstructionPart,
     InstructionSource,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestAttempt,
     ModelRequestPart,
     ModelRequestState,
     ModelResponse,
@@ -117,10 +147,13 @@ from .messages import (
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
     ToolsetInstructionSource,
+    UnknownCapabilityEvent,
+    UnknownCustomEvent,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -142,7 +175,16 @@ from .native_tools import (
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import (
+    BoolCriteria,
+    Choice,
+    Choices,
+    NativeOutput,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -185,6 +227,7 @@ from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
     '__version__',
+    'BANNER_ENABLED',
     # agent
     'Agent',
     'CancellationToken',
@@ -202,6 +245,12 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # images
+    'ImageGenerator',
+    'ImageGenerationModel',
+    'ImageGenerationSettings',
+    'ImageGenerationResult',
+    'GeneratedImage',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',
@@ -216,13 +265,26 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
+    'UsageLimitUnavailableWarning',
     'ModelRetry',
     'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRateLimitError',
+    'ModelQuotaExceededError',
+    'ModelUnavailableError',
+    'ModelOverloadedError',
+    'ModelServerError',
+    'ModelConnectionError',
+    'ModelTimeoutError',
+    'TransportPhase',
+    'ModelContextWindowExceededError',
+    'ModelRequestTimeout',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
     'RunCancelled',
+    'RunTimedOut',
     'MessageHistoryMutatedWarning',
     'PydanticAIDeprecationWarning',
     'SkipModelRequest',
@@ -230,6 +292,7 @@ __all__ = (
     'SkipToolValidation',
     'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
+    'UnsupportedSettingWarning',
     'UsageLimitExceeded',
     'UserError',
     # messages
@@ -248,6 +311,10 @@ __all__ = (
     'NativeToolReturnPart',
     'CachePoint',
     'CompactionPart',
+    'CapabilityEvent',
+    'CustomEvent',
+    'UnknownCapabilityEvent',
+    'UnknownCustomEvent',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
@@ -272,6 +339,7 @@ __all__ = (
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
+    'ModelRequestAttempt',
     'ModelRequestPart',
     'ModelRequestState',
     'ModelResponse',
@@ -294,10 +362,15 @@ __all__ = (
     'ToolsetInstructionSource',
     'ToolAvailabilityDeltaEvent',
     'ToolAvailabilityDeltaPart',
+    'InstructionBaselinePart',
+    'InstructionDeltaPart',
+    'InstructionDigest',
+    'InstructionChangePolicy',
     'ThinkingPartDelta',
     'ToolCallEvent',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolKind',
     'ToolResultEvent',
     'ToolReturn',
     'ToolReturnPart',
@@ -322,6 +395,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'UseEnumMemberDocstrings',
     # toolsets
     'AbstractToolset',
     'AgentToolset',
@@ -360,6 +434,9 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
+    'BoolCriteria',
     # template
     'TemplateStr',
     # format_prompt
@@ -382,5 +459,16 @@ __all__ = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'Conversation',
+    'ConversationTypeAdapter',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
+
+BANNER_ENABLED = True
+"""Whether the first-run banner may be shown, for a program that would rather own its output.
+
+Set it to `False` before the first agent run; `PYDANTIC_AI_NO_BANNER` does the same from the
+environment. Neither is needed to keep the banner out of an application's way: it is only ever shown
+once per process, to a terminal or a coding agent, and never at all once instrumentation is
+configured, under `pytest`, or in CI.
+"""

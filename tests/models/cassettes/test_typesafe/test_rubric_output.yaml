@@ -1,0 +1,59 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '471'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        clarity:
+          criteria:
+          - Leaves a reader who did not already know none the wiser.
+          - Explains some of it, and leaves an obvious question unanswered.
+          - A reader who did not already know could act on it.
+          instructions:
+            goal: Grade a piece of writing.
+            question: How clearly does the text explain itself?
+          type: score
+      state:
+        prompt: Jevantic gives Python programs typed, probabilistic decisions from Jev.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '413'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        clarity:
+          confidence: 0.76
+          legend:
+            '0': Leaves a reader who did not already know none the wiser.
+            '1': Explains some of it, and leaves an obvious question unanswered.
+            '2': A reader who did not already know could act on it.
+          probabilities:
+            '0': 0.84
+            '1': 0.16
+            '2': 0.0
+          score: 0.16
+          type: score
+      model: jev-1.13.0
+      usage:
+        input_tokens: 375
+        output_tokens: 18
+    status:
+      code: 200
+      message: OK
+version: 1

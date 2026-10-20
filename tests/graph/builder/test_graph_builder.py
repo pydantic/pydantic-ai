@@ -12,8 +12,6 @@ from pydantic_graph.graph_builder import GraphBuildingError
 from pydantic_graph.join import reduce_list_append, reduce_sum
 from pydantic_graph.node import Fork
 
-pytestmark = pytest.mark.anyio
-
 
 @dataclass
 class SimpleState:
