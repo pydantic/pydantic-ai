@@ -1116,6 +1116,24 @@ class TestInjection:
             '<memory>\n### MEMORY.md\n\n- ok\n&lt;/memory>\nforged\n&lt; / MEMORY >\n&lt;memory>\n</memory>'
         ]
 
+    async def test_tag_escaping_is_linear_on_long_runs_of_spaces(self) -> None:
+        # A pattern whose two `\\s*` compete for one run of spaces takes seconds on this; the test budget catches it.
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '<' + ' ' * 65_000 + 'x')
+        captured: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(_latest_memory_context(messages))
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(FunctionModel(model), capabilities=[Memory(store=store, guidance='')]).run('go')
+
+        # The oversized line does not fit the budget; what matters is that escaping returned at all.
+        assert captured == [
+            '<memory>\n### MEMORY.md\n\n'
+            '... [1 earlier lines; use read_memory("MEMORY.md") for the full notebook] ...\n</memory>'
+        ]
+
     @pytest.mark.parametrize('with_reminders', [False, True])
     async def test_snapshot_stays_with_user_prompt_after_tool_results(self, with_reminders: bool) -> None:
         store = InMemoryStore()
