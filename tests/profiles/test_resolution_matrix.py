@@ -58,6 +58,7 @@ with try_import() as bedrock_imports:
         BedrockJsonSchemaTransformer,
         BedrockProvider,
         # Name the concrete transformer in profile snapshots.
+        _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
     )
 
@@ -870,7 +871,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
-            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
     )
@@ -943,7 +944,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
             'tool_deferral_mode': 'standalone',
-            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
     )

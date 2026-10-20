@@ -9,7 +9,7 @@ from copy import deepcopy
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 from pydantic_ai import Agent, ModelRequest, NativeOutput, ToolOutput, UserPromptPart
 from pydantic_ai._json_schema import JsonSchema
@@ -17,7 +17,6 @@ from pydantic_ai.direct import model_request
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 
-from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 
 with try_import() as imports_successful:
@@ -49,12 +48,17 @@ def contains_provider() -> Iterator[BedrockProvider]:
 
 
 @pytest.mark.parametrize(
-    'model_name',
+    'model_name,schema_type',
     [
-        'zai.glm-4.7-flash',
-        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-        'qwen.qwen3-32b-v1:0',
-        'google.gemma-3-12b-it',
+        pytest.param('zai.glm-4.7-flash', 'array', id='zai.glm-4.7-flash'),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            'array',
+            id='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        ),
+        pytest.param('qwen.qwen3-32b-v1:0', 'array', id='qwen.qwen3-32b-v1:0'),
+        pytest.param('google.gemma-3-12b-it', 'array', id='google.gemma-3-12b-it'),
+        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', ['array', 'null'], id='claude-nullable-array'),
     ],
 )
 @pytest.mark.parametrize('output_mode', ['native', 'tool'])
@@ -62,12 +66,18 @@ async def test_bedrock_contains(
     allow_model_requests: None,
     contains_provider: BedrockProvider,
     model_name: str,
+    schema_type: str | list[str],
     output_mode: Literal['native', 'tool'],
 ):
     """Both strict request paths succeed and send the constraint as a description hint."""
 
+    schema_extra: dict[str, JsonValue] = {
+        'type': schema_type if isinstance(schema_type, str) else [*schema_type],
+        'contains': {'type': 'string'},
+    }
+
     class Result(BaseModel):
-        values: list[str] = Field(json_schema_extra={'contains': {'type': 'string'}})
+        values: list[str] = Field(json_schema_extra=schema_extra)
 
     requests: list[JsonSchema] = []
 
@@ -107,6 +117,8 @@ async def test_bedrock_contains(
         tool_spec: JsonSchema = requests[0]['toolConfig']['tools'][0]['toolSpec']
         assert tool_spec['strict'] is True
         schema = tool_spec['inputSchema']['json']
-    assert schema['properties']['values'] == snapshot(
-        {'items': {'type': 'string'}, 'type': 'array', 'description': "contains={'type': 'string'}"}
-    )
+    assert schema['properties']['values'] == {
+        'items': {'type': 'string'},
+        'type': schema_type,
+        'description': "contains={'type': 'string'}",
+    }

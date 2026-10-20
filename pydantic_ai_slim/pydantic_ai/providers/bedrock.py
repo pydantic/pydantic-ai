@@ -139,6 +139,19 @@ class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer)
     }
 
 
+class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        schema_type = schema.get('type')
+        # Claude also rejects contains on nullable array type lists; GLM, Qwen and Gemma accept it.
+        # Keep the matching-type traversal boundary: the contains subschema is not walked here.
+        if self.strict and isinstance(schema_type, list) and 'array' in schema_type and 'contains' in schema:
+            note = f'contains={schema.pop("contains")}'
+            description = schema.get('description')
+            schema['description'] = note if not description else f'{description} ({note})'
+        return schema
+
+
 class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
@@ -315,9 +328,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         profile,
         BedrockModelProfile(
             json_schema_transformer=(
-                _BedrockJsonSchemaTransformerWithoutContains
-                if supports_structured_output
-                else BedrockJsonSchemaTransformer
+                _BedrockAnthropicJsonSchemaTransformer if supports_structured_output else BedrockJsonSchemaTransformer
             ),
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,

@@ -137,6 +137,7 @@ Claude don't accept output tools alongside thinking, so there a request that thi
 For Claude, GLM, Qwen, and Gemma models that support structured output, Pydantic AI moves array `contains`
 constraints into field descriptions when using [`NativeOutput`][pydantic_ai.output.NativeOutput] or explicitly strict tools. Bedrock rejects this
 keyword for these models. The description preserves the constraint as a hint; Bedrock does not enforce it.
+For Claude, this also applies to nullable arrays expressed as `type: ['array', 'null']`.
 Non-strict tools keep the original constraint.
 
 ### Custom HTTP headers

@@ -768,10 +768,11 @@ def test_strict_true_strips_array_max_items():
     ],
 )
 @pytest.mark.parametrize('strict', [True, False, None])
-def test_bedrock_contains_constraint(model_name: str, strict: bool | None):
+@pytest.mark.parametrize('schema_type', ['array', ['array', 'null']])
+def test_bedrock_contains_constraint(model_name: str, strict: bool | None, schema_type: str | list[str]):
     """Pin the outgoing schema: cassette matching alone does not check request bodies."""
     schema: JsonSchema = {
-        'type': 'array',
+        'type': schema_type,
         'items': {'type': 'string'},
         'contains': {'type': 'string'},
         'minItems': 1,
@@ -785,32 +786,37 @@ def test_bedrock_contains_constraint(model_name: str, strict: bool | None):
     transformer = transformer_type(schema, strict=strict)
     transformed = transformer.walk()
 
-    if strict:
-        assert transformed == snapshot(
-            {
-                'type': 'array',
-                'items': {'type': 'string'},
-                'minItems': 1,
-                'description': "Values (contains={'type': 'string'})",
-            }
-        )
+    if strict and (schema_type == 'array' or 'anthropic' in model_name):
+        assert transformed == {
+            'type': schema_type,
+            'items': {'type': 'string'},
+            'minItems': 1,
+            'description': "Values (contains={'type': 'string'})",
+        }
     else:
         assert transformed == original
     assert schema == original
 
 
-@pytest.mark.parametrize('schema_type', [None, 'object', ['array', 'null']])
-def test_bedrock_contains_preserves_matching_type_boundary(schema_type: str | list[str] | None):
+@pytest.mark.parametrize('model_name', ['zai.glm-4.7-flash', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'])
+@pytest.mark.parametrize('schema_type', [None, 'object', ['array', 'null'], ['string', 'null']])
+def test_bedrock_contains_preserves_matching_type_boundary(model_name: str, schema_type: str | list[str] | None):
     """A contains subschema must not widen the walk into unmatched object/array keywords."""
     schema: JsonSchema = {'contains': {'$ref': '#/$defs/Missing'}}
     if schema_type is not None:
         schema['type'] = schema_type
-    profile = BedrockProvider.model_profile('zai.glm-4.7-flash')
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
     assert profile is not None
     transformer_type = profile.get('json_schema_transformer')
     assert transformer_type is not None
     transformed = transformer_type(schema, strict=True).walk()
-    assert transformed['contains'] == schema['contains']
+    if 'anthropic' in model_name and schema_type == ['array', 'null']:
+        assert 'contains' not in transformed
+        assert transformed['description'] == "contains={'$ref': '#/$defs/Missing'}"
+    else:
+        assert transformed['contains'] == schema['contains']
+    assert schema == original
 
 
 @pytest.mark.parametrize(
