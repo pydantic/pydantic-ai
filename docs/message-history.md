@@ -923,7 +923,10 @@ the call, is a side effect of that call, so it goes into the
 each enqueue something, each call's content follows its own return, in the order that call enqueued
 it. The model still gets all of a request's tool results ahead of the enqueued content, as providers
 require. A complete `ModelRequest` or `ModelResponse` passed to `enqueue` keeps its message-level
-fields, so it's added as its own message instead, as is anything enqueued outside a tool call. A
+fields, so it's added as its own message instead, as is anything enqueued outside a tool call. So is
+content whose call has no `ToolReturnPart` in the next request (because the tool raised
+[`ModelRetry`][pydantic_ai.exceptions.ModelRetry], say), content that's delivered in a later step, and
+content enqueued after something that was added as its own message. A
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way, and lands as
 a [mid-conversation system prompt](#mid-conversation-system-prompts) — it keeps its position in the
 history instead of being lifted into the top-level system prompt, so it doesn't invalidate the

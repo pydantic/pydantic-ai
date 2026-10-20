@@ -149,22 +149,12 @@ class PendingMessage:
     [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] emitted when the messages
     are delivered, and returned by [`enqueue`][pydantic_ai.tools.RunContext.enqueue]."""
 
-    tool_call_id: str | None = None
-    """The tool call whose result this content is delivered next to, if any.
+    _tool_call: tuple[str, int] | None = field(default=None, repr=False, compare=False)
+    """The `tool_call_id` and run step of the tool call whose result this content goes next to, if any.
 
-    Set when the content was enqueued with `priority='asap'` during a tool call (from the tool body or a
-    capability hook wrapping it) and is made only of parts, so delivery puts those parts in the
-    [`ModelRequest`][pydantic_ai.messages.ModelRequest] carrying that call's
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Content holding a complete
-    `ModelRequest` or `ModelResponse` keeps its own message-level fields, so it's always delivered as its
-    own messages.
-    """
-
-    tool_call_run_step: int = 0
-    """The [run step][pydantic_ai.tools.RunContext.run_step] of the tool call in `tool_call_id`.
-
-    A model may reuse a `tool_call_id` in a later step, so content enqueued late by an earlier call (say, from a
-    task it started) must not be put next to the later call's return.
+    Set by `from_content` for parts enqueued with `priority='asap'` during a tool call (from the tool or a
+    capability hook wrapping it). The step matters because a model may reuse a `tool_call_id` later, and
+    content an earlier call enqueues late (say, from a task it started) mustn't go next to the later return.
     """
 
     @classmethod
@@ -172,15 +162,13 @@ class PendingMessage:
         cls,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
-        tool_call_id: str | None = None,
-        tool_call_run_step: int = 0,
+        _tool_call: tuple[str, int] | None = None,
     ) -> PendingMessage | None:
         """Build a `PendingMessage` from `enqueue` arguments, or `None` when there's nothing to send.
 
         Returns `None` for an empty call (enqueueing nothing is a no-op rather than an error).
-        `tool_call_id` is the tool call being executed, if any, and `tool_call_run_step` the step it runs in;
-        the call is kept only when the content can be delivered next to its result (see
-        `PendingMessage.tool_call_id`).
+        `_tool_call` is the `tool_call_id` and run step of the tool call being executed, if any. It's kept
+        only for content made of parts, which can go next to that call's result.
 
         Raises:
             UserError: If the assembled messages don't end in a
@@ -196,10 +184,8 @@ class PendingMessage:
                 'items that form one), so the agent has a request to respond to.'
             )
         if priority != 'asap' or any(isinstance(item, ModelRequest | ModelResponse) for item in content):
-            tool_call_id = None
-        return cls(
-            messages=messages, priority=priority, tool_call_id=tool_call_id, tool_call_run_step=tool_call_run_step
-        )
+            _tool_call = None
+        return cls(messages=messages, priority=priority, _tool_call=_tool_call)
 
 
 class PendingMessageQueue(list[PendingMessage]):
@@ -209,9 +195,11 @@ class PendingMessageQueue(list[PendingMessage]):
         super().__init__(messages)
         self._closed = False
         self._lock = threading.Lock()
-        # The last part delivered next to each tool call's return, so content a later delivery in the same
-        # step brings for that call goes after it.
-        self.last_delivered_for_call: dict[str, ModelRequestPart] = {}
+        # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
+        # the last part put next to each call's return in it, so a later delivery in the same step puts that
+        # call's content after it.
+        self._spliced_request: tuple[ModelRequest, ModelRequest] | None = None
+        self._last_delivered_for_call: dict[str, ModelRequestPart] = {}
 
     def __reduce_ex__(self, protocol: SupportsIndex) -> tuple[type[PendingMessageQueue], tuple[list[PendingMessage]]]:
         return PendingMessageQueue, (list(self),)
@@ -238,6 +226,12 @@ class PendingMessageQueue(list[PendingMessage]):
     def close(self) -> None:
         with self._lock:
             self._closed = True
+
+    def request_in_history(self, request: ModelRequest) -> ModelRequest:
+        """The copy in history of `request`, if tool-call content was put into it, else `request` itself."""
+        if self._spliced_request is not None and self._spliced_request[0] is request:
+            return self._spliced_request[1]
+        return request
 
     def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         selected = [pending for pending in self if pending.priority == priority]
@@ -279,7 +273,7 @@ def run_queue(ctx: RunContext[Any]) -> PendingMessageQueue:
 
 def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessageQueue) -> ModelRequestPart:
     """The part in `target` that content for `tool_call_id` goes right after."""
-    delivered = queue.last_delivered_for_call.get(tool_call_id)
+    delivered = queue._last_delivered_for_call.get(tool_call_id)  # pyright: ignore[reportPrivateUsage]
     if delivered is not None and any(part is delivered for part in target.parts):
         return delivered
     return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
@@ -288,12 +282,13 @@ def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessag
 def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
     """Deliver the queued `'asap'` messages into the request being prepared.
 
-    Content tied to a tool call (see [`PendingMessage.tool_call_id`][pydantic_ai._enqueue.PendingMessage.tool_call_id])
-    goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
+    Content tied to a tool call (see `PendingMessage._tool_call`) goes into the request that carries that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart],
     right after it, when that request ends the history: several deliveries for the same call keep their
     enqueue order, whatever other calls' content arrives in between. Everything else is appended as its own
-    messages, and so is anything drained after it, so content never lands ahead of what was enqueued first. Either way it lands in both `request_context.messages` (so the model sees it this step) and
-    `ctx.messages` (so it persists in the agent's message history).
+    messages, and so is anything drained after it, so content never lands ahead of what was enqueued first.
+    Either way it lands in both `request_context.messages` (so the model sees it this step) and `ctx.messages`
+    (so it persists in the agent's message history). The request the content went into is replaced by a copy,
+    which `PendingMessageQueue.request_in_history` finds.
 
     One [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted per drained
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in the order the content lands in history,
@@ -316,17 +311,19 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     appended: list[tuple[str, list[ModelMessage]]] = []
     for pending in drained:
         messages = stamped_messages(pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id)
+        tool_call = pending._tool_call  # pyright: ignore[reportPrivateUsage]
         if (
-            pending.tool_call_id in answered_calls
+            tool_call is not None
+            and tool_call[0] in answered_calls
             # The calls `target` answers ran in the step before this one, so an older call reused the id.
-            and pending.tool_call_run_step >= ctx.run_step - 1
+            and tool_call[1] >= ctx.run_step - 1
             # Content that came after something added as its own message stays after it.
             and not appended
+            # `from_content` only keeps the call for content made of parts, which is one request.
+            and len(messages) == 1
+            and isinstance(request := messages[0], ModelRequest)
         ):
-            # `from_content` only keeps `tool_call_id` for content made of parts, which is one request.
-            (request,) = messages
-            assert isinstance(request, ModelRequest)
-            spliced.setdefault(pending.tool_call_id, []).append((pending.enqueue_id, request))
+            spliced.setdefault(tool_call[0], []).append((pending.enqueue_id, request))
         else:
             appended.append((pending.enqueue_id, messages))
 
@@ -334,6 +331,12 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     if spliced:
         assert isinstance(target, ModelRequest)
         queue = run_queue(ctx)
+        previous = queue._spliced_request  # pyright: ignore[reportPrivateUsage]
+        if previous is not None and previous[1] is target:
+            original = previous[0]
+        else:
+            original = target
+            queue._last_delivered_for_call.clear()  # pyright: ignore[reportPrivateUsage]
         # Each call's content goes after its return, or after what an earlier delivery in this step put there.
         anchors = {id(_splice_anchor(target, call_id, queue)): call_id for call_id in spliced}
         parts: list[ModelRequestPart] = []
@@ -344,11 +347,12 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
                 continue
             for enqueue_id, request in spliced.pop(call_id, ()):
                 parts.extend(request.parts)
-                queue.last_delivered_for_call[call_id] = request.parts[-1]
+                queue._last_delivered_for_call[call_id] = request.parts[-1]  # pyright: ignore[reportPrivateUsage]
                 events.append(
                     EnqueuedMessagesEvent(enqueue_id=enqueue_id, messages=(request,), parts=tuple(request.parts))
                 )
         spliced_target = replace(target, parts=parts)
+        queue._spliced_request = (original, spliced_target)  # pyright: ignore[reportPrivateUsage]
         ctx.messages[-1] = spliced_target
         request_context.messages = [
             spliced_target if message is target else message for message in request_context.messages

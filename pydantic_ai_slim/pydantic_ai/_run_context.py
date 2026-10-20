@@ -886,8 +886,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Content made of parts and enqueued with `priority='asap'` during a tool call (from the tool or
         a capability hook wrapping the call) goes into the
         [`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries that call's
-        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Anything else is added
-        to the history as its own messages.
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, when that request is the
+        next one sent. Anything else is added to the history as its own messages, and so is content
+        enqueued after it.
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
@@ -927,7 +928,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
         pending = PendingMessage.from_content(
-            *content, priority=priority, tool_call_id=self.tool_call_id, tool_call_run_step=self.run_step
+            *content,
+            priority=priority,
+            _tool_call=None if self.tool_call_id is None else (self.tool_call_id, self.run_step),
         )
         if pending is None:
             return None

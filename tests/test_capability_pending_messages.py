@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     EnqueuedMessagesEvent,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -1597,6 +1598,79 @@ async def test_tool_call_content_delivered_in_two_drains_keeps_enqueue_order():
             'a',
             'b',
         ]
+
+
+async def test_request_with_tool_call_content_records_what_was_sent():
+    """The request tool-call content went into is the step's request: what's recorded on it lands in history.
+
+    A `before_model_request` hook adds an instruction part each step, and the instructions sent are recorded on
+    the step's request, which the content was put into by a copy.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    @dataclass
+    class StepInstructions(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            parameters = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                parameters,
+                instruction_parts=[*(parameters.instruction_parts or []), InstructionPart(f'step {ctx.run_step}')],
+            )
+            return request_context
+
+    agent = Agent(FunctionModel(model_fn), instructions='base', capabilities=[StepInstructions()])
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        ctx.enqueue('side effect')
+        return 'ok'
+
+    nodes: list[_agent_graph.ModelRequestNode[Any, Any]] = []
+    async with agent.iter('Hello') as run:
+        async for node in run:
+            if isinstance(node, _agent_graph.ModelRequestNode):
+                nodes.append(node)
+    assert run.result is not None
+    history = run.result.all_messages()
+    assert [any(node.request is message for message in history) for node in nodes] == [True, True]
+    tool_request = history[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert [part.part_kind for part in tool_request.parts] == ['tool-return', 'user-prompt']
+    assert tool_request.instructions == 'base\n\nstep 2'
+
+
+async def test_directly_built_pending_message_with_several_messages_is_delivered_whole():
+    """A `PendingMessage` built by hand, holding more than one request's worth, is added as its own messages."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(msg, ModelResponse) for msg in messages):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id='call-1')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def inject_msg(ctx: RunContext[object]) -> str:
+        assert ctx.pending_messages is not None and ctx.tool_call_id is not None
+        ctx.pending_messages.append(
+            PendingMessage(
+                messages=[
+                    ModelResponse(parts=[TextPart(content='synthetic')]),
+                    ModelRequest(parts=[UserPromptPart(content='follow-up')]),
+                ],
+                _tool_call=(ctx.tool_call_id, ctx.run_step),
+            )
+        )
+        return 'ok'
+
+    result = await agent.run('Hello')
+    assert [message.kind for message in result.all_messages()[2:5]] == ['request', 'response', 'request']
 
 
 async def test_enqueue_from_tool_renders_like_its_own_request():
