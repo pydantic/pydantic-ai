@@ -1607,6 +1607,9 @@ Note that returning an empty string will result in no instruction message added.
 
 Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [toolsets](toolsets.md#building-a-custom-toolset) via [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
 
+!!! tip "Instructions that change during a conversation"
+    By default, an instruction whose text changes rewrites the instruction prefix, so the provider can't reuse the cached conversation behind it. For state that changes as the conversation goes on, such as a todo list, memory, or the page a user is on, opt into `on_change='append'` so each change is appended to the history instead. See [Appending instruction changes](#appending-instruction-changes).
+
 ### Instruction parts {#instruction-parts}
 
 Each source contributes its own instruction part. Parts are sent to the model as one string, separated by a blank line, and are also available individually as [`InstructionPart`][pydantic_ai.messages.InstructionPart]s on [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts].
@@ -1682,7 +1685,9 @@ Two consequences worth knowing before you key configuration on an id:
 
 ### Appending instruction changes {#appending-instruction-changes}
 
-Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
+Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run, or that changes between runs of a conversation. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
+
+We recommend append mode for any instruction that changes partway through a conversation. The instruction prefix, and the conversation cached behind it, stays the same; the cost is a short replacement (or diff) added to the history for each change, which stays there. An instruction that never changes within a conversation doesn't need it: both modes send it the same way.
 
 ```python {title="instruction_changes.py"}
 from dataclasses import dataclass
@@ -1727,6 +1732,24 @@ assert changes == ['Todo status: done.']
 The function still runs before each model request, including the request after a tool call. The initial value stays in the prefix. A changed value produces a typed [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] at the end of history containing the complete replacement. Unchanged values add nothing; changing from A to B and back to A emits both replacements. Returning `None` or an empty string withdraws the previous instruction. Removing a contributing source also withdraws its tracked blocks. A block first appearing after the baseline is delivered at the end of history.
 
 Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
+
+How you opt in depends on where the instructions come from:
+
+| Instructions from | How to opt in |
+|---|---|
+| [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] | `@agent.instructions(name='state', on_change='append')` |
+| [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] | `@capability.instructions(name='state', on_change='append')`, on a capability with an `id` |
+| Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)` | Pass `InstructionPart('...', name='config', on_change='append')`. The text is fixed for the agent, so this only matters when it differs between runs of one conversation, for example an agent built per request |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] on a [custom capability](capabilities/custom.md#providing-instructions) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's read when the run starts, so its text can change between runs |
+| [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] on a [custom toolset](toolsets.md#building-a-custom-toolset) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's called before each request, so its text can change during a run |
+
+A few sources can't opt in yet:
+
+- A callable passed to `Agent(instructions=...)` or `Capability(instructions=...)`: register it with `@agent.instructions(name=..., on_change='append')` or `@capability.instructions(name=..., on_change='append')` instead.
+- A callable or [template string](agent-spec.md#template-strings) returned from a capability's `get_instructions()`: build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the callable with its decorator.
+- A function registered with [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions]: override `get_instructions()` on a `FunctionToolset` subclass instead, as shown in [Toolset instructions that change](toolsets.md#toolset-instructions-that-change).
+- Instructions passed to a run method's `instructions` argument, which have no identity to address: move them into a named instruction function that reads the value from the run's dependencies.
+- [MCP server](mcp/client.md) instructions, which are read once when the connection opens and rarely change.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 

@@ -98,11 +98,15 @@ def add_user_name(ctx: RunContext[str]) -> str:
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
-For changing operator state, use `@agent.instructions(name='state', on_change='append')` to preserve the instruction prefix.
+For instructions that change mid-conversation (operator state, todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is a short replacement in history per change.
+Use `@agent.instructions(name='state', on_change='append')` on the agent.
 The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
 Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
-Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
+Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` from `get_instructions()` under their own `id`; `@toolset.instructions` has no `on_change`, so override `get_instructions()` on a `FunctionToolset` subclass.
+A custom capability's `get_instructions()` can return such an `InstructionPart` for text that changes between runs; a returned callable can't opt in, so use `Capability` and its decorator for text that changes during a run.
+Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` and `FunctionToolset(instructions=...)` opts in with `InstructionPart('...', name='config', on_change='append')`.
+Callables passed to `Agent(instructions=...)` and run-level `instructions=` can't opt in; use a named decorator instead.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.

@@ -163,6 +163,7 @@ So a 5-minute cache (1.25x) breaks even after one read and Anthropic's 1-hour ca
 ### Changes under your control
 
 - Minute-precision timestamps or other per-request values in instructions or system prompts. Prefer date-only granularity when the exact time is not required.
+- Instructions whose text changes mid-conversation, such as a todo list or memory. Opt them into [`on_change='append'`](../agent.md#appending-instruction-changes) so changes are appended to the history instead of rewriting the prefix.
 - Reordering or changing tool definitions between steps.
 - History processors that rewrite already-sent messages on every request.
 - Switching models or providers during a conversation. Each provider maintains a separate cache.
@@ -178,6 +179,7 @@ Provider caches expire after idle gaps. This is unavoidable, but it creates a us
 Pydantic AI makes the following guarantees about the prompt prefix it sends to providers:
 
 - [Instructions are assembled deterministically](../agent.md#instructions) for each request. Static instructions from `Agent(instructions=...)` always sort before dynamic instructions, preserving the static prefix when dynamic content changes.
+- Instructions with [`on_change='append'`](../agent.md#appending-instruction-changes) keep the prefix the conversation started with: a change is appended to the history, and the prefix only moves when a block that rewrites changes or the history is compacted.
 - Message history is append-only within a run: Pydantic AI does not rewrite or reorder settled messages. [History processors](../message-history.md#processing-message-history) you add, and capabilities that rewrite history such as [compaction](compaction.md), are the exception.
 - The [output mode](../output.md) a structured `output_type` gets when it doesn't pick one is chosen on the run's first request to each model and kept for the rest of the run (except behind a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], where each model chooses on every request), so a [thinking](thinking.md) setting that changes between steps doesn't add or remove the output tool. A new run, including one continuing the same conversation, chooses again.
 - Internal bookkeeping such as run IDs, message timestamps, and deferred-tool flags does not reach the provider wire and therefore cannot move the prompt prefix.
@@ -234,3 +236,4 @@ Tool, toolset, and capability authors should preserve the same contract:
 - Put per-turn dynamic content in the user message, in tool results, or after the last [`CachePoint`][pydantic_ai.messages.CachePoint].
 - Keep tool definitions and their ordering stable across steps.
 - Use date-only timestamps in instructions.
+- Give instructions that change mid-conversation [`on_change='append'`](../agent.md#appending-instruction-changes), which needs an `id` on your capability or toolset.

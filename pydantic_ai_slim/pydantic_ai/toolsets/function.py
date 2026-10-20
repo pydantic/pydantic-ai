@@ -537,6 +537,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             return f'Results for: {query}'
         ```
 
+        A registered function can't opt into
+        [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]. For instructions
+        that change mid-conversation, override [`get_instructions`][pydantic_ai.toolsets.AbstractToolset.get_instructions]
+        on a subclass instead; see [toolset instructions that change](../toolsets.md#toolset-instructions-that-change).
+
         Args:
             func: The instructions function to register.
         """

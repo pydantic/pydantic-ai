@@ -141,7 +141,7 @@ Changing what the model sees from `before_model_request`:
 
 - Steering message the model sees now and that stays in the conversation: `ctx.enqueue(part)`. It goes into the request being prepared and into history, as its own `ModelRequest`.
 - Reminder true only for this request: `ctx.enqueue(SystemPromptPart(..., scope='request'))`. Anthropic sends it with `clear_at` and stops showing it once its request has been answered; elsewhere it's sent with its own request only. It stays in history either way.
-- State the model should track (todo list, notes): instructions, via `get_instructions` returning a callable. Each change re-sends everything after the instructions uncached.
+- State the model should track (todo list, notes): instructions with `on_change='append'`, via `@capability.instructions(name='state', on_change='append')` on a `Capability` with an `id`. Each change is appended to history as a replacement, so the cached prefix survives. A callable returned from `get_instructions` can't opt in, and with the default `'rewrite'` each change re-sends everything after the instructions uncached.
 - Change only this request (trim, filter, redact): assign a new list to `request_context.messages`. Build new messages and parts; mutating shared ones in place changes history too.
 - Rewrite history (compaction): `ctx.messages[:] = ...`, plus assign `request_context.messages` if this request should be sent it.
 - `request_context.messages.append(...)` also writes history, deprecated with a warning; use `ctx.enqueue(...)`.
