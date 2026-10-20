@@ -18,6 +18,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -43,6 +45,7 @@ from . import (
     Model,
     ModelRequestParameters,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -125,6 +128,10 @@ class CohereModel(Model[AsyncClientV2]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+    )
 
     _model_name: CohereModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
@@ -412,6 +419,8 @@ class CohereModel(Model[AsyncClientV2]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -424,7 +433,7 @@ class CohereModel(Model[AsyncClientV2]):
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:

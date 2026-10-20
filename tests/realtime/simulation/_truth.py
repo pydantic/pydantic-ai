@@ -136,6 +136,10 @@ class GroundTruth:
     next_user_number: int = 1
     truncations: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     """`(item id, audio_end_ms)` for every truncation the server applied."""
+    pruned: list[str] = field(default_factory=list[str])
+    """The fingerprint of every item the session deleted from a server conversation (`openai_prune_tool_items`)."""
+    pruned_unanswered: list[str] = field(default_factory=list[str])
+    """Calls whose items the session deleted before the model answered their results."""
     item_responses: dict[str, TruthResponse] = field(default_factory=dict[str, TruthResponse])
     """The response that spoke each assistant message item."""
     refused_truncations: list[str] = field(default_factory=list[str])
@@ -160,6 +164,8 @@ class GroundTruth:
     """Those whose `input_audio_buffer.cleared` the client read."""
     speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
     """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    speech_reopened: set[str] = field(default_factory=set[str])
+    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
     transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each spoken user turn's completed transcript."""
     models_every_spoken_turn: bool = False

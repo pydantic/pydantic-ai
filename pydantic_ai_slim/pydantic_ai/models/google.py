@@ -24,6 +24,8 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -71,6 +73,7 @@ from . import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -533,6 +536,8 @@ class GoogleModel(Model[Client]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -1299,6 +1304,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()
                     elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1543,6 +1550,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _media_processing_tool_call_id: str | None = field(default=None, init=False)
@@ -1575,7 +1583,11 @@ class GeminiStreamedResponse(StreamedResponse):
         uncheckpointed_output = False
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                self._add_usage(
+                    _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage),
+                    reported=chunk.usage_metadata is not None,
+                    cumulative=True,
+                )
                 if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
                     mark_initial_input_tokens(self, initial_input_tokens)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
@@ -2219,7 +2231,7 @@ def _metadata_as_usage(
 ) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return existing_usage or usage.RequestUsage()
+        return existing_usage or usage.RequestUsage(unmeasured_requests=1)
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,

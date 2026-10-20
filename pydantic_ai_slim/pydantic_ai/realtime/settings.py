@@ -111,17 +111,18 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     It is applied once, when the session is created, and holds for every response. `'none'` and
     function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
-    model. OpenAI, Azure OpenAI, and xAI send the mode too, so they raise
+    model. OpenAI, Azure OpenAI, xAI, and ElevenLabs Agents raise
     [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
     call (`'required'` or a list of tool names): applied to every response, including the one after a
     tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
     Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
-    restrict availability without requiring a tool call.
+    restrict availability without requiring a tool call. ElevenLabs Agents restricts a hosted agent's attached
+    tools through its toggle-gated `tool_ids` conversation override.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI, and
-    OpenAI GPT-Live, which raises for `'required'` and lists of tool names: a session applies the
-    choice to every response, including the one after a tool result, so a forced call never lets the
-    model answer.
+    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
+    ElevenLabs Agents (`'none'` and function-tool allow-lists only), and OpenAI GPT-Live, which raises for
+    `'required'` and lists of tool names: a session applies the choice to every response, including the
+    one after a tool result, so a forced call never lets the model answer.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -131,7 +132,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     specific id (e.g. `'gpt-live-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
-    `None` turns transcription off on every provider. A *pinned* id applies only to the providers that
+    `None` turns transcription off on every provider that can disable it; ElevenLabs Agents cannot (ASR
+    drives its agent pipeline) and rejects `None` with a [`UserError`][pydantic_ai.exceptions.UserError].
+    A *pinned* id applies only to the providers that
     transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
     ignores it (`google_input_transcription` configures Gemini's own transcription).
 
@@ -146,7 +149,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting, because a session that
     quietly spoke instead of writing would be worse than one that didn't start.
 
-    Supported by: OpenAI and Azure OpenAI. Gemini Live and xAI always generate audio — read the spoken
+    Supported by: OpenAI, Azure OpenAI, and ElevenLabs Agents (via the hosted agent's toggle-gated
+    `conversation.text_only` override). Gemini Live and xAI always generate audio — read the spoken
     answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] instead.
     """
 
@@ -188,9 +192,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Seconds to wait for the realtime protocol handshake to complete. Defaults to `30.0`.
 
     On OpenAI, Azure OpenAI, and xAI this bounds the wait for each handshake event; on Gemini it bounds
-    opening the socket and waiting for the session setup to complete.
+    opening the socket and waiting for the session setup to complete; on ElevenLabs Agents it bounds the wait
+    for the conversation initiation metadata.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, and ElevenLabs Agents.
     """
 
     reconnect: ReconnectPolicy

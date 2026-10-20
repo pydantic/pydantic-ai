@@ -22,6 +22,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -49,6 +51,7 @@ from ..models import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -301,6 +304,10 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
+    )
+
     _model_name: str
     _provider: Provider[AsyncClient]
 
@@ -417,6 +424,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
