@@ -114,24 +114,19 @@ class TestGitHub:
         assert ('Provider instructions.' in (request.instructions or '')) is include
 
     @pytest.mark.parametrize(
-        ('auth', 'url', 'toolsets', 'lockdown'),
+        ('auth', 'url', 'toolsets'),
         [
-            ('token', GITHUB_MCP_URL, None, False),
-            (per_user_token, GITHUB_MCP_URL, None, False),
-            (None, 'https://example.com/mcp', None, False),
-            (None, GITHUB_MCP_URL, ['repos'], False),
-            (None, GITHUB_MCP_URL, None, True),
+            ('token', GITHUB_MCP_URL, None),
+            (per_user_token, GITHUB_MCP_URL, None),
+            (None, 'https://example.com/mcp', None),
+            (None, GITHUB_MCP_URL, ['repos']),
         ],
     )
     def test_client_cannot_be_combined_with_connection_settings(
-        self,
-        auth: str | Callable[[RunContext[str | None]], str | None] | None,
-        url: str,
-        toolsets: list[str] | None,
-        lockdown: bool,
+        self, auth: str | Callable[[RunContext[str | None]], str | None] | None, url: str, toolsets: list[str] | None
     ) -> None:
         with pytest.raises(UserError, match='`client` owns the connection'):
-            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets, lockdown=lockdown)
+            GitHub(client='https://example.com/mcp', auth=auth, url=url, toolsets=toolsets)
 
     @pytest.mark.parametrize(
         'capability',
@@ -241,8 +236,8 @@ class TestGitHub:
         [
             (GitHub[str | None](auth='token'), {}),
             (
-                GitHub[str | None](auth='token', read_only=True, lockdown=True, toolsets=['actions', 'notifications']),
-                {'X-MCP-Readonly': 'true', 'X-MCP-Lockdown': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
+                GitHub[str | None](auth='token', read_only=True, toolsets=['actions', 'notifications']),
+                {'X-MCP-Readonly': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
             ),
         ],
         ids=['default', 'configured'],

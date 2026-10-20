@@ -58,7 +58,7 @@ def github_token(ctx: RunContext[Deps]) -> str | None:
 agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[GitHub(auth=github_token)])
 ```
 
-Each run connects as its own user, so concurrent runs never share an account. `read_only`, `lockdown`, `toolsets`, and `url` still apply to every run.
+Each run connects as its own user, so concurrent runs never share an account. `read_only`, `toolsets`, and `url` still apply to every run.
 
 Your app obtains, stores, and refreshes each user's token, for example through a GitHub App's OAuth flow. Load it before the run, async if needed, and put it in deps. The `auth` function is sync and only reads it.
 
@@ -94,15 +94,14 @@ With durable execution such as Temporal, read the credential from the run's deps
 ## Provider settings
 
 - `toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups.
-- `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only.
-- `lockdown=True` asks GitHub to hide issue and pull request content in public repositories when its author has no push access. GitHub describes it as a best-effort content filter, not a security boundary.
+- `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only. If none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`.
 - `url` sets a GitHub Enterprise Cloud endpoint. It must be an `https://` URL.
 
 The capability does not limit which repositories the agent can reach. Set that with the token's or GitHub App's permissions. To send other headers, or to use custom authentication, pass a configured `client`.
 
 ## Untrusted content
 
-Tool results include text written by anyone who can open an issue, pull request, or comment in a repository the token can read. That text can contain instructions aimed at the agent. With a token that reads private repositories and writes to public ones, such instructions can lead the agent to copy private content into a public issue or pull request. Use `read_only=True`, `lockdown=True`, a token limited to the repositories the task needs, approval for write tools (below), or [Prompt Injection Defender](prompt-injection-defender.md).
+Tool results include text written by anyone who can open an issue, pull request, or comment in a repository the token can read. That text can contain instructions aimed at the agent. With a token that reads private repositories and writes to public ones, such instructions can lead the agent to copy private content into a public issue or pull request. Use `read_only=True`, a token limited to the repositories the task needs, approval for write tools (below), or [Prompt Injection Defender](prompt-injection-defender.md).
 
 ## Tool selection and approval
 
@@ -125,7 +124,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Pass `client`, your own FastMCP client or transport, to control the connection yourself: a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, `toolsets`, or `lockdown` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only. If none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. `include_instructions=False` stops the server's instructions from reaching the model.
+Pass `client`, your own FastMCP client or transport, to control the connection yourself: a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, or `toolsets` raises an error. With a client, `read_only=True` only drops the tools the server does not mark as read-only, since no read-only header is sent. `include_instructions=False` stops the server's instructions from reaching the model.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
