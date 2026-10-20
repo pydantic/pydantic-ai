@@ -4187,6 +4187,43 @@ async def test_bedrock_default_max_tokens(
     assert result.response.finish_reason == 'stop'
 
 
+@pytest.mark.parametrize('cancel', [False, True], ids=['error', 'cancel'])
+async def test_bedrock_default_max_tokens_stream_closed_on_failure(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture, cancel: bool
+) -> None:
+    """The stream `request()` opens behind the scenes is closed when it fails or the request is cancelled.
+
+    Mocked: a cassette can't break a stream off mid-response or cancel the request while it's read.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-opus-5-5', provider=bedrock_provider)
+    closed: list[bool] = []
+
+    with anyio.CancelScope() as scope:
+
+        def stream() -> Iterator[dict[str, Any]]:
+            try:
+                yield {'messageStart': {'role': 'assistant'}}
+                if cancel:
+                    anyio.from_thread.run_sync(scope.cancel)
+                    yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Hel'}}}
+                raise ClientError(
+                    {'Error': {'Code': 'ServiceUnavailableException', 'Message': 'broken'}}, 'ConverseStream'
+                )
+            finally:
+                closed.append(True)
+
+        mocker.patch.object(model.client, 'converse_stream', return_value={'stream': stream(), 'ResponseMetadata': {}})
+        if cancel:
+            await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+        else:
+            with pytest.raises(ModelHTTPError) as exc_info:
+                await model.request([ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters())
+            assert exc_info.value.status_code == 503
+
+    assert scope.cancelled_caught == cancel
+    assert closed == [True]
+
+
 async def test_bedrock_top_k_user_field_takes_precedence(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:

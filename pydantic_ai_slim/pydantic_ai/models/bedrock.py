@@ -1039,7 +1039,9 @@ class BedrockConverseModel(Model[BaseClient]):
             async for _ in streamed_response:
                 pass
         finally:
-            await streamed_response.close_stream()
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
         return streamed_response.get()
 
     async def count_tokens(
