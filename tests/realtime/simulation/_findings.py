@@ -330,32 +330,6 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
-def _failed_call_has_siblings(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A call that raised was made in the same response as another call."""
-    calls = sim.truth.tool_calls
-    failed = {calls[call_id].response for call_id, outcome in sim.tools.settled.items() if outcome == 'error'}
-    return any(sum(call.response == response for call in calls.values()) > 1 for response in failed)
-
-
-LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
-    id='SIM-43',
-    title=(
-        'on GPT-Live, a tool that raises leaves the rest of its delegated round owed: the results of its siblings, '
-        'sent after the failure, each ask for a reply, but the backend waits for every call in the round and the '
-        "failed one's output never comes, so `wait_for_reply()` hangs (on the OpenAI protocol, a failed call's "
-        'siblings ask for no reply)'
-    ),
-    tracked_by=(
-        'the GPT-Live reply obligations rewrite (#10668); found by this simulator, under SIM-15 until the rest of '
-        'SIM-15 turned out to be a simulator that stopped reading at the first error the iterator raised'
-    ),
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_failed_call_has_siblings,
-)
-
-
 LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
     id='SIM-18',
     title=(
@@ -643,7 +617,6 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
