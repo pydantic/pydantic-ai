@@ -26,8 +26,8 @@ from urllib.parse import urlencode
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -121,16 +121,7 @@ class PostHog(AbstractCapability[AgentDepsT]):
             if self.read_only:
                 return read_only_toolset(toolset)
             return toolset
-        if callable(self.auth):
-            return DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
-        return self._connect(self.auth)
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
+        return connect_with_auth(self.auth, self._connect, id=id)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         url = _POSTHOG_MCP_URL

@@ -9,8 +9,8 @@ from urllib.parse import urlsplit
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -90,16 +90,8 @@ class GitHub(AbstractCapability[AgentDepsT]):
         toolset: AbstractToolset[AgentDepsT]
         if self.client is not None:
             toolset = MCPToolset(self.client, id=self.id, include_instructions=self.include_instructions)
-        elif callable(auth := self.auth):
-
-            def connect_for_run(ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-                token = auth(ctx)
-                return self._connect(token) if token else None
-
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(connect_for_run, per_run_step=False, id=self.id)
         else:
-            toolset = self._connect(auth)
+            toolset = connect_with_auth(self.auth, self._connect, id=self.id)
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         return read_only_toolset(toolset) if self.read_only else toolset
