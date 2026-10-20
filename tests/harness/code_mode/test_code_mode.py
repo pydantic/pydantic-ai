@@ -1387,6 +1387,26 @@ class TestCodeMode:
         with pytest.raises(UserError, match='`max_tool_calls` must be at least 1'):
             await zero_calls.__aenter__()
 
+    @pytest.mark.parametrize(
+        ('limits', 'message'),
+        [
+            ({'max_duration_secs': 0}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': -1}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': float('nan')}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_duration_secs': float('inf')}, '`max_duration_secs` must be a positive number of seconds below'),
+            ({'max_memory': 0}, '`max_memory` must be a positive number of bytes below'),
+            ({'max_memory': 2**64}, '`max_memory` must be a positive number of bytes below'),
+            ({'max_suspensions': 2**64}, '`max_suspensions` must be at least 1 and below'),
+        ],
+    )
+    async def test_out_of_range_resource_limits_are_rejected_on_enter(
+        self, limits: CodeModeResourceLimits, message: str
+    ) -> None:
+        """A limit no snippet can run under fails the run at start, not every `run_code` call as a retry."""
+        toolset = CodeModeToolset[object](wrapped=_build_function_toolset(add), resource_limits=limits)
+        with pytest.raises(UserError, match=message):
+            await toolset.__aenter__()
+
     async def test_run_code_syntax_error_becomes_model_retry(self) -> None:
         """A Python syntax error is surfaced as `ModelRetry` so the model can fix it."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
