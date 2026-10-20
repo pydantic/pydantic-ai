@@ -471,6 +471,13 @@ See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/mode
 P = ParamSpec('P')
 T = typing.TypeVar('T')
 
+_LEGACY_DEFAULT_MAX_TOKENS = 4096
+"""The `max_tokens` sent when the request doesn't set one and the model rejects input plus `max_tokens` beyond its
+context window.
+
+It matches the 4,096-token default Bedrock applies when `inferenceConfig.maxTokens` is omitted.
+"""
+
 _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
     'content_filtered': 'content_filter',
     'end_turn': 'stop',
@@ -1256,8 +1263,8 @@ class BedrockConverseModel(Model[BaseClient]):
                     )
         return model_response
 
-    @staticmethod
     def _map_inference_config(
+        self,
         model_settings: ModelSettings | None,
     ) -> InferenceConfigurationTypeDef:
         model_settings = model_settings or {}
@@ -1265,6 +1272,8 @@ class BedrockConverseModel(Model[BaseClient]):
 
         if max_tokens := model_settings.get('max_tokens'):
             inference_config['maxTokens'] = max_tokens
+        elif default_max_tokens := self._default_max_tokens():
+            inference_config['maxTokens'] = default_max_tokens
         if (temperature := model_settings.get('temperature')) is not None:
             inference_config['temperature'] = temperature
         if (top_p := model_settings.get('top_p')) is not None:
@@ -1273,6 +1282,20 @@ class BedrockConverseModel(Model[BaseClient]):
             inference_config['stopSequences'] = stop_sequences
 
         return inference_config
+
+    def _default_max_tokens(self) -> int | None:
+        """The `max_tokens` to send when the request doesn't set one.
+
+        Bedrock applies a default of 4,096 output tokens when `inferenceConfig.maxTokens` is omitted, and Claude
+        counts thinking toward it, so a response can end at that limit before it produces any text. The profile
+        already holds the model's maximum output, so send it, as `AnthropicModel` does. Models that reject input
+        plus `max_tokens` beyond their context window keep the lower default, and models without a known maximum
+        (including non-Anthropic ones) leave the field out.
+        """
+        profile = cast(BedrockModelProfile, self.profile)
+        if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False):
+            return _LEGACY_DEFAULT_MAX_TOKENS
+        return profile.get('anthropic_max_output_tokens')
 
     def _map_tool_config(
         self,

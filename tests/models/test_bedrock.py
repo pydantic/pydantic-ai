@@ -170,6 +170,38 @@ async def test_bedrock_client_property_can_be_reassigned(bedrock_provider: Bedro
     assert model.base_url == 'https://bedrock-runtime.example.com'
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected_inference_config'),
+    [
+        ('eu.anthropic.claude-opus-5-5', {'maxTokens': 128_000}),
+        ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', {'maxTokens': 64_000}),
+        # Before Sonnet 4.5, Bedrock rejects input plus `max_tokens` beyond the context window.
+        ('us.anthropic.claude-3-5-sonnet-20241022-v2:0', {'maxTokens': 4096}),
+        # Only the Anthropic profile knows a maximum output, so other models keep the field out.
+        ('us.amazon.nova-micro-v1:0', {}),
+    ],
+)
+def test_bedrock_default_max_tokens(
+    bedrock_provider: BedrockProvider, model_name: str, expected_inference_config: dict[str, Any]
+):
+    """A request that doesn't set `max_tokens` sends the model's maximum output, as `AnthropicModel` does.
+
+    Bedrock applies a 4,096-token default when `inferenceConfig.maxTokens` is omitted, and Claude counts thinking
+    toward it, so a reasoning response can end before it produces any text.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+
+    assert model._map_inference_config(None) == expected_inference_config  # pyright: ignore[reportPrivateUsage]
+
+
+def test_bedrock_explicit_max_tokens_wins_over_the_default(bedrock_provider: BedrockProvider):
+    model = BedrockConverseModel('eu.anthropic.claude-opus-5-5', provider=bedrock_provider)
+
+    assert model._map_inference_config(BedrockModelSettings(max_tokens=256)) == {  # pyright: ignore[reportPrivateUsage]
+        'maxTokens': 256
+    }
+
+
 async def test_bedrock_model_blocks_requests_when_disabled():
     model = _bedrock_model_with_error(ClientError({'Error': {'Code': 'TestError'}}, 'Converse'))
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('hello')]
