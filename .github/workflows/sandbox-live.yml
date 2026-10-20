@@ -98,13 +98,18 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           sudo apt-get install -y --no-install-recommends bubblewrap
+          # TEMPORARY diagnostics, to be reverted.
+          which -a bwrap; bwrap --version
+          bwrap --unshare-user --ro-bind / / -- true && echo BWRAP-USERNS-OK || echo BWRAP-USERNS-FAILED
+          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          ls -l /dev/kvm; ls /etc/apparmor.d | grep -i -E 'bwrap|unpriv' || true
 
       # `<NAME>_REQUIRE_LIVE` turns a missing or empty secret into a failure; without it the
       # live tests skip themselves and the job would report green having tested nothing.
       - run: |
           upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
           export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
-          uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
+          RUST_LOG=debug uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q -x || { find ~/.boxlite/logs -type f -exec tail -n 60 {} + 2>/dev/null; exit 1; }
         env:
           PROVIDER: ${{ matrix.provider }}
           # Scoped to this step so checkout and setup never see the secrets.
