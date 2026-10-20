@@ -998,6 +998,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed'})
+
     supported_tool_deferral_modes = frozenset({'standalone'})
     supported_tool_addition_modes = frozenset({'by_reference'})
     # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves

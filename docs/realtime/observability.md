@@ -91,15 +91,17 @@ to the normal content-redaction setting. Like a [classic agent run span](../logf
 it reports only what the session itself spent: a total carried in with `usage=` and a delegated run's tokens
 still count toward `session.usage`, but not toward the span, so agent run spans can be added up without
 counting anything twice. Nested provider-response spans have the OpenTelemetry name
-`chat {model}` but display as `response {model}` in Logfire. On OpenAI, Azure OpenAI, and xAI, a response span's input
-messages don't include [retained audio](history.md#retaining-audio) for now; its output does. `execute_tool` spans represent tools;
+`chat {model}` but display as `response {model}` in Logfire. A response span's input is the conversation ahead of the
+response, with any [retained audio](history.md#retaining-audio). `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn.
 
 You may see runs of `model turn complete (interrupted)` spans with no `chat` span between them.
 That's normal on OpenAI server VAD: the provider starts a response for each detected speech segment,
-so a user who keeps talking cancels each auto-response before it produces output. Every cancelled or
-interrupted response still draws a boundary, displayed as `model turn complete (interrupted)`.
+so a user who keeps talking cancels each auto-response before it produces output. A cancelled or
+interrupted response draws a boundary, displayed as `model turn complete (interrupted)`, when it leaves nothing else
+owed: not while an earlier tool call still runs or a reply to text you sent is still due (see
+[the turn boundary](events.md#the-turn-boundary)).
 
 | Attribute | Set on | Meaning |
 | --- | --- | --- |

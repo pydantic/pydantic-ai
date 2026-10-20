@@ -165,10 +165,9 @@ waiting in a [`stream_transcripts()`][pydantic_ai.realtime.RealtimeSession.strea
 their part's audio until they are consumed.
 
 Retained audio is kept in the history
-[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider. The conversation a
-tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input recorded on
-each response's [span](observability.md), carry transcripts without that audio for now; the events and
-the response a span records keep it.
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] returns, on every provider, and in what is built
+from it: the conversation a tool sees as [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], and the input
+and output recorded on each response's [span](observability.md).
 
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.

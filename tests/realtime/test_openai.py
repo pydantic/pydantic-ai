@@ -5313,10 +5313,13 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     end_chat_span = SessionInstrumentation.end_chat_span
 
     def record(
-        self: SessionInstrumentation, input_messages: list[ModelMessage], response: ModelResponse | None
+        self: SessionInstrumentation,
+        response_id: str,
+        input_messages: list[ModelMessage],
+        response: ModelResponse | None,
     ) -> None:
         ended.append((input_messages, response))
-        end_chat_span(self, input_messages, response)
+        end_chat_span(self, response_id, input_messages, response)
 
     monkeypatch.setattr(SessionInstrumentation, 'end_chat_span', record)
     ws = _QueuedWebSocket()
@@ -5588,10 +5591,9 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
 
 @pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
-    """The session core's history keeps retained audio; the session's own record (what tools see) lets its copy go.
+    """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
 
-    The part streamed as an event keeps its audio, so recorded audio is bounded by `retain_audio_max_seconds` once
-    rather than twice.
+    The part streamed as an event keeps its audio too.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5633,7 +5635,7 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
                 streamed.append(event.part)
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
-        legacy = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        seen_by_tools = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         history = session.all_messages()
 
     def speech(messages: list[ModelMessage]) -> list[SpeechPart]:
@@ -5641,8 +5643,8 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
 
     assert [part.transcript for part in speech(history)] == ['Hello.']
     assert all(part.audio is not None for part in speech(history))
-    assert [part.transcript for part in speech(legacy)] == ['Hello.']
-    assert all(part.audio is None for part in speech(legacy))
+    # The same messages, not copies.
+    assert all(seen is recorded for seen, recorded in zip(seen_by_tools, history, strict=True))
     assert [part.audio is not None for part in streamed] == [True]
 
 
@@ -5976,7 +5978,7 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
                     stream.append(event)
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
 
     def text_of(part: ModelResponsePart) -> str | None:
         if isinstance(part, TextPart):
@@ -6083,7 +6085,7 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
                     ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
                 elif isinstance(event, RealtimeSessionErrorEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         recorded = session.all_messages()
 
     def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:

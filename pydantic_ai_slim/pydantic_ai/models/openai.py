@@ -600,6 +600,11 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
+    """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
+    return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
+
+
 def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> None:
     """Drop unsupported parameters based on model profile.
 
@@ -1228,6 +1233,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'top_k'})
+
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
 
@@ -1348,6 +1355,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     async def request(
         self,
@@ -2372,6 +2382,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'stop_sequences', 'top_k'}
+    )
+
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
@@ -2461,6 +2475,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         model_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
 
     @property
     def system(self) -> str:

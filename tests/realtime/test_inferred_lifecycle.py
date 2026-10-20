@@ -156,3 +156,19 @@ def test_sending_reports_an_input_that_failed_to_go_out() -> None:
     with pytest.raises(OSError), tracker.sending('Hello'):
         raise OSError
     assert tracker.take_pending() == []
+
+
+def test_words_after_a_second_commit_close_the_turn_the_first_commit_joined() -> None:
+    """Audio committed after a turn joined is a turn of its own: the earlier one is over once that one's words come."""
+    tracker = InferredLifecycle(transcribes=True)
+    audio = BinaryAudio(data=b'\x00\x00', media_type='audio/pcm')
+    assert lifecycle(tracker.frame_for([InputTranscript('Hello')])) == snapshot(['UserTurnStarted'])
+    tracker.input_sent(audio)
+    tracker.input_sent(CommitAudio())
+    assert lifecycle(tracker.take_pending()) == snapshot(['UserTurnEnded'])
+    tracker.input_sent(audio)
+    tracker.input_sent(CommitAudio())
+    assert lifecycle(tracker.take_pending()) == snapshot([])
+    assert lifecycle(tracker.frame_for([InputTranscript('Again')])) == snapshot(
+        ['UserTurnClosed', 'UserTurnStarted', 'UserTurnEnded']
+    )

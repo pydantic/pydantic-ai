@@ -183,6 +183,8 @@ class GroqModel(Model[AsyncGroq]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    unsupported_settings = frozenset({'service_tier', 'top_k'})
+
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
 
