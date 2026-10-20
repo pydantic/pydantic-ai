@@ -89,8 +89,8 @@ from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup, can_steer
-from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, find_queued
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal

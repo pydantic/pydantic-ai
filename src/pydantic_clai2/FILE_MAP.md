@@ -83,8 +83,8 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter steering (`can_steer`), timed double-Esc gesture, and menu handoff |
-| `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by, and `PromptInbox`, the queue of a session no editor reads for |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter steering, timed double-Esc gesture, and menu handoff |
+| `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
 | `ui/prompt/terminal.py` | `Terminal`, the terminal driver: console, `LivePrompt`, line prompt, transcript, input history, and pasted images, attached to the one live session shown (`attach`, `show`); `drive` runs the session CLAI started with until the session shown ends; `session_console` for sessions opened beside it |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |

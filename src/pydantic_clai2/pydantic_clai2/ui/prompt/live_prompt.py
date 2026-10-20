@@ -26,7 +26,7 @@ from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
-from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt
+from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -684,11 +684,6 @@ class LivePrompt:
             self._completion_worker.close()
             self.console.file = original
             self.output.restore()
-
-
-def can_steer(text: str) -> bool:
-    """Whether `text` may join a running turn: `/commands` and `!` shell lines never steer."""
-    return not is_command_input(text) and shell_command(text) is None
 
 
 def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:

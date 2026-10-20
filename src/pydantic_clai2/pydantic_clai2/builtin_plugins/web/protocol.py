@@ -38,13 +38,12 @@ from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
-from pydantic_clai2.cli.shell_passthrough import shell_command
-from pydantic_clai2.commands import is_command_input
 from pydantic_clai2.plugins import PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime._session import STEERING
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
 from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
 
 MONTY_TOOL = 'run_code'
@@ -269,7 +268,7 @@ class UpdateInfo:
     """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
 
 
-QueuedKind = Literal['prompt', 'command', 'shell']
+QueuedKind = InputKind
 """A prompt can steer the running turn; a `/command` or a `!` shell line, queued from the terminal, cannot."""
 
 
@@ -284,10 +283,7 @@ class QueuedItem:
 
 def queued_item(entry: QueuedInput) -> QueuedItem:
     """A waiting input as the page lists it, with whether it can steer."""
-    kind: QueuedKind = (
-        'command' if is_command_input(entry.text) else 'shell' if shell_command(entry.text) is not None else 'prompt'
-    )
-    return QueuedItem(id=entry.id, text=entry.text, kind=kind)
+    return QueuedItem(id=entry.id, text=entry.text, kind=input_kind(entry.text))
 
 
 @dataclass(frozen=True, kw_only=True)

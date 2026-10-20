@@ -3,10 +3,28 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from itertools import count
+from typing import Literal
+from uuid import uuid4
 
-_ids = count(1)
+from pydantic_clai2.cli.shell_passthrough import shell_command
+from pydantic_clai2.commands import is_command_input
+
 NOT_QUEUED = 'That message is no longer queued: it was sent or removed.'
+
+InputKind = Literal['prompt', 'command', 'shell']
+"""What a line entered at the prompt is: a prompt, the only kind that can steer the running turn, a `/command`, or a `!` shell line."""
+
+
+def input_kind(text: str) -> InputKind:
+    """Whether `text` is a `/command`, a `!` shell line, or a prompt."""
+    if is_command_input(text):
+        return 'command'
+    return 'shell' if shell_command(text) is not None else 'prompt'
+
+
+def can_steer(text: str) -> bool:
+    """Whether `text` may join a running turn: `/commands` and `!` shell lines never steer."""
+    return input_kind(text) == 'prompt'
 
 
 @dataclass(eq=False)
@@ -14,12 +32,13 @@ class QueuedPrompt:
     """A queued prompt compared by identity, so an edit finds it even after the queue shifts.
 
     Its `id` names it to a browser, stable while it waits, also when it moves between the editor and the inbox.
+    The terminal's editor serves whichever session it shows, so IDs are unique everywhere rather than counted.
     """
 
     text: str
     recorded: str = ''
     """The raw draft `accept` saved to history for this prompt, before command expansion."""
-    id: str = field(default_factory=lambda: f'q{next(_ids)}')
+    id: str = field(default_factory=lambda: uuid4().hex)
 
 
 def find_queued(entries: list[QueuedPrompt], input_id: str) -> QueuedPrompt:
