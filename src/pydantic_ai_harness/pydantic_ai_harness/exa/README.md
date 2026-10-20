@@ -297,9 +297,9 @@ Inline execution polls the runs one after another, and `timeout_ms` applies to
 each, so a response that starts several runs can wait up to `timeout_ms` per
 run. A run whose polling times out keeps running on Exa, and the retry prompt
 gives the model its run ID to follow up on. When the agent run is cancelled
-while it polls, the capability cancels the Exa run too, if the `runs` client has
-a `cancel` method, as `exa_py`'s does. Under durable execution the run is left
-running, since the engine can resume the wait. If creating a run fails in a way
+while it polls, the capability cancels the Exa runs it hasn't finished polling,
+if the `runs` client has a `cancel` method, as `exa_py`'s does. Under durable
+execution the runs are left running, since the engine can resume the wait. If creating a run fails in a way
 that Exa may have acted on (a 5xx response, or a network failure after the
 request was sent), the error is raised instead of retried, so the model can't
 start a second run.

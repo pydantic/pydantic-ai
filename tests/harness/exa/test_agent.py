@@ -133,10 +133,22 @@ class _CancellableRuns(_FakeRuns):
     """A runs double whose polling never finishes and which records cancellations, as exa-py's runs can."""
 
     def __init__(self, *, cancel_error: Exception | None = None) -> None:
-        super().__init__(created=_run('queued', run_id='run_c'))
+        super().__init__()
         self.cancel_error = cancel_error
         self.polling = anyio.Event()
         self.cancelled: list[str] = []
+
+    async def create(
+        self,
+        *,
+        query: str,
+        system_prompt: str | None = None,
+        output_schema: 'dict[str, object] | type[BaseModel] | None' = None,
+        effort: str | None = None,
+        previous_run_id: str | None = None,
+    ) -> AgentRun:
+        await super().create(query=query)
+        return _run('queued', run_id=f'run_{len(self.create_calls)}')
 
     async def poll_until_finished(
         self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
@@ -365,7 +377,7 @@ class TestExaAgent:
                 group.start_soon(agent.run, 'Research something.')
                 await runs.polling.wait()
                 group.cancel_scope.cancel()
-        assert runs.cancelled == ['run_c']
+        assert runs.cancelled == ['run_1']
 
     async def test_natively_cancelled_inline_polling_cancels_the_exa_run(self) -> None:
         runs = _CancellableRuns()
@@ -375,7 +387,25 @@ class TestExaAgent:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
-        assert runs.cancelled == ['run_c']
+        assert runs.cancelled == ['run_1']
+
+    async def test_cancelled_inline_polling_cancels_every_run_not_yet_polled(self) -> None:
+        def start_two_runs(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='exa_agent', args={'query': 'a'}),
+                    ToolCallPart(tool_name='exa_agent', args={'query': 'b'}),
+                ]
+            )
+
+        runs = _CancellableRuns()
+        agent = Agent(FunctionModel(start_two_runs), capabilities=[ExaAgent(runs=runs)])
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(agent.run, 'Research something.')
+                await runs.polling.wait()
+                group.cancel_scope.cancel()
+        assert sorted(runs.cancelled) == ['run_1', 'run_2']
 
     async def test_cancelled_polling_in_a_durable_run_leaves_the_exa_run_running(
         self, monkeypatch: pytest.MonkeyPatch

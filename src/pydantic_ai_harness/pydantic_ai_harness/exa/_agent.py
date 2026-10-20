@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import suppress
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
@@ -67,8 +68,8 @@ class ExaAgentRuns(Protocol):
     `AsyncExa().agent.runs` satisfies the protocol as-is.
 
     An object that also has `async def cancel(self, run_id: str)`, as
-    `exa_py`'s does, lets the capability cancel a run whose inline polling is
-    cancelled.
+    `exa_py`'s does, lets the capability cancel the runs it was still polling
+    inline when the agent run is cancelled, outside durable execution.
     """
 
     async def create(
@@ -385,31 +386,44 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         """
         if self.execution != 'inline':
             return None
-        calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        owned: list[tuple[str, str]] = []
         for call in requests.calls:
             metadata = requests.metadata.get(call.tool_call_id, {})
             run_id = metadata.get(RUN_ID_METADATA_KEY)
             if metadata.get(_OWNER_METADATA_KEY) == self._owner_token and isinstance(run_id, str):
-                result = await self._await_run(ctx, run_id)
-                calls[call.tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
-        if not calls:
+                owned.append((call.tool_call_id, run_id))
+        if not owned:
             return None
+        calls: dict[str, ToolReturn[str] | ModelRetry] = {}
+        for index, (tool_call_id, run_id) in enumerate(owned):
+            try:
+                result = await self._resolve_run(run_id)
+            except anyio.get_cancelled_exc_class():
+                await self._cancel_runs(ctx, [run_id for _, run_id in owned[index:]])
+                raise
+            calls[tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
         return DeferredToolResults(calls=calls)
 
-    async def _await_run(self, ctx: RunContext[AgentDepsT], run_id: str) -> ToolReturn[str] | RetryRequest:
-        """Resolve one run, cancelling it on Exa if the agent run is cancelled while it waits.
+    async def _cancel_runs(self, ctx: RunContext[AgentDepsT], run_ids: list[str]) -> None:
+        """Cancel the runs a cancelled agent run was still waiting for, as nothing is left to read their results.
 
-        Once the agent run is cancelled, nothing is left to read the run's result. Under durable
-        execution the engine may resume the wait, for example on another worker after a restart,
-        so there the run is left running.
+        Under durable execution the engine may resume the wait, for example on another worker after a
+        restart, so there the runs are left running.
         """
-        try:
-            return await self._resolve_run(run_id)
-        except anyio.get_cancelled_exc_class():
-            runs = None if ctx.in_durable_context else self._resolved_runs()
-            if isinstance(runs, _CancellableRuns):
-                await stop_shielded(lambda: runs.cancel(run_id), grace=_CANCEL_GRACE_SECONDS)
-            raise
+        runs = None if ctx.in_durable_context else self._resolved_runs()
+        if not isinstance(runs, _CancellableRuns):
+            return
+
+        async def cancel(run_id: str) -> None:
+            with suppress(Exception):
+                await runs.cancel(run_id)
+
+        async def cancel_all() -> None:
+            async with anyio.create_task_group() as group:
+                for run_id in run_ids:
+                    group.start_soon(cancel, run_id)
+
+        await stop_shielded(cancel_all, grace=_CANCEL_GRACE_SECONDS)
 
     @durable_operation('resolve_run')
     async def _resolve_run(self, run_id: str) -> ToolReturn[str] | RetryRequest:
