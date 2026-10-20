@@ -393,6 +393,32 @@ def test_tool_result_over_request_limit_ends_the_wait() -> None:
     run_clean(OpenAISimulation(options=SessionOptions(request_limit=2)), scenario)
 
 
+@pytest.mark.parametrize('ending', ['request_limit', 'tool_error'])
+def test_turn_held_behind_a_reply_is_recorded_when_a_session_ended_on_its_own_closes(ending: str) -> None:
+    """A turn committed while a reply streams is held behind that reply, which a session that ended on its own settles as it closes.
+
+    Here the session ends on the reply's tool call: the request its result would make passes `request_limit`, or the
+    tool raises.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.send_image(respond=True)
+        sim.commit_audio()
+        sim.call_tool()
+        if ending == 'tool_error':
+            sim.finish_tool(outcome='error')
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(
+            options=SessionOptions(request_limit=1 if ending == 'request_limit' else None),
+            openai=OpenAIOptions(turn_detection='manual', dialect='azure'),
+        ),
+        scenario,
+    )
+
+
 def test_cleared_barge_in_releases_the_dropped_request() -> None:
     """SIM-16, fixed by the session core."""
 
