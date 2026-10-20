@@ -399,12 +399,13 @@ def update_instruction_history(
     normalized = _normalize_append_parts(instructions or [])
     baseline = instruction_window(messages)
 
+    recorded = _recorded_instruction_values(messages, baseline) if baseline is not None else None
     if instructions is None:
-        # Unset parts preserve the recorded request text and end the window, so its old changes stop applying.
-        if baseline is not None and baseline.instructions:
+        # Unset parts preserve the recorded request text and end the window, so its old changes stop applying. A
+        # window with no blocks and no changes has nothing to end.
+        if baseline is not None and (baseline.instructions or recorded != {}):
             _record_baseline(targets, [])
         return None
-    recorded = _recorded_instruction_values(messages, baseline) if baseline is not None else None
     if baseline is not None and (recorded is None or not continues_window(baseline, normalized)):
         baseline = None
         if not any(part.on_change == 'append' for part in normalized):
