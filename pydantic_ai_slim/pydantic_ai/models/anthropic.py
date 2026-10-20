@@ -2183,9 +2183,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParamParam(enabled=True) if tool.enable_citations or include_citations else None
+        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -2233,9 +2233,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(
-                    tool, supports_dynamic_filtering, model_settings.get('include_citations', False)
-                )
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
