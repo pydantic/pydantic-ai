@@ -292,8 +292,11 @@ def test_history_items() -> None:
     [listed] = history_items([image_only], image_ids=ids)
     assert (listed.text, listed.images) == ('', [hashlib.sha256(b'png').hexdigest()])
     assert history_items([ModelRequest(parts=[UserPromptPart('plain')])], image_ids=ids)[0].images == []
-    assert ids.find([image], listed.images[0]) is image
-    assert ids.find([], listed.images[0]) is None, 'not once the session no longer holds it'
+    assert ids.find(listed.images[0]) is image
+    ids.keep([image])
+    assert ids.find(listed.images[0]) is image
+    ids.keep([])
+    assert ids.find(listed.images[0]) is None, 'not once the session no longer holds it'
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40

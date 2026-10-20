@@ -97,6 +97,7 @@ class SessionChannel:
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
         items = history_items(conversation.messages, image_ids=self._image_ids)
+        self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
         service = self.service
@@ -120,9 +121,7 @@ class SessionChannel:
 
     def image(self, image_id: str) -> BinaryContent | None:
         """The image the transcript lists as `image_id`: the last prompt's, or one of the conversation's prompts."""
-        return self._image_ids.find(
-            [*self._prompt_images, *history_images(self.session.conversation.messages)], image_id
-        )
+        return self._image_ids.find(image_id)
 
     def status(self) -> StatusInfo:
         status = self.session.status
@@ -209,6 +208,7 @@ class SessionChannel:
         hub.rename(self.shown, self.id)
         self.shown = self.id
         self.workers.reset()
+        self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
         hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
         return True

@@ -930,12 +930,14 @@ class ImageIds:
             known = self._known[id(image)] = (image, image_id(image))
         return known[1]
 
-    def find(self, images: Sequence[BinaryContent], wanted: str) -> BinaryContent | None:
-        """The image of `images`, those the session holds, whose ID is `wanted`; forgets the images it no longer holds."""
-        found = next((image for image in images if self(image) == wanted), None)
+    def find(self, wanted: str) -> BinaryContent | None:
+        """The image whose ID is `wanted`, of those the transcript listed and the session still holds."""
+        return next((image for image, known in self._known.values() if known == wanted), None)
+
+    def keep(self, images: Sequence[BinaryContent]) -> None:
+        """Forget every image but `images`, those the session holds now."""
         held = {id(image) for image in images}
         self._known = {key: known for key, known in self._known.items() if key in held}
-        return found
 
 
 def user_images(part: UserPromptPart) -> list[BinaryContent]:

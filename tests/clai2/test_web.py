@@ -511,6 +511,10 @@ def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> 
         unknown = web_.get(f'/api/images/{"0" * 64}')
         assert (unknown.status_code, unknown.json()) == (404, {'detail': 'No such image in this session.'})
         assert web_.client.get(route).status_code == 403, 'not without the token'
+        # A new conversation lets go of the old one's images.
+        web_.post('/api/input', {'text': '/new'})
+        assert receive_until(socket, Snapshot)[1].items == []
+        assert web_.get(f'/api/images/{image_id(red)}').status_code == 404
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
 
