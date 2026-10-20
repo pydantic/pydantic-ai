@@ -108,6 +108,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Output token limit
+
+When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. Such a request is streamed behind the scenes, since a response that long can take longer than the client's read timeout (`aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], 300 seconds by default), which then limits the wait between streamed chunks rather than the whole response. That wait includes the time the model spends thinking, which can arrive as a single chunk. Models older than Claude Sonnet 4.5, models other than Claude, and models reached through an ARN or a custom deployment name get Bedrock's default, so set `max_tokens` yourself for those.
+
 ### Thinking and structured output
 
 Claude answers a forced tool choice without thinking, and manual extended thinking

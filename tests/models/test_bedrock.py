@@ -87,6 +87,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from .conftest import stream_bedrock_converse_mock
 
 with try_import() as imports_successful:
     from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
@@ -360,21 +361,28 @@ def _capture_bedrock_request_headers(
 
 @contextmanager
 def _capture_bedrock_request_bodies(
-    model: BedrockConverseModel, operation: Literal['Converse', 'ConverseStream'] = 'Converse'
+    model: BedrockConverseModel, operation: Literal['Converse', 'ConverseStream'] | None = None
 ) -> Generator[list[dict[str, Any]]]:
-    """Record final Converse request bodies, unregistering after the request."""
+    """Record final request bodies of `operation`, or of either operation, unregistering after the request.
+
+    `request()` uses `ConverseStream` for a Claude model whose maximum output it sends as the default `maxTokens`.
+    """
     captured: list[dict[str, Any]] = []
 
     def capture(request: Any, **_: Any) -> None:
         body = request.body.decode() if isinstance(request.body, bytes) else request.body
         captured.append(json.loads(body))
 
-    event = f'before-send.bedrock-runtime.{operation}'
-    model.client.meta.events.register_last(event, capture)
+    events = [
+        f'before-send.bedrock-runtime.{op}' for op in ([operation] if operation else ['Converse', 'ConverseStream'])
+    ]
+    for event in events:
+        model.client.meta.events.register_last(event, capture)
     try:
         yield captured
     finally:
-        model.client.meta.events.unregister(event, capture)
+        for event in events:
+            model.client.meta.events.unregister(event, capture)
 
 
 def _decode_header(value: str | bytes) -> str:
@@ -1194,7 +1202,11 @@ async def test_bedrock_model_anthropic_model_without_tools(
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot(
-        "The capital of France is **Paris**. It's the largest city in France and has been the country's capital since the 12th century. Paris is known for its iconic landmarks like the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and its rich history, culture, and cuisine."
+        """\
+The capital of France is **Paris**.
+
+Paris is not only the capital but also the largest city in France. It's known for its iconic landmarks like the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and its rich history, art, culture, and cuisine.\
+"""
     )
 
 
@@ -1397,6 +1409,7 @@ async def test_bedrock_usage_with_cached_tokens(
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(model=model)
 
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
@@ -2274,7 +2287,7 @@ async def test_bedrock_model_thinking_part_anthropic_legacy(
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='This is a straightforward question about crossing the street safely. I should provide practical safety advice for pedestrians.',
+                        content='This is a straightforward safety question about crossing the street. I should provide practical, helpful advice for pedestrian safety.',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
@@ -2286,7 +2299,7 @@ Here's how to cross the street safely:
 
 1. **Find a safe crossing spot**
    - Use crosswalks, intersections, or pedestrian signals when available
-   - Avoid crossing between parked cars or on curves where drivers can't see you
+   - Avoid crossing between parked cars or on curves
 
 2. **Stop at the curb/edge**
    - Don't step into the street yet
@@ -2295,31 +2308,32 @@ Here's how to cross the street safely:
    - Keep looking while you cross
 
 4. **Listen for traffic**
-   - Remove headphones or turn down volume
-   - Listen for engines, horns, or warning sounds
+   - Watch for turning vehicles and cyclists
 
-5. **Make eye contact with drivers**
-   - Ensure they see you before crossing
+5. **Make eye contact with drivers** (if possible)
+   - Don't assume they see you
 
-6. **Wait for a safe gap in traffic**
-   - If there's a signal, wait for the "walk" signal
-   - Don't assume cars will stop
+6. **Walk, don't run**
+   - Cross steadily and predictably
 
-7. **Walk, don't run**
-   - Stay alert and keep watching for cars
-   - Be visible--wear bright colors at night
+7. **Stay alert**
+   - Avoid phone/headphones or stay aware of surroundings
 
-## Extra Tips
-- Put your phone away while crossing
-- Watch for turning vehicles
-- Be extra careful in bad weather or low light
-- Teach children to hold an adult's hand
+## At Traffic Signals
+- Wait for the "WALK" signal
+- Keep watching for turning cars even with the right of way
+- Don't start if the signal is flashing "DON'T WALK"
 
-Is there a specific crossing situation you're dealing with?\
+## Additional Tips
+- Be extra careful at night (wear reflective/bright clothing)
+- Watch for vehicles backing out of driveways
+- Hold children's hands
+
+Is there a specific crossing situation you need help with?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=43, output_tokens=306, cost=Decimal('0.0051909')),
+                usage=RequestUsage(input_tokens=43, output_tokens=309, cost=Decimal('0.0052404')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2353,71 +2367,72 @@ Is there a specific crossing situation you're dealing with?\
                 parts=[
                     ThinkingPart(
                         content="""\
-The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the parallel challenges and solutions. Let me think about the key elements:
+The user is asking me to think about crossing a river by analogy to crossing a street. This is an interesting question that requires me to think about what principles carry over and what's different.
 
-Crossing a street:
-- Find safe crossing spots (crosswalks, intersections)
-- Look for hazards (traffic)
-- Use infrastructure when available
-- Timing and safety assessment
-- Stay alert during crossing
+Let me think about the analogy:
 
-Crossing a river:
-- Find safe crossing points (bridges, fords, ferries)
+**Crossing a street:**
+- Find a safe crossing spot (crosswalk, intersection)
+- Stop and assess
+- Look for traffic/obstacles
+- Wait for the right moment/signal
+- Cross efficiently
+- Stay alert
+
+**Crossing a river:**
+- Find a safe crossing spot (bridge, ford, ferry, shallow area)
+- Stop and assess conditions
 - Look for hazards (current, depth, obstacles)
-- Use infrastructure when available
-- Assess conditions and safety
-- Stay alert during crossing
+- Choose appropriate method
+- Cross safely using that method
+- Stay alert
 
-This is a nice analogy! I should provide helpful, practical information about river crossing.\
+The analogy works in terms of general safety principles, but the methods are quite different. Let me provide a helpful response that acknowledges the analogy while giving practical information.\
 """,
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
                         content="""\
-Great analogy! Here's how the principles translate:
+# How to Cross a River (by analogy)
 
-## Find Safe Crossing Points
+Great analogy! Many safety principles apply, but the methods differ:
 
-**Like using crosswalks:**
-- **Bridges** - the "crosswalk" of rivers (safest option)
-- **Ferries or boats** - the "pedestrian signal" \n\
-- **Fords** - shallow areas (like a quiet intersection)
-- **Stepping stones** - natural crossing infrastructure
+## Find a Safe Crossing Point
+- **Bridge** (like a crosswalk) - safest option
+- **Ferry or boat** (like public transit)
+- **Shallow ford** (like a quiet side street)
+- Avoid dangerous spots (rapids, deep water, strong currents)
 
-## Assess Before Crossing
+## Stop and Assess
+- Check water depth, current speed, and width
+- Look for hazards: slippery rocks, debris, drop-offs
+- Consider weather and water temperature
 
-**Like looking for traffic:**
-- Check water **depth** and **current speed**
-- Look for hazards: debris, slippery rocks, drop-offs
-- Consider **weather** - recent rain means faster current
-- Scout up and downstream for easier spots
+## Look for "Traffic" (Hazards)
+- Current strength and direction
+- Obstacles in the water
+- Changing conditions
 
-## Cross Safely
+## Choose Your Method
+- **Walk across** (bridge, stepping stones, shallow ford)
+- **Wade** (if shallow enough, use a stick for balance)
+- **Swim** (only if skilled and conditions allow)
+- **Boat/raft** (for wider/deeper rivers)
 
-**Like walking alertly:**
-- Use a **walking stick** for balance (test depth)
-- Cross at an **angle downstream** - don't fight the current
-- **Unbuckle backpack straps** - so you can ditch weight if needed
-- **Never cross alone** if it's risky
-- Turn sideways to reduce resistance in strong current
+## Cross Carefully
+- Face upstream if wading
+- Take your time, test footing
+- Don't cross if unsafe - find another way
 
-## Know When NOT to Cross
+## Key Difference
+Streets have predictable "traffic" patterns; rivers have natural forces. **When in doubt, find a bridge or don't cross!**
 
-**Like waiting for traffic to clear:**
-- Water above your knees = dangerous current
-- Fast-moving or murky water
-- Cold water (hypothermia risk)
-- If unsure, find another way
-
-**The key similarity**: Use infrastructure when available, assess the hazards, and don't take unnecessary risks!
-
-What kind of river crossing did you have in mind?\
+What type of river crossing are you considering?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=341, output_tokens=501, cost=Decimal('0.0093918')),
+                usage=RequestUsage(input_tokens=342, output_tokens=509, cost=Decimal('0.0095271')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2460,50 +2475,39 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive(
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking a simple, practical question about how to cross the street safely.',
+                        content='The user is asking a simple, everyday question about how to cross the street safely.',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
                         content="""\
-Here are the basic steps for safely crossing the street:
+Here are some basic steps for crossing the street safely:
 
-1. **Find a safe place to cross**
-   - Use a crosswalk or intersection when possible
-   - Avoid crossing between parked cars or on curves
+1. **Find a safe place to cross** - Use a crosswalk, intersection, or pedestrian signal when available.
 
-2. **Stop at the curb or edge**
-   - Don't stand in the road while waiting
+2. **Stop at the curb** - Don't step into the road right away.
 
-3. **Look both ways**
-   - Look left, then right, then left again
-   - In some countries, the order may differ based on traffic direction
+3. **Look both ways** - Look left, right, then left again (in countries where traffic drives on the right). Repeat as needed.
 
-4. **Wait for a safe gap in traffic**
-   - At a traffic light, wait for the walk signal (green light or "WALK" sign)
-   - Make sure cars have actually stopped before stepping out
+4. **Wait for a safe gap in traffic** - Make sure cars are far enough away or have stopped.
 
-5. **Make eye contact with drivers** (when possible)
-   - Ensure they see you before crossing
+5. **Make eye contact with drivers** if possible, to confirm they see you.
 
-6. **Walk, don't run**
-   - Walk briskly and directly across
-   - Keep watching for traffic as you cross
+6. **Walk, don't run** - Cross at a steady, controlled pace.
 
-7. **Stay alert**
-   - Avoid looking at your phone while crossing
-   - Watch for turning vehicles, cyclists, and other hazards
+7. **Stay alert** - Avoid looking at your phone while crossing. Keep watching for traffic.
 
-**Additional tips:**
-- Be extra cautious at night or in bad weather
-- Make yourself visible (wear bright clothing if possible)
-- Never assume a driver sees you
+8. **Follow signals** - At traffic lights, wait for the walk signal before crossing.
+
+9. **Watch for turning vehicles** - Even when you have the right of way, cars may be turning.
+
+10. **Finish crossing** - Don't stop in the middle of the road.
 
 Would you like more specific advice for a particular situation?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=14, output_tokens=322, cost=Decimal('0.0053592')),
+                usage=RequestUsage(input_tokens=14, output_tokens=284, cost=Decimal('0.0047322')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2537,63 +2541,56 @@ Would you like more specific advice for a particular situation?\
                 parts=[
                     ThinkingPart(
                         content="""\
-The user is asking me to analogously apply the principles of crossing a street to crossing a river. This is a fun and interesting question. Let me think about how the steps for crossing a street map to crossing a river.
+The user is asking me to use the street-crossing advice as an analogy for crossing a river. Let me think about how each step maps over to crossing a river safely.
 
-Let me map the concepts:
-- Finding a safe place to cross → finding a safe crossing point (shallow ford, bridge, etc.)
-- Looking both ways → assessing the river conditions (current, depth, width)
-- Waiting for a safe gap → waiting for safe conditions (water level, weather)
-- Making eye contact with drivers → being aware of hazards
-- Walking, not running → moving carefully and steadily
-- Staying alert → watching for hazards like slippery rocks, currents, etc.
+Let me map the steps:
 
+1. Find a safe place to cross - find a ford, bridge, or shallow/narrow section
+2. Stop at the edge - assess before entering
+3. Look both ways - check upstream and downstream for hazards (logs, currents, boats)
+4. Wait for safe conditions - check water levels, current speed
+5. Make eye contact with... hmm, this one doesn't map as well - maybe signal to others/helpers
+6. Walk, don't run - move carefully and deliberately
+7. Stay alert for changes in current or footing, and heed weather or flood warnings as the river's equivalent of traffic signals, watching for debris or sudden depth changes instead of turning vehicles, and committing to finish the crossing without stopping midway. I want to make sure this analogy feels genuinely useful rather than forced.
 
-- Now I'm considering how these principles apply differently depending on the crossing method--whether I'm using a bridge, wading through a ford, taking a boat, or swimming across.\
 """,
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
                         content="""\
-Great analogy! Here's how crossing a street maps to crossing a river:
+Great analogy! Here's how crossing a river maps to crossing a street:
 
-## 1. Find a Safe Place to Cross
-- Look for a **bridge** (like using a crosswalk)
-- Or find a **shallow ford** -- avoid deep, wide, or fast-moving sections
-- Avoid crossing near rapids, waterfalls, or steep banks
+1. **Find a safe place to cross** - Look for a bridge, stepping stones, or a shallow/narrow section (like a crosswalk).
 
-## 2. Stop and Assess Before Entering
-- Check the **water depth and width**
-- Look for **hazards** (rocks, debris, strong current)
-- Check **upstream and downstream** (like looking left and right)
+2. **Stop at the edge** - Assess before entering the water, just as you'd stop at the curb.
 
-## 3. Wait for Safe Conditions
-- Like waiting for a walk signal, wait if water levels are **high or rising**
-- Avoid crossing after heavy rain or during flooding
+3. **Look both ways** - Check **upstream and downstream** for hazards like logs, fast currents, or boats.
 
-## 4. "Make Eye Contact" -- Know Your Hazards
-- Identify slippery rocks, hidden drop-offs, and current strength
+4. **Wait for safe conditions** - Let high water or strong currents pass, just as you'd wait for traffic to clear.
 
-## 5. Cross Carefully and Directly
-- Use a **walking stick** for stability (like walking briskly and steadily)
-- Face slightly **upstream**
-- Unbuckle your pack (if carrying one) for safety
+5. **Signal to others** - Let companions or rescuers know your plan, like making eye contact with drivers.
 
-## 6. Stay Alert Throughout
-- Keep watching conditions as you cross
-- Don't look at your phone 😄
+6. **Move steadily, don't rush** - Careful footing beats speed in water.
 
-## Bonus Options (like different types of crosswalks):
-- **Bridge** = safest
-- **Stepping stones** = moderate
-- **Wading/fording** = requires more caution
-- **Swimming** = last resort
+7. **Stay alert** - Watch for slippery rocks, sudden depth changes, and shifting currents. No distractions.
 
-Would you like detail on any specific method?\
+8. **Check warnings** - Look up flood advisories or water levels, like checking traffic signals.
+
+9. **Watch for hidden dangers** - Unexpected drop-offs or debris, like turning vehicles.
+
+10. **Commit to finishing** - Don't stop in the middle; the current is most dangerous there.
+
+**Key differences from street crossing:**
+- A river can be **unpredictable** in ways traffic isn't
+- Using a **walking stick** for stability helps
+- **Never cross alone** if possible
+
+Would you like more detail on any specific scenario?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=358, output_tokens=574, cost=Decimal('0.0106524')),
+                usage=RequestUsage(input_tokens=320, output_tokens=574, cost=Decimal('0.010527')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2625,7 +2622,7 @@ async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     agent = Agent(model, output_type=ToolOutput(int), model_settings={'thinking': True})
 
-    with _capture_bedrock_request_bodies(model, 'ConverseStream' if stream else 'Converse') as sent_requests:
+    with _capture_bedrock_request_bodies(model) as sent_requests:
         if stream:
             async with agent.run_stream('Return the number 42.') as result:
                 output = await result.get_output()
@@ -2688,47 +2685,34 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user is asking a simple, everyday question about how to cross the street safely.',
+                        content='The user is asking a simple, straightforward question about how to cross the street safely.',
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
                         content="""\
-Here are the basic steps for safely crossing the street:
+Here are the basic steps for crossing a street safely:
 
-1. **Find a safe place to cross**, such as:
-   - A marked crosswalk
-   - An intersection with traffic signals
-   - A pedestrian crossing
+1. **Find a safe place to cross** - Use a crosswalk, intersection, or pedestrian signal when available
+2. **Stop at the curb or edge** - Don't step into the street right away
+3. **Look left, then right, then left again** - Check for oncoming traffic from all directions
+4. **Listen** - Turn off or remove headphones so you can hear approaching vehicles
+5. **Make eye contact with drivers** if possible, to be sure they see you
+6. **Wait for a safe gap in traffic** - Don't rush if cars are coming
+7. **Walk, don't run** - Cross at a steady pace
+8. **Stay alert the whole time** - Keep watching for traffic as you cross
+9. **Avoid distractions** - Put your phone away while crossing
 
-2. **Stop at the curb** before stepping into the street
+**At a crosswalk with signals:**
+- Wait for the "Walk" signal
+- Still look both ways before stepping out
+- Watch for turning vehicles
 
-3. **Look both ways:**
-   - Look left
-   - Look right
-   - Look left again
-
-4. **Wait for traffic to clear** or for the walk signal if at a traffic light
-
-5. **Make eye contact** with any drivers to be sure they see you
-
-6. **Walk, don't run** across the street
-
-7. **Stay alert** - avoid looking at your phone while crossing
-
-8. **Cross in a straight line** and keep watching for traffic as you go
-
-**Additional tips:**
-- Use crosswalks and signals whenever possible
-- Be extra cautious at night or in bad weather
-- Watch for turning vehicles, even when you have the right of way
-- Be aware of cyclists as well as cars
-
-Would you like more detail on any specific situation, like crossing with children or crossing without a crosswalk?\
+Would you like more specific advice for a particular situation?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=14, output_tokens=280, cost=Decimal('0.0046662')),
+                usage=RequestUsage(input_tokens=14, output_tokens=272, cost=Decimal('0.0045342')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -2762,74 +2746,53 @@ Would you like more detail on any specific situation, like crossing with childre
                 parts=[
                     ThinkingPart(
                         content="""\
-The user is asking how to cross a river, using the analogy of crossing the street. They want me to apply similar principles/steps but adapted for crossing a river. Let me think about this carefully.
+The user is asking me to use the street-crossing advice as an analogy for crossing a river. This is a fun and interesting question. Let me think about how each step of crossing a street maps to crossing a river.
 
-Crossing a street involves:
-1. Finding a safe place to cross
-2. Stopping and assessing
-3. Looking both ways for hazards
-4. Waiting for the right moment
-5. Moving carefully and alertly
-6. Staying aware throughout
+Let me think about this analogously:
 
-Analogously, crossing a river would involve similar principles but adapted for the river context:
+1. **Find a safe place to cross** - Look for a bridge, ford, or shallow area
+2. **Stop at the edge** - Don't just jump in
+3. **Look left, then right** - Check the current, upstream and downstream
+4. **Listen** - Listen for rapids, waterfalls, or fast water
+5. **Make eye contact with drivers** - Maybe signal to others/a guide that you're crossing
+6. **Wait for a safe gap** - Wait for calmer water
+7. **Walk, don't run** - Move steadily rather than rushing
+8. **Stay alert** - Watch for shifting currents, and avoid distractions so I stay focused the whole way across
 
-1. Find a safe place to cross (shallow ford, bridge, stepping stones, etc.)
-2. Assess the conditions before entering
+I'm also thinking of practical river-specific tips: using a trekking pole for balance, unbuckling the pack straps in case I need to shed it, facing upstream while wading, picking the widest and shallowest point to cross, and never attempting it during flood conditions. This crosswalk-to-river analogy is working out nicely.
 
-
-3. Check upstream and downstream for potential dangers like debris or strong currents
-4. Wait for optimal conditions if the water is too turbulent
-5. Move across deliberately and with full attention
-6. Maintain awareness of changing water conditions the entire time\
 """,
                         signature=IsStr(),
                         provider_name='bedrock',
                     ),
                     TextPart(
                         content="""\
-Here's how to cross a river, using the same principles as crossing a street:
+Great analogy! Here's how the steps map over:
 
-## 1. Find a Safe Place to Cross
-- Look for a **bridge** (like using a crosswalk)
-- Find a **shallow ford** where the water is calm and slow
-- Look for **stepping stones**
-- Avoid deep, fast-moving, or narrow sections
+1. **Find a safe place to cross** → Look for a **bridge, shallow ford, or calm/narrow section**
+2. **Stop at the edge** → Assess the bank before entering the water
+3. **Look left, right, left** → Check **upstream and downstream** for current speed, debris, or boats
+4. **Listen** → Listen for **rapids or waterfalls** downstream
+5. **Make eye contact with drivers** → **Signal to a spotter or companion** that you're crossing
+6. **Wait for a safe gap** → Wait for **calmer water conditions** or lower water levels
+7. **Walk, don't run** → Move **slowly and deliberately**, testing each step
+8. **Stay alert the whole time** → Watch for **changing currents or slippery rocks**
+9. **Avoid distractions** → Stay fully focused on your **footing and the current**
 
-## 2. Stop and Assess Before Entering
-- Check the **water depth and speed** (like checking for traffic)
-- Look **upstream and downstream** for hazards (like looking left and right)
-- Watch for debris, rocks, or sudden drop-offs
+**Additional river-specific tips:**
+- Use a **walking stick or trekking pole** for stability
+- **Face upstream** when wading
+- **Unbuckle your backpack** straps so you can shed it if you fall
+- Cross at the **widest point**, which is usually the shallowest
+- **Never cross in flood conditions**
 
-## 3. Wait for Safe Conditions
-- Avoid crossing during **floods or heavy rain**
-- Let fast currents settle, similar to waiting for traffic to clear
-
-## 4. Cross Carefully
-- **Unbuckle your pack** if carrying one, in case you fall
-- Use a **walking stick** for stability
-- Face **upstream** as you cross
-- Move **slowly and deliberately** (don't run)
-- Cross at an **angle** with the current rather than straight across
-
-## 5. Stay Alert Throughout
-- Keep watching for changing conditions
-- Don't look at distractions
-- Have an **exit plan** if you lose footing
-
-## Key Analogy Points:
-| Street | River |
-|--------|-------|
-| Crosswalk | Bridge/ford |
-| Traffic | Current/debris |
-| Walk signal | Calm water conditions |
-| Looking both ways | Checking upstream/downstream |
+The core principle is the same - **stop, assess, and move carefully** rather than rushing in!
 
 Would you like more detail on any specific crossing method?\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=316, output_tokens=573, cost=Decimal('0.0104973')),
+                usage=RequestUsage(input_tokens=308, output_tokens=800, cost=Decimal('0.0142164')),
                 model_name='us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -3890,6 +3853,7 @@ async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
         ModelRequest(parts=[UserPromptPart(content='start')]),
         ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
     ]
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
@@ -3951,6 +3915,7 @@ async def test_bedrock_tool_results_lead_multi_reveal_turn(
             ]
         ),
     ]
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
@@ -4192,6 +4157,36 @@ async def test_bedrock_top_k_nova_variant(
     assert result.output == IsStr()
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'model_settings', 'expected_operation', 'expected_inference_config'),
+    [
+        # Bedrock's own default for Claude Opus 5.5 is 4096, which thinking counts toward.
+        pytest.param('us.anthropic.claude-opus-5-5', {}, 'ConverseStream', {'maxTokens': 128000}, id='claude-default'),
+        pytest.param(
+            'us.anthropic.claude-opus-5-5', {'max_tokens': 1000}, 'Converse', {'maxTokens': 1000}, id='claude-explicit'
+        ),
+        pytest.param('us.amazon.nova-micro-v1:0', {}, 'Converse', {}, id='non-claude-default'),
+    ],
+)
+async def test_bedrock_default_max_tokens(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+    model_settings: ModelSettings,
+    expected_operation: Literal['Converse', 'ConverseStream'],
+    expected_inference_config: dict[str, Any],
+) -> None:
+    """Without `max_tokens`, Claude gets its maximum output, and the request is streamed behind the scenes, since a
+    response that long can outlast the read timeout. An explicit `max_tokens` and other models keep `Converse`."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    with _capture_bedrock_request_bodies(model, expected_operation) as bodies:
+        result = await Agent(model).run('Reply with the single word: ok', model_settings=model_settings)
+
+    assert [body['inferenceConfig'] for body in bodies] == [expected_inference_config]
+    assert result.output == IsStr()
+    assert result.response.finish_reason == 'stop'
+
+
 async def test_bedrock_top_k_user_field_takes_precedence(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
@@ -4203,6 +4198,7 @@ async def test_bedrock_top_k_user_field_takes_precedence(
     model_settings = BedrockModelSettings(top_k=20, bedrock_additional_model_requests_fields={'top_k': 5})
     agent = Agent(model, model_settings=model_settings)
 
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
@@ -4578,7 +4574,7 @@ async def test_bedrock_cache_usage_includes_cache_tokens(allow_model_requests: N
     result = await agent.run([long_context, CachePoint(), 'Response only number What is 2 + 3'])
     assert result.output == snapshot('5')
     assert result.usage == snapshot(
-        RunUsage(input_tokens=1517, cache_read_tokens=1504, output_tokens=5, requests=1, cost=Decimal('0.00062172'))
+        RunUsage(input_tokens=1517, cache_read_tokens=1503, output_tokens=5, requests=1, cost=Decimal('0.00062469'))
     )
 
 
@@ -4615,17 +4611,28 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
     run_args = [long_context, CachePoint(), document, CachePoint(), 'What is 10 + 11?']
 
     first = await agent.run(run_args)
-    assert first.output == snapshot('21')
+    assert first.output == snapshot("""\
+The answer to 10 + 11 is **21**.
+
+This is a simple addition problem where we combine ten and eleven to get twenty-one.\
+""")
     first_usage = first.usage
     assert first_usage == snapshot(
-        RunUsage(input_tokens=1324, cache_write_tokens=1322, output_tokens=5, requests=1, cost=Decimal('0.00554235'))
+        RunUsage(
+            input_tokens=1324,
+            cache_write_5m_tokens=1321,
+            cache_write_tokens=1321,
+            output_tokens=36,
+            requests=1,
+            cost=Decimal('0.006053025'),
+        )
     )
 
     second = await agent.run(run_args)
     assert second.output == snapshot('21')
     second_usage = second.usage
     assert second_usage == snapshot(
-        RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1322, requests=1, cost=Decimal('0.00052536'))
+        RunUsage(input_tokens=1324, output_tokens=5, cache_read_tokens=1321, requests=1, cost=Decimal('0.00052833'))
     )
 
 
@@ -4640,18 +4647,18 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8172,
+                        cache_write_tokens=8257,
                         output_tokens=5,
-                        cache_write_5m_tokens=8172,
+                        cache_write_5m_tokens=8257,
                         input_tokens=8259,
-                        cost=Decimal('0.0227194'),
+                        cost=Decimal('0.02276615'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
                         input_tokens=8259,
-                        cache_read_tokens=8172,
-                        cost=Decimal('0.00204424'),
+                        cache_read_tokens=8257,
+                        cost=Decimal('0.00187594'),
                         requests=1,
                     ),
                 )
@@ -4664,18 +4671,18 @@ async def test_bedrock_cache_write_and_read(allow_model_requests: None, bedrock_
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8175,
-                        cache_write_1h_tokens=8175,
+                        cache_write_tokens=8260,
+                        cache_write_1h_tokens=8260,
                         output_tokens=5,
                         input_tokens=8262,
-                        cost=Decimal('0.0362164'),
+                        cost=Decimal('0.0364034'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
                         input_tokens=8262,
-                        cache_read_tokens=8175,
-                        cost=Decimal('0.0020449'),
+                        cache_read_tokens=8260,
+                        cost=Decimal('0.0018766'),
                         requests=1,
                     ),
                 )
@@ -4774,13 +4781,13 @@ async def test_unified_cache_reads_history_after_wide_turn_real_api(
     ] == [(True, True)] * 2
     assert (first.usage, second.usage) == snapshot(
         (
-            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=219),
+            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=163),
             RequestUsage(
                 input_tokens=8337,
                 cache_read_tokens=7746,
                 cache_write_tokens=584,
                 cache_write_5m_tokens=584,
-                output_tokens=156,
+                output_tokens=69,
             ),
         )
     )
@@ -4814,22 +4821,23 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
 
     result = await agent.run(run_args)
     assert result.output == snapshot("""\
-I'll analyze the documents you've provided:
+I'll analyze both documents for you.
 
-## Document 1 (Document 1.txt)
-- **Content**: Contains important analysis data
-- **Key characteristic**: Explicitly marked as containing "important" information
-- **Purpose**: Appears to be a test document designed to hold significant analytical data
+**Document 1 (Document 1.txt):**
+- Contains a test document
+- Explicitly mentions "important analysis data"
+- Brief and concise content
 
-## Document 2 (Document 2.txt)
-- **Content**: Contains unimportant data
-- **Key characteristic**: Explicitly marked as containing "unimportant" information
-- **Purpose**: Also a test document, but with data of lesser significance
+**Document 2 (Document 2.txt):**
+- Also contains a test document
+- Describes the data as "unimportant"
+- Similarly brief in content
 
-## Summary
-Both documents appear to be test files with minimal content. The main distinction between them is the stated importance level of their data - Document 1 contains information designated as important for analysis, while Document 2's data is marked as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents for testing document analysis capabilities.
+**Comparative Analysis:**
+The key difference between these documents is the characterization of their data. Document 1 emphasizes that its data is "important" for analysis purposes, while Document 2 describes its data as "unimportant." Both appear to be test documents with minimal content, likely created for demonstration or testing purposes rather than containing actual substantive information.
 
-Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
+**Summary:**
+These are minimal test documents with contrasting labels regarding the significance of their content. Neither contains detailed information that would typically require in-depth analysis.\
 """)
 
     usage = result.usage
@@ -4844,16 +4852,13 @@ Is there a specific aspect of these documents you'd like me to focus on or a par
     assert result.output == snapshot("""\
 Based on the documents provided:
 
-**Document 1 (Document 1.txt)**: 10 words
-- "This is a test document with important analysis data."
+**Document 1:** 10 words
+("This is a test document with important analysis data.")
 
-**Document 2 (Document 2.txt)**: 8 words
-- "This is a test document with unimportant data."
+**Document 2:** 8 words
+("This is a test document with unimportant data.")
 
-Both documents are very short - just single sentences. If you're asking about character count instead:
-
-- Document 1: 55 characters (including spaces)
-- Document 2: 49 characters (including spaces)\
+Both documents are very short. If you're asking about combined length, together they contain **18 words** total.\
 """)
 
     usage = result.usage
@@ -4888,26 +4893,21 @@ async def test_bedrock_cache_messages_with_image_as_last_content(
     assert result.output == snapshot("""\
 I'd be happy to analyze this image for you!
 
-This is a close-up photograph of a **kiwi fruit cross-section**. Here are the key details:
+This is a cross-sectional view of a **kiwi fruit** that has been cut in half horizontally. The image shows the distinctive internal structure of the kiwi with several notable features:
 
-## Visual Characteristics:
-- **Color Palette**: Vibrant green flesh with a pale cream/white center
-- **Seeds**: Multiple small, black, teardrop-shaped seeds arranged in a radial pattern around the center
-- **Texture**: The flesh appears juicy and translucent with a gradient from bright green at the edges to lighter green near the center
-- **Skin**: Brown fuzzy skin visible around the perimeter of the slice
-- **Pattern**: Natural starburst or sunburst pattern created by the seed arrangement
+**Visual Characteristics:**
+- **Bright green flesh** making up the majority of the fruit's interior
+- **Pale, creamy-white center** (the core)
+- **Small black seeds** arranged in a radial pattern around the white center, creating a sunburst or starburst effect
+- **Brown fuzzy skin** visible around the edges
+- **Fine hairs** on the outer skin that are characteristic of kiwi fruit
 
-## Composition:
-- The slice is photographed from directly above against a white background
-- The fruit is cut perpendicular to its length, showing a perfect circular cross-section
-- The lighting is bright and even, highlighting the fruit's natural moisture and color variations
+**Texture and Detail:**
+- The flesh appears juicy and translucent
+- The seeds are evenly distributed in a circular pattern
+- There's a gradient of color from the pale center through lighter green to the darker green outer flesh
 
-## Notable Features:
-- The radial symmetry creates an aesthetically pleasing natural pattern
-- Tiny fine hairs (trichomes) are visible on the brown skin edge
-- The flesh shows subtle striations radiating outward from the center
-
-This type of image is commonly used in food photography, nutritional content, or botanical documentation.\
+This is a classic presentation shot often used in food photography to showcase the kiwi's beautiful natural geometry and vibrant colors. The fruit appears fresh and ripe, with its characteristic sweet-tart flavor profile typically associated with kiwis.\
 """)
 
     usage = result.usage
@@ -4919,11 +4919,9 @@ This type of image is commonly used in food photography, nutritional content, or
     messages = result.all_messages()
 
     result = await agent.run('How large is the image?', message_history=messages)
-    assert result.output == snapshot("""\
-The image dimensions are **597 × 597 pixels** (a perfect square).
-
-This is a relatively small to medium-sized image by modern standards, suitable for web use, thumbnails, or social media posts, but not high-resolution enough for large-format printing.\
-""")
+    assert result.output == snapshot(
+        'The image dimensions are **597 × 598 pixels** (essentially square, with a width of 597 pixels and a height of 598 pixels).'
+    )
 
     usage = result.usage
     assert usage.input_tokens > 0
@@ -5856,6 +5854,7 @@ async def test_bedrock_earlier_cache_points_raised_to_later_longer_ttl(
     as it is."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_count_tokens = mocker.patch.object(model.client, 'count_tokens', return_value={'inputTokens': 10})
+    stream_bedrock_converse_mock(mocker, model.client)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
         'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
@@ -7283,7 +7282,7 @@ The document is titled "Document 1.txt" and contains only the text:
 
 **"Dummy TXT file"**
 
-It appears to be a placeholder or test file with no substantial content.\
+It appears to be a placeholder or test document with minimal content.\
 """)
 
 
@@ -7792,7 +7791,9 @@ async def test_bedrock_specific_tool_choice_with_adaptive_thinking_runs(
     assert len(sent_requests) == 1
     assert sent_requests[0]['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
     assert sent_requests[0]['toolConfig']['toolChoice'] == {'tool': {'name': 'get_weather'}}
-    assert response.parts == [ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=IsStr())]
+    [part] = response.parts
+    assert isinstance(part, ToolCallPart)
+    assert (part.tool_name, part.args_as_dict()) == ('get_weather', {'city': 'Paris'})
 
 
 @pytest.mark.parametrize('model_name', ['anthropic.claude-fable-5-1', 'anthropic.claude-mythos-5-1'])
@@ -7801,6 +7802,7 @@ async def test_bedrock_anthropic_model_without_tool_forcing_uses_auto(
 ) -> None:
     """Pin the fallback payload locally: these restricted-access models cannot be recorded here."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
         model.client,
         'converse',
@@ -7859,6 +7861,7 @@ async def test_bedrock_agent_output_tool_with_thinking_is_unforced(
     can't all be recorded here.
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
         model.client,
         'converse',
@@ -7904,6 +7907,7 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     """`thinking=False` sends `disabled` where omitting `thinking` would leave it on. Mocked because the payload is
     the claim, and restricted-access models can't all be recorded here."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
         model.client,
         'converse',
@@ -7967,6 +7971,7 @@ async def test_bedrock_default_output_mode_stays_put_when_thinking_toggles_per_s
     """Claude keeps the output tool when a later step turns extended thinking on, offering it without forcing,
     so the tools sent stay the same and the prompt cache holds."""
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
         model.client,
         'converse',
@@ -8083,7 +8088,7 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
 
     message_history: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Hello there!')])]
     result = await agent.run('Now say goodbye.', message_history=message_history)
-    assert result.output == snapshot('Goodbye!')
+    assert result.output == snapshot('Goodbye! Take care!')
     assert result.all_messages() == snapshot(
         [
             ModelResponse(
