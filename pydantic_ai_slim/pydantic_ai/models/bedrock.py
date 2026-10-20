@@ -540,7 +540,7 @@ def _map_citations_for_replay(
     Every citation must be a character range that still selects its cited text from a plain-text document in the
     request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
     """
-    if not text:
+    if not text or not citations:
         return None
     mapped_citations: list[CitationOutputTypeDef] = []
     for citation in citations:
@@ -569,8 +569,6 @@ def _map_citations_for_replay(
         if isinstance(title := citation.get('title'), str):
             mapped_citation['title'] = title
         mapped_citations.append(mapped_citation)
-    if not mapped_citations:
-        return None
     return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_citations}}
 
 
