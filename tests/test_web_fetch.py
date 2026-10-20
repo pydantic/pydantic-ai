@@ -7,6 +7,7 @@ import json
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import suppress
 from threading import Event, Lock, get_ident
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -40,6 +41,36 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
 
 
 class TestWebFetchLocalTool:
+    @pytest.mark.parametrize('anyio_backend', ['trio'])
+    async def test_trio_conversion_spawn_failure_releases_slot(self, anyio_backend: str):
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response('<p>x</p>'),
+            ),
+            patch('trio.lowlevel.spawn_system_task', side_effect=RuntimeError('cannot spawn')),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(RuntimeError, match='cannot spawn'):
+                await tool('https://example.com')
+        assert _HTML_CONVERSION_LIMITER.get().value == 4
+
+    @pytest.mark.parametrize('anyio_backend', ['trio'])
+    async def test_trio_conversion_error_releases_slot(self, anyio_backend: str):
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response('<p>x</p>'),
+            ),
+            patch('pydantic_ai.common_tools.web_fetch._convert_html', side_effect=ModelRetry('too complex')),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            with pytest.raises(ModelRetry, match=r'Failed to convert .*too complex'):
+                await tool('https://example.com')
+        assert _HTML_CONVERSION_LIMITER.get().value == 4
+
     @pytest.mark.parametrize('anyio_backend', ['trio'])
     async def test_trio_html_conversion_preserves_thread_setting(self, anyio_backend: str):
         converter_threads: list[int] = []
@@ -1176,14 +1207,10 @@ class TestMarkdownConverter:
 
     def test_whitespace_closed_comment_does_not_hide_markup(self):
         html = '<!--comment-- >' + '<li>x</li>' * 21
-        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_OPENERS', 20):
-            try:
-                _, content = _convert_html(html)
-            except ModelRetry as exc:
-                assert 'too complex' in str(exc)
-            else:
-                # Python versions disagree on whether '-- >' closes the comment.
-                assert not content
+        # Python versions disagree on whether '-- >' closes the comment. The page must
+        # either be rejected for complexity or produce no visible content.
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_OPENERS', 20), suppress(ModelRetry):
+            assert not _convert_html(html)[1]
 
     @pytest.mark.parametrize(
         ('prefix', 'suffix'),
@@ -1454,6 +1481,10 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
         assert time.perf_counter() - started < 60
+
+    def test_thead_row_with_cell_converts(self):
+        html = '<table><thead><tr><td>x</td></tr></thead></table>'
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     def test_repeated_tbody_table_search_is_bounded(self):
         """The first row of each tbody must not rescan the whole table."""
