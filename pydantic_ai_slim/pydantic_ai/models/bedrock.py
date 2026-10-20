@@ -45,6 +45,8 @@ from pydantic_ai import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelProfileSpec,
     ModelRequest,
@@ -95,6 +97,7 @@ from pydantic_ai.models import (
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1570,6 +1573,8 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                         raise _unsynthesized_tool_availability_delta_error()
                     elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1604,7 +1609,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile, message)
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
                             if not carry_in_user_turn:
                                 content.append({'text': thinking_text})
                             elif item.content:
@@ -2015,6 +2020,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
+    _usage_received: bool | None = field(default=False, init=False)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
@@ -2046,8 +2052,11 @@ class BedrockStreamedResponse(StreamedResponse):
                         self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                     case {'metadata': metadata}:
                         if 'usage' in metadata:  # pragma: no branch
-                            self._usage += _map_usage(
-                                metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                            self._add_usage(
+                                _map_usage(
+                                    metadata['usage'], self._provider_name, self._provider_url, self._model_name
+                                ),
+                                reported=True,
                             )
                         if 'trace' in metadata:
                             # `messageStop` usually precedes `metadata`, but AWS documents no strict event

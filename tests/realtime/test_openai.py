@@ -2450,7 +2450,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -5587,6 +5587,58 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     assert part.audio.data[44:] == sent
     [streamed_part] = streamed
     assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
+
+
+def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
+    """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
+    reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    pcm = b'\x01\x00' * 2_400
+    async with session:
+        await session.send_audio(pcm)
+        await session.commit_audio()
+
+    [request] = session.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.speaker == 'user' and part.transcript is None
+    assert part.audio is not None and part.audio.data[44:] == pcm
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
+    """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
+    the session closes before anything acknowledges it."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    async with session:
+        await session.send_audio(b'\x01\x00' * 100)
+        await session.commit_audio()
+        ws.push(
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'code': 'input_audio_buffer_commit_empty',
+                    'message': 'Error committing input audio buffer: buffer too small.',
+                },
+            }
+        )
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
+        await session.commit_audio()
+
+    assert session.all_messages() == []
 
 
 @pytest.mark.anyio

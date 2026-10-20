@@ -188,7 +188,12 @@ async def test_tool_round_and_followup_turn(
     answer_part = answer.parts[0]
     assert isinstance(answer_part, SpeechPart)
     assert answer_part.speaker == 'assistant'
-    assert answer_part.transcript is not None and 'sunny' in answer_part.transcript.lower()
+    # The follow-up text went out while the answer was still playing, which cuts it off: ElevenLabs' correction says
+    # the user heard none of it, which history records after the fact, keeping what the agent said.
+    assert answer_part.transcript == snapshot('...')
+    assert answer_part.provider_details is not None
+    assert 'sunny' in answer_part.provider_details['original_transcript'].lower()
+    assert answer.state == 'interrupted'
     assert isinstance(answer_part.audio, BinaryContent)
     assert len(answer_part.audio.data) > 0
     # The conversation id from the handshake rides on the finalized response, so a consumer can
@@ -528,7 +533,8 @@ async def test_settings_overrides_reach_the_initiation_frame(
         for part in message.parts
         if isinstance(part, SpeechPart)
     ]
-    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', 'Hello there.')])
+    # The text sent while the greeting played cut it off, as ElevenLabs' correction of it says.
+    assert spoken == snapshot([('assistant', 'Welcome to the demo...'), ('assistant', 'Hello there.')])
 
 
 def _weather_agent() -> Agent:

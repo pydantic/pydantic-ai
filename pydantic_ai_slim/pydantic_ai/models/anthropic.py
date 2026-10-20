@@ -39,6 +39,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -109,6 +111,7 @@ from . import (
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -2433,6 +2436,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                             else:
                                 user_content_params.append(content)
+                    elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(request_part, ToolAvailabilityDeltaPart):
                         if not supports_tool_availability_delta:
                             # `prepare_messages` projects the delta onto the local tool-search exchange
@@ -2634,7 +2639,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                         elif response_part.content:  # pragma: no branch
                             thinking_text, carry_in_user_turn = render_replayed_thinking(
-                                response_part.content, self.profile, m
+                                response_part.content, self.profile
                             )
                             thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
                             if carry_in_user_turn:

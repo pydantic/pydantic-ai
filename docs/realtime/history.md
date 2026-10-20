@@ -230,7 +230,8 @@ History follows the order of the provider's own conversation:
   that finishes after later messages were recorded has its return inserted ahead of them.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation), and a speech part whose
+  interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
+  heard), and a speech part whose
   [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
   the latest snapshot rather than appending only the messages past the ones you stored.
 
@@ -250,9 +251,9 @@ With transcription disabled:
   Gemini Live reports none, so a turn there is the audio sent since the last reply, recorded as the model
   replies to it;
 - with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
-  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
-  and one still held back when the session closes records nothing); a commit with no audio since the last one
-  records nothing;
+  provider has it, even if the session closes or the connection drops before the provider confirms the commit
+  (on xAI, commits made while a reply is still under way go out together after it, as one turn, and one still
+  held back when the session closes records nothing); a commit with no audio since the last one records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

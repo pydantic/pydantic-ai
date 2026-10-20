@@ -1783,6 +1783,7 @@ Don't include any text or Markdown fencing before or after.
                             {
                                 'content': 'Be kind',
                                 'dynamic': False,
+                                'on_change': 'rewrite',
                                 'name': None,
                                 'id': 'agent',
                                 'part_kind': 'instruction',
@@ -1797,6 +1798,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                                 'dynamic': False,
+                                'on_change': 'rewrite',
                                 'name': None,
                                 'id': None,
                                 'part_kind': 'instruction',

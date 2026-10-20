@@ -23,6 +23,7 @@ with try_import() as imports_successful:
         InputAdded,
         InputLost,
         LifecycleEvent,
+        OutputItemCut,
         OutputItemDetails,
         ResponseEnded,
         ResponseRequestRefused,
@@ -212,6 +213,12 @@ def test_lifecycle_contract_rules() -> None:
     assert feed_lifecycle(start, details, end, details, inputs_sent=1) == snapshot(
         ['lifecycle.content_outside_response']
     )
+    # A cut can come after its response ended, but only of an item some content named.
+    named = AudioDelta(b'\x00', response_id='resp_1', item_id='item_a1')
+    assert feed_lifecycle(
+        start, named, end, OutputItemCut(item_id='item_a1', heard_transcript=''), inputs_sent=1
+    ) == snapshot([])
+    assert feed_lifecycle(OutputItemCut(item_id='item_b1')) == snapshot(['lifecycle.cut_of_unknown_item'])
 
 
 async def test_recorded_abnormal_close_is_replayed_as_one() -> None:

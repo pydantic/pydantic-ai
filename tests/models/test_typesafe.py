@@ -60,7 +60,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import IsStr, RequestCapture, TestEnv, decode_request_body, try_import
 
 with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
@@ -745,7 +745,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         return 'Configured.'
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
+        body = json.loads(decode_request_body(request.content, request.headers))
         seen.append(body)
         if len(seen) == 1:
             return answers(
@@ -2130,7 +2130,9 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
 
 def none_of_these(request: httpx2.Request) -> httpx2.Response:
     """Jev answering "None of these." to every question that offers it, and the first option to any other."""
-    questions: dict[str, dict[str, Any]] = json.loads(request.content)['questions']
+    questions: dict[str, dict[str, Any]] = json.loads(decode_request_body(request.content, request.headers))[
+        'questions'
+    ]
     return answers(
         **{
             name: tool_answers_for('none' if 'none' in question['criteria'] else next(iter(question['criteria'])))
@@ -2251,7 +2253,7 @@ async def test_none_of_these_leaves_a_nested_model_default_to_apply_in_a_union_m
     """The fill of a union member Jev picked leaves out a nested model's default the same way."""
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        if list(json.loads(request.content)['questions']) == ['route']:
+        if list(json.loads(decode_request_body(request.content, request.headers))['questions']) == ['route']:
             return tool_answers('Escalated', 0.9)
         return none_of_these(request)
 

@@ -60,6 +60,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -129,6 +131,7 @@ from . import (
     ToolVisibility,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -421,12 +424,15 @@ _OPENAI_IMAGE_SIZES: tuple[_OPENAI_IMAGE_SIZE, ...] = get_args(_OPENAI_IMAGE_SIZ
 
 
 class _ChatCompletion(chat.ChatCompletion):
-    """Relaxes strict Literal validation on fields that OpenAI-compatible providers may return non-standard values for."""
+    """Relaxes validation on fields that OpenAI-compatible providers may return non-standard values for."""
 
     model_config = {'title': 'ChatCompletion'}
 
     service_tier: str | None = None  # type: ignore[reportIncompatibleVariableOverride]
     """OpenAI-compatible providers can return arbitrary `service_tier` values (e.g. `"standard"`, `"on_demand"`)."""
+
+    metadata: dict[str, Any] | None = None
+    """OpenAI-compatible providers can return non-string `metadata` values (e.g. Nebius returns a list under `weight_versions`)."""
 
 
 class _ChatCompletionChunk(ChatCompletionChunk):  # pyright: ignore[reportUnusedClass] — subclassed in openrouter.py
@@ -1562,7 +1568,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom completion validations.
         """
-        return _ChatCompletion.model_validate(response.model_dump())
+        return _ChatCompletion.model_validate(response.model_dump(warnings=False))
 
     def _missing_finish_reason(
         self, choice: chat_completion.Choice
@@ -2217,6 +2223,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         tool_call_id=_guard_tool_call_id(t=part),
                         content=part.model_response(),
                     )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):
@@ -4058,6 +4066,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         )
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         if self.tool_addition_mode != 'with_definitions':
                             # `prepare_messages` projects the delta onto the local tool-search exchange
@@ -4660,6 +4670,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _usage_received: bool | None = field(default=False, init=False)
     # Content segments are anonymous; reasoning segments also carry their field identity.
     _content_generation: int = field(default=0, init=False)
     _reasoning_generation: int = field(default=0, init=False)
@@ -4683,13 +4694,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                         'timestamp': self._provider_timestamp,
                     }
 
-                chunk_usage = self._map_usage(chunk)
-                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
-                else:
-                    self._usage += chunk_usage
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+                if chunk.usage is not None or not cumulative:
+                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -5001,6 +5010,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
@@ -5172,7 +5182,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
 
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -5207,7 +5217,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
@@ -5234,11 +5244,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Parity with the non-streaming `_process_response`: map the incomplete
                     # reason when the provider sends one, leave the finish reason unset otherwise.
                     raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -5703,6 +5713,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
+    def _record_usage(self, response: responses.Response) -> None:
+        self._add_usage(self._map_usage(response), reported=response.usage is not None)
+
     @property
     def model_name(self) -> OpenAIModelName:
         """Get the model name of the response."""
@@ -6034,9 +6047,11 @@ def _map_usage(
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
-                web_searches=web_search_requests, details={'web_search_requests': web_search_requests}
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
             )
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {
