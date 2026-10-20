@@ -62,7 +62,8 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestOrdinal:
-    async def test_agent_runs_with_ordinal_tools(self) -> None:
+    @pytest.mark.parametrize('auth', [None, ''], ids=['unset-auth', 'empty-auth'])
+    async def test_agent_runs_with_ordinal_tools(self, auth: str | None) -> None:
         server = FastMCP('ordinal-fake')
 
         @server.tool()
@@ -72,7 +73,7 @@ class TestOrdinal:
 
         agent = Agent(
             TestModel(call_tools=['ordinal_get_workspace_context']),
-            capabilities=[Ordinal(client=server)],
+            capabilities=[Ordinal(client=server, auth=auth)],
         )
         result = await agent.run('List my workspaces')
         assert 'acme' in result.output

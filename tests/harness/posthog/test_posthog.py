@@ -63,7 +63,8 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestPostHog:
-    async def test_agent_runs_with_posthog_tools(self) -> None:
+    @pytest.mark.parametrize('auth', [None, ''], ids=['unset-auth', 'empty-auth'])
+    async def test_agent_runs_with_posthog_tools(self, auth: str | None) -> None:
         server = FastMCP('posthog-fake')
 
         @server.tool()
@@ -71,7 +72,7 @@ class TestPostHog:
             """Query PostHog insights."""
             return {'name': 'Weekly signups'}
 
-        agent = Agent(TestModel(call_tools=['insight_query']), capabilities=[PostHog(client=server)])
+        agent = Agent(TestModel(call_tools=['insight_query']), capabilities=[PostHog(client=server, auth=auth)])
         result = await agent.run('Show weekly signups')
         assert 'Weekly signups' in result.output
 

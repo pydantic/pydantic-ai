@@ -92,8 +92,11 @@ class TestSlack:
             (True, '{"read_resource":"read"}'),
         ],
     )
-    async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
-        agent = Agent(TestModel(), capabilities=[Slack(client=server, read_only=read_only)])
+    @pytest.mark.parametrize('auth', [None, ''], ids=['unset-auth', 'empty-auth'])
+    async def test_agent_executes_selected_tools(
+        self, auth: str | None, server: FastMCP, read_only: bool, expected: str
+    ) -> None:
+        agent = Agent(TestModel(), capabilities=[Slack(client=server, auth=auth, read_only=read_only)])
         result = await agent.run('Use the tools')
         assert result.output == expected
 

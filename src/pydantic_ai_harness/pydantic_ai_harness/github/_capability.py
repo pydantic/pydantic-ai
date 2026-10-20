@@ -52,9 +52,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and (
-            self.auth is not None or self.url != GITHUB_MCP_URL or self.toolsets is not None
-        ):
+        if self.client is not None and (self.auth or self.url != GITHUB_MCP_URL or self.toolsets is not None):
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`, `url`, or `toolsets`.')
         # GitHub reads an empty toolsets header as its defaults, which include write tools.
         if self.toolsets == []:

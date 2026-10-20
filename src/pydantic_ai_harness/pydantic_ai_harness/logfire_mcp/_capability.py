@@ -64,7 +64,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     """Hosted US, hosted EU, or self-hosted MCP endpoint."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and (self.auth is not None or self.url != LOGFIRE_US_MCP_URL):
+        if self.client is not None and (self.auth or self.url != LOGFIRE_US_MCP_URL):
             raise UserError('`client` owns the connection, so it cannot be combined with `auth` or `url`.')
 
     @classmethod

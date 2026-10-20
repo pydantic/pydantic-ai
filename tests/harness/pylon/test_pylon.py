@@ -68,7 +68,8 @@ class TestPylon:
         ('read_only', 'expected'),
         [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
     )
-    async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
+    @pytest.mark.parametrize('auth', [None, ''], ids=['unset-auth', 'empty-auth'])
+    async def test_read_only_keeps_only_read_only_tools(self, auth: str | None, read_only: bool, expected: str) -> None:
         server = FastMCP('pylon-fake')
 
         @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
@@ -83,7 +84,7 @@ class TestPylon:
         def unmarked() -> str:
             return 'unmarked'
 
-        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=read_only)])
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, auth=auth, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
 
     async def test_read_only_warns_when_it_removes_every_tool(self) -> None:
