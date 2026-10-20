@@ -592,14 +592,7 @@ class TestBackgroundTools:
     async def test_instances_with_distinct_ids_schedule_a_call_once(self, background: bool | str, args: str) -> None:
         """When two instances select the same tool, the outer one runs it and the inner one stays out of the way."""
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if _follow_up_seen(messages, "Background tool 'slow'"):
-                return ModelResponse(parts=[TextPart(content='done')])
-            if _ack_seen(messages):
-                return ModelResponse(parts=[TextPart(content='waiting')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='slow', args=args, tool_call_id='call-slow')])
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools(id='a'), BackgroundTools(id='b')])
+        agent = Agent(_model_calling('slow', args), capabilities=[BackgroundTools(id='a'), BackgroundTools(id='b')])
 
         @agent.tool_plain(metadata={'background': background})
         async def slow() -> str:
@@ -616,7 +609,8 @@ class TestBackgroundTools:
             for item in part.content
             if isinstance(item, TextContent)
         ]
-        assert follow_ups == ["Background tool 'slow' (task call-slow) completed.\nResult: slow result"]
+        assert len(follow_ups) == 1
+        assert re.fullmatch(r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result", follow_ups[0])
 
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
