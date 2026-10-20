@@ -1,15 +1,17 @@
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal, assert_never, cast, overload
 
-from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..exceptions import ModelHTTPError, ModelOverloadedError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -19,6 +21,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -49,6 +53,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
@@ -71,7 +76,7 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, TextGenerationError
+    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError, OverloadedError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -89,19 +94,40 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except HfHubHTTPError as e:
-        raise ModelHTTPError(
+        category = (
+            ModelOverloadedError
+            if _tgi_error_type(e.response.content) == 'overloaded'
+            else _model_errors.http_status_category(e.response.status_code)
+        )
+        raise ModelHTTPError.for_category(
+            category,
             status_code=e.response.status_code,
             model_name=model_name,
             body=e.response.content,
             headers=dict(e.response.headers),
         ) from e
     except TextGenerationError as e:
-        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
-        # status code to report.
-        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received. An overloaded
+        # TGI server answers with a 429 before a stream opens, so the in-stream error gets that too; other errors
+        # have no clear status.
+        if isinstance(e, OverloadedError):
+            raise ModelHTTPError.for_category(
+                ModelOverloadedError, status_code=429, model_name=model_name, body=str(e), in_stream=True
+            ) from e
+        raise ModelAPIError(model_name=model_name, message=str(e), in_stream=True) from e
     except (httpx.TransportError, InferenceTimeoutError) as e:
         # `huggingface_hub` doesn't wrap connection errors and read timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx.TimeoutException | InferenceTimeoutError)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
+
+
+def _tgi_error_type(content: bytes) -> object:
+    """The `error_type` of a Text Generation Inference error body, like `'overloaded'`."""
+    try:
+        data: object = json.loads(content)
+    except ValueError:
+        return None
+    return data.get('error_type') if _utils.is_str_dict(data) else None
 
 
 __all__ = (
@@ -509,6 +535,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -566,6 +594,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.aclose()
@@ -575,7 +604,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                self._usage += _map_usage(chunk)
+                self._add_usage(_map_usage(chunk), reported=chunk.usage is not None)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -635,7 +664,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     return usage.RequestUsage(
         input_tokens=response_usage.prompt_tokens,

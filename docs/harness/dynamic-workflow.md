@@ -22,7 +22,7 @@ If you have met [Code Mode](code-mode.md), this will feel familiar -- the same [
 The harness has two delegation capabilities. They trade in the same currency -- named, isolated sub-agent runs -- but at different altitudes:
 
 - [`SubAgents`](subagents.md) exposes one `delegate_task(agent_name, task)` tool. Each delegation is its own tool call and its own model turn. It is the right fit when delegations are occasional, or when each result needs the parent's judgment before the next one.
-- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and intermediate results never enter the parent's context.
+- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and only what the script returns or prints (plus bounded previews of completed results on failure or budget exhaustion) reaches the parent.
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow catalog without changing the sub-agents themselves.
 
@@ -153,7 +153,7 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 
 ### Workflows do not nest
 
-A sub-agent cannot start its own workflow; a nested `run_workflow` call returns a terminal error instead of running. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
+A sub-agent cannot start its own workflow: a sub-agent that has the `DynamicWorkflow` capability is not offered `run_workflow` while it runs inside a workflow. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
 
 ## Renaming a sub-agent: `WorkflowAgent`
 
@@ -208,7 +208,7 @@ DynamicWorkflow(
 The script runs in Monty, a subset of Python. Knowing the edges matters:
 
 - No third-party libraries.
-- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and clock operations are not configured for workflow scripts.
+- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
@@ -256,7 +256,7 @@ workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates bef
 WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
-    description=None,             # function docstring; falls back to agent.description
+    description=None,             # function docstring; None falls back to agent.description, '' hides it
 )
 ```
 

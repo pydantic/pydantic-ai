@@ -88,9 +88,12 @@ def _loaded(library: Path, name: str, body: str = 'Follow these directions.') ->
 
 
 def _catalog(*entries: str) -> str:
+    """The deferred capability catalog as `FunctionModel` receives it: tagged, since its changes are appended."""
     return (
+        '<context id="capability:deferred_capabilities">\n'
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
-        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries)
+        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries) + '\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
 
 
@@ -318,9 +321,12 @@ async def _names(skills: Skills[Any], workspace: Path) -> list[str]:
 
 
 async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
+    """The catalog entries a run over `workspace` lists, one per line."""
     run = await _run(skills, workspace)
     assert run.instructions is not None
-    return run.instructions.split('\n', 1)[1]
+    # Between the catalog's opening sentence and the closing tag its changes are appended under.
+    entries = run.instructions.split('\n', 2)[2]
+    return entries.rsplit('\n</context>\n', 1)[0]
 
 
 class TestSkillValidation:
