@@ -109,13 +109,16 @@ value this version does not accept) is read as empty, and `author_capability` an
 `disable_authored_capability` raise `UserError` instead of replacing it, so its entries are
 kept until you repair or remove it.
 
-The store serializes its own tool calls, but not other processes or agents: point each
-`directory` at one agent at a time, or concurrent authoring can lose manifest updates.
+Every store over one `directory` in a process shares a lock, so agents in the same process
+do not lose each other's manifest updates. Separate processes are not coordinated: point
+each `directory` at one process at a time.
 
 Capability names are at most 64 lowercase letters, digits, and underscores, starting with a
-letter; reusing a name replaces the previous capability of that name. Code that fails
-validation is still written to disk (so it can be inspected) and recorded with its
-`last_error` set; `load_active()` skips it.
+letter. Reusing a name replaces the previous capability of that name once the new code
+passes validation. Code that fails is kept on disk so it can be inspected. If the name
+already has a version that passed validation, that version stays in place and the rejected
+code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and
+recorded with its `last_error` set; `load_active()` skips it.
 
 ## Durable execution
 
@@ -153,8 +156,35 @@ executing on your host.
 Authored code first runs when the model calls `author_capability`, not on the next run:
 validation executes the module body, the constructor, and the static getters in the current
 run, with the agent process's environment and permissions, even when validation then
-rejects the code. Validation waits for that code to return, so authored code that blocks
-also blocks the tool call, and cancelling the run does not interrupt it.
+rejects the code. If that code blocks, cancelling the run stops waiting for it, but its
+worker thread runs until the code returns, and later authoring calls on the same
+`directory` wait for it. `store.load_active()` runs authored code the same way, in the
+calling thread.
+
+To have a person approve authored code before any of it runs, require approval for
+`author_capability` with a
+[`ToolGuardrail`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/).
+The run then ends with a `DeferredToolRequests` output for the call, which you approve or
+deny as described in
+[Human-in-the-loop tool approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval):
+
+```python
+from pathlib import Path
+
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import CapabilityCreation, GuardrailResult, ToolGuardrail
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[
+        LocalWorkspace('.'),
+        CapabilityCreation(directory=Path('.authored')),
+        ToolGuardrail(guard=lambda call: GuardrailResult.approve(), tools=['author_capability']),
+    ],
+    output_type=[str, DeferredToolRequests],
+)
+```
 
 If the agent also has file or shell tools (such as `FileSystem` or `Shell`) over a
 workspace that contains `directory`, as with `LocalWorkspace('.')` and

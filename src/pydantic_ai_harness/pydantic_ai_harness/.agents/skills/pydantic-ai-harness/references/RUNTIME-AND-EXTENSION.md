@@ -433,8 +433,11 @@ model's code yourself. Authored code runs during `author_capability` validation,
 `load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
 workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
 a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
-toolset. The authoring tools still work. `guidance=''` drops the built-in system-prompt guidance.
-`CapabilityCreation` is not spec-serializable.
+toolset. The authoring tools still work. A failed re-author keeps the version that last passed
+validation and saves the rejected code as `<name>.rejected.py`. To have a person approve authored
+code before it runs, add `ToolGuardrail(guard=lambda call: GuardrailResult.approve(),
+tools=['author_capability'])` with `output_type=[str, DeferredToolRequests]`. `guidance=''` drops the
+built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs
 

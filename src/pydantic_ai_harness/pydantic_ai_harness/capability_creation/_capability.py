@@ -123,17 +123,17 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
     @durable_operation('write')
     async def _write(self, name: str, code: str) -> AuthoredCapability | RetryRequest:
         try:
-            return await anyio.to_thread.run_sync(self.store.write, name, code)
+            return await anyio.to_thread.run_sync(self.store.write, name, code, abandon_on_cancel=True)
         except ValueError as exc:
             return RetryRequest(str(exc))
 
     @durable_operation('list_all')
     async def _list_all(self) -> list[AuthoredCapability]:
-        return await anyio.to_thread.run_sync(self.store.list_all)
+        return await anyio.to_thread.run_sync(self.store.list_all, abandon_on_cancel=True)
 
     @durable_operation('disable')
     async def _disable(self, name: str) -> bool:
-        return await anyio.to_thread.run_sync(self.store.disable, name)
+        return await anyio.to_thread.run_sync(self.store.disable, name, abandon_on_cancel=True)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

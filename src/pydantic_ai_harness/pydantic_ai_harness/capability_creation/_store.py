@@ -6,6 +6,10 @@ error) and is the surface a UI can read. Updates are a read-modify-write upsert
 keyed by name. Reads are fail-soft: a broken entry is skipped rather than raised.
 Writes refuse an unreadable manifest rather than replacing it, so its entries
 are not lost.
+
+Every store over one directory in this process shares a lock, so two agents or
+toolsets over the same directory do not lose each other's manifest updates.
+Separate processes are not coordinated.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -28,6 +33,16 @@ from pydantic_ai_harness.capability_creation._validate import (
 )
 
 _NAME_RE = re.compile(r'[a-z][a-z0-9_]{0,63}')
+
+_DIRECTORY_LOCKS: dict[Path, threading.Lock] = {}
+_DIRECTORY_LOCKS_GUARD = threading.Lock()
+
+
+def _directory_lock(directory: Path) -> threading.Lock:
+    """The lock shared by every store over `directory` in this process."""
+    key = directory.resolve()
+    with _DIRECTORY_LOCKS_GUARD:
+        return _DIRECTORY_LOCKS.setdefault(key, threading.Lock())
 
 
 class AuthoredCapability(BaseModel):
@@ -90,22 +105,19 @@ class CapabilityStore:
             os.unlink(tmp_name)
             raise
 
-    def _upsert(self, record: AuthoredCapability) -> None:
-        manifest = self._load_manifest(for_update=True)
-        for index, existing in enumerate(manifest.capabilities):
-            if existing.name == record.name:
-                manifest.capabilities[index] = record
-                break
-        else:
-            manifest.capabilities.append(record)
-        self._save_manifest(manifest)
-
     def write(self, name: str, code: str) -> AuthoredCapability:
-        """Write `code` to `<name>.py`, validate it, and upsert the manifest entry.
+        """Validate `code` as the capability `name` and save it as `<name>.py`.
 
         Raises `ValueError` for an invalid name and `UserError` for an unreadable
-        manifest, both before writing anything. Code that fails validation is
-        still written (so it can be inspected) and recorded with `last_error` set;
+        manifest, both before writing anything.
+
+        The code is validated before it replaces anything. Code that passes
+        replaces `<name>.py` and its manifest entry. Code that fails is kept on
+        disk so it can be inspected: when `name` already has a version that
+        passed validation, that version and its manifest entry stay as they
+        are, the rejected code is saved as `<name>.rejected.py`, and the returned
+        record (with that `module_file`) is not saved to the manifest. Otherwise
+        the code is saved as `<name>.py` and recorded with `last_error` set, so
         `load_active` skips it.
         """
         if not _NAME_RE.fullmatch(name):
@@ -113,29 +125,44 @@ class CapabilityStore:
                 f'invalid capability name {name!r}: use at most 64 lowercase letters, digits, and underscores, '
                 f'starting with a letter'
             )
-        self._load_manifest(for_update=True)
-        self.directory.mkdir(parents=True, exist_ok=True)
-        path = self.directory / f'{name}.py'
-        path.write_text(code, encoding='utf-8')
-        try:
-            class_name = validate_capability_file(path)
-            record = AuthoredCapability(name=name, module_file=path.name, class_name=class_name)
-        except CapabilityValidationError as exc:
-            record = AuthoredCapability(name=name, module_file=path.name, class_name='', last_error=str(exc))
-        self._upsert(record)
-        return record
+        with _directory_lock(self.directory):
+            manifest = self._load_manifest(for_update=True)
+            previous = next((record for record in manifest.capabilities if record.name == name), None)
+            self.directory.mkdir(parents=True, exist_ok=True)
+            live = self.directory / f'{name}.py'
+            rejected = self.directory / f'{name}.rejected.py'
+            candidate = self.directory / f'{name}.candidate.py'
+            candidate.write_text(code, encoding='utf-8')
+            try:
+                class_name = validate_capability_file(candidate)
+            except CapabilityValidationError as exc:
+                if previous is not None and previous.last_error is None and live.exists():
+                    os.replace(candidate, rejected)
+                    return AuthoredCapability(name=name, module_file=rejected.name, class_name='', last_error=str(exc))
+                record = AuthoredCapability(name=name, module_file=live.name, class_name='', last_error=str(exc))
+            else:
+                record = AuthoredCapability(name=name, module_file=live.name, class_name=class_name)
+                rejected.unlink(missing_ok=True)
+            os.replace(candidate, live)
+            if previous is None:
+                manifest.capabilities.append(record)
+            else:
+                manifest.capabilities[manifest.capabilities.index(previous)] = record
+            self._save_manifest(manifest)
+            return record
 
     def disable(self, name: str) -> bool:
         """Mark the named capability disabled so `load_active` stops returning it. Returns whether it existed."""
-        manifest = self._load_manifest(for_update=True)
-        found = False
-        for record in manifest.capabilities:
-            if record.name == name:
-                record.status = 'disabled'
-                found = True
-        if found:
-            self._save_manifest(manifest)
-        return found
+        with _directory_lock(self.directory):
+            manifest = self._load_manifest(for_update=True)
+            found = False
+            for record in manifest.capabilities:
+                if record.name == name:
+                    record.status = 'disabled'
+                    found = True
+            if found:
+                self._save_manifest(manifest)
+            return found
 
     def list_all(self) -> list[AuthoredCapability]:
         """Return every manifest entry, in insertion order."""
@@ -152,22 +179,23 @@ class CapabilityStore:
         its error, a re-fixed entry clears it, so the manifest stays truthful about
         which capabilities are actually active.
         """
-        manifest = self._load_manifest()
-        instances: list[AbstractCapability[object]] = []
-        changed = False
-        for record in manifest.capabilities:
-            if record.status != 'active':
-                continue
-            try:
-                instances.append(load_capability_instance(self._module_path(record)))
-            except CapabilityValidationError as exc:
-                if record.last_error != str(exc):
-                    record.last_error = str(exc)
+        with _directory_lock(self.directory):
+            manifest = self._load_manifest()
+            instances: list[AbstractCapability[object]] = []
+            changed = False
+            for record in manifest.capabilities:
+                if record.status != 'active':
+                    continue
+                try:
+                    instances.append(load_capability_instance(self._module_path(record)))
+                except CapabilityValidationError as exc:
+                    if record.last_error != str(exc):
+                        record.last_error = str(exc)
+                        changed = True
+                    continue
+                if record.last_error is not None:
+                    record.last_error = None
                     changed = True
-                continue
-            if record.last_error is not None:
-                record.last_error = None
-                changed = True
-        if changed:
-            self._save_manifest(manifest)
-        return instances
+            if changed:
+                self._save_manifest(manifest)
+            return instances
