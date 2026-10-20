@@ -292,11 +292,15 @@ def restore_telemetry_mcp_url_ids(
             url_ids.update(mcp_telemetry_url_ids(configured_capabilities))
             if any(isinstance(capability, DynamicCapability) for capability in configured_capabilities):
                 # Legacy payloads cannot resolve a dynamic capability's local MCP toolset.
-                # Its generated capability and toolset IDs are equal in the tool definition.
+                # Match the metadata MCPToolset writes before treating equal IDs as MCP-owned.
                 legacy_dynamic_local_ids = {
                     tool.capability_id
                     for tool in parameters.function_tools
-                    if tool.capability_id is not None and tool.capability_id == tool.toolset_id
+                    if tool.capability_id is not None
+                    and tool.capability_id == tool.toolset_id
+                    and tool.metadata is not None
+                    and {'meta', 'annotations', 'task'} <= tool.metadata.keys()
+                    and isinstance(tool.metadata['task'], bool)
                 }
                 url_ids.update(legacy_dynamic_local_ids)
             for toolset in agent.toolsets:
