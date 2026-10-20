@@ -74,6 +74,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolDone,
     TurnEnded,
     TurnStarted,
+    image_id,
 )
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -468,12 +469,50 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
         for _ in range(3):
             messages += receive_until(socket, TurnEnded)[0]
         started_items = [message.item for message in messages if isinstance(message, TurnStarted)]
-        assert [item.text for item in started_items if item] == ['first', 'what is this?\n[image]', '[image]']
+        red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
+        shown: list[tuple[str, list[str]]] = [('first', []), ('what is this?', [image_id(red)]), ('', [image_id(blue)])]
+        assert [(item.text, item.images) for item in started_items if item] == shown
+        history = [item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user']
+        assert [(item['text'], item['images']) for item in history] == shown, 'the same IDs after a reload'
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
-    red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
     assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
     assert web_.shell.images.pending == {}, 'sent images are let go'
+
+
+def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> None:
+    """A prompt's images are served by ID, from a running turn's prompt and from the saved history."""
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    [red] = decode_images([encoded(png('red'))])
+    route = f'/api/sessions/{web_.shell.session.conversation_id}/images/{image_id(red)}'
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
+        web_.portal.call(started.wait)
+        for path in (route, f'/api/images/{image_id(red)}'):
+            response = web_.get(path)
+            assert (response.status_code, response.content) == (200, red.data), 'while its turn runs'
+            assert response.headers['content-type'] == 'image/png'
+            assert response.headers['cache-control'] == 'private, max-age=31536000, immutable'
+        web_.portal.call(release.set)
+        receive_until(socket, TurnEnded)
+        # A later prompt without images leaves only the saved history to find it in.
+        web_.post('/api/input', {'text': 'again'})
+        receive_until(socket, TurnEnded)
+        assert web_.get(route).content == red.data, 'from the saved history'
+        unknown = web_.get(f'/api/images/{"0" * 64}')
+        assert (unknown.status_code, unknown.json()) == (404, {'detail': 'No such image in this session.'})
+        assert web_.client.get(route).status_code == 403, 'not without the token'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
 
 
 def test_a_prompt_keeps_its_images_while_it_waits_for_the_terminal(

@@ -43,6 +43,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     WorkspaceOpened,
     WorkspacesInfo,
     dump,
+    find_image,
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
@@ -221,6 +222,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     _page(app, token=token, static=static)
     _prompt(app, service)
+    _images(app, service)
     _sessions(app, service)
     _plugins(app, service)
     _commands(app, service)
@@ -323,6 +325,28 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     @app.get('/api/models')
     async def models() -> list[str]:
         return await service.models()
+
+
+def _images(app: FastAPI, service: WebService) -> None:
+    """The images of a session's prompts, by the IDs its transcript items list, for the page to show.
+
+    Each route is there twice, as the composer's are. The page fetches them with the token header and
+    shows them as `data:` URLs, which its content policy allows.
+    """
+
+    async def image(image_id: str, conversation_id: str | None = None) -> Response:
+        images = _run(service.default if conversation_id is None else lambda: service.session(conversation_id)).images()
+        # Off the loop: hashing every image of a long conversation would stall every stream meanwhile.
+        found = await to_thread.run_sync(find_image, images, image_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail='No such image in this session.')
+        # An ID is the digest of the bytes, so they never change.
+        return Response(
+            found.data, media_type=found.media_type, headers={'Cache-Control': 'private, max-age=31536000, immutable'}
+        )
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/images/{{image_id}}')(image)
 
 
 def _answer(answer: Answer) -> AskUserAnswer:

@@ -1312,7 +1312,9 @@ Images pasted or dropped into the composer go with the next prompt: the page sho
 thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
 `images`, base64-encoded), which the server checks and converts to PNG as the terminal does a pasted
 image, then enters with `send_input(text, images=...)`. A prompt may be images alone; a `/command`
-takes none.
+takes none. A prompt's transcript item lists its images by ID (`images`, the SHA-256 of the bytes),
+and the page fetches each from `GET /api/sessions/ID/images/IMAGE_ID` with the token header,
+showing it as a thumbnail in the message.
 
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as

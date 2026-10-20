@@ -1,6 +1,7 @@
 """The `web` plugin's parts on their own: event translation, history, the answerer race, the server, and `--web`."""
 
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -281,9 +282,11 @@ def test_history_items() -> None:
         ('tool', 'shell', 'error'),
         ('tool', 'grep', 'interrupted'),
     ]
-    assert items[0].text == 'Look\n[image]\n[BinaryContent]'
+    assert (items[0].text, items[0].images) == ('Look\n[BinaryContent]', [hashlib.sha256(b'png').hexdigest()])
     image_only = UserPromptPart(['', BinaryContent(b'png', media_type='image/png')])
-    assert history_items([ModelRequest(parts=[image_only])])[0].text == '[image]', 'a prompt of images alone'
+    [alone] = history_items([ModelRequest(parts=[image_only])])
+    assert (alone.text, alone.images) == ('', items[0].images), 'a prompt of images alone'
+    assert history_items([ModelRequest(parts=[UserPromptPart('plain')])])[0].images == []
     note = MontyCell(code='x = 1', returned='{}').note()
     assert history_items([ModelRequest(parts=[UserPromptPart([note, 'what is x?'])])])[0].text == 'what is x?'
     assert items[3].text.endswith('\n… 5 more characters') and len(items[3].text) < len(long) + 40

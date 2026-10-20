@@ -4,8 +4,9 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
@@ -98,6 +99,8 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    images: list[str] = field(default_factory=list[str])
+    """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
 
 
 @dataclass(kw_only=True)
@@ -905,23 +908,54 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
     return text
 
 
+def image_id(image: BinaryContent) -> str:
+    """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
+    return hashlib.sha256(image.data).hexdigest()
+
+
+def user_images(part: UserPromptPart) -> list[BinaryContent]:
+    """The images a prompt carries, which the browser shows as thumbnails."""
+    if isinstance(part.content, str):
+        return []
+    return [item for item in part.content if isinstance(item, BinaryContent) and item.is_image]
+
+
 def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show.
+    """A prompt's text, naming the attachments the browser shows neither as text nor as thumbnails.
 
     Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
     return '\n'.join(
-        item
-        if isinstance(item, str)
-        else '[image]'
-        if isinstance(item, BinaryContent) and item.is_image
-        else f'[{type(item).__name__}]'
+        item if isinstance(item, str) else f'[{type(item).__name__}]'
         for item in part.content
         # A prompt sent as images alone has an empty text.
         if not (isinstance(item, str) and (not item or item.startswith(NOTE_PREFIX)))
+        and not (isinstance(item, BinaryContent) and item.is_image)
     )
+
+
+def user_item(part: UserPromptPart, *, id: str) -> Item:
+    """A prompt's transcript item: its text, and its images by ID."""
+    return Item(id=id, kind='user', text=user_text(part), images=[image_id(image) for image in user_images(part)])
+
+
+def find_image(images: Iterable[BinaryContent], wanted: str) -> BinaryContent | None:
+    """The image of `images` whose ID is `wanted`, if any."""
+    return next((image for image in images if image_id(image) == wanted), None)
+
+
+def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
+    """Every image the prompts of a history carry."""
+    return [
+        image
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for image in user_images(part)
+    ]
 
 
 def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
@@ -932,7 +966,7 @@ def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
+                    items.append(user_item(part, id=f'h{len(items)}'))
                 elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'
