@@ -304,7 +304,7 @@ calls.
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each Exa request is recorded, so a
+Under [durable execution](../durable_execution/overview.md), each Exa request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -315,7 +315,7 @@ On Temporal an activity has 60 seconds by default, which `deep_search` can
 exceed. Give the tool calls longer with
 `TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](durable-execution.md#temporal-timeouts). `ExaAgent` polls its run in a capability
+as in [Temporal timeouts](../durable_execution/temporal.md#harness-command-timeouts). `ExaAgent` polls its run in a capability
 activity, which takes the base `activity_config`, so set its
 `start_to_close_timeout` above `timeout_ms`.
 
@@ -358,8 +358,10 @@ To use the provider's search where there is one and Exa's elsewhere, either:
   and Exa's `web_search` is only sent to models without one. `get_page` and `deep_search` stay available on every model.
   `include_domains` and `exclude_domains` become the native tool's
   `allowed_domains` and `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  Exa's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means Exa
+  searches.
 - Or pass Exa's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 

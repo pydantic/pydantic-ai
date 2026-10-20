@@ -17,7 +17,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 !!! tip
-    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI.
+    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI. To let the users of your open-source or local app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md).
 
 ## Environment variable
 
@@ -346,6 +346,15 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without the setting has no recorded history, and is continued from as before.
+
+!!! warning "Redacting stored history"
+    The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] to make it an HMAC.
+
+    Don't just clear `history_digest`: a response without one is trusted and continued from, while OpenAI still holds the unredacted copy. If you do strip it, also clear `provider_response_id` on the same responses, so nothing continues from them.
+
+Every model continuing the same conversations needs the same `history_digest_key`, including workers under [durable execution](../durable_execution/overview.md); a response recorded with a different key, or none, is resent rather than continued from. Computing the digest serializes the history on each request, which costs local work proportional to the conversation's length.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -406,7 +415,7 @@ result = agent.run_sync('What did we discuss last time?', model_settings=model_s
 print(result.output)
 ```
 
-When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response. OpenAI keeps the conversation itself, so it can't be rewritten from the client: changes to the messages before that response, by a [history processor](../message-history.md#processing-message-history) or [compaction](../capabilities/compaction.md) for instance, don't reach the model. Unlike [`openai_previous_response_id`](#referencing-earlier-responses), which falls back to sending the full history, there is no conversation to fall back to without duplicating its items.
 
 When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 

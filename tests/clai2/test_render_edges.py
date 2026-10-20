@@ -120,6 +120,19 @@ async def test_thinking_deltas_and_abort() -> None:
     await renderer.abort()
 
 
+async def test_a_part_follows_its_console_to_another_file() -> None:
+    """The terminal showing another session hands its console a new file mid-part: the rest of the part goes there."""
+    before, after = io.StringIO(), io.StringIO()
+    console = Console(file=before, force_terminal=False)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('shown before\nhalf a ')))
+    console.file = after
+    await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='line\n')))
+    await renderer.finish()
+    assert 'shown before' in before.getvalue() and 'half a' not in before.getvalue()
+    assert 'half a line' in after.getvalue() and 'shown before' not in after.getvalue()
+
+
 @pytest.mark.parametrize('terminal', [False, True])
 @pytest.mark.parametrize('thinking', [False, True])
 async def test_echo_prompt_resumes_active_part(thinking: bool, terminal: bool) -> None:

@@ -400,6 +400,28 @@ async def test_an_unreadable_terminal_still_ends_the_response_it_closed() -> Non
     )
 
 
+async def test_an_unreadable_terminal_ends_a_response_created_without_an_id() -> None:
+    stream = Stream(
+        created(None),
+        {'type': 'response.done', 'response': 'garbled'},
+        created('resp_2'),
+        done('resp_2'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1'),
+            ResponseEnded(response_id='pydantic_ai_response_1', status='lost'),
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_2'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
 async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     stream = Stream({'type': 'input_audio_buffer.committed'}, created('resp_1'), done('resp_1'))
     assert await stream.rest() == snapshot(
@@ -937,13 +959,13 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
-    # The two notes are equal, so only identity tells them apart.
-    assert first == second
+    # The two note the same inputs, so only identity tells them apart.
+    assert first.sent_before == second.sent_before
     lifecycle.audio_commit_failed(second)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
     third = lifecycle.audio_commit_sent()
     lifecycle.audio_commit_failed(first)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
     lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(third)
-    assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
+    assert not lifecycle._commits  # pyright: ignore[reportPrivateUsage]

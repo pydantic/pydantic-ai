@@ -1666,8 +1666,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
-    commits_announced: list[None] = []
-    conn._set_audio_commit_listener(lambda: commits_announced.append(None))  # pyright: ignore[reportPrivateUsage]
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)
@@ -1685,8 +1683,6 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
         'response.create',
     ]
     assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
-    # The session placed the turn when the commit first started going out; sending it again doesn't move it.
-    assert len(commits_announced) == 1
 
 
 async def test_audio_kept_back_during_a_reply_is_the_latest_input_once_sent() -> None:
@@ -2279,8 +2275,8 @@ async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of
     await conn.send(_AUDIO)
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]
     # A request committing nothing has no snapshot to drop.
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
-    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._commits == deque()  # pyright: ignore[reportPrivateUsage]

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import type { MenuField } from '../protocol'
+import { McpSection } from './McpSection'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, BrainIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, BrainIcon, FileIcon, InfoIcon, KeyIcon, PuzzleIcon, ServerIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -37,7 +38,41 @@ export const SECTIONS = [
     hint: 'Turn plugins on and off and edit their settings, as /plugins does.',
     commands: [],
   },
+  {
+    id: 'keys',
+    label: 'Keys & accounts',
+    icon: KeyIcon,
+    hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave CLAI.',
+    commands: ['keys', 'login', 'accounts'],
+  },
+  {
+    id: 'mcp',
+    label: 'MCP servers',
+    icon: ServerIcon,
+    hint: 'Connect MCP servers whose tools the agent can use, and manage them, as /mcp does.',
+    commands: ['mcp'],
+  },
+  {
+    id: 'system-prompt',
+    label: 'System prompt',
+    icon: FileIcon,
+    hint: "Your own instructions, sent after CLAI's, and the full prompt the model last received.",
+    commands: ['system_prompt'],
+  },
+  {
+    id: 'about',
+    label: 'About',
+    icon: InfoIcon,
+    hint: 'The CLAI running now, and the channel /update installs from.',
+    commands: ['update'],
+  },
 ] as const satisfies readonly Section[]
+
+/** The Keys & accounts section's cards: each the declared menu of a command. */
+const KEYS_MENUS = [
+  { command: 'keys', title: 'API keys' },
+  { command: 'accounts', title: 'Accounts' },
+] as const
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
 
@@ -143,6 +178,23 @@ export function SettingsWindow({
               onNotice={onNotice}
             />
           )}
+          {section === 'keys' && (
+            <div className="settings-groups">
+              {KEYS_MENUS.map(({ command, title }) => (
+                <section key={command} className="settings-group">
+                  <h3 className="settings-group-title">{title}</h3>
+                  <div className="settings-card">
+                    <MenuForm
+                      target={{ kind: 'commands', name: command }}
+                      version={settingsVersion}
+                      onError={onError}
+                      onNotice={onNotice}
+                    />
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
           {section === 'plugins' && (
             <PluginsPanel
               version={pluginsVersion}
@@ -151,6 +203,29 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'mcp' && (
+            <McpSection version={settingsVersion} running={running} onError={onError} onNotice={onNotice} />
+          )}
+          {section === 'system-prompt' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'system_prompt' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
+          )}
+          {section === 'about' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'update' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
           )}
         </div>
       </main>

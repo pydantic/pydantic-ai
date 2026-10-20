@@ -27,7 +27,12 @@ from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
-from . import ModelRequestParameters, download_item
+from . import (
+    ModelRequestParameters,
+    _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
+    _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ._prompt_cache import (
     excess_cache_points,
     previous_tail_needing_breakpoint,
@@ -997,6 +1002,17 @@ class OpenRouterModel(OpenAIChatModel):
         return frozenset({WebSearchTool, AdvisorTool})
 
     @override
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings that OpenRouter's web search server tool doesn't take.
+
+        That is `external_web_access=False`. The domain filters and `max_uses` are forwarded, though whether they
+        take effect depends on the search engine OpenRouter selects.
+        """
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'max_uses'}
+        return frozenset()
+
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1137,7 +1153,13 @@ class OpenRouterModel(OpenAIChatModel):
             )
             if previous_tail is not None:
                 self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
-            self._add_cache_control_to_message(openai_messages[-1], cache_messages)
+            # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
+            # and the next request won't send it, so the breakpoint goes on the message before it.
+            end, _ = _request_scoped_suffix_start(
+                openai_messages, _request_scoped_tail_texts(messages), _user_message_text
+            )
+            if end:
+                self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
 
         if (
             model_settings
@@ -1447,3 +1469,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'error']
     ) -> FinishReason | None:
         return _CHAT_FINISH_REASON_MAP.get(key)
+
+
+def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
+    """A user message's text content, which is how a request-scoped prompt renders."""
+    content = message.get('content')
+    return content if message['role'] == 'user' and isinstance(content, str) else None

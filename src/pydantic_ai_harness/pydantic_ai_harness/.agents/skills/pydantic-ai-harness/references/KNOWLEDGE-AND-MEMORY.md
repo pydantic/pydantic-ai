@@ -226,7 +226,7 @@ agent = Agent(
 ```
 
 Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='error',
-duplicate_names='error', workspace=None)`. `directories` is one path or a sequence of library
+duplicate_names='error', unknown_names='error', workspace=None)`. `directories` is one path or a sequence of library
 directories (not individual skill folders), in precedence order.
 
 To layer project and personal libraries as coding agents do, pass
@@ -258,6 +258,7 @@ Gotchas:
   not compared) counts once.
 - `include` and `exclude` are mutually exclusive; unknown names fail at run start, and so do
   duplicate selected names and missing library paths with the default `'error'` options.
+  `unknown_names='skip'` ignores names no library has, for a selection shared across projects.
   Malformed frontmatter or a name not matching its directory warns and skips that skill.
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's

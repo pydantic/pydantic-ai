@@ -507,6 +507,22 @@ pre {
   background: var(--amber);
 }
 
+/* A running session with input queued behind its turn: the running dot, ringed. */
+.state.queued {
+  background: var(--lithium);
+  outline: 1.5px solid var(--lithium);
+  outline-offset: 1.5px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--lithium) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
+/* A question or dialog waits for the user: amber, and pulsing, unlike a cancelled turn's. */
+.state.asking {
+  background: var(--amber);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 60%, transparent);
+  animation: pulse 1.6s ease-out infinite;
+}
+
 @keyframes pulse {
   70% {
     box-shadow: 0 0 0 6px transparent;
@@ -795,6 +811,22 @@ pre {
   background: var(--surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A sent prompt's images, as the composer showed them, above its text. */
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-images.captioned {
+  margin-bottom: 8px;
+}
+
+.attachment.missing {
+  border-style: dashed;
 }
 
 .markdown {
@@ -1273,6 +1305,59 @@ pre {
   max-height: 240px;
   line-height: 1.5;
   font-size: 14.5px;
+}
+
+/* Images pasted or dropped for the next prompt, above the text they go with. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.attachment {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.attachment:hover .attachment-remove,
+.attachment-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .attachment-remove {
+    opacity: 1;
+  }
 }
 
 .composer textarea::placeholder {
@@ -3428,4 +3513,415 @@ textarea.setting-input {
 
 .settings-pane.models .setting-submenu .setting-select {
   width: 180px;
+}
+
+/* A dialog's text keeps its line breaks and indentation, as the terminal's panel shows them. */
+.dialog-description p,
+.dialog-shown p {
+  white-space: pre-wrap;
+}
+
+/* Settings: the MCP servers section. */
+
+.mcp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mcp-head .settings-group-title {
+  margin: 0;
+}
+
+.mcp-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mcp-server {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-server:last-child {
+  border-bottom: 0;
+}
+
+.mcp-dot {
+  flex: none;
+  align-self: flex-start;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.mcp-dot.running {
+  background: var(--green);
+}
+
+.mcp-dot.ready {
+  border: 1.5px solid var(--green);
+  background: transparent;
+}
+
+.mcp-dot.error {
+  background: var(--red);
+}
+
+.mcp-dot.sign-in {
+  background: var(--amber);
+}
+
+.mcp-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcp-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.mcp-state {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.mcp-state.running {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  color: var(--text);
+}
+
+.mcp-state.error {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--red);
+}
+
+.mcp-state.sign-in {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  color: var(--text);
+}
+
+.mcp-target,
+.mcp-trust-text code {
+  overflow: hidden;
+  color: var(--muted);
+  font: 12px/1.4 ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mcp-info .setting-note {
+  margin: 0;
+}
+
+.mcp-empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mcp-trust {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+
+.mcp-trust.trusted {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.mcp-trust-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mcp-trust-text strong {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.mcp-trust-text code {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+/* Usage & session tools: /usage and /cost cards, the command palette, and multi-line and read-only dialogs. */
+
+.usage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.usage-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.usage-card-title {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.usage-card-scope {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.usage-card-header .notice-command {
+  margin-left: auto;
+}
+
+.usage-card-empty,
+.usage-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.usage-note {
+  color: var(--faint);
+}
+
+.usage-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.usage-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.usage-stats dt {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.usage-stats dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.usage-split {
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-table-wrap {
+  overflow-x: auto;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-table th,
+.usage-table td {
+  padding: 5px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.usage-table th:first-child {
+  text-align: left;
+}
+
+.usage-table thead th {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.usage-table tbody th {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.usage-table tfoot th,
+.usage-table tfoot td {
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.palette-overlay {
+  place-items: start center;
+  padding-top: 14vh;
+}
+
+.palette {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 48px));
+  max-height: min(520px, 70vh);
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.palette-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.palette-search input::placeholder {
+  color: var(--faint);
+}
+
+.palette-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.palette-item.active {
+  background: var(--active);
+  box-shadow: inset 2px 0 0 var(--lithium);
+}
+
+.palette-name {
+  flex: none;
+  color: var(--text);
+  font: 13px ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.palette-hint {
+  margin-left: 6px;
+  color: var(--faint);
+}
+
+.palette-description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-foot {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.dialog-box.view,
+.dialog-box.multiline {
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+}
+
+.dialog-view {
+  max-height: 56vh;
+  margin: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--code-bg);
+  color: var(--text-soft);
+  font: 12.5px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: 0;
+}
+
+.dialog-textarea {
+  width: 100%;
+  min-height: 240px;
+  padding: 10px 12px;
+  resize: vertical;
+  font: 13px/1.55 ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.dialog-keys {
+  align-self: center;
+  margin-right: auto;
+  color: var(--faint);
+  font-size: 11.5px;
 }

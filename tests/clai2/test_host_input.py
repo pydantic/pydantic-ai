@@ -19,12 +19,12 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, conversation_text
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import CommandEnd, Plugin, PluginHost, SessionStart, TurnEnd
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_tasks import task

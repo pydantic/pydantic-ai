@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { api, type MenuTarget } from '../api'
+import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react'
+import { SessionContext, type MenuTarget, type SessionApi } from '../api'
 import type { MenuEdited, MenuField, MenuInfo } from '../protocol'
 import { Draft } from './SettingsForm'
 import { CheckIcon, ChevronIcon } from './icons'
@@ -59,10 +59,16 @@ export function MenuForm({
   const request = useRef(0)
   const path = target.path?.join('\u0000')
 
+  // A command's menu acts on the shown session, so `/model` picks its model, not another session's.
+  const session = useContext(SessionContext)
+  // The session shown now: an edit answered after a switch must not show the last session's rows.
+  const shown = useRef(session)
+  shown.current = session
+
   const load = useCallback(async () => {
     const id = ++request.current
     try {
-      const found = await api.menu(target)
+      const found = await session.menu(target)
       if (id !== request.current) return
       setMenu(found)
       const first = opened?.(found)
@@ -71,15 +77,17 @@ export function MenuForm({
       onError(message(error))
     }
     // A fresh target each render names the same menu.
-  }, [target.kind, target.name, path, onError])
+  }, [session, target.kind, target.name, path, onError])
 
   useEffect(() => {
     void load()
   }, [load, version])
 
-  const edited = (key: string, result: MenuEdited) => {
-    ++request.current
-    setMenu(result.menu)
+  const edited = (key: string, result: MenuEdited, owner: SessionApi) => {
+    if (owner === shown.current) {
+      ++request.current
+      setMenu(result.menu)
+    }
     setErrors((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== key)))
     const text = result.messages.filter(Boolean).join('\n')
     // An action the user backed out of says nothing, and saved nothing.
@@ -91,8 +99,9 @@ export function MenuForm({
 
   const run = async (key: string, edit: () => Promise<MenuEdited>, inline: boolean) => {
     setBusy(key)
+    const owner = session
     try {
-      edited(key, await edit())
+      edited(key, await edit(), owner)
     } catch (error) {
       // A value the menu rejects shows by its row; anything else, such as a failed sign-in, as a toast.
       if (inline) setErrors((current) => ({ ...current, [key]: message(error) }))
@@ -113,8 +122,8 @@ export function MenuForm({
       state={busy === field.key ? 'saving' : saved === field.key ? 'saved' : null}
       disabled={busy !== null}
       open={open === field.key}
-      onSet={(value) => void run(field.key, () => api.setField(target, field.key, value), true)}
-      onAction={() => void run(field.key, () => api.runAction(target, field.key), false)}
+      onSet={(value) => void run(field.key, () => session.setField(target, field.key, value), true)}
+      onAction={() => void run(field.key, () => session.runAction(target, field.key), false)}
       onOpen={() => setOpen((current) => (current === field.key ? '' : field.key))}
     >
       {field.menu && open === field.key && (
@@ -273,11 +282,13 @@ function Control({
 }) {
   const [other, setOther] = useState(false)
   if (field.action) {
+    // A row says what its button does, or else one with nothing to show, such as one that adds something, opens.
+    const verb = field.button ? field.button.replace(/…$/, '') : field.value || field.secret ? 'Change' : 'Open'
     return (
       <div className="setting-action">
         <span className="setting-current">{field.secret ? '' : label(field.value)}</span>
-        <button id={id} className="ghost small" disabled={disabled} onClick={onAction} aria-label={`Change ${field.label}`}>
-          Change…
+        <button id={id} className="ghost small" disabled={disabled} onClick={onAction} aria-label={`${verb} ${field.label}`}>
+          {verb}…
         </button>
       </div>
     )

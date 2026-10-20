@@ -1193,6 +1193,19 @@ Like `output_tokens_limit`, this is checked after each response, since a respons
 !!! note
     Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
+!!! note
+    Token and cost limits rely on provider-reported usage. When a completed response omits usage, [`RunUsage.unmeasured_requests`][pydantic_ai.usage.RunUsage.unmeasured_requests] counts it, and known token totals and cost remain lower bounds. Independently known costs, such as native tool fees, still contribute to the subtotal; any known token or cost subtotal that exceeds a limit still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]. Calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] on an individual response with no usage raises `ValueError`. If a token or cost limit is configured, Pydantic AI emits [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] and returns the result by default. Request and tool-call limits do not depend on reported usage and do not emit this warning. To abort when usage is unavailable, configure Python's warning filter to treat the category as an error:
+
+    ```py
+    import warnings
+
+    from pydantic_ai import UsageLimitUnavailableWarning
+
+    warnings.filterwarnings('error', category=UsageLimitUnavailableWarning)
+    ```
+
+    Intermediate stream chunks without usage do not emit a warning; a completed stream response that still has no usage is counted as unmeasured.
+
 #### Model (Run) Settings
 
 Pydantic AI offers a [`settings.ModelSettings`][pydantic_ai.settings.ModelSettings] structure to help you fine tune your requests.
@@ -1231,6 +1244,8 @@ print(result_sync.output)
 ```
 
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
+
+Not every model supports every setting: each [`ModelSettings`][pydantic_ai.settings.ModelSettings] field lists the models that do. A model ignores a setting it doesn't support, so the same settings work across models. Most of these are tuning knobs like `temperature` that are ignored silently, but ignoring `timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers` or `extra_body` changes what the request guarantees, so the model emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] naming the setting. It does so wherever the setting was set, so when an agent-level setting only applies to some of a [`FallbackModel`](models/overview.md#fallback-model)'s models, set it on those models' own `settings` instead. To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter).
 
 ##### Dynamic model settings
 

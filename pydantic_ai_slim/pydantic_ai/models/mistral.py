@@ -197,6 +197,8 @@ class MistralModel(Model[Mistral]):
     [API Documentation](https://docs.mistral.ai/)
     """
 
+    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'service_tier', 'top_k'})
+
     json_mode_schema_prompt: str
 
     _model_name: MistralModelName = field(repr=False)
@@ -815,6 +817,7 @@ class MistralStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     _delta_content: str = field(default='', init=False)
 
@@ -827,7 +830,10 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
+                self._add_usage(
+                    _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name),
+                    reported=chunk.data.usage is not None,
+                )
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -1019,7 +1025,7 @@ def _map_usage(
 ) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage is None:
-        return RequestUsage()
+        return RequestUsage(unmeasured_requests=1)
     usage_data = response.usage.model_dump(exclude_none=True)
     details: dict[str, int] = {
         k: v

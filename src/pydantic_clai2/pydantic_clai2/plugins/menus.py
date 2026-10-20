@@ -33,6 +33,11 @@ class FieldRow:
     """Where the value comes from when not from the user; shown muted after the value."""
     preview: ChoicePreview | None = None
     """Renders a sample of each choice in the terminal choice picker."""
+    button: str = ''
+    """What the web UI's button for a row with an action says, such as `View…`.
+
+    When empty, `Change…` for a row with a value or a secret, else `Open…`.
+    """
 
     def display(self, value: str) -> str:
         """Label a choice without changing its stored or validated value."""
@@ -52,7 +57,7 @@ class FieldSource(Protocol):
         ...
 
     def current(self, row: FieldRow) -> str:
-        """The active value as the user would type it."""
+        """The active value as the user would type it; the typed editor opens holding it unless it is the row's `default`."""
         ...
 
     def problem(self, row: FieldRow, text: str) -> str | None:
@@ -102,17 +107,25 @@ class Dialogs(Protocol):
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
         description: str = '',
+        multiline: bool = False,
     ) -> str | None:
         """The typed text, stripped, or `None` when the user backed out.
 
         `secret` masks it. `check` says why non-empty text is not acceptable, or returns `None`;
         the dialog stays open until it accepts the text or the text is empty. `description` says
-        more above the input, such as where to find the value, with a link to open.
+        more above the input, such as where to find the value, with a link to open. `multiline`
+        takes text with line breaks, such as instructions, in a text editor; it is never masked.
+        Without it, an `initial` of several lines is still edited over several lines where the
+        surface can, as the web UI does.
         """
         ...
 
     async def confirm(self, *, title: str, yes: str, no: str, description: str = '') -> bool:
         """Whether the user picked `yes`; `no`, which starts selected, and backing out are `False`."""
+        ...
+
+    async def view(self, *, title: str, text: str) -> None:
+        """Show `text`, read-only and scrollable, until the user closes it."""
         ...
 
     async def wait(

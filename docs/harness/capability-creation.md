@@ -87,7 +87,7 @@ Capability names must be lowercase letters, digits, and underscores, starting wi
 
 ## Durable execution
 
-Under [durable execution](durable-execution.md), each authoring, listing, and disabling
+Under [durable execution](../durable_execution/overview.md), each authoring, listing, and disabling
 call to the store is recorded, so a recovered run reuses the result instead of
 writing the authored module and manifest again. Temporal and Prefect record
 each tool call in its own activity or task. DBOS runs function tools in
