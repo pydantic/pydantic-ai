@@ -53,14 +53,10 @@ DepsT = TypeVar('DepsT')
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
     """The HTTP transport of the one MCP connection in `toolset`, looking through wrappers such as the read-only filter."""
-    connections: list[MCPToolset[DepsT]] = []
-
-    def collect(leaf: AbstractToolset[DepsT]) -> None:
-        if isinstance(leaf, MCPToolset):
-            connections.append(leaf)
-
-    toolset.apply(collect)
-    [connection] = connections
+    leaves: list[AbstractToolset[DepsT]] = []
+    toolset.apply(leaves.append)
+    [connection] = leaves
+    assert isinstance(connection, MCPToolset)
     result = connection.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
