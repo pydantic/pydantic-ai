@@ -17,7 +17,7 @@ A single agent that does everything accumulates a large tool set and a long cont
 
 ## The solution
 
-`SubAgents` takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt as a static instruction, so the listing stays in the cached prefix.
+`SubAgents` takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt, so the listing stays in the cached prefix; if it changes between runs of the same conversation, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the prefix.
 
 ```python
 from pydantic_ai import Agent
