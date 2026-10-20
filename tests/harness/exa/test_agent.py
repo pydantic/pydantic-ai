@@ -1,12 +1,16 @@
 """Tests for the ExaAgent capability, ExaAgentToolset, and agent_run_result."""
 
 import json
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
+import anyio
 import httpx
 import pytest
 from exa_py.agent.types import (
+    AgentEffort,
     AgentError,
+    AgentEvent,
     AgentGroundingCitation,
     AgentGroundingEntry,
     AgentOutput,
@@ -124,6 +128,29 @@ class _FakeRuns:
         return self.finished
 
 
+class _CancellableRuns(_FakeRuns):
+    """A runs double whose polling never finishes and which records cancellations, as exa-py's runs can."""
+
+    def __init__(self, *, cancel_error: Exception | None = None) -> None:
+        super().__init__(created=_run('queued', run_id='run_c'))
+        self.cancel_error = cancel_error
+        self.polling = anyio.Event()
+        self.cancelled: list[str] = []
+
+    async def poll_until_finished(
+        self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
+    ) -> AgentRun:
+        self.polling.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    async def cancel(self, run_id: str) -> AgentRun:
+        self.cancelled.append(run_id)
+        if self.cancel_error is not None:
+            raise self.cancel_error
+        return _run('cancelled', run_id=run_id)
+
+
 class _Facts(BaseModel):
     name: str
     founded_year: int
@@ -208,6 +235,42 @@ class TestExaAgentToolset:
         with pytest.raises(ModelRetry, match='Exa request failed: connection refused'):
             await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
 
+    async def test_failure_after_the_request_was_sent_propagates(self) -> None:
+        """Exa may have created the run already, so asking the model to call again could start a second one."""
+        runs = _FakeRuns(error=httpx.ReadTimeout('timed out'))
+        with pytest.raises(httpx.ReadTimeout):
+            await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
+
+    async def test_value_error_that_is_not_an_http_response_propagates(self) -> None:
+        runs = _FakeRuns(error=ValueError("Invalid value for option 'effort'"))
+        with pytest.raises(ValueError, match='Invalid value'):
+            await ExaAgent[None](runs=runs).get_toolset().exa_agent('q')
+
+    async def test_streamed_create_result_is_rejected(self) -> None:
+        class _StreamingRuns:
+            async def create(
+                self,
+                *,
+                query: str,
+                system_prompt: str | None = None,
+                output_schema: dict[str, object] | type[BaseModel] | None = None,
+                effort: AgentEffort | None = None,
+                previous_run_id: str | None = None,
+            ) -> AgentRun | AsyncGenerator[AgentEvent, None]:
+                async def events() -> AsyncGenerator[AgentEvent, None]:
+                    for event in ():  # pragma: no cover
+                        yield event
+
+                return events()
+
+            async def poll_until_finished(
+                self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
+            ) -> AgentRun:
+                raise AssertionError('unreachable')  # pragma: no cover
+
+        with pytest.raises(TypeError, match='must return an AgentRun'):
+            await ExaAgent[None](runs=_StreamingRuns()).get_toolset().exa_agent('q')
+
 
 class TestAgentRunResult:
     def test_completed_text_with_sources_and_run_id(self) -> None:
@@ -238,9 +301,9 @@ class TestAgentRunResult:
             agent_run_result(run, output_schema=_Facts)
 
     def test_structured_output_with_dict_schema_rendered_as_json(self) -> None:
-        run = _run(structured={'name': 'Exa'})
+        run = _run(structured={'name': 'Zürich'})
         result = agent_run_result(run, output_schema={'type': 'object'})
-        assert _text(result).startswith('{"name": "Exa"}')
+        assert _text(result).startswith('{"name": "Zürich"}')
 
     def test_failed_run_reports_error(self) -> None:
         run = _run('failed', error_message='budget exceeded')
@@ -262,6 +325,64 @@ class TestExaAgent:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         toolset = ExaAgent[None]().get_toolset()
         assert isinstance(toolset, ExaAgentToolset)
+
+    async def test_default_runs_client_is_built_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each `AsyncExa` owns an httpx connection pool, so one run must not build one per request."""
+        built: list[_FakeRuns] = []
+
+        class _CountingAsyncExa:
+            def __init__(self) -> None:
+                runs = _FakeRuns()
+                built.append(runs)
+                self.agent = type('_AgentNamespace', (), {'runs': runs})()
+
+        monkeypatch.setattr('pydantic_ai_harness.exa._agent.AsyncExa', _CountingAsyncExa)
+        await Agent(TestModel(), capabilities=[ExaAgent()]).run('Research something.')
+        assert len(built) == 1
+        assert len(built[0].create_calls) == len(built[0].poll_calls) == 1
+
+    @pytest.mark.parametrize(
+        ('poll_interval', 'timeout_ms', 'message'),
+        [
+            (0, 1000, 'poll_interval must be positive, got 0'),
+            (1000, -1, 'timeout_ms must be positive, got -1'),
+        ],
+    )
+    def test_polling_bounds_validated(self, poll_interval: int, timeout_ms: int, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            ExaAgent[None](poll_interval=poll_interval, timeout_ms=timeout_ms)
+
+    @pytest.mark.parametrize('cancel_error', [None, httpx.ConnectError('connection refused')])
+    async def test_cancelled_inline_polling_cancels_the_exa_run(self, cancel_error: Exception | None) -> None:
+        runs = _CancellableRuns(cancel_error=cancel_error)
+        agent = Agent(TestModel(), capabilities=[ExaAgent(runs=runs)])
+        async with anyio.create_task_group() as group:
+            group.start_soon(agent.run, 'Research something.')
+            await runs.polling.wait()
+            group.cancel_scope.cancel()
+        assert runs.cancelled == ['run_c']
+
+    async def test_cancelled_inline_polling_without_a_cancel_method_still_propagates(self) -> None:
+        class _HangingRuns(_FakeRuns):
+            def __init__(self) -> None:
+                super().__init__()
+                self.polling = anyio.Event()
+
+            async def poll_until_finished(
+                self, run_id: str, *, poll_interval: int = 1000, timeout_ms: int = 3600000
+            ) -> AgentRun:
+                self.polling.set()
+                await anyio.sleep_forever()
+                raise AssertionError('unreachable')  # pragma: no cover
+
+        runs = _HangingRuns()
+        agent = Agent(TestModel(), capabilities=[ExaAgent(runs=runs)])
+        with anyio.fail_after(5):
+            async with anyio.create_task_group() as group:
+                group.start_soon(agent.run, 'Research something.')
+                await runs.polling.wait()
+                group.cancel_scope.cancel()
+        assert len(runs.create_calls) == 1
 
     def test_instructions_reference_the_tool(self) -> None:
         instructions = ExaAgent[None]().get_instructions()
@@ -435,6 +556,23 @@ class TestExaAgent:
         retry = result.calls['c1']
         assert isinstance(retry, ModelRetry)
         assert 'run_v' in str(retry)
+
+    async def test_poll_value_error_that_is_not_an_http_response_propagates(self) -> None:
+        creator_runs = _FakeRuns(created=_run('queued', run_id='run_p'))
+        capability = ExaAgent[None](runs=creator_runs)
+        with pytest.raises(CallDeferred) as exc_info:
+            await capability.get_toolset().exa_agent('task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+
+        capability.runs = _FakeRuns(poll_error=json.JSONDecodeError('Expecting value', '<html>', 0))
+        requests = DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='exa_agent', tool_call_id='c1')],
+            metadata={'c1': metadata},
+        )
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+        with pytest.raises(json.JSONDecodeError):
+            await capability.handle_deferred_tool_calls(ctx, requests=requests)
 
     async def test_poll_auth_failure_propagates(self) -> None:
         creator_runs = _FakeRuns(created=_run('queued', run_id='run_x'))

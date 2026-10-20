@@ -100,14 +100,15 @@ agent = Agent(
 
 `ExaSearch` fields: `num_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
-`include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive),
+`include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
+`web_search` and `deep_search`, not `get_page`),
 `guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default `exa_py.AsyncExa` from
 `EXA_API_KEY`).
 
-`ExaAgent` fields: `effort=None` (`'low'|'medium'|'high'|'xhigh'|'auto'`), `execution='inline'` (polls
-to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;
-or dict schema, not validated), `system_prompt=None`, `poll_interval=1000` ms, `timeout_ms=3_600_000`,
-`guidance=None`, `runs=None`.
+`ExaAgent` fields: `effort=None` (an `exa_py` `AgentEffort`, e.g. `'low'` or `'auto'`), `execution='inline'`
+(polls to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;
+or dict schema, not validated), `system_prompt=None`, `poll_interval=1000` ms and `timeout_ms=3_600_000`
+(both positive; the timeout applies to each run), `guidance=None`, `runs=None`.
 
 Gotchas:
 
@@ -116,7 +117,14 @@ Gotchas:
 - `execution='external'` requires `output_type=[str, DeferredToolRequests]`; resolve with
   `agent_run_result(run, output_schema=...)` and the run id at
   `requests.metadata[call.tool_call_id][RUN_ID_METADATA_KEY]` (both from `pydantic_ai_harness.exa`).
-- Empty results, rate limits, and transient errors become `ModelRetry`; 401/403 propagate.
+  Skip calls without that key (other tools' deferred calls), and store a `ModelRetry` that
+  `agent_run_result` raises on a schema mismatch as the call's result.
+- Empty pages and answers, HTTP error responses such as rate limits, and network failures become
+  `ModelRetry` (up to the tool's retry limit); 401/402/403 and other `exa_py` errors propagate.
+  Creating an Exa run is not retried after the request was sent, since the run may exist.
+- Cancelling an agent run during inline polling cancels the Exa run too, when `runs` has `cancel`.
+- Page text, titles, and excerpts are third-party content; `get_page` reads any URL the model passes.
+  Add `PromptInjectionDefender` or tool approval when that matters.
 - Citations: each tool returns a `ToolReturn` whose `metadata['sources']` is a list of `ExaSource`
   (`url`, `title`), read from `ToolReturnPart.metadata` (not sent to the model).
 - Agent spec: `custom_capability_types=[ExaSearch, ExaAgent]`; `client`/`runs` are not serializable.
