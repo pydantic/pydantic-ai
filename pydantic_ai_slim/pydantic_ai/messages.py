@@ -2515,7 +2515,7 @@ class InstructionDeltaPart:
     def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
         """Render this change as a `<context>` element that replaces the block's earlier one.
 
-        A replacement is rendered as a `<context-diff>` element instead, holding a unified diff against
+        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
         `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
         shorter than the full replacement.
 

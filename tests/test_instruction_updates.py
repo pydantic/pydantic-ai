@@ -1302,9 +1302,9 @@ def test_instruction_updates_render_escapes_the_id():
 
 def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
-    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context-diff> after.')
+    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context-diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
     )
 
 
@@ -1324,7 +1324,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     )
     assert part.render(previous=MEMORY) == snapshot(
         """\
-<context-diff id="agent:memory">
+<context_diff id="agent:memory">
 --- before
 +++ after
 @@ -5,5 +5,5 @@
@@ -1334,7 +1334,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
 +- Fact 7: value seven.
  - Fact 8: value 8.
  - Fact 9: value 9.
-</context-diff>\
+</context_diff>\
 """
     )
     full = f'<context id="agent:memory">\n{edited}\n</context>'
@@ -1376,7 +1376,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
     assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
-    assert all(statement.startswith('<context-diff id="agent:memory">') for statement in received[2])
+    assert all(statement.startswith('<context_diff id="agent:memory">') for statement in received[2])
 
     # A processor that drops the first change leaves the second without the text it was computed
     # against, so the model gets it in full.

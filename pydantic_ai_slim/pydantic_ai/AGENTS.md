@@ -30,7 +30,7 @@ For non-trivial changes to this package, also read [Pydantic AI Slim Architectur
 
 ## Code Style
 
-- Render every framework tag that goes into prompt text (`<system>`, `<tool_result>`, `<context>`, …) with `_framing.wrap()` (or `open_tag`/`close_tag`), never a hand-built string: it neutralizes the tag's own closer and escapes attributes, and `tests/test_framing.py` fails on hand-built tag literals and non-snake_case tag names
+- Render every framework tag that goes into prompt text (`<system>`, `<tool_result>`, `<context>`, …) with `_framing.wrap()` (or `open_tag`/`close_tag`), never a hand-built string: it neutralizes the tag's own closer and every opening or closing `<system>` tag in the body (so data can't speak in the framework's voice) and escapes attributes, and `tests/test_framing.py` fails on hand-built tag literals and non-snake_case tag names
 
 <!-- rule:552 -->
 - Consolidate methods with duplicated logic using helpers, delegation, or type overloads — Reduces maintenance burden and prevents bugs from divergent implementations of the same control flow

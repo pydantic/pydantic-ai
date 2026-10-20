@@ -8,9 +8,12 @@ There are two kinds. `<system>` is the one voice tag: it means the application i
 person the model is talking to. The rest are data tags: they say where content came from, so the
 model can treat it as data rather than as instructions.
 
-Either way, text inside a tag must not be able to end it. [`wrap`][pydantic_ai._framing.wrap]
-neutralizes the tag's own closing tag in the body and escapes attribute values, and changes nothing
-else, so content that never mentions the tag goes out exactly as written.
+Either way, text inside a tag must not be able to end it, or speak in the framework's voice: on a
+model with no mid-conversation system role, the framework's own `<system>` block is user text, so a
+`<system>` written into a tool result would read exactly like it. [`wrap`][pydantic_ai._framing.wrap]
+neutralizes the tag's own closing tag and every opening or closing `<system>` tag in the body, escapes
+attribute values, and changes nothing else, so content that mentions neither goes out exactly as
+written.
 """
 
 from __future__ import annotations as _annotations
@@ -19,7 +22,7 @@ import html
 import re
 from typing import Final, Literal, get_args
 
-FramingTag = Literal['system', 'tool_result', 'assistant_thinking', 'context', 'context-diff']
+FramingTag = Literal['system', 'tool_result', 'assistant_thinking', 'context', 'context_diff']
 """Every tag the framework writes into prompt text."""
 
 SYSTEM_TAG: Final = 'system'
@@ -34,7 +37,7 @@ ASSISTANT_THINKING_TAG: Final = 'assistant_thinking'
 CONTEXT_TAG: Final = 'context'
 """Frames an instruction block's text with the id a later `<context>` element replaces it by."""
 
-CONTEXT_DIFF_TAG: Final = 'context-diff'
+CONTEXT_DIFF_TAG: Final = 'context_diff'
 """Frames a unified diff from an instruction block's previous text to its new text."""
 
 _CLOSING_TAG_OPENERS: Final = {
@@ -45,6 +48,10 @@ _CLOSING_TAG_OPENERS: Final = {
 That covers any case, whitespace around the `/`, and a closing tag that carries attributes or ends in
 `/>`, but not a longer tag name that merely starts with this one.
 """
+
+
+_VOICE_TAG_OPENERS: Final = re.compile(rf'<(?=\s*/?\s*{SYSTEM_TAG}(?=[\s/>]))', re.IGNORECASE)
+"""Matches only the `<` of an opening or closing `<system>` tag, in the same spellings as `_CLOSING_TAG_OPENERS`."""
 
 
 def neutralize_closing_tag(text: str, *tags: FramingTag) -> str:
@@ -75,7 +82,9 @@ def close_tag(tag: FramingTag) -> str:
 def wrap(tag: FramingTag, body: str, /, **attrs: str | None) -> str:
     """Wrap `body` in `tag` so that nothing in it can end the tag early.
 
-    Only the `<` of a closing `tag` inside `body` is escaped, so the rest of the body goes in exactly
-    as written. Attribute values are escaped as by [`open_tag`][pydantic_ai._framing.open_tag].
+    Only the `<` of a closing `tag`, and of any opening or closing `<system>` tag, inside `body` is
+    escaped, so the rest of the body goes in exactly as written. Attribute values are escaped as by
+    [`open_tag`][pydantic_ai._framing.open_tag].
     """
-    return f'{open_tag(tag, **attrs)}{neutralize_closing_tag(body, tag)}{close_tag(tag)}'
+    body = _VOICE_TAG_OPENERS.sub('&lt;', neutralize_closing_tag(body, tag))
+    return f'{open_tag(tag, **attrs)}{body}{close_tag(tag)}'
