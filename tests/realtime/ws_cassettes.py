@@ -467,11 +467,14 @@ class ReplayWebSocket:
             item: dict[str, Any] = actual.get('item') or {}
             if str(item.get('id', '')).startswith('pydantic_ai_item_'):
                 del item['id']
-        if actual.get('type') == 'user_message' and 'id' not in expected:
+        if (
+            actual.get('type') == 'user_message'
+            and 'id' not in expected
+            and str(actual.get('id', '')).startswith('pydantic_ai_input_')
+        ):
             # Recorded before a typed turn went out under an id naming its input (see `_unnamed_user_messages`);
             # only that id is let through, and the rest of the frame is still pinned.
-            if str(actual.get('id', '')).startswith('pydantic_ai_input_'):
-                del actual['id']
+            del actual['id']
         if actual.get('type') == 'response.create' and 'response' not in expected:
             # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.

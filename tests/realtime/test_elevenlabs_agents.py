@@ -2927,7 +2927,7 @@ async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> No
     assert await connection.send('What is two plus two?') == snapshot([InputAdded(input_id=0)])
     second_audio = {
         'type': 'audio',
-        'audio_event': {'audio_base_64': _AUDIO['audio_event']['audio_base_64'], 'event_id': 2},
+        'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 2},
     }
     frames = await _frames(
         connection,

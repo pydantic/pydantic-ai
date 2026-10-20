@@ -236,8 +236,8 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
         "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
         'Agents, and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed '
         'its answer (fixed where the provider says: the OpenAI protocol asks again for a request server VAD '
-        'overtook, Gemini 3.x hands an input that cut a reply off to the next, and GPT-Live answers text '
-        'in the reply under way)'
+        'overtook, Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text '
+        'in the reply under way, and ElevenLabs Agents names the typed turns a reply answers)'
     ),
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
