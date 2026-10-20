@@ -15,11 +15,11 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Annotated, Any, Generic, Literal, Self
+from typing import Annotated, Any, Generic, Literal, Self, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
-from typing_extensions import TypedDict, TypeIs
+from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -185,11 +185,6 @@ non-`None` value returns `{"output": "<printed text>", "result": <last expressio
 bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
 values.\
 """
-
-
-def _is_request_response_model(model: object) -> TypeIs[Model]:
-    """Narrow a model without losing its provider client type."""
-    return isinstance(model, Model)
 
 
 def _is_valid_sandbox_name(name: str) -> bool:
@@ -718,9 +713,11 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         self._call_count += 1
         # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
         # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
-        # than forwarding a model it cannot run with.
+        # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
+        # `Model[Any]` from the generic `Model` (which `isinstance` narrows to `Model[Unknown]`),
+        # mirroring core's own `reinject_system_prompt` idiom.
         ctx_model = ctx.model
-        inherited_model = ctx_model if self.inherit_model and _is_request_response_model(ctx_model) else None
+        inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,

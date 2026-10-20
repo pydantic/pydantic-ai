@@ -46,9 +46,9 @@ sub-agent runs, but they work at different altitudes:
   into context, then decides the next step. It is simple to reason about. It is the right fit when
   delegations are occasional, or when each result needs the parent's judgment before the next one.
 - `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops
-  all run inside one tool call, and only the script's final value (and, on failure, bounded previews
-  of completed results) returns to the parent. It is the right fit when the coordination between
-  sub-agents is the actual work.
+  all run inside one tool call, and only what the script returns or prints (plus bounded previews of
+  completed results on failure or budget exhaustion) reaches the parent. It is the right fit when the
+  coordination between sub-agents is the actual work.
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow
 catalog without changing the sub-agents themselves.
