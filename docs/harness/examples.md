@@ -13,6 +13,7 @@ code and tweak it, without chasing imports.
 
 | Example | What it does |
 |---|---|
+| `agent_control.py` | A support agent whose prompt, model, settings and tool descriptions are editable from Logfire block by block, via [`Agent Control`](agent-control.md). With no Logfire configured it resolves nothing and runs exactly as written |
 | `coding_agent.py` | A coding agent for the current repo, built from the blocks that make up [`Coder`](coder.md) |
 | `research_agent.py` | A web-research agent that cites every claim, built from the blocks that make up [`Researcher`](researcher.md) |
 

@@ -1,0 +1,13 @@
+[
+  {
+    "name": "two entries for one id keep the first and report the second",
+    "input": {
+      "parts": [{ "id": "agent", "text": "Main." }],
+      "config": { "instructions": [{ "id": "agent", "instructions": "A" }, { "id": "agent", "instructions": "B" }] }
+    },
+    "expected": {
+      "parts": [{ "id": "agent", "text": "A" }],
+      "issues": [{ "section": "instructions", "reason": "duplicate-entry", "instruction_id": "agent" }]
+    }
+  }
+]
