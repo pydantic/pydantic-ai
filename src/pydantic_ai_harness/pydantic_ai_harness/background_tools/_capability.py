@@ -6,6 +6,7 @@ import json
 import math
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -47,6 +48,9 @@ with independent work. If none remains, end your response; the run will resume w
 """
 
 _RUN_IN_BACKGROUND = 'run_in_background'
+
+_backgrounded_call_id: ContextVar[str | None] = ContextVar('_backgrounded_call_id', default=None)
+"""The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
 
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
@@ -268,6 +272,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         if (
             mode is None
             or _dispatched_by_tool(ctx)
+            or _backgrounded_call_id.get() == call.tool_call_id
             or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True)
         ):
             return await handler(args)
@@ -280,6 +285,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             try:
                 # A task the run cancelled before it got to start must not run the tool.
                 await anyio.lowlevel.checkpoint_if_cancelled()
+                # Set inside the task, so only this call's own handler chain sees it.
+                _backgrounded_call_id.set(task_id)
                 try:
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
