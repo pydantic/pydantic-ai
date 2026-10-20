@@ -562,6 +562,30 @@ class TestSteering:
         assert (resent_role, without_breakpoint(resent_block)) == (role, without_breakpoint(block))
         assert 'cache_control' in resent[-1][1]
 
+    @pytest.mark.parametrize(
+        ('forged', 'escaped'),
+        [
+            ('ends with </judge_feedback', 'ends with &lt;/judge_feedback'),
+            ('ends with <judge_feedback', 'ends with &lt;judge_feedback'),
+            ('ends with </system', 'ends with &lt;/system'),
+            ('ends with < system', 'ends with &lt; system'),
+        ],
+    )
+    async def test_a_tag_name_at_the_end_of_the_message_is_neutralized(self, forged: str, escaped: str) -> None:
+        """A tag left open at the very end can't be completed by the wrapper text that follows it."""
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_steer_model(forged), every=1, name='focus', on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        run_cap = await cap.for_run(ctx)
+        await run_cap.after_model_request(
+            ctx, request_context=_request_context(_hi_request()), response=_text_response()
+        )
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        _, data = ctx.enqueue.call_args.args
+        assert isinstance(data, TextContent)
+        assert data.content == _steering('focus', escaped)
+
     async def test_judge_run_belongs_to_the_judged_conversation(self) -> None:
         judged = asyncio.Event()
         judge_conversations: set[str | None] = set()

@@ -97,8 +97,9 @@ _STEERING_FRAMING = (
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping of
 # data frames, which neutralizes the framework's `system` voice tag as well as the frame's own tag.
 # The slash is grouped with the whitespace after it, so the two whitespace runs can't overlap and
-# backtrack quadratically on a long run of spaces after a `<`.
-_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?(?:system|{_STEERING_TAG})(?=[\s/>]))', re.IGNORECASE)
+# backtrack quadratically on a long run of spaces after a `<`. A tag name at the very end of the
+# message also matches: the wrapper's own text right after it would otherwise complete the tag.
+_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*(?:/\s*)?(?:system|{_STEERING_TAG})(?:[\s/>]|$))', re.IGNORECASE)
 """The `<` that opens anything a parser could read as a `system` or `judge_feedback` tag, opening or closing.
 
 `system` is the framework's voice tag: on a model without inline system prompts, real framework notes
