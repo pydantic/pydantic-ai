@@ -12465,7 +12465,8 @@ def test_retry_feedback_after_user_content_keeps_its_place():
     """A `RetryFeedbackPart` authored after a `UserPromptPart` reloads after it.
 
     The request goes out as one `UIMessage` per run of same-role parts, in authored order, with the
-    request's metadata on the last, so it reloads as the same parts in the same order.
+    request's metadata on the last user message, so it reloads as the same parts in the same order
+    and a frontend that drops system messages keeps the metadata.
     """
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -12479,7 +12480,7 @@ def test_retry_feedback_after_user_content_keeps_its_place():
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     assert [(msg.role, msg.metadata) for msg in ui_messages] == snapshot(
-        [('user', None), ('system', {'tenant': 'acme'})]
+        [('user', {'tenant': 'acme'}), ('system', None)]
     )
     [reloaded] = VercelAIAdapter.load_messages(ui_messages)
     assert [type(part).__name__ for part in reloaded.parts] == snapshot(['UserPromptPart', 'RetryFeedbackPart'])

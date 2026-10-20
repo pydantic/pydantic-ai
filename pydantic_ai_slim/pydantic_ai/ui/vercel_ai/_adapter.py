@@ -1134,7 +1134,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         A `ModelRequest` mixing system-voice parts (`SystemPromptPart`, system-voice
         `RetryFeedbackPart`) with user content goes out as one `UIMessage` per run of same-role parts,
         in the order they were authored, so it reloads as the same parts in the same order and
-        re-sends the same request bytes. The request's metadata rides on the last of them.
+        re-sends the same request bytes. The request's metadata rides on the last `role='user'` one, or
+        on the last one when there is none, so a frontend that drops system messages keeps it.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
@@ -1186,12 +1187,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 segments = cls._dump_request_message(msg)
-                # Metadata only goes on the trailing UIMessage of a split request so reload
-                # applies it once to the merged ModelRequest.
+                # Metadata goes on one UIMessage of a split request, so reload applies it once to the
+                # merged ModelRequest: the last user one, which a frontend that drops system messages
+                # still keeps, or the last one when there is no user message.
                 request_metadata = dump_message_metadata(msg)
+                user_positions = [position for position, (role, _) in enumerate(segments) if role == 'user']
+                metadata_position = user_positions[-1] if user_positions else len(segments) - 1
                 for position, (role, ui_parts) in enumerate(segments):
                     ui_message = UIMessage(id=id_generator(msg, role, message_index), role=role, parts=ui_parts)
-                    if request_metadata and position == len(segments) - 1:
+                    if request_metadata and position == metadata_position:
                         ui_message.metadata = request_metadata
                     result.append(ui_message)
                     message_index += 1
