@@ -86,6 +86,7 @@ class Macroscope(AbstractCapability[AgentDepsT]):
             command=self.command,
             base=self.base,
             timeout=self.timeout,
+            id=self.id or 'macroscope',
         )
 
     def get_instructions(self) -> str | None:

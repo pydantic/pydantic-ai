@@ -36,8 +36,20 @@ _ISSUE_LINE = (
 )
 
 
-def _fake_cli(directory: Path, lines: Sequence[str], *, name: str = 'macroscope', sleep: float | None = None) -> str:
-    """Write an executable stand-in for `macroscope` that records argv and cwd and emits `lines` on stderr."""
+def _fake_cli(
+    directory: Path,
+    lines: Sequence[str],
+    *,
+    name: str = 'macroscope',
+    sleep: float | None = None,
+    hang: float | None = None,
+    exit_code: int = 0,
+) -> str:
+    """Write an executable stand-in for `macroscope` that records argv and cwd and emits `lines` on stderr.
+
+    `sleep` waits before the lines and `hang` after them; the script then exits with `exit_code`.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
     script = directory / name
     body = [
         '#!/bin/sh',
@@ -48,6 +60,9 @@ def _fake_cli(directory: Path, lines: Sequence[str], *, name: str = 'macroscope'
     if sleep is not None:
         body.append(f'sleep {sleep}')
     body += [f"printf '%s\\n' {shlex.quote(line)} >&2" for line in lines]
+    if hang is not None:
+        body.append(f'sleep {hang}')
+    body.append(f'exit {exit_code}')
     script.write_text('\n'.join(body) + '\n')
     script.chmod(0o755)
     return str(script)
@@ -137,6 +152,10 @@ class TestParseStream:
         assert review.review_id is None  # not pulled out of the body
         assert review.status == 'unknown'  # not pulled out of the body
 
+    def test_review_id_and_status_on_one_line(self) -> None:
+        review = parse_macroscope_stream(['review_id=rev-6 issue_status=completed'])
+        assert (review.review_id, review.status) == ('rev-6', 'completed')
+
 
 class TestRunReview:
     async def test_returns_findings(self, tmp_path: Path) -> None:
@@ -192,6 +211,56 @@ class TestRunReview:
         assert review.review_id == 'rev-7'
         assert review.status == 'failed'
 
+    async def test_review_that_exits_with_an_error_is_interrupted(self, tmp_path: Path) -> None:
+        # The CLI died mid-review: the findings so far are returned, marked as incomplete.
+        command = _fake_cli(tmp_path, ['review_id=rev-10', _ISSUE_LINE, 'fatal: connection reset'], exit_code=1)
+        review = await _toolset(command).run_macroscope_review(_ctx(tmp_path))
+        assert (review.review_id, review.status) == ('rev-10', 'interrupted')
+        assert [i.issue_id for i in review.issues] == ['i1']
+
+    async def test_reported_status_survives_an_error_exit(self, tmp_path: Path) -> None:
+        command = _fake_cli(tmp_path, ['review_id=rev-11', 'issue_status=failed'], exit_code=1)
+        review = await _toolset(command).run_macroscope_review(_ctx(tmp_path))
+        assert review.status == 'failed'
+
+    async def test_timeout_keeps_streamed_findings(self, tmp_path: Path) -> None:
+        # Findings that arrived before the deadline are returned instead of being thrown away.
+        command = _fake_cli(tmp_path, ['review_id=rev-12', _ISSUE_LINE], hang=30)
+        review = await _toolset(command, timeout=0.5).run_macroscope_review(_ctx(tmp_path))
+        assert (review.review_id, review.status) == ('rev-12', 'timed_out')
+        assert [i.issue_id for i in review.issues] == ['i1']
+
+    async def test_model_base_that_looks_like_an_option_is_rejected(self, tmp_path: Path) -> None:
+        command = _fake_cli(tmp_path, ['review_id=rev-13', 'issue_status=completed'])
+        with pytest.raises(ModelRetry, match='must be a git ref'):
+            await _toolset(command).run_macroscope_review(_ctx(tmp_path), base='--output=/tmp/x')
+        assert not Path(f'{command}.args').exists()
+
+    def test_configured_base_that_looks_like_an_option_is_rejected(self) -> None:
+        with pytest.raises(UserError, match='must be a git ref'):
+            _toolset('macroscope', base='--output=/tmp/x')
+
+    @pytest.mark.parametrize('command', ['/opt/tools=v2/macroscope', '-macroscope'])
+    def test_command_that_env_would_misread_is_rejected(self, command: str) -> None:
+        with pytest.raises(UserError, match='cannot start with `-` or contain `=`'):
+            _toolset(command)
+
+    async def test_missing_command_path_names_the_path(self, tmp_path: Path) -> None:
+        command = str(tmp_path / 'absent' / 'macroscope')
+        with pytest.raises(UserError, match=f'No executable Macroscope CLI at {re.escape(repr(command))}'):
+            await _toolset(command).run_macroscope_review(_ctx(tmp_path))
+
+    async def test_configured_base_failure_names_the_base(self, tmp_path: Path) -> None:
+        command = _fake_cli(tmp_path, ["fatal: ambiguous argument 'no-such-ref'"], exit_code=1)
+        with pytest.raises(UserError, match="fix the configured `base` 'no-such-ref'"):
+            await _toolset(command, base='no-such-ref').run_macroscope_review(_ctx(tmp_path))
+
+    async def test_no_review_id_without_base_omits_the_base_hint(self, tmp_path: Path) -> None:
+        command = _fake_cli(tmp_path, ['error: not signed in'])
+        with pytest.raises(UserError, match='did not start') as info:
+            await _toolset(command, base=None).run_macroscope_review(_ctx(tmp_path))
+        assert 'configured `base`' not in info.value.message
+
     async def test_workspace_timeout_raises_model_retry(self, tmp_path: Path) -> None:
         # sleep(30) far exceeds the 0.2s timeout, so a review that ignored the timeout would
         # complete successfully instead of raising.
@@ -236,6 +305,17 @@ class TestCapability:
 
     def test_empty_guidance_disables_instructions(self) -> None:
         assert Macroscope(guidance='').get_instructions() is None
+
+    def test_toolset_id_follows_the_capability_id(self) -> None:
+        # Durable execution identifies a toolset's activities by its `id`.
+        assert Macroscope().get_toolset().id == 'macroscope'
+        assert Macroscope(id='review').get_toolset().id == 'review'
+
+    def test_temporal_durability_accepts_macroscope(self) -> None:
+        pytest.importorskip('temporalio')
+        from pydantic_ai.durable_exec.temporal import TemporalDurability  # needs the temporal extra
+
+        Agent(TestModel(), name='macroscope-agent', capabilities=[Macroscope(), TemporalDurability()])
 
     def test_agent_spec_roundtrip(self) -> None:
         # The docs promise Macroscope loads from an agent spec via `custom_capability_types`.
