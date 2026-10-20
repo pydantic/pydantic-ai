@@ -185,8 +185,25 @@ export const orchestrator = {
   clear: () => call<void>('POST', '/api/orchestrator/clear'),
 }
 
+/** The bridge `clai2 --desktop`'s window gives the page; absent in a browser. */
+interface DesktopWindow {
+  pywebview?: { api?: { open_external?: (url: string) => Promise<boolean> } }
+}
+
+/** In `clai2 --desktop`'s window, which opens no windows of its own, open `url` in the default browser instead. */
+export function openExternal(url: string): boolean {
+  const open = (window as Window & DesktopWindow).pywebview?.api?.open_external
+  if (!open) return false
+  void open(url)
+  return true
+}
+
 /** Start a workspace's CLAI if needed and open its own page in a new tab. */
 export async function openWorkspacePage(id: string): Promise<void> {
+  if ((window as Window & DesktopWindow).pywebview) {
+    openExternal((await api.openWorkspace(id)).url)
+    return
+  }
   // Opened now, while the click still counts as one, and pointed at the page once its CLAI answers.
   const tab = window.open('', '_blank')
   try {

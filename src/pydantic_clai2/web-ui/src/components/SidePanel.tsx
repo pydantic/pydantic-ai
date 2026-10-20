@@ -1,4 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { openExternal } from '../api'
 import { MOD } from '../platform'
 import type { PanelInfo } from '../protocol'
 import { CloseIcon, ExternalIcon, PanelIcon, TracesIcon } from './icons'
@@ -37,6 +38,7 @@ function navigate(key: string, existing: Opened, url: string): boolean {
 
 /** Open `panel`'s page in a window beside this one, or point the one already open at it and bring it forward. */
 function openBeside(panel: PanelInfo, url: string): boolean {
+  if (openExternal(url)) return true
   const key = panelKey(panel)
   const existing = opened.get(key)
   if (existing && navigate(key, existing, url)) {

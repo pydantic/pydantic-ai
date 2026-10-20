@@ -1,7 +1,7 @@
 """`clai2 --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from anyio import CancelScope, create_task_group, get_cancelled_exc_class
@@ -40,6 +40,7 @@ async def run_web(
     port: int | None = None,
     token: str | None = None,
     restart: WebHandoff | None = None,
+    desktop: Callable[[str], Awaitable[int]] | None = None,
 ) -> None:
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
 
@@ -57,6 +58,9 @@ async def run_web(
 
     `restart` is the web UI the build before `/update` served: CLAI serves it again on that port with that
     token, opening no browser, so the pages it had reconnect. After `/update`, this raises `Relaunch`.
+
+    `desktop` shows the web UI in a window instead of the browser, as `clai2 --desktop` does with
+    `open_window`: CLAI calls it with the address once serving, and quits when it returns.
     """
     if resume == '':
         raise ValueError('--web needs an explicit --resume SESSION-ID; the sidebar lists the others')
@@ -90,6 +94,7 @@ async def run_web(
             port=port,
             token=token,
             restart=restart,
+            desktop=desktop,
         )
 
 
@@ -142,6 +147,7 @@ async def _serve_web(
     port: int | None,
     token: str | None,
     restart: WebHandoff | None,
+    desktop: Callable[[str], Awaitable[int]] | None,
 ) -> None:
     """Run `shell`, the session CLAI started with, serving the web UI until it ends; other live sessions end first."""
     reason: SessionEndReason = 'error'
@@ -171,7 +177,11 @@ async def _serve_web(
                 if token is not None:
                     # A launcher talks to it on this machine alone, whatever address the saved settings name.
                     web.token, web.listen = token, LAUNCHER_HOST
-                if token is None and restart is None:
+                if desktop is not None:
+                    url = await web.start()
+                    console.print(f'Web UI running at {url}, in its own window', markup=False)
+                    workers.start_soon(_until_closed, desktop, url, console, workers.cancel_scope)
+                elif token is None and restart is None:
                     console.print(await shell.commands.execute_async(f'/{WEB}'), markup=False)
                 else:
                     url = await web.start()
@@ -190,6 +200,15 @@ async def _serve_web(
                 await shell.close(reason)
     if (relaunch := shell.relaunch(web=served)) is not None:
         raise relaunch
+
+
+async def _until_closed(
+    window: Callable[[str], Awaitable[int]], url: str, console: Console, scope: CancelScope
+) -> None:
+    """Show `url` in the desktop window, then quit CLAI once the user closes it."""
+    if status := await window(url):
+        console.print(f'The CLAI window exited with status {status}.', markup=False)
+    scope.cancel()
 
 
 def _loaded_web(loader: SessionPlugins[DepsT]) -> WebPlugin | None:

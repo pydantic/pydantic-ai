@@ -509,6 +509,35 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     )
 
 
+@pytest.mark.parametrize('status', [0, 1])
+async def test_run_web_desktop_quits_when_the_window_closes(
+    status: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`clai2 --desktop` serves, shows the address in its window instead of the browser, and quits once it closes."""
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
+    shown: list[str] = []
+
+    async def window(url: str) -> int:
+        shown.append(url)
+        return status
+
+    output = io.StringIO()
+    with anyio.fail_after(30):
+        await run_web(
+            settings_for=lambda project: Settings(model='test'),
+            store=SettingsStore(tmp_path / 'config.db'),
+            project=ProjectSettings(),
+            console=Console(file=output, force_terminal=False, width=300),
+            desktop=window,
+        )
+    [url] = shown
+    assert re.fullmatch(r'http://127\.0\.0\.1:\d+/\?token=\S+', url)
+    assert opened == []
+    assert f'Web UI running at {url}, in its own window' in output.getvalue()
+    assert ('The CLAI window exited with status 1.' in output.getvalue()) is bool(status)
+
+
 async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`clai2 --web` works where a session runs: `--resume` starts in its directory, `/workspace` starts one elsewhere.
 
@@ -598,6 +627,8 @@ async def test_run_web_needs_a_session_id_to_resume(tmp_path: Path) -> None:
         (['--port', '8000'], '--port and --token-file need --web'),
         (['--token-file', 'token'], '--port and --token-file need --web'),
         (['--web', '--port', '70000'], '--port must be between 0 and 65535'),
+        (['--desktop', '--token-file', 'token'], '--desktop cannot be combined with --token-file'),
+        (['--desktop', '-p', 'hi'], '--web cannot be combined'),
     ],
 )
 def test_web_flag_rejects(
@@ -632,6 +663,32 @@ def test_web_flag_runs_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert (settings.model, settings.instructions, settings.request_limit) == ('test', 'Be brief.', 7), (
         'launch flags still win over a project file'
     )
+
+
+def test_desktop_flag_runs_the_web_ui_in_a_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from pydantic_clai2.cli import desktop
+
+    from .test_desktop import found, missing
+
+    calls: list[dict[str, object]] = []
+
+    async def fake_run_web(**kwargs: object) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr('pydantic_clai2.cli.web.run_web', fake_run_web)
+    monkeypatch.setattr(desktop, 'find_spec', found)
+    monkeypatch.setattr(sys, 'argv', ['clai2', '--desktop', '--database', str(tmp_path / 'c.db')])
+    _cli.run()
+    [call] = calls
+    assert call['desktop'] is desktop.open_window
+
+    monkeypatch.setattr(desktop, 'find_spec', missing)
+    with pytest.raises(SystemExit):
+        _cli.run()
+    assert 'pydantic-clai2[desktop]' in capsys.readouterr().err
+    assert len(calls) == 1
 
 
 def test_web_flag_reads_a_private_token_file(

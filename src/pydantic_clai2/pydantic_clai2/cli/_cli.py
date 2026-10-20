@@ -14,7 +14,7 @@ from pydantic_clai2.ui.rendering.splash import Splash
 from pydantic_clai2.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from pydantic_clai2.cli.self_update import WebHandoff
     from pydantic_clai2.config import Settings
@@ -70,6 +70,14 @@ def run(*, splash: Splash | None = None) -> None:
         '--web',
         action='store_true',
         help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+    )
+    parser.add_argument(
+        '--desktop',
+        action='store_true',
+        help=(
+            'Like --web, but show the web UI in a desktop window of its own; closing it quits CLAI. '
+            'Needs the desktop extra'
+        ),
     )
     parser.add_argument(
         '--port',
@@ -169,6 +177,7 @@ def run(*, splash: Splash | None = None) -> None:
                     port=args.port,
                     token=None if args.token_file is None else read_token(args.token_file),
                     restart=served,
+                    desktop=_desktop_window(args),
                 )
             )
             return
@@ -217,6 +226,16 @@ def run(*, splash: Splash | None = None) -> None:
     except KeyboardInterrupt:
         if args.prompt is not None or args.web:
             raise SystemExit(130) from None
+
+
+def _desktop_window(args: argparse.Namespace) -> 'Callable[[str], Awaitable[int]] | None':
+    """The window `--desktop` shows the web UI in, once pywebview is found; `None` to use the browser."""
+    if not args.desktop:
+        return None
+    from pydantic_clai2.cli.desktop import open_window, require_webview
+
+    require_webview()
+    return open_window
 
 
 def _settings_for(
@@ -284,7 +303,7 @@ def relaunch_argv(
     """
     argv = [executable]
     if args.web:
-        argv.append('--web')
+        argv.append('--desktop' if args.desktop else '--web')
         if args.port is not None:
             argv += ['--port', str(args.port)]
         if args.token_file is not None:
@@ -369,6 +388,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(str(exc))
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
+    if args.desktop:
+        if args.token_file is not None:
+            parser.error('--desktop cannot be combined with --token-file')
+        args.web = True
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')

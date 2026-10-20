@@ -615,7 +615,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
 
 def _args(**options: object) -> argparse.Namespace:
     defaults: dict[str, object] = dict(
-        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+        agent=None, model=None, request_limit=None, database=None, web=False, desktop=False, port=None, token_file=None
     )
     return argparse.Namespace(**(defaults | options))
 
@@ -636,6 +636,9 @@ def test_relaunch_argv(tmp_path: Path) -> None:
     # `--web` stays a web launch; the token stays in its file, off the command line.
     web = _args(web=True)
     assert relaunch_argv(web, executable='/b/clai2', session_id='s') == ['/b/clai2', '--web', '--resume', 's']
+    # `--desktop` comes back in its window.
+    window = _args(web=True, desktop=True)
+    assert relaunch_argv(window, executable='/b/clai2', session_id='s') == ['/b/clai2', '--desktop', '--resume', 's']
     launcher = _args(web=True, port=0, token_file=tmp_path / 'token')
     assert relaunch_argv(launcher, executable='/b/clai2', session_id=None) == [
         '/b/clai2',

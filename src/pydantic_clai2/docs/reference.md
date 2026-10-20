@@ -67,6 +67,8 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--session-id UUID` | Save a new session under this ID |
 | `--fork-session` | With `--resume`, continue in a copy of the session |
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
+| `--web` | Drive CLAI from a local web UI instead of the terminal prompt |
+| `--desktop` | Like `--web`, in a desktop window of its own; closing it quits CLAI. Needs `pydantic-clai2[desktop]` |
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |

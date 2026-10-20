@@ -23,6 +23,13 @@ runs in it. `clai2 --web --resume ID` starts in that session's directory. A sess
 an hour, with nothing running or queued and no browser showing it, closes, except the one CLAI
 started with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
+`clai2 --desktop` does the same in a window of its own, maximized, with CLAI's icon, instead of a
+browser tab; closing the window quits CLAI. It needs the `desktop` extra, which installs
+[pywebview](https://pywebview.flowrl.com/) (`uv tool install 'pydantic-clai2[desktop]'`), and draws
+with the system's web engine: WebKit on macOS, WebView2 on Windows, and GTK or Qt on Linux, which
+need their system packages. The page's preferences are kept between launches. Links, a workspace's
+page, and a panel's own window open in your default browser.
+
 The sidebar lists the sessions `/resume` shows, grouped by project (the Git repository, named
 after its main checkout's folder), then by worktree (each checkout, labelled with its branch), with
 the current ones first and search across all of them. A folder outside Git is a project of its own.
