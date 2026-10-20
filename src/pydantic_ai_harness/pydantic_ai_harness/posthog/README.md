@@ -96,8 +96,8 @@ Each run connects as its own user, so concurrent runs never share an account.
 Your app gets each user's key, stores it, and refreshes it if it is an OAuth
 token. For example, a settings page where each user pastes their own personal
 API key, or a "Connect PostHog" button that signs them in with PostHog OAuth and
-saves the access token to their account. Before each run, load it (this can be
-async) and put it in the deps; the function only reads it.
+saves the access token to their account. Before each run, put it in the deps, or
+load it in an async `auth` function.
 
 With durable execution such as Temporal, read the key from the run's deps rather
 than from a global, since the function may run in another process. The
