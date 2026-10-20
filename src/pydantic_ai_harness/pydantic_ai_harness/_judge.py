@@ -44,7 +44,8 @@ SerializableToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str,
 _CHARS_PER_TOKEN = 4
 
 # TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
-# (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
+# (https://github.com/pydantic/pydantic-ai/pull/10547), adding `tool_call` and `conversation` to its tags.
+# Until then this matches its semantics: only the `<` of a closing tag is escaped.
 _CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*/\s*(?:tool_call|conversation)(?=[\s/>]))', re.IGNORECASE)
 
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
@@ -78,7 +79,7 @@ def tool_call_prompt(
     closing `tool_call` or `conversation` tag is escaped, so the call's arguments or a tool result
     cannot end their block early and continue as something else.
     """
-    payload = json.dumps({'tool_name': tool_name, 'arguments': args}, default=str)
+    payload = json.dumps({'tool_name': tool_name, 'arguments': args}, default=str, ensure_ascii=False)
     tool_call = f'<tool_call>\n{_neutralize_closing_tags(payload)}\n</tool_call>'
     if not include_conversation:
         return tool_call
