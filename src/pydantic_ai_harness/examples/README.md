@@ -1,9 +1,9 @@
 # Examples
 
-Complete agents assembled from individual harness capabilities, written to be
-read as much as run: every capability choice has the reasoning next to it, and
-each example writes out its full configuration so you can copy it into your own
-code and tweak it.
+Complete agents written to be read as much as run. The coding agent combines
+the packaged `Coder` capability with `LocalWorkspace`, while the research agent
+is assembled from individual harness capabilities. Each example writes out its
+full configuration so you can copy it into your own code and tweak it.
 
 If you just want the assembled version, use the packaged harnesses instead
 ([`Coder`](../../../docs/harness/coder.md), [`Researcher`](../../../docs/harness/researcher.md)) — or run one
@@ -15,7 +15,7 @@ From the repo root:
 
 ```bash
 make install                      # or: uv sync --all-extras
-uv run examples/coding_agent.py
+uv run python src/pydantic_ai_harness/examples/coding_agent.py
 ```
 
 Each example states its default model at the top and reads that provider's API
