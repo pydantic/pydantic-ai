@@ -221,6 +221,8 @@ class TestDiskMediaStore:
             return 'images/' + uri.removeprefix('media+sha256://') + '.bin'
 
         store = DiskMediaStore(tmp_path, key_strategy=splice)
+        stored = await store.put(b'addressed by its digest')
+        assert await store.get(stored) == b'addressed by its digest'
         forged = 'media+sha256://other'
         with pytest.raises(ValueError, match='invalid sha256 digest'):
             await store.get(forged)
