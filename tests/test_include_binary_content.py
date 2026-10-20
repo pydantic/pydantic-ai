@@ -37,7 +37,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
 
-from ._inline_snapshot import snapshot
+from ._inline_snapshot import snapshot,Is
 from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
@@ -250,7 +250,7 @@ CASES = [
         attribute='gen_ai.tool.call.result',
         redacted=snapshot(
             {
-                'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
+                'return_value': Is({**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}}),
                 'content': ['here it is', REDACTED_IMAGE],
                 'metadata': {'img': REDACTED_IMAGE},
                 'tools': None,
