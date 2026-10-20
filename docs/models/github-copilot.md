@@ -134,7 +134,7 @@ curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
-The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request, so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
+The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request ([`vscode-chat` by default](#integration-id)), so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
 
 Two `400` responses tell you why an id didn't work:
 
@@ -180,6 +180,26 @@ model = GitHubCopilotModel(
     provider=GitHubCopilotProvider(
         api_key='your-copilot-token',
         base_url='https://copilot.example.com',
+    ),
+)
+agent = Agent(model)
+...
+```
+
+## Integration id
+
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it, and the ids the `/models` listing returns depend on it. The provider sends `vscode-chat` unless you pass `integration_id`, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI reads. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+
+model = GitHubCopilotModel(
+    'claude-haiku-4.5',
+    provider=GitHubCopilotProvider(
+        api_key='your-copilot-token',
+        integration_id='agentic-workflows',
     ),
 )
 agent = Agent(model)

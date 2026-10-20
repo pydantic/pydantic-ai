@@ -54,13 +54,13 @@ _COPILOT_PLUGIN_VERSION = '0.26.7'
 _COPILOT_CLIENT_HEADERS = MappingProxyType(
     {
         'editor-version': 'vscode/1.95.0',
-        'copilot-integration-id': 'vscode-chat',
         'editor-plugin-version': f'copilot-chat/{_COPILOT_PLUGIN_VERSION}',
         'openai-intent': 'conversation-panel',
         'x-github-api-version': '2025-04-01',
     }
 )
-"""Headers every Copilot client sends, for parity with them.
+"""Headers every Copilot client sends, for parity with them, apart from `copilot-integration-id`,
+which `GitHubCopilotProvider.__init__` adds because its value is configurable.
 
 None of these is documented as required, and none could be *made* required against
 `api.githubcopilot.com`: omitting `editor-version` still returns 200, as does an unknown
@@ -203,6 +203,7 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
+        integration_id: str | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -212,6 +213,7 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         base_url: str | None = None,
+        integration_id: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -226,14 +228,20 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
             base_url: The base URL of the Copilot inference API, e.g. for an enterprise host or a
                 local proxy. Defaults to the `GITHUB_COPILOT_BASE_URL`, `COPILOT_API_URL` or
                 `GITHUB_COPILOT_API_BASE` environment variable, then to `https://api.githubcopilot.com`.
+            integration_id: The `copilot-integration-id` header sent on every request. Copilot
+                attributes the traffic to it, and the ids `GET /models` lists depend on it. Defaults
+                to the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the Copilot CLI
+                reads, then to `vscode-chat`.
             openai_client: An existing `AsyncOpenAI` client to use. Its `base_url` must already point
                 at the Copilot inference API, and it is used as-is, without the Copilot client
-                headers. If provided, `api_key`, `base_url` and `http_client` must be `None`.
+                headers. If provided, `api_key`, `base_url`, `integration_id` and `http_client` must
+                be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+            assert integration_id is None, 'Cannot provide both `openai_client` and `integration_id`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             self._client = openai_client
             return
@@ -259,7 +267,11 @@ class GitHubCopilotProvider(_OpenAICompatibleProvider):
             or os.getenv('GITHUB_COPILOT_API_BASE')
             or 'https://api.githubcopilot.com'
         )
+        integration_id = integration_id or os.getenv('GITHUB_COPILOT_INTEGRATION_ID') or 'vscode-chat'
 
         self._client = self._create_openai_client(
-            base_url=base_url, api_key=api_key, http_client=http_client, default_headers=_COPILOT_CLIENT_HEADERS
+            base_url=base_url,
+            api_key=api_key,
+            http_client=http_client,
+            default_headers={**_COPILOT_CLIENT_HEADERS, 'copilot-integration-id': integration_id},
         )
