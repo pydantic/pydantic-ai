@@ -76,7 +76,7 @@ _PARTIAL_OUTPUT_LIMIT = 4096
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
 
-_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _require_asyncio() -> None:
@@ -144,9 +144,7 @@ async def _delete_session(sandbox: AsyncSandbox, session_id: str) -> None:
                 await anyio.sleep(_RETRY_DELAY)
     finally:
         if not deleted:
-            _logger.warning(
-                'Could not delete Daytona command session %s; its command may still be running.', session_id
-            )
+            logger.warning('Could not delete Daytona command session %s; its command may still be running.', session_id)
 
 
 def _output_limit_error(stdout: str, stderr: str) -> WorkspaceOutputLimitError:
@@ -289,10 +287,10 @@ async def _close_quietly(client: AsyncDaytona) -> bool:
         try:
             await _close_client(client)
         except Exception:
-            _logger.warning('Could not close the Daytona API client.', exc_info=True)
+            logger.warning('Could not close the Daytona API client.', exc_info=True)
             return False
     if deadline.cancelled_caught:
-        _logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
+        logger.warning('Closing the Daytona API client did not complete within %ss.', _TEARDOWN_TIMEOUT)
         return False
     return True
 
@@ -410,7 +408,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._record(created)
             self._working_dir_pending = self._working_dir is not None
             # Logged at creation, so the id can be found whatever ends the run before it is stored.
-            _logger.info('Created Daytona sandbox %s', created.id)
+            logger.info('Created Daytona sandbox %s', created.id)
             return created
 
         try:
@@ -620,11 +618,13 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             self._create_name = f'pydantic-ai-{uuid.uuid4().hex}'
         name = self._create_name
         try:
-            return await client.get(name, request_timeout=_REQUEST_TIMEOUT)
+            existing = await client.get(name, request_timeout=_REQUEST_TIMEOUT)
         except daytona.DaytonaNotFoundError:
-            pass
+            existing = None
         except Exception as error:
             _raise_translated(error, 'Could not start Daytona sandbox')
+        if existing is not None:
+            return await _started(existing)
         params = daytona.CreateSandboxFromSnapshotParams(
             name=name,
             snapshot=self._snapshot,
@@ -639,7 +639,7 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             except (daytona.DaytonaConnectionError, daytona.DaytonaTimeoutError, TimeoutError):
                 # The sandbox may have been created before the reply was lost.
                 if (created := await _find(client, name)) is not None:
-                    return created
+                    return await _started(created)
                 raise
             except Exception as error:
                 translated = _translated(error, 'Could not start Daytona sandbox')
@@ -650,9 +650,12 @@ class DaytonaSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                     translated = WorkspaceUnavailableError(str(translated))
                 raise translated from error
         if (created := await _find(client, name)) is not None:
-            return created
+            return await _started(created)
         # A stalled control plane is transient, not a command deadline.
-        raise TimeoutError(f'Daytona sandbox creation did not complete within {_CREATE_TIMEOUT}s.')
+        raise TimeoutError(
+            f'Daytona sandbox creation did not complete within {_CREATE_TIMEOUT}s; '
+            'the Daytona control plane may be unreachable.'
+        )
 
     async def _attach(self, client: AsyncDaytona, sandbox_id: str) -> AsyncSandbox:
         """Attach to a sandbox that already exists, starting it if it is stopped.
@@ -795,6 +798,17 @@ async def _find(client: AsyncDaytona, name: str) -> AsyncSandbox | None:
         return await client.get(name, request_timeout=_REQUEST_TIMEOUT)
     except (daytona.DaytonaNotFoundError, daytona.DaytonaConnectionError, daytona.DaytonaTimeoutError):
         return None
+
+
+async def _started(sandbox: AsyncSandbox) -> AsyncSandbox:
+    """Wait for a sandbox found by name to finish starting.
+
+    The SDK's `create` times out after the sandbox exists when it starts slowly, so the lookup
+    that recovers it can return it still starting.
+    """
+    if sandbox.state != daytona.SandboxState.STARTED:
+        await sandbox.wait_for_sandbox_start(timeout=_LIFECYCLE_TIMEOUT)
+    return sandbox
 
 
 async def _restart_if_stopped(sandbox: AsyncSandbox) -> bool:

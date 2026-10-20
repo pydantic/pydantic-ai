@@ -30,7 +30,14 @@ from typing import IO, Protocol
 
 import anyio
 import anyio.lowlevel
-from daytona import DaytonaBadRequestError, DaytonaConnectionError, DaytonaError, DaytonaNotFoundError, SandboxState
+from daytona import (
+    DaytonaBadRequestError,
+    DaytonaConnectionError,
+    DaytonaError,
+    DaytonaNotFoundError,
+    DaytonaTimeoutError,
+    SandboxState,
+)
 
 
 class CreateParams(Protocol):
@@ -429,6 +436,9 @@ class FakeSandbox:
             raise self.start_error
         self.state = SandboxState.STARTED
 
+    async def wait_for_sandbox_start(self, timeout: float | None = 60) -> None:
+        self.state = SandboxState.STARTED
+
     async def refresh_data(self, request_timeout: float | None = None) -> None:
         if self.refresh_error is not None:
             raise self.refresh_error
@@ -475,6 +485,10 @@ class FakeClient:
             await self.owner.create_gate.wait()
         if self.owner.lose_create_reply:
             raise DaytonaConnectionError('create response lost')
+        if self.owner.slow_start:
+            # The SDK's `create` gives up waiting for the start; the sandbox keeps starting.
+            sandbox.state = SandboxState.STARTING
+            raise DaytonaTimeoutError('Sandbox failed to become ready within the timeout period')
         return sandbox
 
     async def get(self, sandbox_id: str, request_timeout: float | None = None) -> FakeSandbox:
@@ -505,6 +519,7 @@ class FakeDaytona:
         self.closed_clients = 0
         self.create_error: Exception | None = None
         self.lose_create_reply = False
+        self.slow_start = False
         self.create_gate: asyncio.Event | None = None
         self.create_started = asyncio.Event()
         # Raised by successive `close` calls; closing succeeds once it is exhausted.

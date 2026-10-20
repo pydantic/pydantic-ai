@@ -646,6 +646,15 @@ class TestErrorsAndFilesystem:
         assert len(fake_daytona.sandboxes) == 1
         assert fake_daytona.create_params[0].name is not None
 
+    async def test_a_sandbox_still_starting_after_a_create_timeout_is_waited_for(
+        self, fake_daytona: FakeDaytona
+    ) -> None:
+        """The SDK's `create` times out once the sandbox exists when it starts slowly; the backend waits for the start."""
+        fake_daytona.slow_start = True
+        sandbox = await DaytonaSandboxBackend().get_sandbox()
+        assert fake_daytona.sandboxes == [sandbox]
+        assert sandbox.state == daytona.SandboxState.STARTED
+
     async def test_a_retried_creation_finds_the_sandbox_a_lost_reply_left(self, fake_daytona: FakeDaytona) -> None:
         fake_daytona.create_gate = gate = asyncio.Event()
         backend = DaytonaSandboxBackend()
@@ -1326,7 +1335,10 @@ async def test_create_timeout_without_the_accepted_sandbox_is_transient(
     fake_daytona.create_gate = asyncio.Event()
     # The lookup by name after the deadline does not find the sandbox either.
     fake_daytona.get_error = DaytonaNotFoundError('no sandbox', status_code=404)
-    with pytest.raises(TimeoutError, match=r'^Daytona sandbox creation did not complete within 0\.05s\.$'):
+    with pytest.raises(
+        TimeoutError,
+        match=r'^Daytona sandbox creation did not complete within 0\.05s; the Daytona control plane may be unreachable\.$',
+    ):
         await DaytonaSandboxBackend().get_sandbox()
 
 

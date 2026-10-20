@@ -151,7 +151,7 @@ async def test_command_and_file_api_share_one_filesystem(client: daytona.AsyncDa
 
 
 async def test_timeout_raises_with_the_partial_output(client: daytona.AsyncDaytona) -> None:
-    """Validates the fake-encoded assumption that session logs stream before the command ends.
+    """Validates the fake-encoded assumption that a command's output files hold what it printed before it ends.
 
     The deadline is enforced client-side, so the output printed before it expired must reach
     the `WorkspaceTimeoutError`, and deleting the session must stop the command.
@@ -212,12 +212,9 @@ async def test_a_new_sandbox_gets_its_working_dir(client: daytona.AsyncDaytona) 
 
 
 async def test_detached_child_does_not_hold_command_result(client: daytona.AsyncDaytona) -> None:
-    """Check whether a real follow websocket remains open with inherited stdout descriptors."""
+    """Validates the docs claim that `run()` returns when the command exits, while a background child it started runs on."""
     async with _owned(client) as backend:
-        try:
-            result = await backend.run('sleep 4 & echo ready', shell=True, timeout=3)
-        except WorkspaceTimeoutError:
-            pytest.xfail('Daytona does not report command completion before inherited output closes')
+        result = await backend.run('sleep 4 & echo ready', shell=True, timeout=3)
         assert result.exit_code == 0
         assert result.stdout.strip() == 'ready'
 
