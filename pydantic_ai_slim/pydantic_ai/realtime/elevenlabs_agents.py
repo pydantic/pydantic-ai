@@ -1615,9 +1615,11 @@ class _CascadeLifecycle(InferredLifecycle):
     ) -> tuple[tuple[InputId, ...], tuple[InputId, ...]]:
         """The text inputs a reply claims and releases, given those it names and those it was taken to answer.
 
-        A text sent while the agent spoke folds into its next reply, which may name only the latest of them (verified
-        live), so a reply also answers the text sent before one it names; text sent after any it names reached the
-        agent after the reply started, and is the next reply's.
+        A text sent while the agent spoke folds into its next reply, which may name only the latest of them: verified
+        live, two texts sent back to back while the agent spoke got one reply, to both, naming only the second. No
+        reply would ever name the first, so it would be owed a reply forever (and `wait_for_reply()` would hang): a
+        reply also answers the text sent before one it names. Text sent after any it names reached the agent after the
+        reply started, and is the next reply's.
         """
         latest = max(named, default=-1)
         claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
