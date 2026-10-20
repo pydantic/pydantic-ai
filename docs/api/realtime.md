@@ -223,7 +223,9 @@ answers an input may name it. A connection that can't tell yet names its best gu
 (with `basis='inferred'`) and corrects it with an
 [`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] once it can: `released` hands inputs the response
 turned out not to answer to a later one, as `InferredLifecycle` does for a response an input cut off (with
-`inputs_cut_off_replies`), and `claimed`
+`inputs_cut_off_replies`, telling it when the provider heard the user speak with
+[`speech_heard()`][pydantic_ai.realtime.lifecycle.InferredLifecycle.speech_heard], where no
+`RealtimeInputSpeechStartEvent` says so), and `claimed`
 settles inputs sent while a response was under way that it answers after all, as GPT-Live does by speaking to text
 in the reply it is giving. Neither moves anything in history.
 

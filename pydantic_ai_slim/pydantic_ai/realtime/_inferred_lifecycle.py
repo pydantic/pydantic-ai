@@ -355,8 +355,9 @@ class InferredLifecycle:
         """The provider heard the user start speaking, which may cut a reply off (see `inputs_cut_off_replies`).
 
         A `RealtimeInputSpeechStartEvent` says so; a connection whose provider reports speech some other way (Gemini
-        Live's `voice_activity`) calls this. `after` is the last input sent before the user started speaking, when the
-        provider says where in the audio that was: by default, every input sent so far.
+        Live's `voice_activity`) calls this, or every reply cut off is taken for one an input cut off. `after` is the id
+        of the last input sent before the user started speaking, when the provider says where in the audio that was:
+        `-1` if they started before any input, and by default every input sent so far, as the report may come late.
         """
         self._spoken_since = max(self._spoken_since, self._inputs - 1 if after is None else after)
 

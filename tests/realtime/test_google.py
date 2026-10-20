@@ -4715,7 +4715,11 @@ def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: boo
 async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
     start: bool, offset: str | None, released: bool
 ) -> None:
-    """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off."""
+    """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off.
+
+    Driven through the connection rather than a recording: Gemini can't be made to place the speech before, between,
+    or after particular sends, or to leave the offset out, on demand.
+    """
     activity = genai_types.VoiceActivity(
         voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START
         if start
@@ -4745,7 +4749,10 @@ async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
 
 
 async def test_only_inputs_sent_after_the_user_spoke_are_released() -> None:
-    """Speech that started between two texts: the one sent before it stays answered by the cut-off reply."""
+    """Speech that started between two texts: the one sent before it stays answered by the cut-off reply.
+
+    (Driven through the connection for the reason above: the speech can't be placed between two sends on demand.)
+    """
     conn = GoogleRealtimeConnection(
         cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
     )

@@ -59,11 +59,12 @@ class ResponseStarted(LifecycleEvent):
 
 @dataclass(frozen=True, kw_only=True)
 class AnswersRevised(LifecycleEvent):
-    """Which inputs a response under way answers turned out different from what its `ResponseStarted` said.
+    """Which inputs a response answers turned out different from what its `ResponseStarted` said.
 
     A connection that works its responses' `answers` out (`basis='inferred'`) can learn better as the response goes
     on: GPT-Live answers text sent mid-reply in the speech already under way, and Gemini cuts off a reply that an
-    input reaches mid-generation, leaving that input to the next one.
+    input reaches mid-generation, leaving that input to the next one. `claimed` is valid while the response is under
+    way, `released` until its reply (tool rounds included) is over.
 
     It moves no message: history keeps every input where it joined the conversation.
     """
