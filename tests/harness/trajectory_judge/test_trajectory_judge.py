@@ -345,11 +345,19 @@ class TestSteering:
         seen: list[str] = []
 
         def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if isinstance(messages[-1], ModelRequest) and any(
-                isinstance(part, UserPromptPart) for part in messages[-1].parts
-            ):
-                return ModelResponse(parts=[ToolCallPart('work', {})])
-            return _text_response('done')
+            last = messages[-1]
+            if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return _text_response('done')
+            return ModelResponse(parts=[ToolCallPart('work', {})])
+
+        # Steer on the first evaluation only: the cadence evaluates again after the final response,
+        # and a second steer racing the run's end would make the count timing-dependent.
+        judge_calls = 0
+
+        def steer_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal judge_calls
+            judge_calls += 1
+            return _steer_response('refocus') if judge_calls == 1 else _all_good_response()
 
         def agent_with(judge: TrajectoryJudge[object], gate: asyncio.Event) -> Agent[object, str]:
             agent = Agent(FunctionModel(main_fn), capabilities=[judge])
@@ -362,7 +370,8 @@ class TestSteering:
             return agent
 
         first = await agent_with(
-            TrajectoryJudge(model=_steer_model(), every=1, name='focus', on_verdict=lambda _: steered.set()), steered
+            TrajectoryJudge(model=FunctionModel(steer_once), every=1, name='focus', on_verdict=lambda _: steered.set()),
+            steered,
         ).run('do the thing')
         second = await agent_with(
             TrajectoryJudge(
