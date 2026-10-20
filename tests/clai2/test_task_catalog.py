@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
@@ -232,3 +233,134 @@ async def test_resume_keeps_the_task_stopped_when_the_prompt_refuses() -> None:
     with pytest.raises(RuntimeError, match='line by line'):
         await ui.resume(record.id)
     assert record.user_stopped, "the user's stop holds when the request cannot be entered"
+
+
+async def settled(ui: Tasks) -> None:
+    """Wait for the runs `prompt` started to end."""
+    await asyncio.gather(*ui._prompts.values())  # pyright: ignore[reportPrivateUsage]
+    await asyncio.sleep(0)  # Their done callbacks run on the next loop iteration.
+    assert not ui._prompts  # pyright: ignore[reportPrivateUsage]
+
+
+def finished(ui: Tasks) -> DelegationTask:
+    record = task()
+    record.status, record.outcome = 'finished', 'ok'
+    ui.owner.records[record.id] = record
+    return record
+
+
+async def test_prompt_runs_a_finished_task_on_its_own() -> None:
+    gates: list[asyncio.Event] = []
+
+    async def work(record: DelegationTask) -> str:
+        gates.append(asyncio.Event())
+        await gates[-1].wait()
+        return 'again'
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        return await ui.owner.delegate(
+            agent_name=record.agent_name,
+            prompt=text,
+            conversation_id='root',
+            model=None,
+            background=False,
+            resume=record.id,
+            run=work,
+        )
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    async with ui.router.opened(view=ui):
+        await ui.prompt(record.id, ' and the docs? ')
+        assert (record.status, record.prompt, record.user_stopped) == ('running', 'and the docs?', False)
+        with pytest.raises(ValueError, match='Nothing waits'):
+            ui.background(record.id)
+        assert ui.focused() is None, 'the status row is left to the main run'
+        assert ui.promote() == 'No foreground tasks. /tasks opens the task inspector.'
+        with pytest.raises(ValueError, match='resumable'):
+            await ui.prompt(record.id, 'not while it runs')
+        gates[-1].set()
+        await settled(ui)
+        assert (record.status, record.outcome) == ('finished', 'ok')
+
+        # Closing the session stops a prompted task with the run that prompted it.
+        await ui.prompt(record.id, 'once more')
+        assert record.status == 'running'
+    assert (record.status, record.outcome) == ('finished', 'cancelled')
+
+
+async def test_prompt_refuses_what_it_cannot_run(caplog: pytest.LogCaptureFixture) -> None:
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
+    record = finished(ui)
+    with pytest.raises(ValueError, match='Type a message'):
+        await ui.prompt(record.id, '  ')
+    with pytest.raises(RuntimeError, match='cannot prompt'):
+        await ui.prompt(record.id, 'hello')
+
+    async def refuse(record: DelegationTask, text: str) -> str:
+        raise ValueError('no delegate tool')
+
+    ui.prompt_task = refuse
+    record.user_stopped = True
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await ui.prompt(record.id, 'hello')
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    assert not caplog.records, 'the caller heard it'
+
+    async def fail_after_starting(record: DelegationTask, text: str) -> str:
+        record.status = 'running'
+        await ui.observe(DelegationTaskEvent(task=record))
+        raise RuntimeError('broke after it started')
+
+    ui.prompt_task = fail_after_starting
+    record.status = 'finished'
+    await ui.prompt(record.id, 'hello')
+    await settled(ui)
+    assert [entry.getMessage() for entry in caplog.records] == [f'Prompting task {record.id} failed']
+
+
+async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None:
+    """A task may settle before the run that prompted it ends, and be prompted again meanwhile."""
+    ending: list[asyncio.Event] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        record.status = 'running'
+        await ui.observe(DelegationTaskEvent(task=record))
+        record.status = 'finished'
+        ending.append(asyncio.Event())
+        await ending[-1].wait()
+        return 'done'
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    await ui.prompt(record.id, 'first')
+    [first_run] = ui._prompts.values()  # pyright: ignore[reportPrivateUsage]
+    await ui.prompt(record.id, 'second')
+    first, second = ending
+    first.set()
+    await first_run
+    assert record.id in ui._prompts, 'still the second run'  # pyright: ignore[reportPrivateUsage]
+    second.set()
+    await settled(ui)
+
+
+async def test_a_session_that_delegates_nothing_prompts_no_task(tmp_path: Path) -> None:
+    shell = create_shell(
+        create_stock_agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with pytest.raises(RuntimeError, match='delegates no tasks'):
+        await shell.session.prompt_task(agent_name='self', task_id='a' * 32, text='hello')

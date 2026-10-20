@@ -76,10 +76,11 @@ from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.runtime.monty_cells import is_monty_cell
 from pydantic_clai2.runtime.project_identity import MISSING, ProjectIdentity, placements, project_identity
 from pydantic_clai2.runtime.session_workspace import workspace_directory
+from pydantic_clai2.runtime.task_prompts import is_task_prompt
 
 THEME = 'display.theme'
 PluginAction = Literal['enable', 'disable', 'reload']
-TaskAction = Literal['stop', 'background', 'resume']
+TaskAction = Literal['stop', 'background']
 SERVING = 'This page runs on the web plugin, so change it from the terminal; any change restarts the web UI.'
 
 VIEW_TIMEOUT = 10.0
@@ -559,18 +560,21 @@ class WebService:
         return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
-        """Stop, background, or resume a task, as `/tasks` does."""
+        """Stop or background a task, as `/tasks` does."""
         channel, catalog = self._task(task_id)
         if action == 'stop':
             await catalog.stop(task_id)
-        elif action == 'background':
-            catalog.background(task_id)
         else:
-            await catalog.resume(task_id)
+            catalog.background(task_id)
         # Backgrounding changes the row without an event from the task, which may be waiting on its model.
         for task in catalog.listing():
             if task.id == task_id:
                 channel.workers.observe(TaskEvent(task=task))
+
+    async def prompt_task(self, task_id: str, text: str) -> None:
+        """Run a finished task again with `text`, on its own: its session's conversation never sees it."""
+        _, catalog = self._task(task_id)
+        await catalog.prompt(task_id, text)
 
     def steer(self, task_id: str, text: str) -> bool:
         """Send a running task a message, shown in its transcript; `False` once it has finished."""
@@ -739,8 +743,11 @@ class Observer(AbstractCapability[None]):
     service: WebService
 
     def _channel(self, ctx: RunContext[None]) -> SessionChannel | None:
-        """The channel of the session whose held conversation this run continues; `None` for a fork or a task."""
-        if DelegationTasks.child_id() is not None:
+        """The channel of the session whose held conversation this run continues; `None` for a fork or a task.
+
+        A run that prompts a task for the user is the task's, which the Workers tree shows.
+        """
+        if DelegationTasks.child_id() is not None or is_task_prompt(ctx):
             return None
         try:
             channel = self.service.current()
