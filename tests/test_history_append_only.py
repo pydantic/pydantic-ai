@@ -70,6 +70,7 @@ from .append_only import (
     discover_capabilities,
     drain_events,
     inject_clock,
+    known_by_provider,
     provider_imports_successful,
     run_conversation,
 )
@@ -148,8 +149,11 @@ UNSUPPORTED: dict[tuple[str, Provider], str] = {
 """(capability, provider) pairs where the capability refuses the provider, so there is no conversation to check."""
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'agent:dynamic_system_prompt': (
-        Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', match='The time is'),
+    'agent:dynamic_system_prompt': known_by_provider(
+        'prefix',
+        'https://github.com/pydantic/pydantic-ai/issues/10521',
+        match='The time is',
+        sections={'anthropic': 'system', 'openai-responses': 'messages', 'openai-chat': 'messages'},
     ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
@@ -238,7 +242,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         pytest.param(Capability[Any](instructions='Answer briefly.'), (), None, 'fail', 'without an `id`', id='ids'),
         pytest.param(
             Capability[Any](id='random', instructions=_random_instructions),
-            (Known('prefix', 'example', match='Your session is'),),
+            (Known('prefix', 'example', 'system', match='Your session is', count=4),),
             None,
             'fail',
             'built the same request twice from the same history with different bytes',
@@ -248,7 +252,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
             CombinedCapability[Any](
                 [Capability(id='clock', instructions=_clock_instructions), PrepareTools(_clock_tool_descriptions)]
             ),
-            (Known('prefix', 'example', match='The time is'),),
+            (Known('prefix', 'example', 'system', match='The time is', count=4),),
             None,
             'fail',
             'As of',
@@ -256,7 +260,15 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         ),
         pytest.param(
             Capability[Any](id='clock', instructions=_clock_instructions),
-            (Known('prefix', 'example', match='The time is'),),
+            (Known('prefix', 'example', 'system', match='The time is'),),
+            None,
+            'fail',
+            'request 2 rewrote system block',
+            id='known-explains-only-its-count',
+        ),
+        pytest.param(
+            Capability[Any](id='clock', instructions=_clock_instructions),
+            (Known('prefix', 'example', 'system', match='The time is', count=4),),
             None,
             'xfail',
             'known: [prefix] example',
@@ -264,7 +276,7 @@ async def _clock_tool_descriptions(ctx: RunContext[Any], tools: list[ToolDefinit
         ),
         pytest.param(
             Capability[Any](instructions='Answer briefly.', id='static'),
-            (Known('prefix', 'example', match='rewrote the prefix'),),
+            (Known('prefix', 'example', 'system', match='rewrote'),),
             None,
             'fail',
             'no longer fails these checks as expected',
@@ -378,3 +390,21 @@ def test_only_provider_cache_markers_are_ignored():
 
     assert breaks(body(0, 'a'), body(1, 'a')) == []
     assert [b.section for b in breaks(body(1, 'a'), body(1, 'b'))] == ['messages']
+
+
+def test_an_unmarked_text_array_is_not_its_string():
+    """A text part read back as a string only when it carried the cache marker that made it an array.
+
+    A unit test of the comparator, like the one above: no adapter switches an unmarked body between the two
+    forms today, so no conversation would show the difference.
+    """
+
+    def body(content: str | list[dict[str, Any]]) -> bytes:
+        return json.dumps({'model': 'gpt-5.6-sol', 'messages': [{'role': 'user', 'content': content}]}).encode()
+
+    def breaks(*bodies: bytes) -> list[PrefixBreak]:
+        return ConversationResult('openai-chat', list(bodies), (b'', b''), []).prefix_breaks()
+
+    marked = [{'type': 'text', 'text': 'Hi', 'prompt_cache_breakpoint': {'mode': 'explicit'}}]
+    assert breaks(body(marked), body('Hi')) == []
+    assert [b.section for b in breaks(body([{'type': 'text', 'text': 'Hi'}]), body('Hi'))] == ['messages']

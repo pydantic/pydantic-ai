@@ -434,7 +434,7 @@ class ConversationResult:
             deferred = [
                 [
                     ('deferred-tools', block)
-                    for block in anthropic_deferred_tool_blocks(_strip_cache_markers(json.loads(body)))
+                    for block in anthropic_deferred_tool_blocks(_strip_cache_markers(json.loads(body), unwrap=False))
                 ]
                 for body in self.conversation
             ]
@@ -527,32 +527,44 @@ _CACHE_MARKERS = frozenset({'cache_control', 'prompt_cache_breakpoint'})
 """Anthropic's and OpenAI's explicit cache breakpoints, which roll forward with each request by design."""
 
 
-def _strip_cache_markers(body: dict[str, Any]) -> dict[str, Any]:
+def _strip_cache_markers(body: dict[str, Any], *, unwrap: bool) -> dict[str, Any]:
     """Drop cache breakpoints from where providers put them, and undo the wrapping that placing one needs.
 
     Markers sit on tool definitions, system blocks, messages and their content parts (one level deeper for an
     Anthropic `tool_result`), so only those are stripped: the same key inside tool arguments or a JSON schema
-    is data, and a change to it is a real prefix change. OpenAI's breakpoint sits on a content part, so a
-    plain-string message body or tool output that gets one is sent as a single text part instead (with the
-    text unchanged), and goes back to a string once the breakpoint moves on. With the marker gone, that single
-    part is read back as the string it stands for.
+    is data, and a change to it is a real prefix change. With `unwrap` (OpenAI), a single text part that carried
+    the marker is read back as the string it stands for: OpenAI's breakpoint sits on a content part, so a
+    plain-string message body or tool output that gets one is sent as a single text part instead (with the text
+    unchanged), and goes back to a string once the breakpoint moves on. An unmarked array stays an array, so a
+    real switch between array and string still counts.
     """
     stripped = dict(body)
     for section in ('tools', 'system', 'messages', 'input'):
         if isinstance(items := stripped.get(section), list):
-            stripped[section] = [_strip_item(item) for item in items]  # pyright: ignore[reportUnknownVariableType]
+            stripped[section] = [_strip_item(item, unwrap=unwrap) for item in items]  # pyright: ignore[reportUnknownVariableType]
     return stripped
 
 
-def _strip_item(item: Any, depth: int = 0) -> dict[str, Any]:
+def _strip_item(item: Any, *, unwrap: bool, depth: int = 0) -> dict[str, Any]:
     assert is_str_dict(item), f'expected a JSON object, got {item!r}'
     stripped = {key: value for key, value in item.items() if key not in _CACHE_MARKERS}
     for key in ('content', 'output'):
-        if depth < 2 and isinstance(parts := stripped.get(key), list):
-            parts = [_strip_item(part, depth + 1) for part in parts]  # pyright: ignore[reportUnknownVariableType]
-            text = _single_text_part(parts)
+        if depth < 2 and _is_list(parts := stripped.get(key)):
+            marked = (
+                unwrap
+                and len(parts) == 1
+                and is_str_dict(first := parts[0])
+                and not first.keys().isdisjoint(_CACHE_MARKERS)
+            )
+            parts = [_strip_item(part, unwrap=unwrap, depth=depth + 1) for part in parts]
+            # Only a part that carried a marker was wrapped for it; an unmarked array is what the request sends.
+            text = _single_text_part(parts) if marked else None
             stripped[key] = parts if text is None else text
     return stripped
+
+
+def _is_list(value: Any) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
 
 
 def _single_text_part(content: Any) -> str | None:
@@ -576,7 +588,8 @@ model and, as measured, per reasoning effort.
 
 
 def _cache_blocks(body: bytes, provider: Provider) -> list[PrefixBlock]:
-    parsed = _strip_cache_markers(json.loads(body))
+    # Only OpenAI wraps a string body in a text part to carry its marker; Anthropic's markers change no shapes.
+    parsed = _strip_cache_markers(json.loads(body), unwrap=provider != 'anthropic')
     canonical = canonical_prefix_blocks(parsed, f'https://api.example.com{_ENDPOINTS[provider]}')
     assert canonical is not None
     settings = {key: parsed[key] for key in _CACHE_KEYED_SETTINGS[provider] if key in parsed}
@@ -763,15 +776,27 @@ Check = Literal['prefix', 'ids', 'determinism']
 
 @dataclass(frozen=True)
 class Known:
-    """An expected failure of one check, linked to the issue or PR that fixes it.
+    """Expected failures of one check, linked to the issue or PR that fixes them.
 
-    `match` must appear in the failure report, so a new, different failure of the same check still fails.
+    An entry explains exactly `count` violations of `check` in `section` whose report contains `match`, on each
+    of `providers`: a further violation with the same text, or one fewer, fails the test, so a known break can't
+    absorb a new one. Sections are a prefix break's request section (`settings`, `tools`, `system`, `messages`,
+    `deferred-tools`), `instructions` for the `ids` check and `request` for `determinism`.
     """
 
     check: Check
     issue: str
+    section: str
     match: str
+    count: int = 1
     providers: tuple[Provider, ...] = PROVIDERS
+
+
+def known_by_provider(
+    check: Check, issue: str, *, match: str, sections: dict[Provider, str], count: int = 1
+) -> tuple[Known, ...]:
+    """The same expected failure on several providers, which put the affected block in different sections."""
+    return tuple(Known(check, issue, section, match, count, (provider,)) for provider, section in sections.items())
 
 
 @dataclass(frozen=True)
@@ -793,26 +818,36 @@ class Allowed:
     """The providers this mover applies to; on the others the capability must keep the prefix."""
 
 
+@dataclass(frozen=True)
+class Violation:
+    section: str
+    report: str
+
+
+def _break_violations(breaks: Sequence[PrefixBreak]) -> list[Violation]:
+    return [Violation(prefix_break.section, str(prefix_break)) for prefix_break in breaks]
+
+
 def _violations(
     result: ConversationResult, *, allowed: Allowed | None, check_ids: bool
-) -> dict[Check, tuple[str, list[str]]]:
+) -> dict[Check, tuple[str, list[Violation]]]:
     """Every violation of each check, as a summary and one item per violation."""
-    violations: dict[Check, tuple[str, list[str]]] = {}
+    violations: dict[Check, tuple[str, list[Violation]]] = {}
     breaks = result.prefix_breaks()
     if allowed is not None and result.provider not in allowed.providers:
         allowed = None
     if allowed is None:
         if breaks:
-            violations['prefix'] = ('rewrote the prefix', [str(b) for b in breaks])
+            violations['prefix'] = ('rewrote the prefix', _break_violations(breaks))
     elif not breaks:
         violations['prefix'] = (
             'no longer moves the prefix',
-            [f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix'],
+            [Violation('prefix', f'is listed in `ALLOWED` ({allowed.reason}) but no longer moves the prefix')],
         )
-    elif not allowed.standing and (outside := [str(b) for b in breaks if not b.in_history]):
+    elif not allowed.standing and (outside := _break_violations([b for b in breaks if not b.in_history])):
         violations['prefix'] = ('may only rewrite history, but changed the settings, tools or system prompt', outside)
     elif allowed.tail:
-        if deep := [str(b) for b in breaks if not b.in_tail]:
+        if deep := _break_violations([b for b in breaks if not b.in_tail]):
             violations['prefix'] = (
                 'may only replace the last block of each request, but rewrote earlier history',
                 deep,
@@ -820,17 +855,17 @@ def _violations(
     elif len(breaks) > allowed.max_moves:
         violations['prefix'] = (
             f'moved the prefix {len(breaks)} times, more than the {allowed.max_moves} its `ALLOWED` entry permits',
-            [str(b) for b in breaks],
+            _break_violations(breaks),
         )
     if check_ids and (unaddressable := result.unaddressable_instructions()):
         violations['ids'] = (
             'contributed instruction blocks without an `id`, so changes to them rewrite the prefix',
-            unaddressable,
+            [Violation('instructions', block) for block in unaddressable],
         )
     if difference := result.nondeterministic_projection():
         violations['determinism'] = (
             'built the same request twice from the same history with different bytes',
-            [difference.strip()],
+            [Violation('request', difference.strip())],
         )
     return violations
 
@@ -846,29 +881,32 @@ def check_conversation(
     """Fail on any violation not listed in `known`, and on any `known` entry that no longer fails."""
     violations = _violations(result, allowed=allowed, check_ids=check_ids)
 
-    # Each violation must be matched by some entry, so a known break can't hide an unrelated one in the
-    # same conversation.
+    # Each violation must be matched by an entry with room for it, so a known break can't absorb a new one
+    # in the same conversation, even one whose report contains the same text.
+    applicable = [k for k in known if result.provider in k.providers]
+    uses = [0] * len(applicable)
     unexpected: list[str] = []
-    used: set[int] = set()
     for check, (summary, items) in violations.items():
         unmatched: list[str] = []
         for item in items:
             index = next(
                 (
                     i
-                    for i, k in enumerate(known)
-                    if k.check == check and result.provider in k.providers and k.match in item
+                    for i, k in enumerate(applicable)
+                    if k.check == check and k.section == item.section and k.match in item.report and uses[i] < k.count
                 ),
                 None,
             )
             if index is None:
-                unmatched.append(item)
+                unmatched.append(item.report)
             else:
-                used.add(index)
+                uses[index] += 1
         if unmatched:
             unexpected.append(f'[{check}] {name} on {result.provider} {summary}:\n  ' + '\n  '.join(unmatched))
-    expected = [f'[{known[i].check}] {known[i].issue}' for i in sorted(used)]
-    stale = [f'[{k.check}] {k.issue}' for i, k in enumerate(known) if result.provider in k.providers and i not in used]
+    expected = [f'[{k.check}] {k.issue}' for k, used in zip(applicable, uses) if used]
+    stale = [
+        f'[{k.check}] {k.issue} (explained {used} of {k.count})' for k, used in zip(applicable, uses) if used != k.count
+    ]
     if unexpected or stale:
         message = '\n\n'.join(unexpected)
         if stale:

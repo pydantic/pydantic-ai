@@ -78,6 +78,7 @@ from ..append_only import (
     check_conversation,
     discover_capabilities,
     inject_clock,
+    known_by_provider,
     run_conversation,
 )
 
@@ -267,37 +268,41 @@ EXEMPT: dict[str, Exempt] = {
 }
 
 _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
+_SYSTEM_SECTIONS: dict[Provider, str] = {'anthropic': 'system', 'openai-responses': 'system', 'openai-chat': 'messages'}
+"""Where each provider sends the system prompt: Chat Completions sends it as leading messages."""
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
 def _no_default_id(block: str) -> tuple[Known, ...]:
     """A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
-    return (Known('ids', f'{_ISSUES}7237 (no default `id`)', match=block),)
+    return (Known('ids', f'{_ISSUES}7237 (no default `id`)', section='instructions', match=block),)
 
 
 KNOWN: dict[str, tuple[Known, ...]] = {
     'AskUser': _no_default_id('When the task is ambiguous'),
     'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', match='The following functions are available'),
+        Known('ids', f'{_ISSUES}8965', section='instructions', match='The following functions are available'),
         # Discovering a deferred tool rewrites the catalog in the system prompt, and on Anthropic folds the
         # tool into `run_code` by dropping its deferred declaration.
-        Known('prefix', f'{_ISSUES}8965', match='async def forecast'),
-        Known('prefix', f'{_ISSUES}8965', match='rewrote deferred-tools', providers=('anthropic',)),
+        *known_by_provider('prefix', f'{_ISSUES}8965', match='async def forecast', sections=_SYSTEM_SECTIONS),
+        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', match='"name": "forecast"', providers=('anthropic',)),
     ),
     'ConversationSearch': _no_default_id('A `search_conversation_history` tool'),
-    'LogfireMCP': (Known('prefix', f'{_PULLS}10543', match='current UTC time is within the hour'),),
+    # One rewrite per request after the first: the clock crosses an hour on every step.
+    'LogfireMCP': known_by_provider(
+        'prefix', f'{_PULLS}10543', match='current UTC time is within the hour', sections=_SYSTEM_SECTIONS, count=4
+    ),
     'Macroscope': _no_default_id('You can run a local Macroscope code review'),
     'ManagedPrompt': _no_default_id('You answer questions about the news.'),
-    'Memory': (Known('prefix', f'{_ISSUES}8996', match='<memory>'),),
+    # Added to the turn's user prompt on the write, moved to the next turn's, then grown by the second write.
+    'Memory': (Known('prefix', f'{_ISSUES}8996', 'messages', match='<memory>', count=3),),
     # The summary takes the place of the standing system prompt's first block instead of joining history. On
     # Responses the standing prompt is `instructions`, which the summary leaves alone.
-    'SummarizingCompaction': (
-        Known(
-            'prefix',
-            f'{_ISSUES}7289',
-            match='Summary of previous conversation',
-            providers=('anthropic', 'openai-chat'),
-        ),
+    'SummarizingCompaction': known_by_provider(
+        'prefix',
+        f'{_ISSUES}7289',
+        match='Summary of previous conversation',
+        sections={'anthropic': 'system', 'openai-chat': 'messages'},
     ),
     'PlaywrightBrowser': _no_default_id('You have a real web browser powered by Playwright'),
     'PydanticAIDocs': _no_default_id('You have a `read_pyai_docs` tool'),
