@@ -881,7 +881,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if images:
             if is_command_input(text) or shell_command(text) is not None:
                 raise ValueError('Images go with a prompt, not with a /command or ! line.')
-            text = f'{text} {self.images.attach(images)}'.strip()
+            try:
+                markers = self.images.attach(images)
+            except ValueError as exc:
+                # The sender may not see the images waiting here, such as a terminal draft's.
+                raise ValueError(
+                    "Images waiting in this session's prompt leave no room for these (32 MiB limit)."
+                ) from exc
+            text = f'{text} {markers}'.strip()
         if not text or self.run_now(text):
             return
         if self.editor is not None:
@@ -962,7 +969,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         previous, self.images = self.images, terminal.images if terminal is not None else ImageInput()
         # Queued prompts, and the one rejected for retry, keep their images as the terminal moves.
         self.images.pending.update(previous.pending)
-        self.images.retry_text = self.images.retry_text or previous.retry_text
+        if previous.retry_text:
+            # The terminal's goes with the session leaving it, and the one shown brings its own.
+            self.images.retry_text, previous.retry_text = previous.retry_text, ''
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id

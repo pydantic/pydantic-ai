@@ -78,8 +78,9 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.image_codec import decode_images
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import decode_images
 from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
@@ -397,7 +398,7 @@ def test_a_failed_turn(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
-def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
+def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
     web_ = make_web(Agent(TestModel()))
     assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
     response = web_.post('/api/input', {'text': '!ls'})
@@ -410,6 +411,20 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
     response = web_.post('/api/input', {'text': 'look', 'images': [encoded(b'not an image')]})
     assert response.status_code == 400 and response.json()['detail'].startswith('Not an image CLAI can read')
     assert web_.shell.images.pending == {}
+    response = web_.post('/api/input', {'text': 'look', 'images': ['not base64!']})
+    assert (response.status_code, response.json()) == (400, {'detail': 'Images must be base64-encoded.'})
+    # Images waiting in the terminal's draft, which the page does not show, leave no room.
+    waiting = web_.shell.images.attach(decode_images([encoded(png('red'))])).strip()
+    [blue] = decode_images([encoded(png('blue'))])
+    monkeypatch.setattr(
+        image_codec, 'MAX_PENDING_BYTES', len(web_.shell.images.pending[waiting].data) + len(blue.data) - 1
+    )
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(png('blue'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
+    )
+    assert list(web_.shell.images.pending) == [waiting]
 
 
 def png(color: str) -> bytes:
@@ -454,7 +469,7 @@ def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') ->
         assert [item.text for item in started_items if item] == ['first', 'what is this?\n[image]', '[image]']
         web_.post('/api/input', {'text': '/exit'})
         running.result(timeout=10)
-    red, blue = decode_images([png('red'), png('blue')])
+    red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
     assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
     assert web_.shell.images.pending == {}, 'sent images are let go'
 

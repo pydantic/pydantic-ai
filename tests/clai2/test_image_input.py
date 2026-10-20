@@ -1,5 +1,6 @@
 """Image bytes survive editing, queued turns, hooks, and persisted history."""
 
+import base64
 import io
 from array import array
 from collections.abc import Sequence
@@ -20,9 +21,10 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import Session, chat, image_codec
+from pydantic_clai2 import Session, chat
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.image_codec import ImageBuffer, decode_images, encode_image
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import ImageBuffer, decode_images, encode_image
 from pydantic_clai2.ui.prompt import image_input
 from pydantic_clai2.ui.prompt.image_input import (
     ImageInput,
@@ -120,14 +122,17 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
 
 def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
-    data = image_path.read_bytes()
+    data = base64.b64encode(image_path.read_bytes()).decode()
     assert decode_images([data, data]) == [read_image(image_path)] * 2
     with pytest.raises(ValueError, match='Not an image CLAI can read'):
-        decode_images([b'not an image'])
-    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * len(data) - 1)
+        decode_images([base64.b64encode(b'not an image').decode()])
+    with pytest.raises(ValueError, match='base64'):
+        decode_images(['not base64!'])
+    size = len(image_path.read_bytes())
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * size - 1)
     with pytest.raises(ValueError, match='32 MiB'):
         decode_images([data, data])
-    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', len(data) - 1)
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', size - 1)
     with pytest.raises(ValueError, match='10 MiB'):
         decode_images([data])
 

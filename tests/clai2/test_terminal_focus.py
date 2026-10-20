@@ -482,6 +482,7 @@ async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
         home.send_input('/resume')
         await until(desk.live, lambda: terminal.shown is other)
         assert home.images.retry_text == rejected and home.images.resolve(rejected)[1] == [green]
+        assert terminal.images.retry_text == '', 'it went with its session, not left for the one shown'
         release['home'].set()
         release['b'].set()
         await until(desk.live, lambda: calls == {'home': 2, 'b': 2} and home.idle and other.idle)

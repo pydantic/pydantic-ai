@@ -10,8 +10,8 @@ from PIL import Image, ImageGrab
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
 from pydantic_ai.messages import BinaryContent
-from pydantic_clai2 import image_codec
-from pydantic_clai2.image_codec import FORMATS, encode_image
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import FORMATS, encode_image
 
 MARKER = re.compile(r'\[image:[0-9a-f]{8}\]')
 ATTACHED = 'Image attached. Enter sends it; delete its marker to remove it.'

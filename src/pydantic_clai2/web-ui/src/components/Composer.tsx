@@ -155,7 +155,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const attach = async (files: File[]) => {
     if (!onAttachments) return
     try {
-      const read = await readImages(files)
+      const read = await readImages(files, attachments)
       onAttachments((current) => [...current, ...read])
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))

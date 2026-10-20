@@ -2625,7 +2625,8 @@ prompt the keyboard does:
   a `/command` or `!` line, which take no images, and when images waiting to be sent would pass 32 MiB.
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
-  which reads its prompts line by line.
+  which reads its prompts line by line. A `PluginHost` you build yourself calls its `send_input=`
+  callback with two arguments, the text and the images, `(text, images)`.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without

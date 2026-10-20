@@ -88,7 +88,6 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
 | `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
 | `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of uploaded bytes; no terminal imports |
 | `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, and the paste key bindings |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
@@ -153,6 +152,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/repl_state.py` | `ReplStates`, the harness `CodeModeReplStore` that keeps the session's own `run_code` REPL in `sessions.repl/<id>.bin` between prompts: hard-linked for forks, removed with the session; sub-agent runs keep theirs to the run |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
+| `runtime/image_codec.py` | image bytes for a prompt, from the terminal or the web UI: the size and pixel limits, `encode_image` (PNG, oriented, without metadata), and `decode_images`, a bounded batch of base64 uploads; no terminal imports |
 | `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()`, `roles()` |
 | `ui/rendering/recolor.py` | repaints retained styled transcript lines in a newly selected theme |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |

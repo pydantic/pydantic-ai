@@ -8,22 +8,34 @@ export interface Attachment {
 
 /** The server's limit on each image; it converts every image to PNG and checks again. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
-/** Larger images are scaled down to this longest side first, as models scale them anyway, so a photo fits as PNG. */
-const MAX_SIDE = 2048
+/**
+ * Larger images are scaled down to this longest side first, as models scale them about as far anyway: the server
+ * converts each image to PNG, and even an uncompressed one this size stays under its 10 MiB limit.
+ */
+const MAX_SIDE = 1568
+/** The server's limit on the images sent together. */
+const MAX_BATCH_BYTES = 32 * 1024 * 1024
 /** The formats the server reads; anything else the browser can draw is sent as PNG. */
 const SERVER_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/tiff'])
-let attached = 0
+let count = 0
 
 /** The images among pasted or dropped files. */
 export function imageFiles(files: Iterable<File>): File[] {
   return Array.from(files).filter((file) => file.type.startsWith('image/'))
 }
 
-/** Read `files` for sending: each scaled down, or drawn as PNG, when the server would otherwise refuse it. */
-export async function readImages(files: readonly File[]): Promise<Attachment[]> {
+/**
+ * Read `files` for sending beside the images already `attached`: each scaled down, or drawn as PNG, when the server
+ * would otherwise refuse it.
+ */
+export async function readImages(files: readonly File[], attached: readonly Attachment[]): Promise<Attachment[]> {
   const read = await Promise.all(files.map(readImage))
-  const large = read.find((attachment) => (base64(attachment).length * 3) / 4 > MAX_IMAGE_BYTES)
+  const bytes = (attachment: Attachment) => (base64(attachment).length * 3) / 4
+  const large = read.find((attachment) => bytes(attachment) > MAX_IMAGE_BYTES)
   if (large) throw new Error(`${large.name} is over the 10 MiB attachment limit.`)
+  if ([...attached, ...read].reduce((total, attachment) => total + bytes(attachment), 0) > MAX_BATCH_BYTES) {
+    throw new Error('These images are over the 32 MiB limit on images sent together.')
+  }
   return read
 }
 
@@ -32,11 +44,11 @@ async function readImage(file: File): Promise<Attachment> {
   const picture = await decode(file)
   if (picture) {
     const scale = Math.min(1, MAX_SIDE / Math.max(picture.width, picture.height))
-    if (scale < 1 || !SERVER_TYPES.has(file.type)) return { id: String(++attached), name, url: draw(picture, scale, file.type) }
+    if (scale < 1 || !SERVER_TYPES.has(file.type)) return { id: String(++count), name, url: draw(picture, scale, file.type) }
   } else if (!SERVER_TYPES.has(file.type)) {
     throw new Error(`${name} is not an image CLAI can read. Use PNG, JPEG, GIF, WebP, BMP, or TIFF.`)
   }
-  return { id: String(++attached), name, url: await dataUrl(file) }
+  return { id: String(++count), name, url: await dataUrl(file) }
 }
 
 /** `file` as the browser draws it, or `null` when it cannot; an SVG, which `createImageBitmap` refuses, through an `<img>`. */
