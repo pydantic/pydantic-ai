@@ -424,7 +424,8 @@ class ConversationResult:
         Each section must start with the previous request's blocks exactly, with new blocks only after them.
         From the first position that differs (or that the later request doesn't have), every differing position
         is a change, so an expected change can't hide another one in the same request: a block inserted ahead
-        of earlier ones shows as each earlier block it displaced. Anthropic leaves `defer_loading: true` tools
+        of earlier ones shows as each earlier block it displaced. New blocks are only free at the end of the last
+        section the earlier request has blocks in; a tool or system block added ahead of sent messages counts. Anthropic leaves `defer_loading: true` tools
         out of its cache key, so `canonical_prefix_blocks` drops them; their wire contract is still append-only
         in first-reveal order, so they're a section of their own.
         """
@@ -509,7 +510,7 @@ class Change:
     """`settings`, `tools`, `system` (with any leading system or developer messages), `messages`,
     `deferred-tools`, or `request` when the bytes differ outside them."""
     block_index: int
-    """The position within the section of the earlier request."""
+    """The position within the section of the earlier request, or of the later one for a block inserted there."""
     identity: str
     """What changed, from structure rather than text: in `system`, the ids of the instruction parts that changed
     (`instruction:<id>`, or `instruction:anonymous@<position>` for a part without one), or `system-prompt` when
@@ -573,13 +574,13 @@ def _is_list(value: Any) -> TypeGuard[list[Any]]:
 
 _CACHE_KEYED_SETTINGS: dict[Provider, tuple[str, ...]] = {
     'anthropic': ('model', 'tool_choice', 'thinking'),
-    'openai-responses': ('model', 'tool_choice', 'reasoning'),
-    'openai-chat': ('model', 'tool_choice', 'reasoning_effort'),
+    'openai-responses': ('model', 'tool_choice', 'reasoning', 'prompt_cache_key'),
+    'openai-chat': ('model', 'tool_choice', 'reasoning_effort', 'prompt_cache_key'),
 }
 """Top-level request fields that are part of the provider's cache key: changing one misses the cache like a prefix edit.
 
 Anthropic documents `tool_choice` and the thinking parameters as invalidating the message cache; OpenAI caches per
-model and, as measured, per reasoning effort.
+model, per `prompt_cache_key` (requests are routed by it) and, as measured, per reasoning effort.
 """
 
 
@@ -610,7 +611,9 @@ def _changes(
 ) -> list[Change]:
     changes: list[Change] = []
     instructions = ', '.join(_changed_instructions(earlier_parameters, later_parameters)) or 'system-prompt'
-    for section in dict.fromkeys(level for level, _ in earlier):
+    # Sections in the order the later request serializes them, then any it no longer has.
+    sections = list(dict.fromkeys(level for level, _ in [*later, *earlier]))
+    for position, section in enumerate(sections):
         before = [block for level, block in earlier if level == section]
         after = [block for level, block in later if level == section]
         for i, old in enumerate(before):
@@ -628,6 +631,13 @@ def _changes(
                     in_tail=section == 'messages' and i == len(before) - 1,
                 )
             )
+        # Appending is only free in the last section the earlier request has blocks in: a new tool or system
+        # block goes ahead of the messages it already sent, so it moves their place in the prefix. Anthropic's
+        # deferred tools are outside its cache key, so where they sit doesn't matter.
+        if any(level in sections[position + 1 :] and level != 'deferred-tools' for level, _ in earlier):
+            for i in range(len(before), len(after)):
+                identity = instructions if section == 'system' else _block_identity(section, after[i], after[i])
+                changes.append(Change(index, section, i, identity, '<missing>', _shorten(after[i], 120), in_tail=False))
     return changes
 
 

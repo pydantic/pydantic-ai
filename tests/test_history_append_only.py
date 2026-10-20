@@ -213,6 +213,10 @@ async def test_conversation_only_appends(
     check_conversation(name, result, known=KNOWN.get(name, ()), allowed=ALLOWED.get(name), check_ids=scenario.check_ids)
 
 
+def _chat_tool(name: str) -> dict[str, Any]:
+    return {'type': 'function', 'function': {'name': name, 'parameters': {'type': 'object', 'properties': {}}}}
+
+
 def _clock_instructions(ctx: RunContext[Any]) -> str:
     return f'The time is {CLOCK.now:%H:%M}.'
 
@@ -503,3 +507,54 @@ def test_identical_anonymous_instructions_are_two_violations():
         check_conversation(
             'example', result, known=(Known('ids', 'example', 'instructions', 'instruction:anonymous@0'),)
         )
+
+
+@pytest.mark.parametrize(
+    ('earlier', 'later', 'expected'),
+    [
+        pytest.param(
+            {'tools': [_chat_tool('look_up')], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+            {'tools': [_chat_tool('look_up'), _chat_tool('forecast')], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+            [('tools', 'tool:forecast')],
+            id='second-tool',
+        ),
+        pytest.param(
+            {'messages': [{'role': 'developer', 'content': 'Be brief.'}, {'role': 'user', 'content': 'Hi'}]},
+            {
+                'messages': [
+                    {'role': 'developer', 'content': 'Be brief.'},
+                    {'role': 'developer', 'content': 'Be kind.'},
+                    {'role': 'user', 'content': 'Hi'},
+                ]
+            },
+            [('system', 'system-prompt')],
+            id='second-developer-message',
+        ),
+        pytest.param(
+            {'messages': [{'role': 'user', 'content': 'Hi'}]},
+            {'prompt_cache_key': 'conversation-2', 'messages': [{'role': 'user', 'content': 'Hi'}]},
+            [('settings', 'setting:prompt_cache_key')],
+            id='prompt-cache-key',
+        ),
+        pytest.param(
+            {'tools': [_chat_tool('look_up')], 'messages': [{'role': 'user', 'content': 'Hi'}]},
+            {
+                'tools': [_chat_tool('look_up')],
+                'messages': [{'role': 'user', 'content': 'Hi'}, {'role': 'assistant', 'content': 'Hello'}],
+            },
+            [],
+            id='appended-message',
+        ),
+    ],
+)
+def test_appending_is_free_only_in_the_last_section(
+    earlier: dict[str, Any], later: dict[str, Any], expected: list[tuple[str, str]]
+):
+    """A tool or system block appended ahead of messages already sent moves the prefix; a new message doesn't.
+
+    A unit test of the comparator on hand-built OpenAI Chat requests: tools and system blocks serialize before
+    the messages, so growing them pushes every message back even though each section on its own only grew.
+    """
+    bodies = [json.dumps({'model': 'gpt-5.6-sol', **body}).encode() for body in (earlier, later)]
+    changes = ConversationResult('openai-chat', bodies, (b'', b''), []).changes()
+    assert [(change.section, change.identity) for change in changes] == expected

@@ -308,10 +308,11 @@ KNOWN: dict[str, tuple[Known, ...]] = {
             for identity, count in counts.items()
         ),
     ),
-    # The summary takes the place of the agent's instructions in the standing system prompt instead of joining
-    # history. On Responses the standing prompt is `instructions`, which the summary leaves alone.
+    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
+    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
     'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('anthropic', 'openai-chat')),
+        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
+        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
     ),
     'PlaywrightBrowser': _NO_DEFAULT_ID,
     'PydanticAIDocs': _NO_DEFAULT_ID,
@@ -325,10 +326,6 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 
 ALLOWED: dict[str, Allowed] = {
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
-    'DeduplicateFileReads': Allowed(
-        'Clears superseded file reads in place, as documented, when the model reads a file again',
-        (('messages', 'tool-return'),),
-    ),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
