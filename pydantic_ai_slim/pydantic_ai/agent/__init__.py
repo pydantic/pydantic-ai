@@ -37,7 +37,12 @@ from pydantic.alias_generators import to_snake
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeForm, TypeIs, TypeVar
 
-from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+from pydantic_ai._instrumentation import (
+    DEFAULT_INSTRUMENTATION_VERSION,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
+)
 from pydantic_ai._spec import load_from_registry
 from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
 
@@ -2423,7 +2428,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
+        self, /, *, name: str | None = None, on_change: _messages.InstructionChangePolicy = 'rewrite'
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
@@ -2432,6 +2437,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         /,
         *,
         name: str | None = None,
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2464,6 +2470,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
@@ -2475,7 +2484,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True, on_change=on_change)
             )
             return func_
 
@@ -4013,6 +4022,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
+            if appended := _instructions.explicitly_appended_blocks(sourced_instructions, instruction_parts):
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
+                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
+                    'appended.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+            instruction_parts = [part for part in instruction_parts if part.content]
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),
@@ -4021,6 +4040,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+                _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), tool_manager.toolset),
+                _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(tool_manager.tools),
+                _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(tool_manager.toolset),
             )
             # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
             # are cleared on tools that didn't opt in, kept as-is for a model that renders them

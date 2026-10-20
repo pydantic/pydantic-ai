@@ -59,9 +59,9 @@ BackgroundTools(tools=lambda ctx, td: td.name.startswith('research_'))
 Use `metadata={'background': 'optional'}` to let the model decide for each call. The model sees a
 `run_in_background` argument, but your function does not receive it.
 
-A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools and
-realtime sessions run normally. Do not use `run_in_background` as one of your function's own
-parameters.
+A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
+realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
+with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
