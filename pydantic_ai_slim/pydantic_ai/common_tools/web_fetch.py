@@ -224,7 +224,8 @@ class WebFetchLocalTool:
                         conversion.add_done_callback(lambda task: limiter.release())
                         conversion.add_done_callback(lambda task: None if task.cancelled() else task.exception())
                         with anyio.CancelScope(shield=not _abandon_on_cancel.get()):
-                            title, content = await asyncio.shield(conversion)
+                            await asyncio.wait((conversion,))
+                            title, content = conversion.result()
                 except RecursionError as e:
                     # `markdownify` walks the document recursively, so a page nested deeper than the
                     # interpreter's recursion limit can't be converted; let the model try elsewhere.
