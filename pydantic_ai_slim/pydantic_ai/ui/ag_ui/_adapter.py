@@ -604,7 +604,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         )
                         if not isinstance(metadata, dict):
                             metadata = {}
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
                         metadata = {}
                     builder.add(
                         ThinkingPart(
