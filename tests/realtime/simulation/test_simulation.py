@@ -906,6 +906,35 @@ def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect,
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
+@known('SIM-41')
+def test_known_xai_reopening_a_turn_after_its_own_stop() -> None:
+    """Recorded live (`xai_race_then_speech` probe): xAI hears the user stop, they speak again before it commits the
+    turn, and it reports `speech_started` for the same item, then stops and commits it once."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(commit=False)
+        sim.send_audio()
+        # The same item starts again: the lifecycle starts the turn it already placed a second time.
+        sim.speech_start()
+
+    reproduce('SIM-41', OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
+
+
+def test_xai_commits_a_stopped_turn_nobody_reopens() -> None:
+    """The simulated xAI commits a turn whose stop it didn't commit at once, once nobody speaks again (as it comes to
+    rest)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(commit=False)
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
+
+
 def test_turn_committed_after_a_racing_clear_is_recorded() -> None:
     """SIM-26, fixed by the session core."""
 
