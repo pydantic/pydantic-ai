@@ -43,9 +43,9 @@ class GitHub(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Offer only the tools the server marks as read-only. The hosted connection also asks for GitHub's read-only mode."""
     lockdown: bool = False
-    """Ask GitHub to hide issue and pull request content in public repositories when its author has no push access.
+    """Ask GitHub to withhold public-repository content written by users without push access.
 
-    GitHub describes this as a best-effort content filter, not a security boundary.
+    GitHub describes this as a best-effort content filter, not a security boundary: other tools can still return it.
     """
     include_instructions: bool = True
     """Forward the server's instructions to the agent."""
