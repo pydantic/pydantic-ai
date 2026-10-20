@@ -388,7 +388,7 @@ async def test_openai_spaced_tool_call_args_roundtrip_wire_stable(
         ),
     ],
 )
-async def test_anthropic_foreign_thinking_attribution_roundtrip_wire_stable(
+async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
     allow_model_requests: None,
     roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
 ):
