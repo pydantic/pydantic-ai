@@ -399,9 +399,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         first operation. Attaching to a deleted box raises `WorkspaceUnavailableError`; it does not
         create a replacement.
         """
-        return await self._get_box()
-
-    async def _get_box(self) -> _Box:
+        # Every operation gets the box first, so this one check covers them all.
         if not running_on_asyncio():
             raise UserError(ASYNCIO_ONLY)
         if self._box is not None:
@@ -488,14 +486,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         # Creating or attaching is bounded by the SDK; the timeout is the command's alone.
         try:
             return await self._exec(
-                await self._get_box(), argv, env=env, working_dir=self._working_dir, timeout=timeout
+                await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
         except _StaleHandle:
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
             return await self._exec(
-                await self._get_box(), argv, env=env, working_dir=self._working_dir, timeout=timeout
+                await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
             )
 
     async def _exec(
