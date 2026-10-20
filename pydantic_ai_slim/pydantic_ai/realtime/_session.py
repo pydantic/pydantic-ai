@@ -98,7 +98,9 @@ from ._core import (
     ResponseRefused,
     SessionCore,
     ToolCallRefused,
+    ToolCallsPruned,
     ToolReturned,
+    ToolRoundsOver,
     TranscriptOverdue,
     UsageCounted,
 )
@@ -475,6 +477,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         tool_name=call.tool_name,
         content=content,
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -731,6 +734,9 @@ class RealtimeSession:
         self._exchange_progress = asyncio.Event()
         # Whether the frame being handled lost a response under way (a reconnect that didn't carry it).
         self._frame_lost_response = False
+        # Answered calls of tool rounds that are over, which the connection may delete from the provider's
+        # conversation once the frame is handled (see `RealtimeConnection._prune_tool_calls`).
+        self._tool_rounds_over: list[ToolCallPart] = []
         # With the session core: the timer of each spoken turn waiting for its transcript (see
         # `_TRANSCRIPT_HOLD_SECONDS`), and of each response holding back user turns (see
         # `_BARGE_IN_TURN_HOLD_SECONDS`).
@@ -829,6 +835,7 @@ class RealtimeSession:
             run_id=run_id,
             responses_are_requests=self._responses_are_requests,
             answers_tool_calls_per_response=connection._answers_tool_calls_per_response,  # pyright: ignore[reportPrivateUsage]
+            tracks_tool_rounds=connection._prunes_tool_calls,  # pyright: ignore[reportPrivateUsage]
             input_transcription_enabled=connection.input_transcription_enabled,
             retain_input_audio=self._retain_input,
             retain_output_audio=self._retain_output,
@@ -911,6 +918,8 @@ class RealtimeSession:
             # interrupted. What that streams is discarded: the stream is closing and has no consumer left.
             self._server_cancelled_the_response_on_speech = False
             self._stop_tool_calls(list(self._pending_tool_calls))
+            for event in self._connection._stop_reading():  # pyright: ignore[reportPrivateUsage]
+                self._apply_core(event)
             self._apply_core(Closed())
             self._end_chat_spans_left_open()
             self._teardown = asyncio.create_task(self._finish_teardown())
@@ -1807,10 +1816,16 @@ class RealtimeSession:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
-        if frames:
-            await self._send_frame(*frames)
         # (Only a response still being generated records the position: a finished one keeps what history
         # recorded, and the position must not land on the next one instead.)
+        if frames:
+            try:
+                await self._send_frame(*frames)
+            except RealtimeError:
+                # The link failed mid-send, so the provider may have applied the truncation already: either way the
+                # listener heard only this much, so history records the cut too.
+                self._apply_core(Interrupted(played_ms=played_ms))
+                raise
         self._apply_core(Interrupted(played_ms=played_ms))
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
@@ -1870,7 +1885,18 @@ class RealtimeSession:
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         truncations = self._truncations_at(playhead)
-        await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        try:
+            await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        except RealtimeError:
+            # As in `interrupt(played_ms=...)`: the truncations may have reached the provider before the link failed.
+            self._apply_core(self._playback_interruption(played_ms, truncations))
+            raise
+        self._apply_core(self._playback_interruption(played_ms, truncations))
+        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
+        return True
+
+    def _playback_interruption(self, played_ms: int, truncations: list[TruncateOutput]) -> Interrupted:
+        """What a barge-in at a playback position cut off, for the core to record."""
         # (Only a response still being generated takes the position as a whole: a finished one is cut off by its
         # item's truncation instead, and the position must not land on the next response.)
         on_this_connection = {
@@ -1881,9 +1907,7 @@ class RealtimeSession:
             for cut in truncations
             if cut.item_id is not None and cut.item_id in on_this_connection
         )
-        self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
-        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
-        return True
+        return Interrupted(played_ms=played_ms, cuts=cuts)
 
     def _bytes_to_ms(self, audio_bytes: int) -> int:
         """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""
@@ -2208,6 +2232,7 @@ class RealtimeSession:
                 tool_name=call_part.tool_name,
                 content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
+                tool_kind=call_part.tool_kind,
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
@@ -2403,11 +2428,16 @@ class RealtimeSession:
             return result_part, user_content
         if not response_usage_follows:
             await self._drain_pending_messages('asap')
-        await self._send_tool_result(call_part, output, wire_content)
+        failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
+        await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
-    async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+    async def _send_tool_result(
+        self, call_part: ToolCallPart, output: str, wire_content: list[UserContent], *, failed: bool = False
+    ) -> None:
+        result = ToolResult(
+            tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
+        )
         await self._send_frame(result)
 
     # --- streaming --------------------------------------------------------------------------------
@@ -2734,7 +2764,10 @@ class RealtimeSession:
                     if await self._handle_pump_event(event):
                         return  # a usage limit tripped: stop reading the upstream
                     continue
-                # The frame is handled. Queued messages waiting for a reply to be over go out now.
+                # The frame is handled. What the provider holds of tool rounds that are over can go, and queued
+                # messages waiting for a reply to be over go out now.
+                if self._tool_rounds_over:
+                    await self._prune_tool_calls()
                 if response_done:
                     await self._drain_pending_messages('asap')
                     await self._drain_pending_messages('when_idle')
@@ -2775,6 +2808,8 @@ class RealtimeSession:
                 self._session_instrumentation.ensure_chat_span(effect.response_id)
             elif isinstance(effect, ResponseClosed):
                 self._response_closed(effect)
+            elif isinstance(effect, ToolRoundsOver):
+                self._tool_rounds_over.extend(effect.calls)
             elif isinstance(effect, UsageCounted):
                 if self._usage_limits is not None:
                     self._usage_limits.check_per_request_input_tokens(effect.usage.input_tokens)
@@ -2794,6 +2829,21 @@ class RealtimeSession:
             else:
                 self._publish_taps(effect)
                 self._queue_put(effect)
+
+    async def _prune_tool_calls(self) -> None:
+        """Let the connection delete the provider's copy of tool rounds that are over (`_prune_tool_calls` on it)."""
+        calls, self._tool_rounds_over = self._tool_rounds_over, []
+        async with self._send_lock:
+            try:
+                pruned = await self._connection._prune_tool_calls(calls)  # pyright: ignore[reportPrivateUsage]
+            except self._connection.transport_errors:
+                # The link dropped: nothing is taken as pruned, so a reconnect replays these calls, and they are
+                # pruned from the new conversation once the next frame is handled.
+                self._tool_rounds_over[:0] = calls
+                return
+        if pruned:
+            self._apply_core(ToolCallsPruned(tool_call_ids=tuple(pruned)))
+            self._session_instrumentation.record_lifecycle('prune tool items', tool_call_ids=list(pruned))
 
     def _end_chat_spans_left_open(self) -> None:
         """End the `chat` spans of responses that ended while their close wasn't streamed (receiving stopped mid-frame)."""

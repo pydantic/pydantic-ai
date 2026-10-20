@@ -884,6 +884,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
+    _telemetry_url_derived_id: str | None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -998,6 +999,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # optional task package here, rather than at module import time, so only an MCPToolset opts
         # the process into that extension and a pre-built but not-yet-entered Client still sees it.
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
+        self._telemetry_url_derived_id = None
 
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`

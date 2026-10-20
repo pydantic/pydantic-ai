@@ -110,7 +110,7 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+itself without reporting speech onset (Gemini, ElevenLabs Agents) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -121,8 +121,8 @@ As an alternative, handle barge-in yourself. The signals: providers whose profil
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
 (OpenAI, Azure OpenAI, and xAI) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
-Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. Read the flag rather than waiting on an event a provider never
+Gemini and ElevenLabs Agents emit [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
+when they interrupt model output instead. Read the flag rather than waiting on an event a provider never
 sends.
 
 While playback keeps the single device-paced iterator, staying in control of the trigger costs one
@@ -294,7 +294,7 @@ async def main():
         await session.create_response()
 ```
 
-Gemini does not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
+Gemini and ElevenLabs Agents do not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 ## Checking what the model supports

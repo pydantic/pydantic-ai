@@ -245,7 +245,10 @@ async def test_core_providers_need_a_profile_and_an_api_key(monkeypatch: pytest.
 async def test_connection_profiles_reuse_the_connection_prompt(
     monkeypatch: pytest.MonkeyPatch, provider: str, *, cancel: bool
 ) -> None:
-    async def openrouter_prompt() -> openrouter.Connection | None:
+    shell = Console(file=io.StringIO())
+
+    async def openrouter_prompt(*, console: Console) -> openrouter.Connection | None:
+        assert console is shell, 'the sign-in prints through the shell console, into the transcript'
         return None if cancel else openrouter.Connection(token=SecretStr('or-key'))
 
     async def vllm_prompt() -> vllm.Connection | None:
@@ -253,7 +256,7 @@ async def test_connection_profiles_reuse_the_connection_prompt(
 
     monkeypatch.setattr(openrouter, 'prompt_connection', openrouter_prompt)
     monkeypatch.setattr(vllm, 'prompt_connection', vllm_prompt)
-    message = await login_command([f'{provider}@lab'], codex=CodexAuth(Console(file=io.StringIO())))
+    message = await login_command([f'{provider}@lab'], codex=CodexAuth(shell))
     if cancel:
         assert message == 'Sign-in cancelled.'
         return

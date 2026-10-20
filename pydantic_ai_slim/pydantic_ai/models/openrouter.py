@@ -1187,7 +1187,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _OpenRouterChatCompletion:
-        response_dict = response.model_dump()
+        response_dict = response.model_dump(warnings=False)
 
         try:
             validated = _OpenRouterChatCompletion.model_validate(response_dict)

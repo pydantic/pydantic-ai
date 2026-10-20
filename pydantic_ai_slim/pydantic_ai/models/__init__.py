@@ -12,16 +12,18 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
+from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
 
 import httpx2
+from pydantic import Field
 from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -34,6 +36,11 @@ from .._http import (
     ConnectPoolTimeoutCap,
     create_async_httpx2_client as create_async_httpx2_client,
     legacy_httpx,
+)
+from .._instructions import (
+    InstructionValues,
+    advance_instruction_window,
+    instruction_window_start,
 )
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -53,6 +60,8 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -81,6 +90,7 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
+    _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
@@ -198,6 +208,18 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
+    _telemetry_mcp_url_ids: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """URL-derived MCP identities to mask in telemetry; `None` means provenance is unknown."""
+    _telemetry_mcp_url_toolset_ids: Annotated[set[str], Field(exclude=True)] = field(
+        default_factory=set[str], repr=False, compare=False
+    )
+    """URL-derived local MCP toolset identities to mask in telemetry."""
+    _telemetry_mcp_url_tool_names: Annotated[set[str] | None, Field(exclude=True)] = field(
+        default=None, repr=False, compare=False
+    )
+    """Resolved local MCP tool names; `None` means old payloads lack ownership provenance."""
     tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
@@ -926,7 +948,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         model_settings = merge_model_settings(self.settings, model_settings)
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
-        params = self.customize_request_parameters(model_request_parameters)
+        customized_params = self.customize_request_parameters(model_request_parameters)
+        from pydantic_ai._instrumentation import model_request_telemetry_url_ids
+
+        custom_tool_names = customized_params._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        original_tool_names = model_request_parameters._telemetry_mcp_url_tool_names  # pyright: ignore[reportPrivateUsage]
+        tool_names = (
+            custom_tool_names | (original_tool_names or set()) if custom_tool_names is not None else original_tool_names
+        )
+
+        # A model may rebuild the request parameters in this hook. Retain trace-only provenance
+        # without mutating its return value, which a custom model may reuse across requests.
+        params = replace(
+            customized_params,
+            _telemetry_mcp_url_ids=(
+                model_request_telemetry_url_ids(
+                    customized_params,
+                    known_ids=model_request_parameters._telemetry_mcp_url_ids,  # pyright: ignore[reportPrivateUsage]
+                )
+                | model_request_telemetry_url_ids(model_request_parameters)
+            ),
+            _telemetry_mcp_url_toolset_ids=(
+                customized_params._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+                | model_request_parameters._telemetry_mcp_url_toolset_ids  # pyright: ignore[reportPrivateUsage]
+            ),
+            _telemetry_mcp_url_tool_names=tool_names,
+        )
         params = prepare_return_schemas(
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
@@ -974,6 +1021,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 params,
                 prompted_output_template=self.profile.get('prompted_output_template', DEFAULT_PROMPTED_OUTPUT_TEMPLATE),
             )
+
+        params = _render_append_blocks(params)
 
         # Append prompted_output_instructions to instruction_parts so models that use structured
         # instruction parts (for per-part system messages or cache placement) also get them.
@@ -1055,6 +1104,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
+        `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
+        instruction baseline or compaction.
+
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
         and moves the current request's ones to the end of the last request.
@@ -1081,6 +1134,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        if _has_instruction_state(messages):
+            # The same path choice as the prefix statement in `prepare_request`; on the fallback path
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            messages = _project_instruction_state(
+                messages,
+                inline_system=self.profile.get('supports_inline_system_prompts', False),
+                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+            )
+
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
@@ -1266,6 +1328,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
+          3b. Defaults for this model instance from `_instance_profile_defaults()`, such as narrowing that
+             depends on the provider's SDK client. Unlike narrowing in a subclass's `profile` override,
+             which runs after the user's layer, the user's `profile=` can still override these.
           4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
@@ -1289,6 +1354,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             if context_window is not None:
                 resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
 
+        # Step 3b: defaults that depend on this model instance (such as its SDK client), which the user can override
+        resolved = self._instance_profile_defaults(resolved)
+
         # Step 4: user override
         if user is None:
             pass
@@ -1310,6 +1378,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
+
+        Override this for defaults that depend on more than the model name, such as the SDK client the provider
+        was built with, so that a value the user sets explicitly in either `profile=` form still wins.
+        """
+        return profile
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
@@ -1372,6 +1448,13 @@ class StreamedResponse(ABC):
 
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
+    _usage_received: bool | None = field(default=None, init=False)
+    """Whether the provider reported usage for this response.
+
+    `None` (the default) means the stream doesn't track this, so its usage is taken as is. A stream whose
+    provider can omit usage opts in by declaring this field with a `False` default and recording usage
+    through `_add_usage`. If such a stream completes without reporting any, `usage` counts it as an unmeasured
+    request."""
     _cancelled: bool = field(default=False, init=False)
     _finished: bool = field(default=False, init=False)
     _first_chunk_monotonic: float | None = field(default=None, init=False)
@@ -1580,7 +1663,7 @@ class StreamedResponse(ABC):
             parts=self._parts_manager.get_parts(),
             model_name=self.model_name,
             timestamp=self.timestamp,
-            usage=self._usage,
+            usage=self.usage,
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             provider_response_id=self.provider_response_id,
@@ -1594,7 +1677,27 @@ class StreamedResponse(ABC):
     @property
     def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
+        # Usage usually arrives with the last event, so omission is only known once the stream has completed.
+        if self._usage_received is False and self._finished:
+            return self._usage + RequestUsage(unmeasured_requests=1)
         return self._usage
+
+    def _add_usage(self, usage: RequestUsage, *, reported: bool, cumulative: bool = False) -> None:
+        """Record the usage mapped from one stream event.
+
+        Whether the response omitted usage is decided once for the whole stream by `usage`, so the
+        per-event omission marker a mapping helper adds is dropped here.
+
+        Args:
+            usage: The usage mapped from the event.
+            reported: Whether the event carried provider usage.
+            cumulative: Whether `usage` is cumulative and replaces the usage recorded so far, rather than adding to it.
+        """
+        usage = copy(usage)
+        usage.unmeasured_requests = 0
+        if reported:
+            self._usage_received = True
+        self._usage = usage if cumulative else self._usage + usage
 
     @property
     @abstractmethod
@@ -2839,6 +2942,86 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
+    """Render the prefix's append-mode blocks, which history holds only the content of; see `_render_append_parts`."""
+    if not (parts := params.instruction_parts):
+        return params
+    rendered = _render_append_parts(parts)
+    return replace(params, instruction_parts=rendered) if rendered != parts else params
+
+
+def _project_instruction_state(
+    messages: Sequence[ModelMessage], *, inline_system: bool, prefix: list[InstructionPart] | None
+) -> list[ModelMessage]:
+    """Render instruction changes as `SystemPromptPart`s, and the current window's instructions as they're sent.
+
+    Only the changes in the current window are rendered: a window opens at an
+    [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] or a compaction, and the
+    prefix moved there anyway, so earlier changes are superseded. Each block's text is folded forward from
+    the window's baseline, so a change can be rendered as a diff against the text the model last received
+    for its block; only text earlier in `messages` goes into that fold, so each change renders the same on
+    every later request.
+
+    The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
+    `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
+    tagged, for the adapters that read a request's instructions from history rather than from the request
+    parameters.
+    """
+    current_start = instruction_window_start(messages)
+    rendered_prefix = InstructionPart.join(_render_append_parts(prefix)) if prefix else None
+    window: InstructionBaselinePart | None = None
+    values = InstructionValues.at(None)
+    projected: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if (next_window := advance_instruction_window(window, message)) is not window:
+            window = next_window
+            values = InstructionValues.at(window)
+        if isinstance(message, ModelResponse):
+            projected.append(message)
+            continue
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if isinstance(part, InstructionDeltaPart):
+                # A change a newer version wrote, which this one can't address, is superseded by the window
+                # the next request opens.
+                if index >= current_start and part.id is not None:
+                    text = part.render(inline_system=inline_system, previous=values.apply(part))
+                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
+            elif not isinstance(part, InstructionBaselinePart):
+                parts.append(part)
+        instructions = message.instructions
+        if (
+            window is not None
+            and index >= current_start
+            and prefix
+            and instructions is not None
+            and instructions == InstructionPart.join(prefix)
+        ):
+            instructions = rendered_prefix
+        if parts != list(message.parts) or instructions != message.instructions:
+            message = replace(message, parts=parts, instructions=instructions)
+        projected.append(message)
+    return projected
+
+
+def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
+    """Whether any request in `messages` records instruction state that `prepare_messages` projects."""
+    return any(
+        isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """Explain how direct model callers can project canonical instruction state."""
+    return UserError(
+        '`InstructionDeltaPart` and `InstructionBaselinePart` must be projected before calling this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result. `Agent` does this for you.'
+    )
 
 
 def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessage]:

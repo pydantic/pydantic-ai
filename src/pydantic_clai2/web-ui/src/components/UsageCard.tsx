@@ -77,6 +77,12 @@ export function UsageCard({ notice, usage }: { notice: NoticeEntry; usage: Usage
           No price data for {usage.unpriced.join(', ')}; those responses are not counted in costs.
         </p>
       )}
+      {usage.unmeasured_requests > 0 && (
+        <p className="usage-note">
+          Token and cost totals are lower bounds because {number(usage.unmeasured_requests)}{' '}
+          {usage.unmeasured_requests === 1 ? 'response' : 'responses'} omitted usage information.
+        </p>
+      )}
       {notes.map((note) => (
         <p key={note} className="usage-note">
           {note}

@@ -154,9 +154,17 @@ Keep sub-agent prompts focused: the assigned files + PR context + the
 pointer to `review-instructions.md`. **Wait for all sub-agents to
 return** before proceeding.
 
-A sub-agent that returns an `error:` result (it timed out, failed, or was
-refused because the run is short on time) is finished. **Do not dispatch it
-again.** Mark its assigned files unreviewed unless you review them yourself.
+A sub-agent that times out is asked once more, without tools, for its report.
+That report opens with `note: the sub-agent timed out` and counts like any
+other sub-agent report.
+
+A sub-agent that returns an `error:` result (it timed out and could not be
+asked again, failed, or was refused because the run is short on time) is finished.
+**Do not dispatch it again.** Mark its assigned files unreviewed unless you
+review them yourself. A file you review yourself counts as reviewed only after
+you read its diff and its full source; a new file's diff contains the whole
+file, so its diff alone is enough. Otherwise list it as unreviewed, which rules
+out `APPROVE`.
 
 **Merge findings:** verify that each reported reviewed or unreviewed path
 belongs to that sub-agent's assignment. Require the two path lists to be
@@ -187,6 +195,10 @@ Before posting **any** inline comment:
 5. **Confirm the line is commentable** — open
    `.review-context/diff/<file>.diff` and check the target line
    has an `NL:<n>` prefix. If not, move the finding into the review body.
+
+Once the time budget is nearly spent, only the safe-output tools remain. Do
+not post an unverified finding as an inline comment: name it in the review
+body as unverified, and do not `APPROVE`.
 
 ### Step 5 — Comment and submit
 
