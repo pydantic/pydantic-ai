@@ -1,10 +1,11 @@
+from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -126,7 +127,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
     # Anthropic on Bedrock accepts a leading assistant turn, so we skip the synthetic user prepend.
     assert anthropic_profile.get('bedrock_supports_leading_assistant_message', False) is True
-    assert anthropic_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        anthropic_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert anthropic_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
     # Anthropic rejects documents/video co-located with a `toolResult`, but accepts text and images.
     assert anthropic_profile.get('bedrock_tool_result_colocatable_content') == frozenset({'text', 'image'})
@@ -254,7 +257,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     qwen_profile = provider.model_profile('qwen.qwen3-32b-v1:0')
     qwen_model_profile_mock.assert_called_with('qwen3-32b')
     assert isinstance(qwen_profile, dict)
-    assert qwen_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        qwen_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert qwen_profile.get('supports_json_schema_output', False) is True
     assert qwen_profile.get('bedrock_supports_strict_tool_definition', False) is True
     # Qwen on Bedrock also accepts a leading assistant turn.
@@ -266,7 +271,9 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     google_profile = provider.model_profile('google.gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert isinstance(google_profile, dict)
-    assert google_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(
+        google_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer
+    )
     assert google_profile.get('supports_json_schema_output', False) is True
     assert google_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert google_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
@@ -300,7 +307,7 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert isinstance(zai_profile, dict)
     assert zai_profile.get('bedrock_supports_tool_choice', False) is True
     assert zai_profile.get('bedrock_supports_leading_assistant_message', False) is True
-    assert zai_profile.get('json_schema_transformer', None) is BedrockJsonSchemaTransformer
+    assert issubclass(zai_profile.get('json_schema_transformer') or JsonSchemaTransformer, BedrockJsonSchemaTransformer)
     assert zai_profile.get('supports_json_schema_output', False) is True
     assert zai_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert zai_profile.get('supports_thinking', False) is True
@@ -749,6 +756,92 @@ def test_strict_true_strips_array_max_items():
             'additionalProperties': False,
         }
     )
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'zai.glm-4.7-flash',
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'qwen.qwen3-32b-v1:0',
+        'google.gemma-3-12b-it',
+    ],
+)
+@pytest.mark.parametrize('strict', [True, False, None])
+@pytest.mark.parametrize('schema_type', ['array', ['array', 'null']])
+def test_bedrock_contains_constraint(model_name: str, strict: bool | None, schema_type: str | list[str]):
+    """Pin the outgoing schema: cassette matching alone does not check request bodies."""
+    schema: JsonSchema = {
+        'type': schema_type,
+        'items': {'type': 'string'},
+        'contains': {'type': 'string'},
+        'minItems': 1,
+        'description': 'Values',
+    }
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformer = transformer_type(schema, strict=strict)
+    transformed = transformer.walk()
+
+    if strict and (schema_type == 'array' or 'anthropic' in model_name):
+        assert transformed == {
+            'type': schema_type,
+            'items': {'type': 'string'},
+            'minItems': 1,
+            'description': "Values (contains={'type': 'string'})",
+        }
+    else:
+        assert transformed == original
+    assert schema == original
+
+
+@pytest.mark.parametrize('model_name', ['zai.glm-4.7-flash', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'])
+@pytest.mark.parametrize('schema_type', [None, 'object', ['array', 'null'], ['string', 'null']])
+def test_bedrock_contains_preserves_matching_type_boundary(model_name: str, schema_type: str | list[str] | None):
+    """A contains subschema must not widen the walk into unmatched object/array keywords."""
+    schema: JsonSchema = {'contains': {'$ref': '#/$defs/Missing'}}
+    if schema_type is not None:
+        schema['type'] = schema_type
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformed = transformer_type(schema, strict=True).walk()
+    if 'anthropic' in model_name and schema_type == ['array', 'null']:
+        assert 'contains' not in transformed
+        assert transformed['description'] == "contains={'$ref': '#/$defs/Missing'}"
+    else:
+        assert transformed['contains'] == schema['contains']
+    assert schema == original
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'mistral.ministral-3-3b-instruct',
+        'minimax.minimax-m2',
+        'nvidia.nemotron-nano-9b-v2',
+        'moonshotai.kimi-k2.5',
+        'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+        'google.gemma-3-4b-it',
+        'qwen.qwq-32b',
+    ],
+)
+def test_bedrock_contains_other_families_unchanged(model_name: str):
+    """Ministral accepts contains; the other families have no confirmed keyword rejection."""
+    schema: JsonSchema = {'type': 'array', 'items': {'type': 'string'}, 'contains': {'type': 'string'}}
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformed = transformer_type(schema, strict=True).walk()
+    assert transformed == original
+    assert schema == original
 
 
 def test_strict_true_strips_array_min_items_gt1():

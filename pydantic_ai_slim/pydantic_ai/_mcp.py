@@ -6,7 +6,10 @@ from typing import Literal, assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
-from .models import _render_unattributed_compaction_parts  # pyright: ignore[reportPrivateUsage]
+from .models import (
+    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
@@ -102,7 +105,7 @@ def _map_sampling_tool_result(
     )
 
 
-def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[str, list[mcp_types.SamplingMessage]]:
+def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[str, list[mcp_types.SamplingMessage]]:  # noqa: C901
     """Convert from pydantic-ai messages to MCP sampling messages.
 
     Returns:
@@ -125,6 +128,8 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                 system_prompt.append(pai_message.instructions)
 
             for part in pai_message.parts:
+                if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
+                    raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):
                     system_prompt.append(part.content)
                 elif isinstance(part, messages.UserPromptPart):
