@@ -48,6 +48,7 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
@@ -88,7 +89,8 @@ from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup, can_steer
+from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, find_queued
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
@@ -444,6 +446,7 @@ def create_shell(
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         queued=lambda: shell.queued,
+        inputs=lambda: shell,
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
     updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
@@ -625,7 +628,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
-    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
     """Whether a turn runs: from its `TurnStart` until its run ends, before plugins hear `TurnEnd`."""
@@ -652,7 +655,37 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     @property
     def queued(self) -> int:
         """How many inputs wait for the running turn or command to end."""
-        return len(self.editor.queued_messages) if self.editor is not None else self._inbox.qsize()
+        return len(self._queued_prompts())
+
+    def _queued_prompts(self) -> list[QueuedPrompt]:
+        """What waits where input comes from now: the terminal's editor while it shows this session, else the inbox."""
+        return self.editor.queued_prompts() if self.editor is not None else self._inbox.entries
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the running turn or command to end, oldest first, as `host.live` lists them."""
+        return [QueuedInput(id=entry.id, text=entry.text) for entry in self._queued_prompts()]
+
+    def edit_queued(self, input_id: str, text: str) -> None:
+        """Rewrite a waiting input in place, as Enter on a recalled queued prompt does; blank text is refused."""
+        text = expand_bare_command(text.strip())
+        if not text:
+            raise ValueError('Type a prompt or a /command.')
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.rewrite(entry, text)
+        else:
+            entry.text = text
+        self.live_session.changed()
+
+    def remove_queued(self, input_id: str) -> None:
+        """Drop a waiting input, as clearing a recalled queued prompt before Enter does."""
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.discard(entry)
+        else:
+            self._inbox.remove(entry)
+        self.live_session.changed()
 
     @property
     def idle(self) -> bool:
@@ -862,7 +895,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if self.editor is not None:
             self.editor.submit(text)
         else:
-            self._inbox.put_nowait(text)
+            self._inbox.put(QueuedPrompt(text))
         self.live_session.changed()
 
     def request_reload(self, args: list[str]) -> str:
@@ -945,15 +978,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
         if self.editor is not None and editor is None:
             # Prompts queued for this session stay its own while the terminal shows another.
-            for text in self.editor.take_queued():
-                self._inbox.put_nowait(text)
+            for entry in self.editor.take_queued():
+                self._inbox.put(entry)
         self.editor = editor
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
             # Input a plugin entered while the editor read for another session, or did not exist yet.
-            while not self._inbox.empty():
-                editor.submit(self._inbox.get_nowait())
+            for entry in self._inbox.take():
+                editor.submit(entry)
             if self.tasks.owner.reports(conversation_id=self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
@@ -991,7 +1024,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     self._reading = None
 
     def steer(self, text: str) -> bool:
-        """Enqueue steering in core and hand transcript feedback to the active turn."""
+        """Enqueue steering in core and hand transcript feedback to the active turn.
+
+        `False` when no run takes it, and for a `/command` or `!` shell line, which never steer.
+        """
+        if not can_steer(text):
+            return False
         try:
             resolved, images = self.images.resolve(text)
         except ValueError as exc:

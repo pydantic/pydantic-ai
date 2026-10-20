@@ -508,6 +508,10 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
     assert (session.running, session.queued, session.watchers, session.interrupt()) == (False, 0, 0, False)
+    assert (session.queue, session.steer('hi')) == ([], False), 'a bare host queues nothing and steers nothing'
+    for change in (lambda: session.edit_queued('q1', 'x'), lambda: session.remove_queued('q1')):
+        with pytest.raises(LookupError, match='no longer queued'):
+            change()
     assert await session.complete('/') == []
     assert session.command_menu('set') is None, 'a bare host has no commands'
     with pytest.raises(KeyError):

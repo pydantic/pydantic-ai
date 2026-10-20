@@ -4,6 +4,7 @@ import type {
   ItemMessage,
   LiveEntry,
   OrchestratorEvent,
+  QueuedItem,
   Questions,
   ServerMessage,
   SessionInfo,
@@ -51,6 +52,8 @@ export interface Chat {
   tasks: TaskEntry[]
   /** What each running task has done so far, by task ID; a finished task's saved history is fetched instead. */
   taskItems: Record<string, Entry[]>
+  /** The input waiting for the running turn or command, oldest first, as the session's prompt holds it. */
+  queue: QueuedItem[]
 }
 
 export const initialChat: Chat = {
@@ -62,6 +65,7 @@ export const initialChat: Chat = {
   turnStartedAt: null,
   tasks: [],
   taskItems: {},
+  queue: [],
 }
 
 export type Snapshot = Extract<ServerMessage, { type: 'snapshot' }>
@@ -271,6 +275,8 @@ export function reduceChat(chat: Chat, message: SessionMessage): Chat {
     }
     case 'title':
       return chat.session ? { ...chat, session: { ...chat.session, title: message.title } } : chat
+    case 'queue':
+      return { ...chat, queue: message.queue }
   }
 }
 
@@ -297,6 +303,7 @@ function applySnapshot(state: State, message: Snapshot): State {
     turnStartedAt: message.running ? (previous?.turnStartedAt ?? null) : null,
     tasks: message.tasks,
     taskItems: message.task_items,
+    queue: message.queue,
   }
   return {
     ...state,

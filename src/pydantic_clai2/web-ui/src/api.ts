@@ -14,6 +14,7 @@ import type {
   PluginRow,
   Project,
   ServerMessage,
+  Steering,
   Switch,
   TaskTranscript,
   Transcript,
@@ -89,6 +90,13 @@ export function sessionApi(id: string | null) {
   const base = id === null ? '/api' : `/api/sessions/${encodeURIComponent(id)}`
   return {
     send: (text: string) => call<Entered>('POST', `${base}/input`, { text }),
+    /** Send a prompt to the running turn now, as Alt+Enter at the prompt does; one that cannot steer is entered instead. */
+    steer: (text: string) => call<Steering>('POST', `${base}/steer`, { text }),
+    /** Rewrite a queued input in place; a 404 means it already ran or was removed. */
+    editQueued: (id: string, text: string) => call<void>('PUT', `${base}/queue/${encodeURIComponent(id)}`, { text }),
+    removeQueued: (id: string) => call<void>('DELETE', `${base}/queue/${encodeURIComponent(id)}`),
+    /** Send a queued prompt to the running turn now; `steered: false` leaves it queued. */
+    steerQueued: (id: string) => call<{ steered: boolean }>('POST', `${base}/queue/${encodeURIComponent(id)}/steer`),
     interrupt: () => call<{ interrupted: boolean }>('POST', `${base}/interrupt`),
     complete: (text: string) => call<CompletionInfo[]>('GET', `${base}/complete?text=${encodeURIComponent(text)}`),
     selectModel: (name: string) => call<void>('POST', `${base}/model`, { name }),

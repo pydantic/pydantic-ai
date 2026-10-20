@@ -18,7 +18,7 @@ import { PanelGlyph, SidePanel, followWindows, following, panelKey } from './com
 import { WorkerView } from './components/WorkerView'
 import { SidebarIcon, TerminalIcon } from './components/icons'
 import type { PanelInfo, ServerMessage, Transcript as Saved } from './protocol'
-import { MAC, MOD } from './platform'
+import { MAC, MOD, STEER_KEY } from './platform'
 import { isLight, paletteVariables } from './palette'
 import { initial, initialOrchestrator, reduce, reduceOrchestrator, shownChat, type Action } from './state'
 import { WorkersContext } from './workers'
@@ -469,11 +469,12 @@ export function App() {
       controls={<Switches status={status} running={chat.running} onError={showError} />}
       model={status?.model ?? '…'}
       disabled={connection !== 'open'}
-      placeholder={chat.running ? 'Queue a follow-up…' : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
+      placeholder={chat.running ? `Queue a follow-up, or steer with ${STEER_KEY}…` : fresh ? 'Describe a task or ask a question' : 'Ask for follow-up changes'}
       local={local}
       onMenu={openMenu}
       draft={draft}
       onDraft={setDraft}
+      queue={chat.queue}
       onError={showError}
     />
   )
