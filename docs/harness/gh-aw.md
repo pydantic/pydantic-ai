@@ -285,7 +285,7 @@ Key by key:
   It also decides the wire API: `anthropic/` runs over the Anthropic Messages API, because
   that backend forwards the request path to `api.anthropic.com` unchanged, and the other
   three are OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
-  `github-copilot:` model, so Copilot's per-family model profiles apply and the thinking
+  [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model profiles apply and the thinking
   its Claude and Gemini models return in `reasoning_text` is kept. Under `PAI_BASE_URL`
   everything stays on the generic Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
@@ -442,9 +442,10 @@ covers that path.
 With safe outputs declared, gh-aw runs a
 [threat-detection job](https://github.github.com/gh-aw/reference/threat-detection/) over the
 agent's output before applying it. That job runs only on gh-aw's built-in engines, and the
-definition picks `copilot`, so detection reads `COPILOT_GITHUB_TOKEN` even when the agent
-uses another provider. A workflow without that secret points detection at the built-in
-engine whose key it already has, `codex` for `openai/` and `codex/` models and `claude` for
+definition picks `copilot`, so detection reads `COPILOT_GITHUB_TOKEN`, or the run's
+`github.token` under `permissions: copilot-requests: write`, even when the agent uses
+another provider. A workflow with neither points detection at the built-in engine whose
+key it already has, `codex` for `openai/` and `codex/` models and `claude` for
 `anthropic/` ones, or sets `false` to skip the AI analysis. The workflow above has an
 OpenAI key, so it would add:
 

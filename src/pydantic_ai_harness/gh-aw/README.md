@@ -251,9 +251,10 @@ configure no endpoint.
 When a workflow declares safe outputs, gh-aw runs a threat-detection job over the
 agent's output before applying them. That job runs only on gh-aw's built-in engines,
 so this definition sets `detection-engine: copilot`: detection runs on the Copilot
-engine and reads `COPILOT_GITHUB_TOKEN`, whatever provider the agent itself uses.
+engine and reads `COPILOT_GITHUB_TOKEN`, or the run's `github.token` under
+`permissions: copilot-requests: write`, whatever provider the agent itself uses.
 
-A workflow that does not have that credential overrides the choice. Point detection at
+A workflow with neither credential overrides the choice. Point detection at
 the built-in engine whose key the workflow already has, `codex` for an `openai/` or
 `codex/` model and `claude` for an `anthropic/` one, or set `false` to skip the AI
 analysis:

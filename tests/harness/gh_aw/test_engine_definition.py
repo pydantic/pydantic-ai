@@ -510,7 +510,10 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
     assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:10002/v1'
     assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
-    assert 'OPENAI_API_KEY' not in invocation.env
+    # gh-aw sets the OpenAI-compatible pair for the copilot backend too, so an agent
+    # that builds its own OpenAI-compatible client keeps reaching the proxy.
+    assert invocation.env['OPENAI_BASE_URL'] == 'http://host.docker.internal:10002/v1'
+    assert invocation.env['OPENAI_API_KEY'] == 'awf-copilot-proxy'
 
 
 def test_copilot_falls_back_to_the_proxy_url_gh_aw_sets_without_reflect(tmp_path: Path) -> None:
@@ -730,7 +733,6 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert invocation.cli_args[3] == f'openai-chat:{model.split("/", 1)[1]}'
     assert invocation.env['OPENAI_BASE_URL'] == 'https://endpoint.example.com/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
-    assert 'GITHUB_COPILOT_BASE_URL' not in invocation.env
 
 
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(

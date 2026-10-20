@@ -651,18 +651,20 @@ engine:
         // The AWF api-proxy injects the real upstream credentials and ignores the
         // inbound key, but no client constructs itself without one. Setting it
         // also replaces whatever key this step inherited, so the agent process holds
-        // the placeholder rather than a provider credential. The Copilot client reads
-        // its own variables, so an inherited OpenAI key is removed instead.
+        // the placeholder rather than a provider credential. gh-aw gives the copilot
+        // backend both its own pair and the OpenAI-compatible one, so both are set
+        // there: the Copilot model reads its own, and an OpenAI-compatible client an
+        // agent builds itself keeps reaching the proxy.
         if (useMessagesAPI) {
           env.ANTHROPIC_BASE_URL = baseUrl;
           env.ANTHROPIC_API_KEY = "awf-anthropic-proxy";
-        } else if (useCopilotAPI) {
-          env.GITHUB_COPILOT_BASE_URL = baseUrl;
-          env.GITHUB_COPILOT_API_KEY = "awf-copilot-proxy";
-          delete env.OPENAI_API_KEY;
         } else {
           env.OPENAI_BASE_URL = baseUrl;
           env.OPENAI_API_KEY = "awf-copilot-proxy";
+          if (useCopilotAPI) {
+            env.GITHUB_COPILOT_BASE_URL = baseUrl;
+            env.GITHUB_COPILOT_API_KEY = "awf-copilot-proxy";
+          }
         }
 
         // `-m` is always passed: the composed agent carries no model, and without
