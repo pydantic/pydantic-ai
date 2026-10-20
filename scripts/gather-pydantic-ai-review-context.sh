@@ -688,7 +688,10 @@ async def before_model_request(self, ctx, request_context):
     ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
 ```
 *Why:* Fixed framework text in system voice, request-scoped, and added to
-history, so later requests send the same bytes. Also don't flag compaction
+history. On Anthropic it's sent natively with `clear_at`, so later requests
+send it unchanged; elsewhere it's sent at the tail of its own request, behind
+the cache breakpoint, and left out of later ones, a deliberate tail move that
+keeps the cached prefix. Also don't flag compaction
 moving the prefix once when it crosses its threshold, a request-only change
 to `request_context.messages` that every later request applies the same way
 (redacting a part from the first request that sends it), or code using today's
