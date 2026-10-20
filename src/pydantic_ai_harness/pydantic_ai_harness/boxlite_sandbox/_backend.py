@@ -130,7 +130,7 @@ message history could reach a box made by another tool, with host mounts or publ
 is a namespace, not proof of origin: any process of this OS user could use it, so a ref is still trusted input.
 """
 
-RESERVED_OPTIONS = frozenset(
+_RESERVED_OPTIONS = frozenset(
     {'image', 'cpus', 'memory_mib', 'network', 'working_dir', 'env', 'auto_delete', 'auto_remove'}
 )
 """`boxlite.BoxOptions` arguments the named settings own, so `box_options` can't pass them too."""
@@ -197,7 +197,7 @@ _late_stops: set[asyncio.Task[None]] = set()
 ASYNCIO_ONLY = '`BoxLiteSandbox` needs the asyncio event loop: the BoxLite SDK returns asyncio futures.'
 
 
-def sdk() -> Any:
+def _sdk() -> Any:
     """The `boxlite` module, untyped: the SDK ships no type information."""
     return boxlite
 
@@ -205,7 +205,7 @@ def sdk() -> Any:
 def runtime() -> _Runtime:
     """This process's BoxLite runtime, opened on first use."""
     try:
-        return cast(_Runtime, sdk().Boxlite.default())
+        return cast(_Runtime, _sdk().Boxlite.default())
     except BaseException as error:
         # The runtime reports failing to open, such as on a home directory another process holds, as a Rust panic.
         if type(error).__name__ != 'PanicException':
@@ -223,7 +223,7 @@ def check_ref(ref: WorkspaceRef) -> None:
         )
 
 
-def network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -> Any:
+def _network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -> Any:
     """The network a new box gets; raise `ValueError` for an allow-list that wouldn't apply."""
     if allowed_hosts is not None:
         if isinstance(allowed_hosts, str) or not all(type(host) is str and host for host in allowed_hosts):
@@ -232,8 +232,8 @@ def network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) ->
             # BoxLite reads an empty allow-list as no restriction.
             raise ValueError('allowed_hosts needs allow_internet_access=True and at least one host')
     if not allow_internet_access:
-        return sdk().NetworkSpec(outbound=sdk().OutboundNetworkSpec(mode='disabled'))
-    return sdk().NetworkSpec(outbound=sdk().OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ())))
+        return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='disabled'))
+    return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ())))
 
 
 def start_lifecycle(name: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
@@ -267,7 +267,13 @@ class _StaleHandle(Exception):
 
 
 class _Output:
-    """A command's output and exit code so far, the output bounded by `_MAX_OUTPUT_BYTES` across both streams."""
+    """A command's output and exit code so far, the output bounded by `_MAX_OUTPUT_BYTES` across both streams.
+
+    `read` and `wait` run in one task group. They record a failure and cancel the group rather than raise
+    it, so `_exec` raises it as itself, not wrapped in an `ExceptionGroup`. The state lives here, not in
+    variables of `_exec` set by nested functions, because pyright would narrow those to `None` and stop
+    checking the code that reads them.
+    """
 
     def __init__(self) -> None:
         self.stdout: list[str] = []
@@ -275,8 +281,6 @@ class _Output:
         self.size = 0
         self.exit_code: int | None = None
         self.error: Exception | None = None
-        """Why collecting stopped early, raised by the caller after the task group so it isn't wrapped in an
-        `ExceptionGroup`."""
 
     async def read(self, stream: AsyncIterator[str], chunks: list[str], group: TaskGroup) -> None:
         try:
@@ -365,14 +369,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         if ref is not None:
             check_ref(ref)
         check_env(env)
-        if reserved := sorted(RESERVED_OPTIONS.intersection(box_options or {})):
+        if reserved := sorted(_RESERVED_OPTIONS.intersection(box_options or {})):
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
-        self._options: Any = sdk().BoxOptions(
+        self._options: Any = _sdk().BoxOptions(
             **(box_options or {}),
             image=image,
             cpus=cpus,
             memory_mib=memory_mb,
-            network=network(allow_internet_access, allowed_hosts),
+            network=_network(allow_internet_access, allowed_hosts),
             # Kept after it stops, so the ref can boot it again.
             auto_delete=0,
         )
@@ -622,5 +626,5 @@ async def _boot(box: _Box) -> None:
         raise WorkspaceUnavailableError(f'This host cannot run a BoxLite box: {error}') from error
 
 
-def _gone_message(name: str | None) -> str:
+def _gone_message(name: str) -> str:
     return f"The BoxLite box {name!r} no longer exists. Pass `workspace='new'` to start a fresh box."

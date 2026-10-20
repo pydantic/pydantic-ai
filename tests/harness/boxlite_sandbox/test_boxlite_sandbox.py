@@ -44,10 +44,10 @@ class _Abort(BaseException):
     """A `BaseException` that asyncio stores on a task, unlike `KeyboardInterrupt`."""
 
 
-async def _wrapper_started(fake_boxlite: FakeBoxLite, count: int) -> None:
-    """Wait until the fake has spawned `count` processes: creating a box runs one, its `mkdir`."""
+async def _command_started(fake_boxlite: FakeBoxLite) -> None:
+    """Wait until the command has started: creating the box runs one process, its `mkdir`, and the command a second."""
     with anyio.fail_after(5):
-        while len(fake_boxlite.spawned) < count:
+        while len(fake_boxlite.spawned) < 2:
             await asyncio.sleep(0.01)
 
 
@@ -559,7 +559,7 @@ async def test_a_deletion_ending_a_command_is_unavailable(fake_boxlite: FakeBoxL
     await backend.get_sandbox()
     assert backend.ref is not None
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 2)
+    await _command_started(fake_boxlite)
     script = fake_boxlite.spawned[-1]
     fake_boxlite.remove_gate = gate = asyncio.Event()
     deletion = asyncio.create_task(BoxLiteSandbox[None]().destroy(backend.ref))
@@ -580,7 +580,7 @@ async def test_a_box_stopped_during_a_command_is_unavailable(fake_boxlite: FakeB
     await backend.get_sandbox()
     (box,) = fake_boxlite.boxes.values()
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 2)
+    await _command_started(fake_boxlite)
     fake_boxlite.stop(box.name)
     with pytest.raises(WorkspaceUnavailableError, match=f"The BoxLite box '{box.name}' is stopped"):
         await command
@@ -596,7 +596,7 @@ async def test_a_box_stopped_elsewhere_while_still_reported_running_is_unavailab
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     command = asyncio.create_task(backend.run(['sleep', '3']))
-    await _wrapper_started(fake_boxlite, 2)
+    await _command_started(fake_boxlite)
     fake_boxlite.exec_error = boxlite.UpstreamUnavailableError('gRPC/tonic error: status: Unavailable')
     fake_boxlite.spawned[-1].send_signal(signal.SIGTERM)
     with pytest.raises(WorkspaceUnavailableError, match='stopped during the command: gRPC'):
