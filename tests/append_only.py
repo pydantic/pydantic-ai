@@ -506,22 +506,33 @@ _CACHE_MARKERS = frozenset({'cache_control', 'prompt_cache_breakpoint'})
 """Anthropic's and OpenAI's explicit cache breakpoints, which roll forward with each request by design."""
 
 
-def _strip_cache_markers(value: Any) -> Any:
-    """Drop cache breakpoints, and undo the wrapping that placing one needs.
+def _strip_cache_markers(body: dict[str, Any]) -> dict[str, Any]:
+    """Drop cache breakpoints from where providers put them, and undo the wrapping that placing one needs.
 
-    OpenAI's breakpoint sits on a content part, so a plain-string message body or tool output that gets one
-    is sent as a single text part instead (with the text unchanged), and goes back to a string once the
-    breakpoint moves on. With the marker gone, that single part is read back as the string it stands for.
+    Markers sit on tool definitions, system blocks, messages and their content parts (one level deeper for an
+    Anthropic `tool_result`), so only those are stripped: the same key inside tool arguments or a JSON schema
+    is data, and a change to it is a real prefix change. OpenAI's breakpoint sits on a content part, so a
+    plain-string message body or tool output that gets one is sent as a single text part instead (with the
+    text unchanged), and goes back to a string once the breakpoint moves on. With the marker gone, that single
+    part is read back as the string it stands for.
     """
-    if is_str_dict(value):
-        stripped = {key: _strip_cache_markers(item) for key, item in value.items() if key not in _CACHE_MARKERS}
-        for key in ('content', 'output'):
-            if (text := _single_text_part(stripped.get(key))) is not None:
-                stripped[key] = text
-        return stripped
-    if isinstance(value, list):
-        return [_strip_cache_markers(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-    return value
+    stripped = dict(body)
+    for section in ('tools', 'system', 'messages', 'input'):
+        if isinstance(items := stripped.get(section), list):
+            stripped[section] = [_strip_item(item) for item in items]  # pyright: ignore[reportUnknownVariableType]
+    return stripped
+
+
+def _strip_item(item: Any, depth: int = 0) -> Any:
+    if not is_str_dict(item):
+        return item
+    stripped = {key: value for key, value in item.items() if key not in _CACHE_MARKERS}
+    for key in ('content', 'output'):
+        if depth < 2 and isinstance(parts := stripped.get(key), list):
+            parts = [_strip_item(part, depth + 1) for part in parts]  # pyright: ignore[reportUnknownVariableType]
+            text = _single_text_part(parts)
+            stripped[key] = parts if text is None else text
+    return stripped
 
 
 def _single_text_part(content: Any) -> str | None:

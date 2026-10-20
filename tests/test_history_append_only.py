@@ -12,6 +12,7 @@ own suites, which check that a durable run sends the same requests as a plain on
 from __future__ import annotations
 
 import importlib
+import json
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -57,9 +58,11 @@ from .append_only import (
     PROVIDERS,
     Allowed,
     Clock,
+    ConversationResult,
     Exempt,
     Fixture,
     Known,
+    PrefixBreak,
     Provider,
     Scenario,
     build_capabilities,
@@ -341,3 +344,28 @@ def test_discovery_finds_capabilities_with_nested_type_arguments(tmp_path: Path,
     found = discover_capabilities(('nested_generic_capabilities',))
     assert sorted(found) == ['Base', 'Leaf']
     assert found['Leaf'].module == 'nested_generic_capabilities._caps'
+
+
+def test_only_provider_cache_markers_are_ignored():
+    """A breakpoint moving is ignored, but the same key inside tool arguments is data and still counts.
+
+    A unit test of the comparator: no capability sends `cache_control` in its tool arguments today, so no
+    conversation would show the difference.
+    """
+
+    def body(marker_on: int, argument: str) -> bytes:
+        messages: list[dict[str, Any]] = [
+            {'role': 'user', 'content': [{'type': 'text', 'text': 'Hi'}]},
+            {
+                'role': 'assistant',
+                'content': [{'type': 'tool_use', 'id': 't1', 'name': 'save', 'input': {'cache_control': argument}}],
+            },
+        ]
+        messages[marker_on]['content'][-1]['cache_control'] = {'type': 'ephemeral'}
+        return json.dumps({'model': 'claude-opus-5-5', 'messages': messages}).encode()
+
+    def breaks(*bodies: bytes) -> list[PrefixBreak]:
+        return ConversationResult('anthropic', list(bodies), (b'', b''), []).prefix_breaks()
+
+    assert breaks(body(0, 'a'), body(1, 'a')) == []
+    assert [b.section for b in breaks(body(1, 'a'), body(1, 'b'))] == ['messages']
