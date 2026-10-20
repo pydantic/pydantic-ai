@@ -50,7 +50,9 @@ from pydantic_ai.realtime._core import (
     ResponseRefused,
     SessionCore,
     ToolCallRefused,
+    ToolCallsPruned,
     ToolReturned,
+    ToolRoundsOver,
     TranscriptOverdue,
 )
 from pydantic_ai.realtime._inferred_lifecycle import InferredLifecycle
@@ -1385,3 +1387,206 @@ def test_a_lifecycle_event_the_core_does_not_know_is_refused() -> None:
 
     with pytest.raises(TypeError, match='no handling for the lifecycle event'):
         core().apply(_Unknown())
+
+
+def test_a_turn_dropped_after_its_transcript_started_streaming_ends_its_part() -> None:
+    """A turn that never joined the conversation isn't recorded, but the part it streamed still ends."""
+    session_core = feed(core(), UserTurnStarted(turn_id='u1'), InputTranscript('Hel', item_id='u1'), AudioCleared())
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == snapshot(
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
+    )
+    assert session_core.all_messages() == []
+
+
+def test_tools_see_what_a_response_under_way_said_and_called() -> None:
+    """A tool runs while the response that called it can still be under way: what it said and called is in view."""
+    session_core = feed(
+        core(),
+        started('r1'),
+        said('r1', 'Let me check.', 'item_1'),
+        ToolCall(tool_call_id='c1', tool_name='lookup', args='{}', response_id='r1'),
+        said('r1', 'Still checking.', 'item_2'),
+    )
+    assert summary(session_core.conversation_so_far()) == snapshot(
+        ['r1 [assistant:Let me check., call:c1, assistant:Still checking.] complete None']
+    )
+    assert session_core.all_messages() == []
+
+
+def test_a_native_part_ends_under_the_index_it_started_with_after_its_response_ended() -> None:
+    """A connection can end a native part in a later frame than its response: it still closes the part it opened."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(
+        core(), started('r1'), PartStartEvent(index=7, part=call), ended('r1'), PartEndEvent(index=7, part=call)
+    )
+    indexes = [
+        (type(effect).__name__, effect.index)
+        for effect in session_core.take_effects()
+        if isinstance(effect, (PartStartEvent, PartEndEvent))
+    ]
+    assert indexes == snapshot([('PartStartEvent', 0), ('PartEndEvent', 0)])
+
+
+def test_stripping_a_message_without_tracked_audio_frees_nothing() -> None:
+    message = ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hi.')])
+    budget = RetainedAudioBudget(10, input_sample_rate=24000, output_sample_rate=24000)
+    assert budget.strip(message) == (message, 0)
+
+
+def test_a_response_that_calls_no_tool_ends_the_tool_rounds_before_it() -> None:
+    """Once a response completes without calling a tool, the answered calls before it are named, once; pruned ones
+    stay in history, and leave the replay with the content their result carried."""
+    returned = ModelRequest(
+        parts=[
+            ToolReturnPart(tool_name='photo', content='Taken.', tool_call_id='c1'),
+            UserPromptPart(content='(photo)'),
+        ]
+    )
+    session_core = feed(
+        core(tracks_tool_rounds=True),
+        started('r1'),
+        said('r1', 'Let me look.', 'item_1'),
+        ToolCall(tool_call_id='c1', tool_name='photo', args='{}', response_id='r1'),
+        ended('r1'),
+        InputSent(input_id=0, solicits=True, tool_call_id='c1'),
+        ToolReturned(tool_call_id='c1', request=returned),
+        started('r2', 0),
+        said('r2', 'A kiwi.'),
+    )
+    session_core.take_effects()
+    feed(session_core, ended('r2'), started('r3'), said('r3', 'Anything else?'), ended('r3'))
+    rounds = [effect for effect in session_core.take_effects() if isinstance(effect, ToolRoundsOver)]
+    assert [[call.tool_call_id for call in effect.calls] for effect in rounds] == [['c1']]
+
+    feed(session_core, ToolCallsPruned(tool_call_ids=('c1',)))
+    assert summary(session_core.replayable_messages()) == snapshot(
+        [
+            'r1 [assistant:Let me look.] complete stop',
+            'r2 [assistant:A kiwi.] complete stop',
+            'r3 [assistant:Anything else?] complete stop',
+        ]
+    )
+    assert summary(session_core.all_messages()) == snapshot(
+        [
+            'r1 [assistant:Let me look., call:c1] complete stop',
+            '{return:c1, prompt:(photo)}',
+            'r2 [assistant:A kiwi.] complete stop',
+            'r3 [assistant:Anything else?] complete stop',
+        ]
+    )
+
+
+def test_a_pruned_round_with_nothing_else_said_leaves_the_replay_entirely() -> None:
+    returned = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='Found.', tool_call_id='c1')])
+    session_core = feed(
+        core(tracks_tool_rounds=True),
+        started('r1'),
+        ToolCall(tool_call_id='c1', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1'),
+        InputSent(input_id=0, solicits=True, tool_call_id='c1'),
+        ToolReturned(tool_call_id='c1', request=returned),
+        started('r2', 0),
+        said('r2', 'Found it.'),
+        ended('r2'),
+        ToolCallsPruned(tool_call_ids=('c1',)),
+    )
+    assert summary(session_core.replayable_messages()) == snapshot(['r2 [assistant:Found it.] complete stop'])
+
+
+def test_a_round_still_running_or_unanswered_waits_and_one_without_a_result_is_never_named() -> None:
+    def returned(call_id: str) -> ModelRequest:
+        return ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id=call_id)])
+
+    session_core = feed(
+        core(tracks_tool_rounds=True),
+        started('r1'),
+        ToolCall(tool_call_id='c1', tool_name='t', args='{}', response_id='r1'),
+        ToolCall(tool_call_id='c2', tool_name='t', args='{}', response_id='r1'),
+        ToolCall(tool_call_id='c3', tool_name='t', args='{}', response_id='r1'),
+        ended('r1'),
+        InputSent(input_id=0, solicits=True, tool_call_id='c1'),
+        ToolReturned(tool_call_id='c1', request=returned('c1')),
+        # c3 settles without its result going out (the tool raised, say).
+        ToolReturned(tool_call_id='c3', request=returned('c3')),
+        started('r2', 0),
+        ended('r2'),
+    )
+
+    def named() -> list[list[str]]:
+        return [
+            [call.tool_call_id for call in effect.calls]
+            for effect in session_core.take_effects()
+            if isinstance(effect, ToolRoundsOver)
+        ]
+
+    assert named() == [['c1']]
+    feed(
+        session_core,
+        InputSent(input_id=1, solicits=True, tool_call_id='c2'),
+        ToolReturned(tool_call_id='c2', request=returned('c2')),
+        started('r3'),
+        ended('r3'),
+    )
+    assert named() == []  # (c2's result isn't answered yet)
+    feed(session_core, started('r4', 1), ended('r4'))
+    assert named() == [['c2']]
+
+
+def test_a_native_part_with_no_response_to_join_streams_neither_its_start_nor_its_end() -> None:
+    """A native part the core drops (no single response under way) doesn't leave an end for a start never streamed."""
+    call = NativeToolCallPart(tool_name='web_search', args={}, tool_call_id='n1')
+    session_core = feed(core(), PartStartEvent(index=7, part=call), PartEndEvent(index=7, part=call))
+    assert [type(effect).__name__ for effect in session_core.take_effects()] == []
+
+
+class _CountingPlaced(list[Any]):
+    """Counts the conversation entries the core looks at, however it reaches them."""
+
+    visits = 0
+
+    def __iter__(self) -> Iterator[Any]:
+        for entry in super().__iter__():
+            type(self).visits += 1
+            yield entry
+
+    def __getitem__(self, index: Any) -> Any:
+        item = super().__getitem__(index)
+        type(self).visits += len(item) if isinstance(index, slice) else 1
+        return item
+
+
+class _CountingResponses(dict[str, Any]):
+    """Counts the responses the core looks at by walking them, rather than by id."""
+
+    visits = 0
+
+    def values(self) -> Any:
+        for response in super().values():
+            type(self).visits += 1
+            yield response
+
+
+def test_a_frame_costs_the_same_however_long_the_conversation_got() -> None:
+    """What the session reads off the core after every frame doesn't walk the turns and responses that finished."""
+    session_core = core()
+    session_core._placed = _CountingPlaced()  # pyright: ignore[reportPrivateUsage]
+    session_core._responses = _CountingResponses()  # pyright: ignore[reportPrivateUsage]
+    costs: list[int] = []
+    for turn in range(30):
+        *answering, end = _answered_turn(turn)
+        feed(session_core, *answering)
+        _CountingPlaced.visits = _CountingResponses.visits = 0
+        # A frame with content naming no response, and what the session reads off the core after each frame.
+        feed(session_core, said(None, ' More.'))
+        assert session_core.transcript_holding_history() is None
+        assert session_core.response_holding_turns() is None
+        assert session_core.speaking_part() is not None
+        costs.append(_CountingPlaced.visits + _CountingResponses.visits)
+        feed(session_core, end)
+
+    assert len(session_core.all_messages()) == 60
+    # Past the first, each frame also passes the answer the turn before finished, once, and nothing older.
+    assert costs == [5] + [6] * 29
+    _CountingPlaced.visits = _CountingResponses.visits = 0
+    _ = list(session_core._placed), list(session_core._responses.values())  # pyright: ignore[reportPrivateUsage]
+    assert (_CountingPlaced.visits, _CountingResponses.visits) == (60, 30), 'the counters see a walk'

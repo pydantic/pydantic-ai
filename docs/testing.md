@@ -4,6 +4,8 @@ description: "Unit test Pydantic AI agents with pytest by swapping in TestModel 
 
 # Unit testing
 
+Before you deploy an agent, and on every change after, unit tests check your own code around the model: tools, dependencies, output validation and failure handling, with no model requests and the same result every run. They don't tell you whether the model's answers are good; that is what [evals](evals.md) are for.
+
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
 Because for the most part they're nothing new, we have pretty well established tools and patterns for writing and running these kinds of tests.

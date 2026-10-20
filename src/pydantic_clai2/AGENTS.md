@@ -104,10 +104,74 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   `callback -> owner` map, no scanning registries for a plugin's name.
 - **A running agent run never changes its plugins.** Core binds capabilities once
   per run, so `/plugins` (an `args_during_turn` command) may load and unload
-  mid-turn, but the run keeps the snapshot `run_turn` bound. `PluginLoader.turn()`
+  mid-turn, but the run keeps the snapshot `run_turn` bound. `SessionPlugins.turn()`
   defers `on_session_end` of plugins unloaded meanwhile until the run is over,
   shielded from cancellation. Do not swap capabilities inside a run; that needs
   core support.
+- **Plugins are per live session; declarations are per process.** Each live
+  session's `SessionPlugins` (`plugins/loader.py`) holds its loaded instances,
+  guards, and deferred ends, and is its `host.plugins`. They all join the
+  process's `ProcessPlugins` (`plugins/process_plugins.py`, held by `ClaiProcess`):
+  declarations, staged `/plugins add` settings, open settings menus, the change
+  lock, and imports. `enable`, `disable`, `remove`, and `reload` run in the session
+  they came from under that lock (`ProcessPlugins.change`), then every other live
+  session `follow`s them, also when the origin failed; `/plugins add` and settings
+  edits are followed once saved. Each session follows under the `turn()` rule above.
+  `PluginLoader` is the former name of `SessionPlugins`, kept for tests; built with
+  `store=` and no `process=`, it gets a process of its own, as one-session hosts do.
+- **`Plugin.scope = 'process'` builds a plugin once per process.** `observability`,
+  `workspaces`, and `web` are. The first session to load one builds it and fires
+  `on_session_start`; it then joins every live session (capabilities, commands, and
+  each moment, dispatched per session with `host.live.current()` naming it). It ends
+  once, when unloaded (after every running turn that bound it) or when the last
+  session closes; sessions load a name one at a time, so it is built once.
+  Its host's `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
+  `submit_prompt`, and `interrupt` follow the session being handled (moments,
+  commands, and runs set it); its other attributes are the loading session's.
+  `restart` keeps it. A process plugin that includes a session plugin (`web` and
+  `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
+  `LiveSession`/`LiveSessions` protocols are public: `PLUGINS.md`'s "Several live
+  sessions" is their contract, with the six rules every plugin follows. Change them
+  as public API, and update that section in the same PR.
+- **A process holds many live sessions; a conversation is live in one.**
+  `ClaiProcess.live` (`runtime/live_runtimes.py`) is `host.live`. `create_shell`
+  adds each `SessionRuntime` and `SessionRuntime.close` removes it; close a
+  runtime with `close`, never with `loader.close` alone. `open` returns the session
+  already holding a conversation, and `Session.resume` refuses one another session
+  holds or is resuming (`LiveRuntimes.claim`). Sessions `open` and `new` start run as tasks of
+  `serving`, in their own directory, with `Interrupts(signals=False)`, refuse
+  `/reload` and `/update` unless the terminal shows them (only that session, or the one
+  CLAI started with, restarts it, never from another folder or while another session runs a
+  turn, and a failed `/reload` continues the shown session's conversation), and close
+  after `IDLE_AFTER` (an hour) with no turn, command, queued input, fork, task,
+  watcher, or terminal focus. `/set` of anything but `model` and `run.*` reaches
+  every live session (`CommandContext.adopt`) unless its project file sets it.
+  There is no turn cap.
+- **Per session on `SessionRuntime`, per process on `ClaiProcess`; never the other
+  way.** `ClaiProcess` (`runtime/process.py`) holds what exists once: the stores,
+  `ProcessPlugins`, the task owner and router, the namer, the Codex providers, and
+  `live`. `SessionRuntime` (`runtime/session_runtime.py`) holds what each live session
+  has: its `Session`, commands, `SessionPlugins`, status, interrupts, input queue,
+  forks, and folder (`Session.workspace`, which plugins read as `host.workspace`).
+  `Terminal` holds what only the terminal has, whichever session it shows.
+  A per-session value on `ClaiProcess` leaks between sessions; a process value on a
+  runtime is built twice or closes with one session. Module-level mutable state is
+  process state too, so keep it off modules. Never call `os.chdir` or read
+  `Path.cwd()` for a session's folder after startup: pass `Session.workspace` (or
+  `host.workspace`). `Path.cwd` stays only as the default of hosts built outside the
+  shell, and for `--worktree` setup and cleanup around the session.
+- **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
+  owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
+  history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
+  their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
+  terminal's. `/resume` of a conversation another live session holds shows that one
+  (`Sessions.show_live`), mid-turn too, and never forks it; the one shown before stays
+  live, and the session CLAI started with is closed for idleness like any other while
+  hidden. Prompts queued for a session stay its own when the terminal shows another.
+  `clai2 --web` keeps its terminal on the session it started with. With one live
+  session nothing changes, and the toolbar adds `N live` only for more.
 - **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
@@ -139,7 +203,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
   the model twice. When a built-in takes the id of a row the former harness
-  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
+  catalog offered, add that old row to `RETIRED_BUILTINS` in `plugins/process_plugins.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
 - **`open_stock_agent` loads `coder`, `repo_context`, and `compaction` only.** Add a
   built-in to that list only when it needs no terminal and reads nothing from the

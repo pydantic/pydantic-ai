@@ -12,7 +12,7 @@ groups:
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence, Set as AbstractSet
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
@@ -60,6 +60,7 @@ from ..messages import (
     RealtimeOutputSpeechStartEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
+    ToolCallPart,
 )
 from ..models import ModelRequestParameters
 from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
@@ -71,7 +72,10 @@ from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, 
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
+    CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
+    CONVERSATION_ITEM_ADDED_EVENTS,
     CONVERSATION_ITEM_CREATE_EVENT,
+    CONVERSATION_ITEM_DELETE_EVENT,
     CONVERSATION_ITEM_TRUNCATE_EVENT,
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -108,6 +112,7 @@ from ._openai_protocol import (
     response_request_metadata,
     seed_items,
     tool_choice_config,
+    tool_content_item_id,
     tool_def_to_openai,
     turn_detection_config,
     user_message_item,
@@ -249,6 +254,23 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
     """
+    openai_prune_tool_items: bool
+    """Whether to delete a tool round's items from the server conversation once the model is done with them.
+
+    The OpenAI Realtime API bills every response for the whole conversation it keeps, so a tool-heavy agent pays
+    for every earlier `function_call` and `function_call_output` item again on each later response. With this set,
+    once a response completes without calling a tool, the session deletes the items of the calls the model has
+    answered (each call with its output and any content the tool returned besides it, never one without the other),
+    so later responses no longer read them. To keep some tools' items, name them in `openai_keep_tool_items`.
+    [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps everything, and a reconnect's replay
+    leaves the pruned items out. Off by default.
+    """
+    openai_keep_tool_items: AbstractSet[str]
+    """The tools whose items `openai_prune_tool_items` leaves in the server conversation, for results the model may
+    need to refer back to.
+
+    Only applies with `openai_prune_tool_items` set to `True`; without it, nothing is pruned and this is ignored.
+    """
     openai_truncation: RealtimeTruncationParam
     """How the session truncates conversation context once it exceeds the model's window.
 
@@ -300,9 +322,7 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         cache_read_tokens=inp.cached_tokens or 0 if inp is not None else 0,
         cache_audio_read_tokens=cached.audio_tokens or 0 if cached is not None else 0,
         output_audio_tokens=out.audio_tokens or 0 if out is not None else 0,
-        # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
-        # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
-        **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
+        output_reasoning_tokens=details.get('reasoning_tokens', 0),
         # Image input is priced at its own rate (and cached image input at another), so it has to reach
         # pricing under the meter names genai-prices reads; in `details` alone it was priced as text.
         **({'input_image_tokens': image} if (image := details.get('input_image_tokens')) else {}),
@@ -424,6 +444,16 @@ class _ToolCallBatch:
     """Whether the response is done, so no further call can join."""
 
 
+@dataclass
+class _ToolItems:
+    """A tool call's items in the server conversation: what `openai_prune_tool_items` deletes together."""
+
+    call: str
+    output: str | None = None
+    content: list[str] = field(default_factory=list[str])
+    """User message items with content the tool returned besides its output."""
+
+
 class OpenAIRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to the OpenAI Realtime API."""
 
@@ -447,8 +477,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
         audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
+        prune_tool_items: bool = False,
+        keep_tool_items: AbstractSet[str] = frozenset(),
     ) -> None:
         self._ws = ws
+        # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
+        self._prune_tool_items = prune_tool_items
+        self._keep_tool_items = keep_tool_items
+        # The items of each tool call in the server conversation, by call id, while pruning (see `_track_tool_item`).
+        self._tool_items: dict[str, _ToolItems] = {}
         self._interrupts_response_on_speech = interrupts_response_on_speech
         self._model_name = model_name
         self._model_name_getter = model_name_getter
@@ -675,6 +712,40 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if len(self._output_items) > _MAX_TRACKED_OUTPUT_ITEMS:
             del self._output_items[next(iter(self._output_items))]
 
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        return self._prune_tool_items
+
+    def _track_tool_item(self, data: dict[str, Any]) -> None:
+        """Remember the id of a tool call's item, or its output's, as it joins the server conversation, to prune it."""
+        if not self._prunes_tool_calls:
+            return
+        # (The protocol's own item model: the SDK's union rejects the shapes clones send, as `item_added` notes.)
+        try:
+            item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
+        except ValueError:
+            return  # (malformed: the lifecycle reports it, as it reads the same frame)
+        if item.call_id is None or item.id is None:
+            return
+        if item.type == 'function_call':
+            if item.name not in self._keep_tool_items:
+                self._tool_items[item.call_id] = _ToolItems(call=item.id)
+        elif item.type == 'function_call_output' and (items := self._tool_items.get(item.call_id)) is not None:
+            items.output = item.id
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        pruned: list[str] = []
+        for call in calls:
+            items = self._tool_items.get(call.tool_call_id)
+            if items is None or items.output is None:
+                # A kept tool's, or a call this conversation doesn't hold both the call and the output of.
+                continue
+            del self._tool_items[call.tool_call_id]
+            for item_id in (items.call, items.output, *items.content):
+                await self._send_event({'type': CONVERSATION_ITEM_DELETE_EVENT, 'item_id': item_id})
+            pruned.append(call.tool_call_id)
+        return pruned
+
     async def _send_tool_result(self, content: ToolResult, *, input_index: int) -> None:
         # Normalize any follow-up content (downloading and re-encoding media) before the first
         # frame goes out, so content this provider can't carry fails with nothing sent rather than
@@ -700,6 +771,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             }
         )
         if item:
+            if (items := self._tool_items.get(content.tool_call_id)) is not None:
+                # Content the tool returned besides its output (an image, say) is pruned with the call it followed.
+                item['id'] = item_id = tool_content_item_id(input_index)
+                items.content.append(item_id)
             self._lifecycle.message_sent(None)
             await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
         if (response_id := self._tool_call_responses.pop(content.tool_call_id, None)) is None:
@@ -709,15 +784,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         batch = self._tool_call_batches[response_id]
         batch.unanswered.discard(content.tool_call_id)
         batch.inputs.append(input_index)
-        await self._answer_tool_call_batch_if_complete(response_id)
+        await self._answer_tool_call_batch_if_complete(response_id, solicited=True)
 
-    async def _answer_tool_call_batch_if_complete(self, response_id: str) -> None:
-        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs."""
+    async def _answer_tool_call_batch_if_complete(self, response_id: str, *, solicited: bool = False) -> None:
+        """Ask for the response that answers `response_id`'s tool calls, once it's done and all have outputs.
+
+        `solicited` is for a caller's `send()` of the last output, which is told when the request didn't go out
+        (see `_solicit_response`).
+        """
         batch = self._tool_call_batches[response_id]
         if batch.done and not batch.unanswered:
             del self._tool_call_batches[response_id]
             # One input names the request, as the batch gets one reply; the response answers every output.
-            await self._request_response((batch.inputs[-1],), answers=batch.inputs)
+            request = self._solicit_response if solicited else self._request_response
+            await request((batch.inputs[-1],), answers=batch.inputs)
 
     async def _send_text(self, text: str, *, respond: bool, input_index: int) -> None:
         self._lifecycle.message_sent(input_index)
@@ -736,7 +816,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if respond:
             await self._solicit_response((input_index,))
 
-    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+    async def _solicit_response(
+        self, input_indexes: Sequence[int], *, answers: Sequence[InputId] | None = None
+    ) -> None:
         """Request a response for a caller's `send()`, which is told when the request didn't go out.
 
         A `response.create` that fails on a dead socket never reached the server, so no response is
@@ -746,7 +828,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         ws = self._ws
         try:
-            await self._request_response(input_indexes)
+            await self._request_response(input_indexes, answers=answers)
         except self.transport_errors:
             # Only a request that went straight out can fail here; a deferred one sends nothing yet. If
             # the link was replaced meanwhile, the active response is the new socket's, not this one.
@@ -796,13 +878,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         if event['type'] != INPUT_AUDIO_BUFFER_COMMIT_EVENT:
             await self._ws.send(to_json(event).decode())
+            if event['type'] == INPUT_AUDIO_BUFFER_APPEND_EVENT:
+                self._lifecycle.audio_appended()
+            elif event['type'] == INPUT_AUDIO_BUFFER_CLEAR_EVENT:
+                self._lifecycle.audio_clear_sent()
             return
         # Noted before it goes out, so nothing sent while it does is taken for ahead of it.
-        sent_before = self._lifecycle.audio_commit_sent()
+        commit = self._lifecycle.audio_commit_sent()
         try:
             await self._ws.send(to_json(event).decode())
         except BaseException:
-            self._lifecycle.audio_commit_failed(sent_before)
+            self._lifecycle.audio_commit_failed(commit)
             raise
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -878,6 +964,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             yield [*settled, error]
             return
 
+    def _stop_reading(self) -> Sequence[LifecycleEvent]:
+        # A commit whose acknowledgement goes unread is still a turn.
+        return self._lifecycle.unacknowledged_commits()
+
     def _unanswered_inputs(self) -> list[InputId]:
         """The inputs whose request for a response is still to be answered: sent, deferred, or not yet made."""
         unanswered = [*self._deferred_response_answers]
@@ -949,6 +1039,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
+        if event_type in CONVERSATION_ITEM_ADDED_EVENTS:
+            # (The beta protocol, which Azure's preview deployments speak, acknowledges items as created.)
+            self._track_tool_item(data)
         self._lifecycle.before_frame(event_type, data)
         try:
             after = self._lifecycle.frame(event_type, data)
@@ -1201,6 +1294,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         # What the old socket hadn't acknowledged it never will; the new one acknowledges only its own sends.
         self._lifecycle.socket_replaced()
+        # The new conversation's items have ids of their own, which its replay reports as it adds them.
+        self._tool_items.clear()
         try:
             self._ws = await self._dial()
             # A response the socket dropped before it could complete will never be released by its
@@ -1573,6 +1668,8 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name=server_model,
                 model_name_getter=lambda: server_model,
                 observes_output_audio=False,
+                prune_tool_items=settings.get('openai_prune_tool_items', False),
+                keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -1646,6 +1743,8 @@ class OpenAIRealtimeModel(RealtimeModel):
                 model_name=server_model,
                 model_name_getter=model_name_getter,
                 audio_output_sample_rate=self.audio_output_sample_rate,
+                prune_tool_items=settings.get('openai_prune_tool_items', False),
+                keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
             )
 
         async with connect_openai_protocol(
