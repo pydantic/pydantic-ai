@@ -94,24 +94,6 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
 )
 
 
-LOST_RESPONSE_RESERVATION = Finding(
-    id='SIM-1',
-    title=(
-        'a reply lost with a dropped connection keeps its reservation: the reconnect does not ask for it again (it '
-        'had started, or the provider resumes without it) and the session does not settle it, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    # Fixed for Gemini and GPT-Live by their lifecycle tracker: a drop loses every reply still owed.
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        any(response.lost and response.answers for response in sim.truth.responses.values())
-        or any(input_.answer_lost for input_ in sim.truth.inputs)
-    ),
-)
-
-
 def _xai_push_to_talk(sim: Simulation) -> bool:
     options = getattr(sim, 'openai', None)
     return options is not None and options.dialect == 'xai' and options.turn_detection == 'manual'
@@ -348,28 +330,29 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 )
 
 
-def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
-
-    from ._invariants import SimulatedToolError
-
-    parked = (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
-    errors = [sim.consumer_error, *(operation.error for operation in sim.operations)]
-    return 'error' in sim.tools.settled.values() or any(isinstance(error, parked) for error in errors)
+def _failed_call_has_siblings(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A call that raised was made in the same response as another call."""
+    calls = sim.truth.tool_calls
+    failed = {calls[call_id].response for call_id, outcome in sim.tools.settled.items() if outcome == 'error'}
+    return any(sum(call.response == response for call in calls.values()) > 1 for response in failed)
 
 
-PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
-    id='SIM-15',
+LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
+    id='SIM-43',
     title=(
-        'the session ends on a parked error (a tool that raised, or a tool result over `request_limit`) while '
-        'another request is still owed (deferred behind the tool round), so `wait_for_reply()` hangs: the part '
-        'of OR8 that #8765 left'
+        'on GPT-Live, a tool that raises leaves the rest of its delegated round owed: the results of its siblings, '
+        'sent after the failure, each ask for a reply, but the backend waits for every call in the round and the '
+        "failed one's output never comes, so `wait_for_reply()` hangs (on the OpenAI protocol, a failed call's "
+        'siblings ask for no reply)'
     ),
-    tracked_by='every reply reservation settled when the session parks an error; found by this simulator',
-    evidence='recorded',
+    tracked_by=(
+        'the GPT-Live reply obligations rewrite (#10668); found by this simulator, under SIM-15 until the rest of '
+        'SIM-15 turned out to be a simulator that stopped reading at the first error the iterator raised'
+    ),
+    evidence='simulated',
     codes=frozenset({'wait.hang'}),
-    providers=ALL,
-    matches=_parked_error,
+    providers=frozenset({'gpt-live'}),
+    matches=_failed_call_has_siblings,
 )
 
 
@@ -415,29 +398,6 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
 )
 
 
-def _turn_without_its_transcript(sim: Simulation) -> bool:
-    """With transcription on, a spoken turn's transcript never reached the client before the session ended or dropped."""
-    ended = sim.close_requested is not None or sim.receive_ended or bool(sim.truth.connection_losses)
-    return (
-        ended
-        and getattr(getattr(sim, 'openai', None), 'transcription', False)
-        and any(input_.kind == 'speech' and input_.transcript_read is None for input_ in sim.truth.inputs)
-    )
-
-
-def _hand_commit_unanswered_at_the_end(sim: Simulation) -> bool:
-    """A turn `commit_audio()` committed whose reply the client hadn't read the end of when the connection dropped or
-    the session ended."""
-    truth = sim.truth
-    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
-    return ended and any(
-        input_.kind == 'speech'
-        and input_.committed_by_client
-        and (input_.answered_by is None or truth.responses[input_.answered_by].terminal_read is None)
-        for input_ in truth.inputs
-    )
-
-
 def _push_to_talk_audio_after_a_repeated_terminal(sim: Simulation) -> bool:
     return (
         _xai_push_to_talk(sim)
@@ -461,47 +421,48 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
-HAND_COMMIT_UNANSWERED_AT_THE_END = Finding(
-    id='SIM-34',
+def _unacknowledged_commit_under_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    """Under server VAD, every turn missing is one `commit_audio()` committed whose acknowledgement the client never
+    read, the session having ended or the connection dropped first."""
+    options = getattr(sim, 'openai', None)
+    truth = sim.truth
+    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
+    return (
+        ended
+        and options is not None
+        and options.turn_detection != 'manual'
+        and any(
+            input_.kind == 'speech'
+            and input_.committed_by_client
+            and input_.committed_read is None
+            and input_.key in violation.context.get('inputs', ())
+            for input_ in truth.inputs
+        )
+    )
+
+
+UNACKNOWLEDGED_COMMIT_UNDER_VAD = Finding(
+    id='SIM-42',
     title=(
-        'a spoken turn `commit_audio()` committed is lost when the connection drops, or the session closes or ends (on '
-        "a failed send, an exceeded limit), before its reply is over (the session core's own: the current one loses "
-        'it only on xAI, whose held commit goes out with the request)'
+        'under server VAD, a `commit_audio()` whose acknowledgement never arrives (the session ends or the connection '
+        'drops first) makes a turn only if the client heard the speech it commits start: OpenAI and Azure commit only '
+        'speech their VAD heard and refuse anything else as empty, so a commit of speech whose `speech_started` the '
+        "client hadn't read yet can't be told from a commit of silence, which would be a phantom turn"
     ),
-    tracked_by='user turns recorded from the provider committing them; found by this simulator on #9422',
+    tracked_by=(
+        "the OpenAI-protocol lifecycle's documented choice for an unacknowledged commit under server VAD; found by "
+        'this simulator on #10722'
+    ),
     evidence='simulated',
     codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_unanswered_at_the_end(sim),
-)
-
-
-TURN_LOST_AT_CLOSE = Finding(
-    id='SIM-25',
-    title=(
-        'a spoken turn committed with input transcription on, whose transcript never arrives (the session closes or '
-        'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never '
-        'comes (surfaced by Macroscope for closing after `commit_audio()`)'
-    ),
-    tracked_by='user turns recorded from the provider committing them, not from their transcript; found reviewing #9070',
-    evidence='recorded',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _turn_without_its_transcript(sim),
+    providers=frozenset({'openai', 'azure'}),
+    matches=_unacknowledged_commit_under_vad,
+    accepted=True,
 )
 
 
 def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.realtime import RealtimeError
-
-    if violation.code == 'send.failed_across_reconnect':
-        return violation.context.get('operation') != 'send_audio'
-    error = sim.consumer_error
-    return (
-        isinstance(error, RealtimeError)
-        and error.message.startswith('Realtime connection failed while sending')
-        and sim.truth.connections > 1
-    )
+    return violation.context.get('operation') != 'send_audio'
 
 
 def _request_deferred_behind_an_answer_to_speech(sim: Simulation) -> bool:
@@ -545,13 +506,12 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
         'a send other than audio (a typed turn, context, an image, `clear_audio`) that hits the dropped socket raises '
-        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else. '
-        'When it is a tool result the session sends, the error ends the event stream over a re-dialed connection, '
-        'and a reply asked for afterwards is waited on forever'
+        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else '
+        '(a tool result the session sends that way is raised from `async for`, and the session goes on)'
     ),
     tracked_by='an ordered outbox that holds sends across a re-dial (#8806 covered audio only)',
     evidence='live-stress',
-    codes=frozenset({'send.failed_across_reconnect', 'wait.hang'}),
+    codes=frozenset({'send.failed_across_reconnect'}),
     providers=OPENAI_PROTOCOL | GEMINI,
     matches=_send_failed_across_reconnect,
 )
@@ -652,26 +612,47 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
 )
 
 
+def _turn_xai_reopened(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The violation names a turn xAI heard stop, then start again under the same item before committing it."""
+    return any(f"'item_{key}'" in violation.detail for key in sim.truth.speech_reopened)
+
+
+XAI_REOPENED_TURN = Finding(
+    id='SIM-41',
+    title=(
+        'under server VAD, xAI takes back its own stop: speech resumed before it commits the turn reopens the same '
+        'item (a second `speech_started` for it, then another `speech_stopped`, then `committed`). The lifecycle '
+        'already placed the turn at the first stop, so it starts the same turn again'
+    ),
+    tracked_by=(
+        "placing an xAI spoken turn at its commit rather than at VAD's stop; recorded live "
+        '(`xai_race_then_speech` probe, October 2026)'
+    ),
+    evidence='recorded',
+    codes=frozenset({'lifecycle.turn_started_twice'}),
+    providers=frozenset({'xai'}),
+    matches=_turn_xai_reopened,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
-        TURN_LOST_AT_CLOSE,
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
-        HAND_COMMIT_UNANSWERED_AT_THE_END,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        PARKED_ERROR_LEAVES_REQUEST_OWED,
+        LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
         CUT_OFF_TURN_COMPLETE,
-        # The general reservation leaks last: a more specific finding explains a hang better.
-        LOST_RESPONSE_RESERVATION,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
+        UNACKNOWLEDGED_COMMIT_UNDER_VAD,
+        XAI_REOPENED_TURN,
     ]
 )
 
