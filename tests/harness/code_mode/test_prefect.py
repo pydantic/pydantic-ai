@@ -6,22 +6,24 @@ from pathlib import Path
 
 import pytest
 
-try:
-    from prefect import flow
-    from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
-
-    from pydantic_ai.durable_exec.prefect import PrefectDurability
-except ImportError:  # pragma: lax no cover
-    pytest.skip('prefect not installed', allow_module_level=True)
-
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests.conftest import try_import
 
-pytestmark = pytest.mark.xdist_group(name='prefect')
+with try_import() as imports_successful:
+    from prefect import flow
+    from prefect.settings import PREFECT_LOCAL_STORAGE_PATH, temporary_settings
+
+    from pydantic_ai.durable_exec.prefect import PrefectDurability
+
+pytestmark = [
+    pytest.mark.xdist_group(name='prefect'),
+    pytest.mark.skipif(not imports_successful(), reason='prefect not installed'),
+]
 
 
 class TestCodeMode:
