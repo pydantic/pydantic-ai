@@ -21,6 +21,8 @@ from .settings import EmbeddingSettings
 try:
     from google.genai import Client, errors
     from google.genai.types import Content, ContentListUnion, EmbedContentConfig, EmbedContentResponse, Part
+
+    from pydantic_ai.models.google import _error_category as error_category  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google embeddings model, '
@@ -35,11 +37,14 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
-            raise ModelHTTPError(
+            status = e.status if isinstance(e.status, str) else None
+            raise ModelHTTPError.for_category(
+                error_category(status, e.message) or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
                 model_name=model_name,
                 body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                provider_error_code=status,
             ) from e
 
         raise
