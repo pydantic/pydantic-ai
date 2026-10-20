@@ -2555,6 +2555,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
                     message_history, prompt
                 )
+                # `override(retries=...)` sets a run's output budget, as in `iter()`.
+                override_output_retries = self._override_output_retries.get()
+                max_output_retries = (
+                    override_output_retries.value if override_output_retries is not None else self._max_output_retries
+                )
                 selection_ctx = models.ModelSelectionContext(
                     agent=self,
                     deps=deps,
@@ -2563,7 +2568,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     prompt=selection_prompt,
                     messages=selection_messages,
                     usage=usage,
-                    max_retries=self._max_output_retries,
+                    max_retries=max_output_retries,
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx

@@ -2393,6 +2393,20 @@ class TestGetModelHook:
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
 
+    async def test_system_prompt_parts_selector_sees_output_retry_budget(self):
+        """`system_prompt_parts()` gives the selector the output budget a run would have, including an override's."""
+        max_retries: list[int] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            max_retries.append(ctx.max_retries)
+            return _text_model('selected')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+        await agent.system_prompt_parts()
+        with agent.override(retries={'output': 5}):
+            await agent.system_prompt_parts()
+        assert max_retries == [2, 5]
+
     async def test_callable_model_selection_streaming(self):
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             yield 'selected'
