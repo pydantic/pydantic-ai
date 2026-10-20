@@ -1043,3 +1043,21 @@ async def test_a_batch_forgets_abandoned_requests_once_it_has_ended() -> None:
     await model.cancel_suspended_response(first)
     assert model.pool._abandoned == {}  # pyright: ignore[reportPrivateUsage]
     assert wrapped.canceled == []
+
+
+@pytest.mark.parametrize('batched', [False, True])
+async def test_batch_waits_dont_count_as_generation_continuations(batched: bool) -> None:
+    """A batched turn of several provider pauses gets as many continuations as the same turn sent directly."""
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls <= 5:
+            return ModelResponse(parts=[TextPart(f'{calls} ')], state='suspended', provider_response_id=f'seg{calls}')
+        return ModelResponse(parts=[TextPart('done')], provider_response_id='final')
+
+    capabilities = [BatchModelRequests(**FAST_BATCH_SETTINGS)] if batched else []
+    result = await Agent(FunctionModel(respond), capabilities=capabilities).run('Hello')
+
+    assert result.output == '1 2 3 4 5 done'

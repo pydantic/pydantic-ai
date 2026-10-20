@@ -1270,7 +1270,11 @@ async def model_request(  # noqa: C901
                 if return_pending and requested and model.continuation_delay(response) is not None:
                     return response
                 job_id = response.provider_response_id
-                if last_mode == 'replace-same-id':
+                # A response the model polls, such as a batch request waiting for its batch, is waiting on a job rather
+                # than continuing a generation, even when it started a new one with a new ID.
+                if last_mode == 'replace-same-id' or (
+                    last_mode is not None and model.continuation_delay(response) is not None
+                ):
                     replace_count += 1
                     over_limit = replace_count > MAX_BACKGROUND_POLLS
                     limit_message = (
