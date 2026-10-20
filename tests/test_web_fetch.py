@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import anyio
 import httpx
 import pytest
+from anyio.from_thread import run_sync as run_sync_from_thread
 from bs4 import BeautifulSoup
 from markdownify import MarkdownConverter, markdownify
 
@@ -57,7 +58,7 @@ class TestWebFetchLocalTool:
         scopes: list[anyio.CancelScope] = []
 
         def convert(html: str) -> tuple[str, str]:
-            anyio.from_thread.run_sync(started.set)
+            run_sync_from_thread(started.set)
             release.wait()
             return '', html
 
