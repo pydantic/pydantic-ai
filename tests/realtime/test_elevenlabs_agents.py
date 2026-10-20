@@ -59,6 +59,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
 )
 from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputLost,
     RealtimeFrame,
@@ -1857,7 +1858,8 @@ async def test_send_audio_rejects_non_pcm_media_type() -> None:
 async def test_send_text_frames_user_message() -> None:
     connection, ws = _connection()
     await connection.send('What is the weather?')
-    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?'}]
+    # Under an id naming the input, which the reply answering it names in its `in_response_to_ids`.
+    assert ws.sent_frames() == [{'type': 'user_message', 'text': 'What is the weather?', 'id': 'pydantic_ai_input_0'}]
 
 
 async def test_send_text_context_frames_contextual_update() -> None:
@@ -2895,6 +2897,151 @@ async def test_a_barge_in_the_users_words_overtake_still_ends_the_cut_off_respon
                 ),
                 StaleEvent(event=OutputTranscript(text='Once...', is_final=True, item_id='resp_1')),
             ],
+        ]
+    )
+
+
+def _reply(text: str, *, event_id: int, response_id: str, answers: list[str]) -> dict[str, Any]:
+    return {
+        'type': 'agent_response',
+        'agent_response_event': {
+            'agent_response': text,
+            'event_id': event_id,
+            'response_id': response_id,
+            'in_response_to_ids': answers,
+        },
+    }
+
+
+_GREETING_CUT = _reply('...', event_id=1, response_id='resp_greeting', answers=[])
+"""Recorded live: the agent's greeting, cut off by text sent as it started, answers nothing."""
+
+
+async def test_a_reply_that_names_none_of_the_text_leaves_it_to_the_next() -> None:
+    """Text sent just as the greeting starts is taken for what the greeting answers, until the greeting names none.
+
+    Recorded live: the text cuts the greeting off, and the reply after it names the text in its
+    `in_response_to_ids`. So the text's reply is the second response, which `wait_for_reply()` waits for.
+    """
+    connection, ws = _connection()
+    assert await connection.send('What is two plus two?') == snapshot([InputAdded(input_id=0)])
+    second_audio = {
+        'type': 'audio',
+        'audio_event': {'audio_base_64': _AUDIO['audio_event']['audio_base_64'], 'event_id': 2},
+    }
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 2}},
+            _GREETING_CUT,
+            second_audio,
+            _reply('Four.', event_id=2, response_id='resp_reply', answers=['pydantic_ai_input_0']),
+            _VOICED,
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [RealtimeResponseInterruptedEvent()],
+            [
+                AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='...', is_final=True, item_id='resp_greeting'),
+                ResponseDone(
+                    interrupted=True,
+                    provider_response_id='resp_greeting',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='cancelled',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2', answers=(0,), basis='inferred', provider_id=False
+                ),
+                AudioDelta(data=b'\x00\x01'),
+            ],
+            [OutputTranscript(text='Four.', is_final=True, item_id='resp_reply')],
+            [
+                ResponseDone(provider_response_id='resp_reply', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('answers', 'revision'),
+    [
+        ([], [AnswersRevised(response_id='pydantic_ai_response_1', released=(0,))]),
+        (['pydantic_ai_input_0'], []),
+    ],
+    ids=['names-none', 'names-the-text'],
+)
+async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_after_it(
+    answers: list[str], revision: list[AnswersRevised]
+) -> None:
+    """The user's words overtake the cut-off reply's text, which then trails the end of its response."""
+    connection, ws = _connection()
+    await connection.send('What is two plus two?')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            {'type': 'interruption', 'interruption_event': {'event_id': 3}},
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Stop.', 'event_id': 3}},
+            _reply('...', event_id=1, response_id='resp_1', answers=answers),
+        ],
+    )
+    assert frames[-1] == [
+        ResponseDone(interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='cancelled', provider_details={'conversation_id': 'conv_1'}
+        ),
+        StaleEvent(event=OutputTranscript(text='...', is_final=True, item_id='resp_1')),
+        *revision,
+    ]
+
+
+async def test_a_reply_answers_text_sent_after_it_started_that_it_names() -> None:
+    """A reply naming text that reached the agent after it started answers that text too, as do any sent before it.
+
+    Text sent while the agent speaks folds into its next reply, which may name only the latest (verified live).
+    """
+    ws = FakeWebSocket([_AUDIO])
+    ws.hold_open = True
+    connection = ElevenLabsAgentsRealtimeConnection(ws, conversation_id='conv_1')  # type: ignore[arg-type]
+    await connection.send('Hi')
+    frames = connection.frames()
+    assert await anext(frames) == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1', answers=(0,), basis='inferred', provider_id=False),
+            AudioDelta(data=b'\x00\x01'),
+        ]
+    )
+    await connection.send('And the weather?')
+    await connection.send('In Berlin, please.')
+    reply = _reply('Hello! It is sunny in Berlin.', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_2'])
+    ws._incoming.append(json.dumps(reply))  # pyright: ignore[reportPrivateUsage]
+    assert await anext(frames) == snapshot(
+        [
+            AnswersRevised(response_id='pydantic_ai_response_1', claimed=(1, 2)),
+            OutputTranscript(text='Hello! It is sunny in Berlin.', is_final=True, item_id='resp_1'),
         ]
     )
 

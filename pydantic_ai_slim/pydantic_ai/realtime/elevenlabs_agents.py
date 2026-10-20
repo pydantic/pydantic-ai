@@ -68,6 +68,7 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     NativeToolCallPart,
@@ -87,7 +88,16 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, OutputItemCut, RealtimeFrame, ResponseEnded, StaleEvent
+from ._lifecycle import (
+    AnswersRevised,
+    InputId,
+    LifecycleEvent,
+    OutputItemCut,
+    RealtimeFrame,
+    ResponseEnded,
+    ResponseStatus,
+    StaleEvent,
+)
 from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
 from .codec import (
     AudioDelta,
@@ -525,6 +535,10 @@ class _AgentResponsePayload(BaseModel):
     agent_response: str
     response_id: str | None = None
     event_id: int | None = None
+    in_response_to_ids: list[str] | None = None
+    """The `id`s of the `user_message`s the reply answers (verified live): the one sent for it, and any sent while the
+    agent spoke, which fold into its next reply. Empty for a reply nothing asked for, like the greeting; the server
+    makes ids up for what the user said."""
 
 
 class _AgentResponseEvent(BaseModel):
@@ -1561,6 +1575,79 @@ class _CascadeLifecycle(InferredLifecycle):
     transcripts_lag_replies = False
     untranscribed_audio_is_a_turn = False
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._text: set[InputId] = set()
+        """The text inputs sent, which a reply names by the `id` they went out with."""
+        self._named: tuple[InputId, ...] | None = None
+        """The text inputs the reply whose text just came names, for its revision."""
+        self._last_ended: tuple[str, tuple[InputId, ...]] | None = None
+        """The response that ended last, and the inputs it answers: a reply cut off gets its text after it ended."""
+
+    def text_sent(self, input_id: InputId) -> None:
+        """A text input went out, with an `id` that the reply answering it names."""
+        self._text.add(input_id)
+
+    def reply_named(self, named: Sequence[InputId]) -> None:
+        """The text of the reply under way (or of the one that just ended) came, naming the text inputs it answers.
+
+        Applied with that text, or by `revise_ended()` if it trails the end of its response.
+        """
+        self._named = tuple(named)
+
+    def revise_ended(self) -> list[LifecycleEvent]:
+        """Revise the response that just ended by the inputs its text named, as that text came after the end."""
+        named, self._named = self._named, None
+        if named is None or self._last_ended is None:
+            return []
+        response_id, answers = self._last_ended
+        _, released = self._revision(named, answers, open_=False)
+        if not released:
+            return []
+        self._unanswered[:0] = released
+        return [AnswersRevised(response_id=response_id, released=released)]
+
+    def _revision(
+        self, named: tuple[InputId, ...], answers: tuple[InputId, ...], *, open_: bool
+    ) -> tuple[tuple[InputId, ...], tuple[InputId, ...]]:
+        """The text inputs a reply claims and releases, given those it names and those it was taken to answer.
+
+        A text sent while the agent spoke folds into its next reply, which may name only the latest of them (verified
+        live), so a reply also answers the text sent before one it names; text sent after any it names reached the
+        agent after the reply started, and is the next reply's.
+        """
+        latest = max(named, default=-1)
+        claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
+        released = tuple(input_id for input_id in answers if input_id in self._text and input_id > latest)
+        return (claimed if open_ else ()), released
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        super()._output(event, before, after)
+        named, self._named = self._named, None
+        if named is None or (response_id := self._open) is None:
+            return
+        claimed, released = self._revision(named, self._open_answers, open_=True)
+        if claimed or released:
+            self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+            self._unanswered[:0] = released
+            self._open_answers = (
+                *(input_id for input_id in self._open_answers if input_id not in released),
+                *claimed,
+            )
+            before.append(AnswersRevised(response_id=response_id, claimed=claimed, released=released))
+
+    def _end(
+        self,
+        events: list[LifecycleEvent],
+        *,
+        status: ResponseStatus,
+        finish_reason: FinishReason | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> None:
+        assert self._open is not None
+        self._last_ended = (self._open, self._open_answers)
+        super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
+
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     """A live WebSocket connection to an ElevenLabs Agents conversation."""
@@ -1611,9 +1698,12 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # received. The protocol does carry ids (`event_id` per turn, `response_id` on the whole-text
         # `agent_response`, `in_response_to_ids`), but each arrives only with a response's *end*, while
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
-        # between the response that calls the tool and the one that answers its result.
+        # between the response that calls the tool and the one that answers its result. So the ids only
+        # correct what the order said: `in_response_to_ids` names the text inputs a reply answers.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
         self._lifecycle = _CascadeLifecycle()
+        # The text inputs sent, by the `id` they went out with, which a reply's `in_response_to_ids` names.
+        self._text_inputs: dict[str, InputId] = {}
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
         self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
         # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
@@ -1655,21 +1745,25 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
         with self._lifecycle.sending(content) as input_id:
-            sent = await self._send(content)
+            sent = await self._send(content, input_id)
         if not sent:
             # A fire-and-forget call's result: the agent asked for none, so none will be answered.
             self._lifecycle.input_unanswerable(input_id)
         # ElevenLabs acknowledges nothing: where the input joined the conversation is known now.
         return self._lifecycle.take_pending()
 
-    async def _send(self, content: RealtimeInput) -> bool:
+    async def _send(self, content: RealtimeInput, input_id: InputId) -> bool:
         """Send `content` on the wire, returning whether anything was sent."""
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=_PROVIDER_LABEL)
             # The one client message without a `type` discriminator.
             await self._send_event({'user_audio_chunk': base64.b64encode(content.data).decode('ascii')})
         elif isinstance(content, str):
-            await self._send_event({'type': 'user_message', 'text': content})
+            # Under an id of ours, which the agent's reply names in its `in_response_to_ids`.
+            text_id = f'pydantic_ai_input_{input_id}'
+            self._text_inputs[text_id] = input_id
+            self._lifecycle.text_sent(input_id)
+            await self._send_event({'type': 'user_message', 'text': content, 'id': text_id})
         elif isinstance(content, TextContext):
             # Injected into the LLM's view of the conversation without a user turn, so the agent
             # neither stops speaking nor replies; the optional `context_id` (which lets a later update
@@ -1777,6 +1871,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
         frame = self._name_conversation(self._lifecycle_frame(events)) if events else []
+        # A reply whose text trailed the end of its response (cut off, say) is revised once that response is over.
+        frame += self._lifecycle.revise_ended()
         cuts, self._cuts = self._cuts, []
         # Last, so that a response the frame ends is recorded by the time its cut applies (one still under way gets
         # it when it is).
@@ -2034,6 +2130,11 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # this is its text, cut down to what was heard. (Audio's `is_final` marks the end of one TTS generation,
             # which can come mid-reply, so it isn't read.)
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
+            if (answered := payload.in_response_to_ids) is not None:
+                # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
+                self._lifecycle.reply_named(
+                    [self._text_inputs[text_id] for text_id in answered if text_id in self._text_inputs]
+                )
             self._response_open = True
             self._open_event_id = payload.event_id
             text, details = payload.agent_response, None
