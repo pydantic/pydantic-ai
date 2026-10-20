@@ -1110,3 +1110,33 @@ async def test_shared_failures_with_nobody_waiting_are_retrieved() -> None:
     finally:
         loop.set_exception_handler(None)
     assert unretrieved == []
+
+
+async def test_model_request_batch_checks_later_batches_without_waiting_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The batches after the first ran while it was waited for, so each is checked before waiting on it."""
+    sleeps = 0
+    real_sleep = anyio.sleep
+
+    async def counting_sleep(delay: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        await real_sleep(0)
+
+    monkeypatch.setattr('pydantic_ai.direct.anyio.sleep', counting_sleep)
+
+    @dataclass(init=False)
+    class OneRequestBatchModel(SlowBatchTestModel):
+        @property
+        def batch_max_requests(self) -> int | None:
+            return 1
+
+    model = OneRequestBatchModel(pending_checks=2)
+    await model_request_batch(
+        model,
+        [BatchRequest(custom_id=str(i), messages=[ModelRequest(parts=[UserPromptPart('Hello')])]) for i in range(3)],
+        **FAST_POLLING,
+    )
+
+    # Only the first batch was waited for: two checks found it in progress, the third ended it, and by then the
+    # others had ended too.
+    assert (sleeps, model.status_checks) == (3, 5)

@@ -204,7 +204,8 @@ async def model_request_batch(
         for index, batch in enumerate(batches):
             batches[index] = await _wait_for_batch(
                 model_instance,
-                batch,
+                # Later batches ran while the earlier ones were waited for, so they're checked straight away.
+                batch if index == 0 else await model_instance.batch_status(batch),
                 poll_interval=poll_interval,
                 max_poll_interval=max_poll_interval,
             )
