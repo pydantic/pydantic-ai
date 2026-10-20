@@ -6,7 +6,6 @@ __pycache__
 .dev.vars
 /scratch/
 /.coverage
-/.testmon-cache/
 env*/
 /TODO.md
 /postgres-data/
@@ -76,6 +75,9 @@ AGENTS.override.md
 !.agents/skills/refresh-issue-brief/
 .agents/skills/refresh-issue-brief/*
 !.agents/skills/refresh-issue-brief/SKILL.md
+!.agents/skills/docs-parity-reviewer/
+.agents/skills/docs-parity-reviewer/*
+!.agents/skills/docs-parity-reviewer/SKILL.md
 .claude/*
 !.claude/plans/
 !.claude/skills/
@@ -103,6 +105,7 @@ AGENTS.override.md
 !.claude/skills/pushing-commits-to-the-repo
 !.claude/skills/refresh-issue-brief
 !.claude/skills/pre-push-review
+!.claude/skills/docs-parity-reviewer
 !.claude/skills/testing-skill/
 .claude/skills/testing-skill/*
 !.claude/skills/testing-skill/SKILL.md

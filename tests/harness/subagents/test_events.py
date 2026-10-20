@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -35,6 +34,8 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     SubAgentToolset,
 )
+
+from .._deferred_tools import deferring_agent
 
 
 @dataclass
@@ -199,10 +200,6 @@ class TestDelegationEvents:
         assert (start.tool_name, end.tool_name) == ('hand_off', 'hand_off')
         assert start.capability_id == end.capability_id == 'sub_agents'
 
-    @pytest.mark.skipif(
-        sys.version_info < (3, 11),
-        reason='Core leaves the tool call running past `run()`: https://github.com/pydantic/pydantic-ai/pull/8822',
-    )
     async def test_listener_that_raises_aborts_the_parent_run(self) -> None:
         @dataclass
         class Boom(AbstractCapability[object]):
@@ -298,6 +295,14 @@ class TestOutcomes:
         _, end = _pair(listener)
         assert end.outcome == 'failed'
         assert end.output == 'use what you have'
+
+    async def test_deferred_tool_requests_is_failed(self) -> None:
+        worker = deferring_agent('worker')
+        listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker)]))
+
+        _, end = _pair(listener)
+        assert end.outcome == 'failed'
+        assert end.output.startswith("Sub-agent 'worker' ended with `DeferredToolRequests`")
 
     async def test_failed_without_on_failure_carries_the_retry(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

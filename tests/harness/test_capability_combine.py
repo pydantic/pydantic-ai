@@ -285,13 +285,18 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_Skill': Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name'),
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
+    '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
+    'DelegationReports': Anonymous(
+        'one per task owner and conversation; each delivers only its own reports, so several coexist'
+    ),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),
@@ -300,6 +305,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'ToolGuardrail': Anonymous('several guards is the design'),
+    'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
+    'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
     'ManagedPrompt': Anonymous('one per prompt name'),
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and PrefixTools',
@@ -314,7 +321,16 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'AbsurdDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'PGTaskDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),
@@ -332,8 +348,8 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `run_command` and friends under fixed names',
         lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
     ),
-    'CapabilityCreation': Collides(
-        'its toolset registers `author_capability` and friends under fixed names',
+    'CapabilityCreation': Narrows(
+        'one store directory per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
     ),
     'PydanticAIDocs': Collides(
@@ -349,9 +365,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `run_macroscope_review` under a fixed name',
         lambda cls: (cls(), cls()),
     ),
-    'LocalStack': Collides(
-        'its toolset registers `aws_cli` and `localstack_health` under fixed names',
-        lambda cls: (cls(), cls()),
+    'LocalStack': Narrows(
+        'one LocalStack environment per id, and its service lists are an access boundary',
+        lambda cls: (cls(allowed_services=['s3']), cls(allowed_services=['sqs'])),
     ),
     'Linear': Narrows(
         'one Linear connection per id; two that differ need their own ids and PrefixTools',
@@ -381,14 +397,26 @@ COMBINE_POLICY: dict[str, Policy] = {
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
     'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
-    'ExaAgent': Collides('its toolset registers `web_search` and friends under fixed names'),
-    'ExaSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'ExaAgent': Narrows(
+        'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),
+    ),
+    'ExaSearch': Narrows(
+        'one Exa search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'GitHub': Narrows(
         'one GitHub connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'YouResearch': Collides('its toolset registers `research` and friends under fixed names'),
-    'YouSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
+    'YouResearch': Narrows(
+        'one You.com research configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
+    'YouSearch': Narrows(
+        'one You.com search configuration per id, and its domain lists are an access boundary',
+        lambda cls: (cls(include_domains=['a.dev']), cls(include_domains=['b.dev'])),
+    ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
@@ -397,11 +425,7 @@ COMBINE_POLICY: dict[str, Policy] = {
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
     if not isinstance(obj, type):
         return False
     try:

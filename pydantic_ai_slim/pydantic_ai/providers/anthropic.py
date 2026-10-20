@@ -43,6 +43,7 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -67,6 +68,7 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-sonnet-5-5',
+    'claude-haiku-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
@@ -75,8 +77,8 @@ to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate sett
 separate features, one GA and one beta, that could diverge again. Models predating the beta reject
 the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
 (`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
-the way it does a plain system entry. Verified live per model except `claude-mythos-5`, which isn't
-reachable with our credentials and is included on the strength of the published list.
+the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
+`claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
 """
 
 
@@ -117,6 +119,22 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             # rendering, as it did before this was supported anywhere.
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                # Request-scoped (`clear_at`) entries are published for the same models and transports as
+                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
+                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
+                # the same reason it's left out above.
+                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+            ),
+            # Prompt caching is likewise a fact about the Messages API rather than the model family.
+            # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
+            # takes the top-level automatic caching parameter on some models), before the user's `profile=` so an
+            # explicit value still wins, and `supported_cache_retentions` on Bedrock, which
+            # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
+            # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+            AnthropicModelProfile(
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                supports_auto_cache=True,
             ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
@@ -254,4 +272,30 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
+        if self.strict is True and 'type' not in schema:
+            _const_to_typed_enum(schema)
         return schema
+
+
+def _const_to_typed_enum(schema: JsonSchema) -> None:
+    """Rewrite an untyped `const` as the one-value `enum` of its type, which Anthropic's `transform_schema()` keeps.
+
+    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, and
+    `transform_schema()` rejects a node without a `type`. It also moves a `const` into the description, which
+    would leave the option unconstrained, while it keeps an `enum`.
+    """
+    const = schema.get('const')
+    # `bool` before `int`, which it subclasses.
+    if isinstance(const, bool):
+        type_ = 'boolean'
+    elif isinstance(const, str):
+        type_ = 'string'
+    elif isinstance(const, int):
+        type_ = 'integer'
+    elif isinstance(const, float):
+        type_ = 'number'
+    else:
+        return
+    del schema['const']
+    schema['type'] = type_
+    schema['enum'] = [const]

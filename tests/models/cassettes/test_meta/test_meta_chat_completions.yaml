@@ -1,0 +1,167 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "362"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        messages:
+        - role: user
+          content: What is the weather in Paris? Use the tool.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "674"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        id: chatcmpl-01a1357e-3b4e-71bd-bcfa-089ed23cd3b0
+        choices:
+        - finish_reason: tool_calls
+          index: 0
+          message:
+            content: I'll look up the current weather in Paris for you.
+            refusal: null
+            tool_calls:
+            - id: call_70419f5f-e695-4e60-9da0-08f5ede3f699
+              type: function
+              function:
+                name: get_weather
+                arguments: "{\"city\":\"Paris\"}"
+            role: assistant
+          logprobs: null
+        created: 1791898827
+        model: muse-spark-1.3
+        object: chat.completion
+        usage:
+          completion_tokens: 442
+          prompt_tokens: 539
+          total_tokens: 981
+          completion_tokens_details:
+            reasoning_tokens: 372
+          prompt_tokens_details:
+            cached_tokens: 113
+  recorded_at: 2026-10-13T13:40:27.681403+00:00
+- request:
+    method: POST
+    uri: https://api.meta.ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "710"
+      content-type:
+      - application/json
+      host:
+      - api.meta.ai
+    body:
+      type: json
+      content:
+        model: muse-spark-1.3
+        stream: false
+        messages:
+        - role: user
+          content: What is the weather in Paris? Use the tool.
+        - role: assistant
+          content: I'll look up the current weather in Paris for you.
+          tool_calls:
+          - id: call_70419f5f-e695-4e60-9da0-08f5ede3f699
+            type: function
+            function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+        - role: tool
+          tool_call_id: call_70419f5f-e695-4e60-9da0-08f5ede3f699
+          content: Sunny and 21C in Paris.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      connection:
+      - keep-alive
+      content-length:
+      - "489"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        id: chatcmpl-01a1357e-436d-766e-a6f0-d26e8e6b4be8
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: It's Sunny and 21°C in Paris.
+            refusal: null
+            role: assistant
+          logprobs: null
+        created: 1791898829
+        model: muse-spark-1.3
+        object: chat.completion
+        usage:
+          completion_tokens: 164
+          prompt_tokens: 634
+          total_tokens: 798
+          completion_tokens_details:
+            reasoning_tokens: 145
+          prompt_tokens_details:
+            cached_tokens: 497
+  recorded_at: 2026-10-13T13:40:29.790893+00:00

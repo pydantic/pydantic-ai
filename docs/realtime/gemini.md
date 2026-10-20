@@ -172,6 +172,9 @@ only native tool it supports — no Live model runs native code execution or URL
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
 `CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
 `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
+`allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
+[restricting parameters](../native-tools.md#restricting-parameters)).
 
 ### Specialist streaming models
 
@@ -238,6 +241,10 @@ drop cut off an exchange the resumed session no longer has (see
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
+- When Gemini says why it ended a turn, the response records it the way a
+  [`GoogleModel`][pydantic_ai.models.google.GoogleModel] response does: a malformed function call is
+  `finish_reason='error'`, refused input or unsafe output is `'content_filter'`, and the raw reason
+  (such as `MALFORMED_FUNCTION_CALL`) is kept in `provider_details['finish_reason']`.
 - `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
   but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
   recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,

@@ -8,6 +8,7 @@ description: Open and advance a PR — write current metadata, run an independen
 
 Pushing starts a loop; it does not end the task. **Work stops only when CI is green, the required
 hosted review has finished on the current HEAD, AND no comment is left unresolved.**
+Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
 Lifecycle: implement → targeted verification → commit → independent pre-push review → remediate
 and re-review within budget → push → full CI and coverage → hosted reviewers → final metadata check.
@@ -65,17 +66,55 @@ end of the body, before the checklist. Skip the section entirely when the log is
 
 Do not copy the decisions template's instructions into the PR body.
 
-### Apply a label
+### Keep labels current with the title and body
 
-Apply a label — the repo triages and filters by them. Fetch the real list first with
-`gh label list --limit 100`, because the set changes and a guessed label silently fails to
-apply. Pick the one naming what the PR *is* (`bug`, `feature`, `docs`, `chore`, `refactor`) and
-add a topic label (`anthropic`, `MCP`, `evals`, …) where one fits:
-`gh pr edit <number> --add-label <label>`.
+For prose-only documentation, handle title, body, and labels directly. Otherwise, assign updates to the same subagent.
+Reconcile labels whenever the title or body changes.
+
+Run `.agents/skills/pushing-commits-to-the-repo/label-catalog`. Read the printed file directly for prose-only documentation; otherwise give it to the subagent.
+The checked-in catalog supplies clones and worktrees without label-read requests.
+Run the helper with `--refresh` after creating, renaming, or updating repository labels.
+Commit refreshed catalog changes.
+The helper uses at most two requests and verifies completeness before replacing the catalog.
+Never fetch labels individually or pass raw label API responses.
+
+Keep the category label aligned with the PR's purpose (`bug`, `feature`, `docs`, `chore`, `refactor`).
+Add existing topic labels for every subject materially covered by the final title, body, and diff.
+Ignore incidental references, checklist text, and verification boilerplate when choosing topics.
+Remove topic labels only when the final scope no longer supports those labels.
+Preserve size, priority, review, and automation labels. Do not create or rename labels unless the user requests that change.
+Apply label additions and removals in a batch with the title/body update. Verify the resulting metadata.
+
+Apply exactly one package label: `pkg:core`, `pkg:harness`, `pkg:clai2`, `pkg:evals`, `pkg:graph` or `pkg:clai`.
+Use the catalog descriptions to choose. Tests and docs count toward the package they cover.
+Use `pkg:core` for repository infrastructure. For changes spanning packages, choose the package whose users the change serves.
 
 Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
 fails, quote the actual error rather than concluding you lack permission. Size labels are
 applied automatically — don't set them.
+
+## Prose-only documentation
+
+Prose-only documentation changes only natural-language text, including policy wording, docstring prose, and instruction wording.
+Executable code, code examples/snippets, configuration, schemas, CI logic, and machine-consumed data changes do not qualify.
+
+Skip `pre-push-review`, all local reviewers, extra hosted-review dispatches, the second-opinion choice, and the final metadata-subagent review.
+Handle metadata directly. Keep CI checks and triage comments already posted before handoff.
+Do not wait or poll for automatic hosted review completion or require its verdict.
+A skipped automatic review does not block handoff.
+
+Leave automatic configured CI and hosted review workflows unchanged; they may run independently.
+Do not edit workflows or triggers to implement this exception.
+Once CI is green and posted comments are triaged, hand David the PR diff to inspect and merge.
+Never merge the PR yourself.
+
+## Mechanical text/data refreshes
+
+A small mechanical text/data refresh changes no code, runtime behavior, CI logic, or substantive
+instruction or review policy. A catalog-row refresh is one example.
+
+For this case, skip local `pre-push-review` and any additional substantive review dispatch. Do not
+ask for a second-opinion choice. Automatic configured CI and hosted reviews still run.
 
 ## Fresh reviewer context contract
 
@@ -132,8 +171,8 @@ gate is unmet.
 
 ## Before you push — independent review gate
 
-Run this gate before the first push. Run it before later pushes while the current task's review
-budget remains. It catches semantic defects before they consume a CI and hosted-review round.
+Apply the prose-only documentation and mechanical text/data exceptions above first.
+Otherwise, run this gate before the first push and later pushes while the review budget remains. It catches semantic defects before they consume a CI and hosted-review round.
 
 Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
 including repeated reviews after findings. Reserve the next count before dispatch and include
@@ -242,6 +281,8 @@ These gates catch different failures; none replaces another:
 - **CI** runs the repository-wide type check, test, and coverage gates.
 - **Hosted reviewers** inspect the pushed diff with different models, instructions, and context.
 
+For prose-only documentation, follow the exception above instead of waiting for hosted review completion.
+
 Capture the PR head SHA after the push. Every post-push gate below must prove it covered that SHA;
 if the head changes, capture the new SHA and restart the loop.
 
@@ -305,6 +346,7 @@ if the head changes, capture the new SHA and restart the loop.
    your own earlier reply does not. The root `AGENTS.md` scope and reproduce-and-confirm bars bind
    a finding exactly as they bind your first commit, and a bot cannot approve a scope expansion —
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
+   For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
@@ -363,6 +405,8 @@ if the head changes, capture the new SHA and restart the loop.
 
 ## When the loop completes — choose an additional review surface
 
+Skip this choice for prose-only documentation and mechanical text/data refreshes defined above.
+
 The required hosted review is not on this menu. Step 3 of the loop above already settles which one
 it is: on a same-repository PR it is `CI Review`, which runs itself once `CI` succeeds on the
 current head and owns the `APPROVE` / `REQUEST_CHANGES` verdict on a severity scale, with subagent
@@ -384,7 +428,7 @@ cheap to review, so take one when the call is close.
 |---|---|
 | `pydanty:review-branch` | The diff reaches widely and you want findings fixed rather than only reported. It runs a fixed reviewer roster and pushes remediation commits to the branch. It waits on green CI. |
 | `pydanty:review-lite` | The diff is narrow or unusual enough that a fixed roster would look past it. It writes review charters for this diff, dispatches one reviewer per charter, and adjudicates before posting. It reports and never remediates, and it has no CI precondition. |
-| `douwebot` | One last high-judgment pass. Inline comments, no verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
+| `douwebot` | One last high-judgment pass. Inline findings and a formal verdict, one review per label application. On a fork this is a second application of the reviewer that already gated the PR, against the diff as it now stands. |
 | local | No hosted surface fits, or you want a read before the PR moves again. Dispatch `pre-push-review` under the context contract above and triage its findings like any other. |
 | none | No second opinion. The required review still gates the PR. |
 
@@ -422,32 +466,46 @@ maintainers run them, not something this repo can show you.
   `.agents/` or `agent_docs/` — a security guard against a PR editing the reviewer's own
   instructions. The guard is skipped for an author with write or admin access on the repo. Don't
   apply the label to a PR the guard covers; the red check is the guard working.
+- When a maintainer explicitly requests review of those protected paths, apply
+  `douwebot:review-agent-config`. It authorizes one review only when its first `labeled` event came
+  from a `User` with current write or admin permission and the PR still has the event head. Do not
+  treat label presence as approval for an ordinary `douwebot` trigger or a later head. If the run
+  fails or is canceled, remove and reapply the label; rerunning the old event is denied.
 - **Afterwards, re-enter the loop.** A hosted surface posts comments that need the same triage as
   any other.
 
 ## Before handing the PR back
 
-Run this final metadata check after CI, the required hosted review, and comments have settled.
+For prose-only documentation, check the title, body, and labels directly against this skill, root `AGENTS.md`, and the PR template.
+Correct metadata directly, then hand David the PR diff after CI is green and posted comments are triaged.
+Skip the subagent steps below; automatic hosted review completion remains exempt.
 
-Skip the check for test-only changes, typo-only changes, dependency bumps, and mechanical chores
-when the title and body were written after the final code push and the scope has not changed since.
-Do not dispatch a metadata-review subagent for an exempt PR.
+For other diffs, run this final metadata check after CI, required hosted review, and comments have settled.
+Any author-selected additional review must also have settled.
 
-When the check applies:
+1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
+   The metadata subagent has not worked on the PR and never decomposes the diff. Run the subagent on the latest light model your harness
+   supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
+   against written rules.
+2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
+   Exclude prior local review reports; permit the decisions log only to check its public mirror.
+3. Ask it to check only the title, body, and labels against this skill, the root `AGENTS.md`, and the PR template.
+4. Require either `current` or exact corrections: title or body text changes and label additions/removals.
+   - Require each correction to cite the rule it enforces.
+   - Require each correction to quote the title, body text, or label that breaks the rule. When the rule requires a
+     missing element, require the correction to name that element instead.
+5. Verify each correction. Keep a correction only when a rule in this skill, the root `AGENTS.md`, or the PR template
+   says what the correction claims and the current title, body, or labels break that rule. When that rule is not the
+   one the correction cites, cite it on the kept correction. When you find a violation that no correction names,
+   verify it the same way and add it as a kept correction.
+6. Edit the title, body, and labels once. Use the kept corrections, and write your own changes where they fall short.
+   The edit is done when all three hold:
+   - The edited title, body, and labels follow every rule a kept correction cites.
+   - The edited title, body, and labels break no rule that the current ones follow.
+   - The edit applies no subagent text that no kept correction covers.
 
-1. Capture the exact current title and body before dispatching the reviewer.
-2. Dispatch a fresh subagent under the fresh reviewer context contract that has not worked on the PR.
-   It never decomposes, so it needs no policy-base worktree of its own.
-3. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, local
-   `pr-decisions.md`, and captured
-   metadata. Ask it to check only objective title and body rules in this section and root
-   `AGENTS.md`.
-4. Require either `current` or an exact, rule-backed correction. The reviewer returns text only.
-   For a correction, record the edit timestamp, apply it, and wait for the corresponding
-   `edited`-event checks; stale checks on the same HEAD are not evidence. Require their
-   workflow-defined accepted terminal outcomes, classifying any permitted skip or no-op; otherwise
-   keep the PR incomplete. Triage feedback. Metadata-only changes skip code review and CI; code
-   changes restart the full lifecycle.
-5. Recheck corrected metadata once with another fresh subagent. Immediately before handoff, compare
-   the live title and body with the reviewed snapshot; any difference restarts this gate. Escalate
-   repeated or discretionary rewrites instead of looping.
+   Committed changes restart the post-push loop; GitHub metadata-only changes do not.
+7. Verify the live title, body, and labels match the checked metadata.
+   After metadata corrections, wait for the corresponding edited-event checks and triage feedback.
+   Require workflow-defined accepted terminal outcomes; earlier checks on the same HEAD do not cover the edit.
+   Hand the PR back after these gates settle.

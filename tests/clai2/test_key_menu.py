@@ -7,14 +7,15 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import api_keys, key_menu
-from pydantic_clai2.credential_store import save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu, is_save_and_close, save_and_close_item
-from pydantic_clai2.key_menu import KeyAction, KeysSource, build_keys_menu, keys_command, run_keys_flow
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.credential_store import save_codex_credentials
+from pydantic_clai2.ui.menus import key_menu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, is_save_and_close, save_and_close_item
+from pydantic_clai2.ui.menus.key_menu import KeyAction, KeysSource, build_keys_menu, keys_command, run_keys_flow
 from tests.clai2.menu_script import Script, pick, typed
 
 
-def test_management_flow() -> None:
+async def test_management_flow() -> None:
     script = Script(
         lists=[
             pick(KeyAction(action='add')),
@@ -26,27 +27,27 @@ def test_management_flow() -> None:
         choices=[pick(True)],
         texts=[typed(' first '), typed('secret'), typed('replacement'), typed('renamed')],
     )
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert api_keys.load_keys() == {}
     assert script.opened == ['list', 'text', 'text', 'list', 'text', 'list', 'text', 'list', 'choice', 'list']
 
 
 @pytest.mark.parametrize('cancel', [MenuResult(cancelled=True), MenuResult(item=None), pick(False)])
-def test_delete_cancel(cancel: MenuResult) -> None:
+async def test_delete_cancel(cancel: MenuResult) -> None:
     api_keys.save_key(name='KEY', value='secret')
     script = Script(
         lists=[pick(KeyAction(action='delete', name='KEY')), MenuResult(item=None)], choices=[cancel], texts=[]
     )
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert api_keys.resolve_key(token=api_keys.KeyReference(name='KEY')) == 'secret'
 
 
 @pytest.mark.parametrize('result', [TextInputResult(cancelled=True), TextInputResult(value=None)])
 @pytest.mark.parametrize('action', [KeyAction(action='add'), 'KEY'])
-def test_input_cancel(result: TextInputResult, action: KeyAction | str) -> None:
+async def test_input_cancel(result: TextInputResult, action: KeyAction | str) -> None:
     api_keys.save_key(name='KEY', value='secret')
     script = Script(lists=[pick(action), MenuResult(cancelled=True)], choices=[], texts=[result])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert list(api_keys.load_keys()) == ['KEY']
 
 
@@ -54,16 +55,16 @@ def test_input_cancel(result: TextInputResult, action: KeyAction | str) -> None:
     ('action', 'texts'),
     [(KeyAction(action='add'), ['KEY']), (KeyAction(action='add'), ['bad-name']), ('KEY', [''])],
 )
-def test_validation_keeps_key(action: KeyAction | str, texts: list[str]) -> None:
+async def test_validation_keeps_key(action: KeyAction | str, texts: list[str]) -> None:
     api_keys.save_key(name='KEY', value='secret')
     script = Script(lists=[pick(action), MenuResult(cancelled=True)], choices=[], texts=[typed(t) for t in texts])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert api_keys.load_keys()['KEY'].get_secret_value() == 'secret'
 
 
-def test_unknown_action() -> None:
+async def test_unknown_action() -> None:
     script = Script(lists=[pick(42), MenuResult(cancelled=True)], choices=[], texts=[])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert not api_keys.load_keys()
 
 
@@ -86,13 +87,13 @@ def test_menu_keys(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
 
 
 @pytest.mark.parametrize('message', ['', 'Saved KEY.'])
-def test_save_and_close_is_the_last_row_and_leaves(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
+async def test_save_and_close_is_the_last_row_and_leaves(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
     pressed = iter(['end', 'enter'])
     monkeypatch.setattr(key_menu, 'menu_key', lambda: next(pressed))
     result = build_keys_menu(names=['KEY'], message=message).run()
     assert result.item is not None and is_save_and_close(result.item)
     script = Script(lists=[MenuResult(item=save_and_close_item())], choices=[], texts=[])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
     assert script.opened == ['list']
 
 
@@ -111,7 +112,7 @@ def test_masked_editor(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFi
     assert source.problem(row, '') is not None
     assert source.problem(row, 'new-secret') is None
     pressed = iter([*'new-secret', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.field_menu.menu_key', lambda: next(pressed))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(pressed))
     widget = FieldMenu(source).build_editor(row)
     assert widget.run().value == 'new-secret'
     output = capsys.readouterr().out
@@ -119,23 +120,23 @@ def test_masked_editor(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFi
 
 
 @pytest.mark.parametrize('failure', [OSError('secret'), KeyringError('secret'), UserError('invalid bundle')])
-def test_backend_failure(monkeypatch: pytest.MonkeyPatch, failure: Exception) -> None:
+async def test_backend_failure(monkeypatch: pytest.MonkeyPatch, failure: Exception) -> None:
     def broken() -> dict[str, object]:
         raise failure
 
     monkeypatch.setattr(api_keys, 'load_keys', broken)
     script = Script(lists=[pick(KeyAction(action='add')), MenuResult(cancelled=True)], choices=[], texts=[typed('KEY')])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
 
 
-def test_plaintext_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_plaintext_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     def unavailable(service: str, account: str) -> None:
         raise NoKeyringError
 
     monkeypatch.setattr(keyring, 'get_password', unavailable)
     api_keys.save_key(name='KEY', value='secret')
     script = Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[])
-    run_keys_flow(runners=script.runners)
+    await run_keys_flow(runners=script.runners)
 
 
 async def test_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,6 +179,6 @@ def test_rename_preserves_other_keys() -> None:
 
 def test_disabled_row_has_no_key_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     # Filtering can focus a disabled status row, which is not a credential.
-    pressed = iter(['z', 'r', 'd', 'escape'])
+    pressed = iter(['/', 'z', 'enter', 'r', 'd', 'escape', 'escape'])
     monkeypatch.setattr(key_menu, 'menu_key', lambda: next(pressed))
     assert build_keys_menu(names=['KEY'], message='zzz status').run().cancelled

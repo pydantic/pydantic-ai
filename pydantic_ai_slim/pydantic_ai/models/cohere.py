@@ -3,9 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import EllipsisType
-from typing import Literal, cast
-
-from typing_extensions import assert_never
+from typing import Literal, assert_never, cast
 
 from pydantic_ai.exceptions import ModelAPIError
 
@@ -49,6 +47,7 @@ from . import (
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
+from ._transport_errors import transport_error_message
 
 try:
     from cohere import (
@@ -70,12 +69,17 @@ try:
         V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
+    from cohere.core.request_options import RequestOptions
     from cohere.v2.client import OMIT
 except ImportError as _import_error:
     raise ImportError(
         'Please install `cohere` to use the Cohere model, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 LatestCohereModelNames = Literal[
     'c4ai-aya-expanse-32b',
@@ -121,6 +125,10 @@ class CohereModel(Model[AsyncClientV2]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+    )
 
     _model_name: CohereModelName = field(repr=False)
     _provider: Provider[AsyncClientV2] = field(repr=False)
@@ -209,6 +217,11 @@ class CohereModel(Model[AsyncClientV2]):
                 seed=model_settings.get('seed', OMIT),
                 presence_penalty=model_settings.get('presence_penalty', OMIT),
                 frequency_penalty=model_settings.get('frequency_penalty', OMIT),
+                request_options=(
+                    None
+                    if (max_retries := model_settings.get('max_retries')) is None
+                    else RequestOptions(max_retries=max_retries)
+                ),
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
@@ -216,6 +229,9 @@ class CohereModel(Model[AsyncClientV2]):
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except httpx.TransportError as e:
+            # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
+            raise ModelAPIError(model_name=self.model_name, message=transport_error_message(e)) from e
 
     def _get_tool_choice(
         self,

@@ -44,7 +44,7 @@ Construct an `Agent` with `CodeMode()` in its `capabilities`, then register tool
 from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -117,7 +117,7 @@ def fetch(url: str) -> str:
 search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     toolsets=[search_tools],
     capabilities=[CodeMode(tools={'code_mode': True})],
 )
@@ -215,9 +215,65 @@ explicit override. `run_code` is replayed in workflow code, so measuring elapsed
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Concurrent tool calls
+
+Sandboxed tools render as `async def` functions, so generated code can start several calls and
+await them together with `asyncio.gather`. Whether those calls overlap follows the run's
+[parallel execution mode](../tools-advanced.md#parallel-tool-calls-concurrency):
+
+- `'parallel'` (the default) and `'parallel_ordered_events'` run gathered calls concurrently.
+  `'parallel_ordered_events'` only orders the result events of top-level tool calls, which nested
+  calls do not emit. It is the mode `DBOSDurability` uses by default.
+- `'sequential'` runs gathered calls one at a time, in the order the code started them.
+
+A tool marked `sequential=True` renders as a plain `def` and runs alone in every mode: calls the
+code started before it finish first.
+
+Durable engines that record nested calls as steps number them as they start. When a tool or a
+capability hook such as `before_tool_execute` awaits before its step starts, concurrent calls can
+start their steps in a different order on recovery. Pass `parallel_execution_mode='sequential'` to
+the durability capability to run nested calls one at a time.
+
 ## REPL state
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
+
+### Keep the REPL across runs
+
+Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`pydantic_ai_harness.code_mode.CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import CodeMode
+
+
+class InMemoryReplStore:
+    def __init__(self) -> None:
+        self.states: dict[str, bytes] = {}
+
+    async def load(self, ctx: RunContext) -> bytes | None:
+        return self.states.get(ctx.conversation_id or '')
+
+    async def save(self, ctx: RunContext, state: bytes | None) -> None:
+        key = ctx.conversation_id or ''
+        if state is None:
+            self.states.pop(key, None)
+        else:
+            self.states[key] = state
+
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+```
+
+- A run that never calls `run_code` neither loads nor saves.
+- `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
+- A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
+- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
+- Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
 
@@ -229,7 +285,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(eager=True)],
 )
 ```
@@ -317,7 +373,7 @@ def lookup_year(*, title: str) -> int | None:
 
 code_mode = CodeMode(speculate=['lookup_author', 'lookup_year'])
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[code_mode],
     tools=[lookup_author, lookup_year],
 )
@@ -352,7 +408,7 @@ def search(query: str) -> str:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     capabilities=[CodeMode(speculate='declared')],
     tools=[Tool(search, metadata={'read_only': True})],
 )
@@ -457,7 +513,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(monty_sandbox_url='wss://sandbox.example.com/monty')],
 )
 ```
@@ -492,7 +548,7 @@ from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     name='coding-agent',
     capabilities=[CodeMode(), TemporalDurability()],
 )
@@ -539,7 +595,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
 
 
 @agent.tool_plain
@@ -552,11 +608,49 @@ result = agent.run_sync("What's the weather in Paris?")
 
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             metadata = part.metadata or {}
             tool_calls = metadata['tool_calls']    # dict[str, ToolCallPart]
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
+
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](../tools-advanced.md#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
 ## In practice
 
@@ -585,7 +679,7 @@ from pydantic_ai_harness import CodeMode
 
 # The agent can read /work/data.csv and write /work/summary.md back to the host:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(mount=MountDir(virtual_path='/work', host_path='/tmp/agent-workspace', mode='read-write'))],
 )
 ```
@@ -603,7 +697,7 @@ from pydantic_ai_harness import CodeMode
 
 # Give the agent a fixed set of environment values:
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(os_access=OSAccess(environ={'API_BASE': 'https://api.example.com'}))],
 )
 ```
@@ -627,7 +721,7 @@ def my_os(*, name, args, kwargs, **_):
     return NOT_HANDLED
 
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(os_access=my_os)])
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(os_access=my_os)])
 ```
 
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
@@ -648,13 +742,14 @@ Your callback's return value decides the call's fate, and the two outcomes are e
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset. Key restrictions:
 
-- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib` (each must be imported before use).
+- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii` (each must be imported before use).
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema. `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them.
+- A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
 
 ## Agent spec (YAML/JSON)
 
@@ -662,7 +757,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - CodeMode: {}
 ```
@@ -694,3 +789,5 @@ capabilities:
 ## API reference
 
 ::: pydantic_ai_harness.CodeMode
+
+::: pydantic_ai_harness.code_mode.CodeModeReplStore

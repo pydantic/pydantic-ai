@@ -291,14 +291,18 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
     assert len(part.audio.data) > 0
 
 
-async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+async def test_text_context_waits_for_next_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
+) -> None:
     provider, _ = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     agent = Agent(instructions='Answer in one short sentence.')
 
     async with agent.realtime(model).session() as session:
         await session.send('The visitor is called Ada.', respond=False)
-        await asyncio.sleep(1)
+        # Gives a reply the model shouldn't have started time to arrive. Replay delivers the recorded frames
+        # back to back, so it needs only a moment.
+        await asyncio.sleep(1 if realtime_recording else 0.1)
         assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
         await session.send('What is the visitor called?')
         with anyio.fail_after(30):
@@ -715,6 +719,96 @@ async def test_audio_in_server_vad_turn(
 
 
 @pytest.mark.realtime_ws_hold_open
+async def test_idle_timeout_nudge_is_not_a_user_turn(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Server VAD's `idle_timeout_ms` makes the model follow up after silence without recording a user turn.
+
+    When it fires, OpenAI commits the silent input audio as an empty user item and starts a response to it.
+    Nobody spoke, so history must hold the follow-up reply but no (empty) spoken user turn.
+    """
+    provider, cassette = openai_ws_cassette
+    recording = not cassette.interactions
+    model = OpenAIRealtimeModel(
+        'gpt-realtime-2.1-mini',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(openai_turn_detection={'type': 'server_vad', 'idle_timeout_ms': 5000}),
+    )
+    agent = Agent(instructions='Reply in a few words.')
+    silence = bytes(4800)  # 100 ms of 24 kHz PCM16
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        # The timeout counts from the end of the model's last reply, so there has to be one.
+        await session.send('Say hi in two words.')
+        turns = 0
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns += 1
+                    if turns == 2:
+                        break
+                    # The timeout runs on the wire clock, so the silence streams at a microphone's pace.
+                    for _ in range(80):
+                        await cassette.before_audio_send()
+                        await session.send_audio(silence)
+                        await anyio.sleep(0.1 if recording else 0)
+
+    assert not any(
+        isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart) and event.part.speaker == 'user'
+        for event in events
+    )
+    messages = session.all_messages()
+    assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse', 'ModelResponse'])
+    assert [part.transcript for m in messages for part in m.parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Hi there.', "Hey, I'm still here! Anything you want to chat about?"]
+    )
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_auto_input_transcription_uses_gpt_live_transcribe(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`input_transcription_model='auto'` transcribes a spoken turn with `gpt-live-transcribe` on OpenAI.
+
+    Its final transcript can arrive after the reply's turn is complete (as in this recording), and still lands
+    in the user turn it describes.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime-2.1-mini', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    order: list[str] = []
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    order.append('turn complete')
+                elif isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                    order.append(f'{event.part.speaker} part end')
+                if 'turn complete' in order and 'user part end' in order:
+                    break
+
+    assert order == snapshot(['assistant part end', 'turn complete', 'user part end'])
+
+    [session_update] = [
+        frame
+        for frame in sent_frames_containing(cassette, 'Reply in a few words.')
+        if frame['type'] == 'session.update'
+    ]
+    assert session_update['session']['audio']['input']['transcription'] == {'model': 'gpt-live-transcribe'}
+    user_turn = session.all_messages()[0]
+    assert isinstance(user_turn, ModelRequest)
+    assert [part.transcript for part in user_turn.parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Hello, my name is Marcelo.']
+    )
+
+
+@pytest.mark.realtime_ws_hold_open
 async def test_input_audio_retention_segments_three_server_vad_turns(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
@@ -886,6 +980,52 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     # tool-calling turn reports two usage updates, not just the final text response's.
     assert session.usage.requests == 2
     assert session.usage.input_tokens > 0 and session.usage.output_tokens > 0
+
+
+async def test_pruned_tool_items_stop_costing_input_tokens(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_prune_tool_items`, a tool round's items leave the server conversation once it is answered.
+
+    The tool returns a long report, so the next response's input tokens show whether the server still reads it.
+    History keeps the round.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=OpenAIRealtimeModelSettings(output_modality='text', openai_prune_tool_items=True),
+    )
+    agent = Agent(
+        instructions='Use the weather_report tool for any weather question, then answer in one short sentence.'
+    )
+
+    @agent.tool_plain
+    def weather_report(city: str) -> str:
+        """Fetch the full weather station report for a city."""
+        return f'Station report for {city}: foggy, 12 degrees, light wind from the west. ' * 150
+
+    async def reply_to(text: str) -> None:
+        await session.send(text)
+        with anyio.fail_after(30):
+            async for event in stream:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    async with agent.realtime(model).session() as session:
+        stream = session.__aiter__()
+        await reply_to('What is the weather in London?')
+        await reply_to('Thanks! Now just say goodbye.')
+
+    deleted = [
+        frame for frame in sent_frames_containing(cassette, 'item_id') if frame['type'] == 'conversation.item.delete'
+    ]
+    assert len(deleted) == 2
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.usage.input_tokens for response in responses] == snapshot([65, 2795, 102])
+    assert any(isinstance(part, ToolReturnPart) for message in session.all_messages() for part in message.parts), (
+        'history keeps the round'
+    )
 
 
 async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
@@ -1272,6 +1412,28 @@ def _span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.vcr
+async def test_webrtc_hang_up_ends_the_call(
+    openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`hang_up()` on a sideband ends the browser's call; `close()` alone would only detach from it.
+
+    Hanging up again finds no call to end, which is not an error. The offer and both hangups are an HTTP
+    VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_ws_sideband_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    realtime = Agent(instructions='Answer in two words.').realtime(model)
+
+    answer = await realtime.answer_webrtc_offer(REAL_SDP_OFFER)
+    async with realtime.session(provider_session=answer.session) as session:
+        await session.hang_up()
+    assert session.closed
+
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)
+
+
+@pytest.mark.vcr
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_webrtc_sideband_audio_turn(
     openai_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
@@ -1416,9 +1578,10 @@ async def test_interrupt_after_the_reply_finished_generating(
     """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
 
     The reply is still being heard, so the barge-in must still truncate its item, and the provider must
-    accept that for a finished response, so the model doesn't believe it was heard in full. History is
-    append-only: the recorded reply keeps its full text and `complete` state, and the next reply is
-    unaffected. The playback position is 0 so it replays deterministically.
+    accept that for a finished response, so the model doesn't believe it was heard in full. History records
+    the reply as cut off where playback stopped, keeping the transcript the provider gave (it doesn't say
+    which words were heard), and the next reply is unaffected. The playback position is 0 so it replays
+    deterministically.
     """
     provider, cassette = openai_ws_cassette
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
@@ -1450,7 +1613,11 @@ async def test_interrupt_after_the_reply_finished_generating(
     assert 'error' not in received
 
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
-    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
+    speech = [[part for part in response.parts if isinstance(part, SpeechPart)] for response in responses]
+    assert [[(part.transcript, part.interrupted_at_ms) for part in parts] for parts in speech] == snapshot(
+        [[('Hello! Great to connect with you.', 0)], [('Take care, talk soon!', None)]]
+    )
     assert responses[0].provider_response_id is not None
     # The truncation named the first reply's output item.
     first_item = next(
@@ -1459,3 +1626,48 @@ async def test_interrupt_after_the_reply_finished_generating(
         if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.output_item.added'
     )
     assert truncates[0]['item_id'] == first_item
+
+
+async def test_interrupt_partway_through_a_finished_reply(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """A barge-in partway into a reply that already finished truncates it there, and history records the cut.
+
+    The transcript stays what the provider gave (it doesn't say which words were heard), so a text model or
+    a replay reads it with the interruption marker. The cassette keeps only a few bytes of each audio delta,
+    so the position attributed as played (20 ms) lies within what replays too.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in two full sentences.')
+
+    async with agent.realtime(model).session() as session:
+        _stream = session.stream_audio()  # the single playback view the position is attributed to
+        events = aiter(session)
+        with anyio.fail_after(60):
+            await session.send('Tell me about the moon.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+            assert await session.interrupt(played_bytes=960) is True
+            # The next turn, so the provider's acknowledgement of the truncation is read before closing.
+            await session.send('Say goodbye.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == snapshot([20])
+    received = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert 'conversation.item.truncated' in received
+    assert 'error' not in received
+
+    response, goodbye = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert (response.state, goodbye.state) == ('interrupted', 'complete')
+    [speech] = [part for part in response.parts if isinstance(part, SpeechPart)]
+    assert speech.interrupted_at_ms == snapshot(20)
+    assert speech.transcript == snapshot(
+        "The moon is Earth's only natural satellite, and it's the fifth largest moon in the solar system. It's about a quarter the size of Earth, and it takes roughly 27 days to orbit our planet, showing phases as it moves through its cycle."
+    )

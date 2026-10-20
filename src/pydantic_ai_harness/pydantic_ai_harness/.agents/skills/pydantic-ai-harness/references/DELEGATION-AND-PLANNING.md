@@ -127,9 +127,11 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 
 `SubAgents` parameters that change behaviour:
 
-- `agent_folders=None` (default): no disk loading. Pass `'agents'` to load every `*.md` under
-  `.agents/agents/` (fallback `.claude/agents/`) from the run's workspace; a run without a workspace
-  skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
+- `agent_folders=None` (default): no disk loading. Pass `'agents'` to load every Claude-style `*.md`
+  and Codex-style `*.toml` under `.agents/agents/`, `.claude/agents/`, and `.codex/agents/` (in that
+  order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
+  unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
+  a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
   Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
@@ -153,12 +155,30 @@ Gotchas:
 - Children receive the parent's `deps` (same `AgentDepsT`) and run in the parent's workspace.
 - In tests, override a child's model by nesting overrides:
   `with parent.override(model=m1), child.override(model=m2):` (`SubAgent` runs the same `Agent`).
-- Timeout, own-budget exhaustion, and `max_calls` exhaustion are soft: a steering message comes back as
-  the tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
+- Timeout, own-budget exhaustion, `max_calls` exhaustion, and a child run that ends with
+  `DeferredToolRequests` (the parent cannot resume it) are soft: a steering message comes back as the
+  tool result. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+
+## DelegationReports
+
+Delivers finished background-task reports from a `DelegationTasks` owner into a parent run, as
+automated, untrusted task data rather than user messages.
+
+```python
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+
+tasks = DelegationTasks()
+reports = DelegationReports(tasks, conversation_id='conversation-1')
+```
+
+- `priority='when_idle'` (default) lets an active parent finish its current work first.
+- For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
+  the reports reach the first model request with no synthetic user prompt.
+- Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
 
 ## DynamicWorkflow
 
@@ -209,7 +229,8 @@ Gotchas:
   `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
 - Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
-  `RuntimeError` in the script; uncaught, the whole script retries.
+  `RuntimeError` in the script; uncaught, the whole script retries. A child run that ends with
+  `DeferredToolRequests` is a failure too, and the catalog leaves that type out of its signature.
 - Past `max_agent_calls` a call raises in the script, and whatever the script does next (even a
   `try`/`except` that finishes), `run_workflow` returns `{'error': '...exhausted its sub-agent call
   budget...', 'last_error': ..., 'completed': [...]}`; later calls in that run are refused.
@@ -272,6 +293,13 @@ Gotchas:
 
 Selected tools start, return a "running in background (task id)" message immediately, and deliver the
 result as a follow-up message when done.
+
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata. `ToolReturn.metadata` is discarded.
 
 ```python
 import asyncio

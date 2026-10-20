@@ -64,7 +64,8 @@ async def run_acp_stdio(
             [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         model_resolver: Maps an advertised model id to the `Model` (or model string) used for the
             run. See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
-        usage_limits: Per-run request/token ceilings applied to every agent run. See
+        usage_limits: Per-run request/token ceilings applied to every agent run. By default, no
+            request limit is applied. See
             [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
     """
     adapter = PydanticAIACPAgent(

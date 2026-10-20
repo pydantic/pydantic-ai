@@ -171,7 +171,7 @@ By default the adapter recognizes the harness `FileSystem` and `Shell` tool call
 
 ## MCP servers
 
-An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than silently ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPServerStdio`).
+An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets. If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected (rather than silently ignoring them) so the mismatch is visible. The spec expects every agent to accept stdio MCP servers, so an agent meant for arbitrary editors should install a `session_config` that connects them (for example with `pydantic_ai.mcp.MCPToolset`).
 
 A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support for those transports during `initialize` (stdio servers are not capability-gated). When your `session_config` connects them, say so:
 
@@ -226,6 +226,7 @@ Each completed turn reports its token counts (input/output/total, plus cached to
 ## Cancellation and limitations
 
 - **Cancellation.** `session/cancel` and `session/close` cancel the in-flight turn; close waits for it to unwind before returning. Cooperative async tools stop promptly. A synchronous tool already running in a worker thread cannot be force-stopped, so its side effects may complete after the turn reports `cancelled` -- prefer async tools for cancellation-sensitive work.
+- **Usage limits.** ACP turns have no request limit by default. Pass `usage_limits=UsageLimits(...)` to bound model requests, tokens, tool calls, or cost. Reaching a configured limit ends the turn with `max_tokens` for a token limit, or `max_turn_requests` for a request, tool-call, or cost limit. The messages exchanged before the limit are committed, so the next turn sees which tools already ran, except tool calls the limit stopped before they ran. The response for that turn reports the usage of every model response received before the limit.
 - **Approval detection.** Tools that require approval are recognized when they live in a `FunctionToolset` (which the harness `FileSystem`/`Shell` and `@agent.tool` both use). A tool whose approval requirement is decided dynamically per call (by raising `ApprovalRequired` from its body) starts as `in_progress`, and any side effects it ran *before* raising have already happened by the time the client is asked -- use an `ApprovalRequiredToolset` (which gates before the tool body runs) for actions that must not partially execute before approval. A tool added only per run (via a capability's `for_run()`, or the callable arm of an `AgentToolset`) is not recognized up front, but the run reports exactly which calls paused for approval, and the adapter corrects their announced status to `pending` before asking the client.
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file (no prior contents), so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a *live* terminal pane in the tool call, which would need the terminal id at call-start, before the command runs.
@@ -250,7 +251,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     session_store=None,       # enables session/load by persisting each session
     models=None,              # models offered as the `model` config option ('all' for every known model)
     model_resolver=None,      # maps an advertised model id to the Model used for the run
-    usage_limits=None,        # per-run request/token ceilings
+    usage_limits=None,        # no request limit by default; pass UsageLimits(...) to set ceilings
 )
 
 run_acp_stdio_sync(...)   # synchronous wrapper, same arguments

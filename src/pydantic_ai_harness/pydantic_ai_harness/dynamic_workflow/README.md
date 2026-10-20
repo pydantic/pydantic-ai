@@ -163,6 +163,12 @@ result["value"]   # not result.value
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and
 reads them by subscript on its own.
 
+An `output_type` can include
+[`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) so a top-level
+caller can approve tools and resume the run. A workflow script cannot do either, so the catalog
+leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with
+it raises a `RuntimeError` in the script, like any other sub-agent failure.
+
 ## A complete, runnable example
 
 Now let's put it together into something you can actually run. This orchestrator runs a small
@@ -421,9 +427,10 @@ workflow.reveal(fixer)
 ```
 
 The revealed sub-agent becomes callable on the next step. The model learns about it through a short
-announcement message that carries the new function's signature. The `run_workflow` description itself
-stays frozen at the agents present when the run started, so even a runtime reveal never moves the
-prompt-cache prefix.
+system-level announcement message that carries the new function's signature. The `run_workflow`
+description itself stays frozen at the agents present when the run started, so even a runtime reveal
+never moves the prompt-cache prefix. If compaction or a history processor removes the announcement,
+the capability announces the sub-agent again on the next step.
 
 > **Note**
 >

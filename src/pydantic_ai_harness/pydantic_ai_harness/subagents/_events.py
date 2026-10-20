@@ -22,13 +22,14 @@ SUB_AGENTS_EVENTS = 'sub_agents'
 MAX_EVENT_TEXT_CHARS = 4096
 """Characters kept of `DelegationStartEvent.task` and `DelegationEndEvent.output` before they are cut."""
 
-DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained']
+DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'cancelled', 'error']
 """How a delegation ended, mirroring the failure-handling contract of `SubAgent`.
 
 - `ok`: the child finished and its output went back to the parent.
 - `timeout`: the child exceeded `SubAgent.timeout_seconds`; the parent got a steering message.
 - `budget`: the child reached its own `SubAgent.usage_limits`; the parent got a steering message.
-- `failed`: the child raised a soft model error; the parent got `SubAgent.on_failure` or a `ModelRetry`.
+- `failed`: the child raised a soft model error (the parent got `SubAgent.on_failure` or a `ModelRetry`),
+  or its run ended with `DeferredToolRequests` (the parent got a steering message).
 - `contained`: the child crashed with `contain_errors` on; the parent got a `ModelRetry`.
 """
 
@@ -55,6 +56,8 @@ class DelegationStartEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='d
     model: str | None
     """The menu key the delegation runs on, or `None` when no option was selected: there is
     no menu, or the delegate allows the whole menu and the parent named no key."""
+    task_id: str | None = None
+    parent_id: str | None = None
     inherits_tools: bool
     """Whether the parent's own tools were passed to the child run (`SubAgents.inherit_tools`)."""
 
@@ -67,7 +70,8 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
     output on `ok`, otherwise the steering message it returns or the
     `ModelRetry` it raises. An exception that propagates out of the delegate
     tool (a shared usage limit, an uncontained crash, a cancellation) ends
-    without this event.
+    without this event for ordinary `SubAgents` users. An opt-in `DelegationTasks`
+    owner emits terminal `cancelled` or `error` outcomes with stable task identity.
     """
 
     agent_name: str
@@ -77,5 +81,7 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
     usage: RunUsage | None
     """The child's own usage when it has separate accounting (`SubAgent.usage_limits`
     set, or `forward_usage` off); `None` when it accrues into the parent's usage."""
+    task_id: str | None = None
+    parent_id: str | None = None
     duration_seconds: float
     """Wall-clock seconds from just after the start event was emitted until the delegation settled."""
