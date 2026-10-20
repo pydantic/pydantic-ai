@@ -678,7 +678,9 @@ class TestContainerManagement:
         assert set(await fresh.get_tools(_run_context())) == {'aws_cli', 'localstack_health', 'extra'}
 
     async def test_managed_ipv6_host_address_is_bracketed(self, tmp_path: Path) -> None:
-        docker, log = _docker_stub(tmp_path)
+        # `run` fails at once, so the published ports are checked without waiting for readiness.
+        log = tmp_path / 'docker.log'
+        docker = _make_stub(tmp_path, f'echo "$@" >> {log}\nexit 1')
         instructions = LocalStack(
             manage_container=True, host_address='::1', endpoint_url='http://localhost:4599'
         ).get_instructions()
@@ -698,9 +700,8 @@ class TestContainerManagement:
             host_address='::1',
             service_port_range='4510-4559',
             docker_path=docker,
-            startup_timeout=0.5,
         )
-        with pytest.raises(LocalStackError, match='did not become ready'):
+        with pytest.raises(LocalStackError, match='Failed to start LocalStack container'):
             async with toolset:
                 pass  # pragma: no cover
         assert '-p [::1]:4599:4566 -p [::1]:4510-4559:4510-4559' in log.read_text()

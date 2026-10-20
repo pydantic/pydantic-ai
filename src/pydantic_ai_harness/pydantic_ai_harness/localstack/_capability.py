@@ -80,7 +80,9 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     manage_container: bool = False
     """If True, start a LocalStack Docker container for each run and stop it when the run ends.
 
-    Requires Docker. When False (default), the agent connects to a LocalStack
+    Inside `async with agent:`, one container is started when the agent is
+    entered, shared by every run inside, and stopped when the agent context
+    exits. Requires Docker. When False (default), the agent connects to a LocalStack
     instance you started separately at `endpoint_url`.
     """
 
@@ -144,6 +146,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
         """Build and return the LocalStack toolset."""
         # A managed container starts empty in the process that recovers a run, so its commands run
         # again there to rebuild its state, rather than replaying recorded output into an empty one.
+        # Runs that share one container inside `async with agent:` also share its state on recovery.
         operations = (
             None
             if self.manage_container

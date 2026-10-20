@@ -108,8 +108,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
 
     Commands are executed as an argument vector (no shell), so shell operators
     and redirection in the command string have no effect. Each command runs with
-    stdin closed and with its own empty AWS config and credentials files, so it
-    never reads or writes the `~/.aws` files of the user running the agent.
+    stdin closed and with its own empty AWS config and credentials files in place
+    of `~/.aws/config` and `~/.aws/credentials`.
 
     `LocalStack` passes `operations` so that each command and health check runs
     as one of its durable operations, whose result durable execution records
@@ -238,11 +238,14 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         Entering is reentrant: only the first entry starts the container and only
         the matching last exit stops it.
         """
+        host_port = self._host_port
+        if host_port is None:
+            return self
         async with self._enter_lock:
-            if self._entered_count == 0 and self._host_port is not None:
+            if self._entered_count == 0:
                 container = LocalStackContainer(
                     image=self._image,
-                    host_port=self._host_port,
+                    host_port=host_port,
                     host_address=self._host_address,
                     service_port_range=self._service_port_range,
                     mount_docker_socket=self._mount_docker_socket,
@@ -259,6 +262,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
 
     async def __aexit__(self, *args: object) -> None:
         """Stop the managed LocalStack container once the last entry exits."""
+        if self._host_port is None:
+            return
         # Shielded so a cancelled run still releases its entry and stops the container.
         with anyio.CancelScope(shield=True):
             async with self._enter_lock:
@@ -343,8 +348,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """Inherit non-AWS environment, then set only the intended LocalStack AWS settings.
 
         The config and credentials files point into `config_dir`, so the CLI never
-        falls back to `~/.aws`, where `aws configure` would read or overwrite the
-        real AWS settings of the user running the agent.
+        falls back to `~/.aws/config` and `~/.aws/credentials`, where `aws configure`
+        would read or overwrite the real AWS settings of the user running the agent.
         """
         env = {key: value for key, value in os.environ.items() if not key.startswith('AWS_')}
         env['AWS_CONFIG_FILE'] = os.path.join(config_dir, 'config')

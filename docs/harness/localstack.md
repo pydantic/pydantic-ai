@@ -60,9 +60,9 @@ the capability start and stop a fresh Docker container per run.
 
 Commands run as an argument vector (no shell), so shell operators and
 redirection in the command string have no effect. Each command runs with stdin
-closed and with its own empty AWS config and credentials files, so it never
-reads or writes your `~/.aws` files; settings from `aws configure` last for that
-one command. Output is labelled with `[stdout]` / `[stderr]` markers and an
+closed and with its own empty AWS config and credentials files in place of
+`~/.aws/config` and `~/.aws/credentials`, so settings from `aws configure` last
+for that one command and never reach your own AWS configuration. Output is labelled with `[stdout]` / `[stderr]` markers and an
 `[exit code: N]` line on non-zero exit. When it exceeds `max_output_chars` the
 **tail** is kept (the head is dropped), so errors survive truncation. The cap
 applies to the command's result itself, so a durable execution record of it is
@@ -113,10 +113,10 @@ LocalStack(
 The container's edge port (`4566`) is published on the host port from
 `endpoint_url`, and the capability waits for the health endpoint before the run
 starts, then stops the container when it ends (even if the run raises). Each run
-gets its own container, so concurrent runs of one agent need distinct host ports
-or an externally managed instance (`manage_container=False`). Inside
-`async with agent:`, entering the agent starts one container that the runs
-inside share, and exiting stops it.
+gets its own container on the same host port, so concurrent runs of one agent
+need to share one: inside `async with agent:`, entering the agent starts one
+container that the runs inside share, and exiting stops it. Alternatively, point
+them at an externally managed instance (`manage_container=False`).
 
 Managed containers bind to `127.0.0.1` by default, reached through
 `localhost.localstack.cloud`. Set `host_address` to publish on a different
@@ -174,7 +174,8 @@ runs them again, which rebuilds the container's state. Temporal and Prefect
 record every tool call, so there recovery replays the recorded output and the
 new container lacks the resources the earlier commands created. Point
 `endpoint_url` at an external LocalStack instance for durable runs on those
-engines.
+engines. Runs that share one container inside `async with agent:` also share its
+state when one of them recovers.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
