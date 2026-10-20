@@ -2839,3 +2839,17 @@ def test_elevenlabs_agents_parallel_tool_calls_are_one_response() -> None:
         sim.report_usage()
 
     run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_scenario_vertex_cut_off_reply_is_taken_for_the_text_that_cut_it() -> None:
+    """8763c #3 on Vertex's `gemini-live-2.5-flash`: it cuts a reply off for text, but reports no speech, so the cut-off
+    reply can't be told from one the user spoke over: it keeps answering the text, and the wait ends with it."""
+    with GeminiSimulation(strict=False, behavior=GeminiBehavior(closes_tool_turn_separately=True)) as sim:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        assert '8763c #3' in {finding_id for finding_id, _ in sim.checker.known_hits}

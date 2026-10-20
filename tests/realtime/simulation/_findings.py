@@ -262,7 +262,7 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
     providers=frozenset({'gpt-live', 'gemini', 'elevenlabs-agents'}),
     matches=lambda sim, violation: (
-        _reply_taken_by_earlier_response(sim, violation) or _cut_off_where_speech_is_unreported(sim, violation)
+        _cut_off_where_speech_is_unreported(sim, violation) or _reply_taken_by_earlier_response(sim, violation)
     ),
 )
 
