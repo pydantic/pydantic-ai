@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -624,6 +625,34 @@ async def test_a_streamed_resume_waits_out_the_continuation_delay_before_opening
         async with agent.run_stream(message_history=history) as stream:
             await stream.get_output()
     assert events == ['sleep 0.001', 'open, continuing=True']
+
+
+async def test_a_streamed_resume_times_out_while_waiting_out_the_continuation_delay():
+    """The `request_timeout` deadline covers the continuation delay waited out before the resumed segment opens."""
+
+    class SlowPollingModel(ScriptedContinuationModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 60
+
+    served = SlowPollingModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(parts=[TextPart('partial')], state='suspended', provider_response_id='job-1'),
+    ]
+    agent = Agent(
+        served,
+        model_settings={'request_timeout': 0.05},
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream, model_name='fallback'))],
+    )
+    with anyio.fail_after(10):
+        async with agent.run_stream(message_history=history) as stream:
+            assert await stream.get_output() == 'hello'
+    response = stream.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(a.model_name, (a.error or '').split(':')[0]) for a in response.failed_attempts or []] == [
+        ('scripted', 'ModelRequestTimeout')
+    ]
+    assert [response.provider_response_id for response in served.cancelled] == ['job-1']
 
 
 async def test_a_wrapped_fallback_default_is_still_outranked():

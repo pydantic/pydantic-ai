@@ -62,7 +62,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
 from . import Model, ModelRequestContext, StreamedResponse
-from ._request_timeout import without_carried_deadline
+from ._request_timeout import enforce_request_deadline, without_carried_deadline
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -447,7 +447,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
         if (seed := self.initial_suspended_response) is not None:
             try:
                 if delay := self.model.continuation_delay(seed):
-                    await self.sleep_func(delay)
+                    # The `request_timeout` deadline covers this wait, as it does the waits between later segments.
+                    with enforce_request_deadline(self._request_deadline):
+                        await self.sleep_func(delay)
             except BaseException:
                 # Nothing will continue the job now, so cancel it, as a failure to open the segment does.
                 await cancel_suspended_job(self.model, seed)
