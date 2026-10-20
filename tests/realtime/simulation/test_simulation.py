@@ -1188,7 +1188,7 @@ def test_request_sent_after_a_tool_raised_is_answered_xai() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
 
 
-@known('SIM-15')
+@known('SIM-43')
 def test_known_live_failed_call_leaves_its_round_owed() -> None:
     """A delegated round of three calls, one of which raises: the other two results ask for a reply that never comes."""
 
@@ -1200,7 +1200,7 @@ def test_known_live_failed_call_leaves_its_round_owed() -> None:
         sim.finish_tool(outcome='error')
         sim.settle()
 
-    reproduce('SIM-15', LiveSimulation(), scenario)
+    reproduce('SIM-43', LiveSimulation(), scenario)
 
 
 @known('SIM-37')

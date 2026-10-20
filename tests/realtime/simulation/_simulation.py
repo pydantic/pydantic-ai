@@ -316,18 +316,18 @@ class Simulation(ABC):
                 except BaseException as e:
                     self.consumer_errors.append(e)
                     self.consumer_errors_at.append(self._now())
-                    # (Once closed, iterating again raises at once: stop rather than spin.)
-                    if isinstance(e, asyncio.CancelledError) or session.closed or not self.session_receiving:
+                    # Iterate again while the session is still reading the provider. (Once closed, iterating again
+                    # raises at once: stop rather than spin.)
+                    if (
+                        isinstance(e, asyncio.CancelledError)
+                        or session.closed
+                        or session._pump_finished  # pyright: ignore[reportPrivateUsage]
+                        or session._receive_ending  # pyright: ignore[reportPrivateUsage]
+                    ):
                         return
         finally:
             self.receive_ended = True
             self.receive_ended_at = self._now()
-
-    @property
-    def session_receiving(self) -> bool:
-        """Whether the session is still reading the provider."""
-        session = self.session
-        return session is not None and not (session._pump_finished or session._receive_ending)  # pyright: ignore[reportPrivateUsage]
 
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.

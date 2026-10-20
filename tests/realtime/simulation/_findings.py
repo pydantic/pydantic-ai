@@ -331,15 +331,17 @@ GEMINI_ASYNC_TOOL_ROUND = Finding(
 
 
 LIVE_FAILED_CALL_LEAVES_ITS_ROUND_OWED = Finding(
-    id='SIM-15',
+    id='SIM-43',
     title=(
         'on GPT-Live, a tool that raises leaves the rest of its delegated round owed: the results of its siblings, '
         'sent after the failure, each ask for a reply, but the backend waits for every call in the round and the '
         "failed one's output never comes, so `wait_for_reply()` hangs (on the OpenAI protocol, a failed call's "
-        'siblings ask for no reply; the rest of SIM-15 was a simulator that stopped reading at the first error the '
-        'iterator raised)'
+        'siblings ask for no reply)'
     ),
-    tracked_by='the GPT-Live reply obligations rewrite (#10668); found by this simulator',
+    tracked_by=(
+        'the GPT-Live reply obligations rewrite (#10668); found by this simulator, under SIM-15 until the rest of '
+        'SIM-15 turned out to be a simulator that stopped reading at the first error the iterator raised'
+    ),
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'gpt-live'}),
