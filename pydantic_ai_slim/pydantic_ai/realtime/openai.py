@@ -96,6 +96,7 @@ from ._openai_protocol import (
     ServerVAD,
     client_event_id,
     client_item_id,
+    config_has_manual_turns,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
@@ -481,6 +482,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
+        manual_turns: bool = False,
     ) -> None:
         self._ws = ws
         # See `OpenAIRealtimeModelSettings.openai_prune_tool_items` and `openai_keep_tool_items`.
@@ -536,8 +538,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # How many of our requests in a row the provider refused because a response of its own was under way.
         self._active_response_refusals = 0
         self._response_request_answers: tuple[InputId, ...] = ()
-        # Which response, user turn, and input each frame is about (see `frames()`).
-        self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled)
+        # Which response, user turn, and input each frame is about (see `frames()`). Under server VAD (unless
+        # `manual_turns` says turn detection is off), the provider commits the speech it hears on its own too.
+        self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled, server_vad=not manual_turns)
         # The calls each response made, by response id, and the response each call came from: a response's
         # tool results get a single `response.create`, once the response is done and every call has its
         # output. Asking after each one had the model answer before its sibling calls had results.
@@ -657,7 +660,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 }
             )
         elif isinstance(content, CommitAudio):
-            await self._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT})
+            # Under its own `event_id`, which an `input_audio_buffer_commit_empty` error refusing it echoes. (Not a
+            # `client_event_id`: a refused commit takes back no input.)
+            await self._send_event(
+                {'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': f'pydantic_ai.commit.{input_index}'}
+            )
         elif isinstance(content, ClearAudio):
             await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
         elif isinstance(content, CreateResponse):
@@ -891,7 +898,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._lifecycle.audio_clear_sent()
             return
         # Noted before it goes out, so nothing sent while it does is taken for ahead of it.
-        commit = self._lifecycle.audio_commit_sent()
+        commit = self._lifecycle.audio_commit_sent(event.get('event_id'))
         try:
             await self._ws.send(to_json(event).decode())
         except BaseException:
@@ -1743,6 +1750,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 observes_output_audio=False,
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
                 keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
+                manual_turns=config_has_manual_turns(session_config),
             )
             connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
             yield connection
@@ -1818,6 +1826,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 audio_output_sample_rate=self.audio_output_sample_rate,
                 prune_tool_items=settings.get('openai_prune_tool_items', False),
                 keep_tool_items=settings.get('openai_keep_tool_items', frozenset()),
+                manual_turns=config_has_manual_turns(session_config),
             )
 
         async with connect_openai_protocol(
