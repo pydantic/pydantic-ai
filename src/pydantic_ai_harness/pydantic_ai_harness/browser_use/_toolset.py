@@ -688,8 +688,8 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """The tool result for a finished run: text, schema JSON, or a failure report."""
         result = history.final_result()
         if result is None:
-            step_errors = [self._redact(error) for error in history.errors() if error]
-            detail = '; '.join(step_errors) if step_errors else 'no further details'
+            step_errors = [error for error in history.errors() if error]
+            detail = self._redact('; '.join(step_errors)) if step_errors else 'no further details'
             return f'The browser agent stopped without producing a result ({detail}).'
         answer = self._render_answer(result, history)
         # The verdict is applied to whatever the answer turned out to be, schema JSON included:

@@ -240,8 +240,9 @@ domain, so add `allowed_domains` to bound where such a request can go.
   allowlist given as a set is matched the same way. browser-use matches an
   allowlist of 100 or more entries by exact hostname only, so an allowlist that
   normalizes to that many raises `ValueError`. Without an allowlist, the same
-  limit applies to `browser_profile.prohibited_domains` once the `file://` and
-  localhost rules are added. The same normalization runs in
+  limit applies to `browser_profile.prohibited_domains` once the harness's
+  `file://` rules (and, with `block_ip_addresses`, its localhost rules) are
+  added. The same normalization runs in
   `BrowserUseToolset`, so constructing the toolset directly gets it too.
 - **Private networks.** `block_ip_addresses=True` by default blocks direct IP
   addresses and common localhost hostnames, including when a profile has an

@@ -23,6 +23,7 @@ from browser_use.agent.service import (
 from browser_use.agent.views import ActionResult, AgentHistory, AgentHistoryList, JudgementResult
 from browser_use.browser import BrowserProfile, BrowserSession
 from browser_use.browser.events import NavigateToUrlEvent
+from browser_use.browser.profile import DOMAIN_OPTIMIZATION_THRESHOLD
 from browser_use.browser.session import ResilientEventBus
 from browser_use.browser.views import BrowserStateHistory
 from browser_use.browser.watchdogs.security_watchdog import SecurityWatchdog
@@ -1350,6 +1351,61 @@ class TestSensitiveDataSafety:
 
         assert result == 'typed <secret>x_password</secret>, not <secret>x_password</secret>'
 
+    @pytest.mark.parametrize(
+        ('agent', 'output_schema', 'expected'),
+        [
+            pytest.param(
+                _HistoryAgent(
+                    _judged_history(JudgementResult(verdict=False, failure_reason='It typed hunter2 on an ad.'))
+                ),
+                None,
+                "The browser agent reported success, but browser-use's judge rejected the result "
+                '(It typed <secret>x_password</secret> on an ad.). Its final result: The Pro plan costs $20.',
+                id='judge-reason',
+            ),
+            pytest.param(
+                _FakeBrowserAgent(_FakeHistory(result='hunter2 was refused', success=False)),
+                None,
+                'The browser agent could not fully complete the task. '
+                'Its final result: <secret>x_password</secret> was refused',
+                id='unsuccessful-answer',
+            ),
+            pytest.param(
+                _FakeBrowserAgent(_FakeHistory(result='hunter2 worked', success=True)),
+                _Facts,
+                '<secret>x_password</secret> worked',
+                id='schema-without-structured-output',
+            ),
+        ],
+    )
+    async def test_secret_values_are_redacted_from_every_result_form(
+        self,
+        kill_calls: list[BrowserSession],
+        agent: _HistoryAgent | _FakeBrowserAgent,
+        output_schema: type[BaseModel] | None,
+        expected: str,
+    ) -> None:
+        capability = BrowserUse[None](
+            output_schema=output_schema,
+            sensitive_data={'https://safe.example': {'x_password': 'hunter2'}},
+            browser_agent=lambda request: agent,
+        )
+
+        assert await capability.get_toolset().browse_web(_ctx(), 'task') == expected
+
+    async def test_a_secret_split_across_step_errors_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        history = _FakeHistory(step_errors=['typed hunter', '2 then gave up'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter; 2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == (
+            'The browser agent stopped without producing a result (typed <secret>x_password</secret> then gave up).'
+        )
+
     async def test_secret_values_are_redacted_from_step_errors(self, kill_calls: list[BrowserSession]) -> None:
         history = _FakeHistory(step_errors=['typed hunter2 into a field that rejected it'])
         capability = BrowserUse[None](
@@ -1913,17 +1969,20 @@ class TestLocalFileNavigation:
         with pytest.raises(ValueError, match='by exact hostname only'):
             BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(50)])
 
-    @pytest.mark.parametrize(('entries', 'block_ip_addresses'), [(97, False), (94, True)])
+    @pytest.mark.parametrize('block_ip_addresses', [False, True])
     def test_a_prohibited_list_browser_use_would_match_by_exact_hostname_is_rejected(
-        self, entries: int, block_ip_addresses: bool
+        self, block_ip_addresses: bool
     ) -> None:
         """At 100 entries, the harness's own rules included, browser-use would drop every glob, `file://` too."""
+        rules = [*_LOCAL_FILE_RULES, *(['localhost', 'localhost.*', '*.localhost'] if block_ip_addresses else [])]
+        entries = DOMAIN_OPTIMIZATION_THRESHOLD - len(rules)
         profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(entries)])
-        with pytest.raises(ValueError, match='by exact hostname only'):
+        with pytest.raises(ValueError, match=f'grows to {DOMAIN_OPTIMIZATION_THRESHOLD} entries'):
             BrowserUse[None](browser_profile=profile, block_ip_addresses=block_ip_addresses)
 
     async def test_a_prohibited_list_below_the_threshold_still_refuses_files(self) -> None:
-        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(96)])
+        entries = DOMAIN_OPTIMIZATION_THRESHOLD - len(_LOCAL_FILE_RULES) - 1
+        profile = BrowserProfile(prohibited_domains=[f'site{index}.com' for index in range(entries)])
         factory = _success_factory()
         await (
             BrowserUse[None](browser_profile=profile, block_ip_addresses=False, browser_agent=factory)
