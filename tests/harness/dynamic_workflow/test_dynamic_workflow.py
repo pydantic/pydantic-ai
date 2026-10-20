@@ -1478,6 +1478,16 @@ async def test_type_check_accepts_type_names_as_the_model_was_shown_them() -> No
     assert await _run_script(ts, code, ctx) == [1, 'different']
 
 
+async def test_type_check_accepts_a_type_shared_with_a_revealed_agent() -> None:
+    workflow = DynamicWorkflow[object](agents=[_review_agent(name='reviewer')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    await ts.get_tools(ctx)
+    workflow.reveal(_review_agent(name='second'))
+    code = "a: Review = await reviewer(task='x')\nb: Review = await second(task='y')\n[a['score'], b['score']]"
+    assert await _run_script(ts, code, ctx) == [9, 9]
+
+
 async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
     ts = workflow.get_toolset()
