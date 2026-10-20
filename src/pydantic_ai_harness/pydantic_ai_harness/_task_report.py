@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Sequence
 from typing import TypeGuard
 
-from pydantic_ai.messages import ModelRequestPart, TextContent, UserContent, UserPromptPart
+from pydantic_ai.messages import ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai_harness._provenance import tagged_text
 
 _TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
@@ -31,11 +30,6 @@ def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, 
     return UserPromptPart([TextContent(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata)])
 
 
-def is_task_output(content: str | Sequence[UserContent] | None) -> bool:
-    """Whether user content is a background task's output rather than something a user wrote."""
-    return tagged_text(content, _TASK_REPORT_ORIGIN) is not None
-
-
 def is_task_report(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
     """Whether `part` carries a background task's output, as delivered by `DelegationReports`."""
-    return isinstance(part, UserPromptPart) and is_task_output(part.content)
+    return isinstance(part, UserPromptPart) and tagged_text(part.content, _TASK_REPORT_ORIGIN) is not None
