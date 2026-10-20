@@ -799,8 +799,12 @@ def test_hand_commit_of_nothing_after_a_vad_commit_is_no_turn(dialect: Dialect, 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
-@known('SIM-40')
-def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+def test_hand_commit_of_unheard_audio_after_a_vad_commit_is_no_turn(dialect: Dialect) -> None:
+    """Retired SIM-40, as first pinned: under server VAD, the provider commits only speech its VAD heard (checked
+    live), so a hand commit of audio sent after VAD committed the turn before it commits nothing, acknowledged or not.
+    """
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.speech_start(deliver=False)
@@ -811,7 +815,54 @@ def test_known_hand_commit_after_a_vad_commit_is_lost_unacknowledged() -> None:
         sim.close()
         sim.settle()
 
-    reproduce('SIM-40', OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('ending', ['close', 'drop'])
+def test_unacknowledged_hand_commit_of_silence_under_vad_is_no_turn(dialect: Dialect, ending: str) -> None:
+    """Under server VAD, a hand commit sent after VAD committed the turn (audio streaming on in the silence after it)
+    commits nothing, so the session ending before the provider refuses it records no turn for it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.settle()
+        sim.send_audio()
+        sim.commit_audio()
+        if ending == 'close':
+            sim.close()
+        else:
+            sim.drop()
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_hand_commit_mid_speech_after_an_empty_one_keeps_its_turn(dialect: Dialect) -> None:
+    """A hand commit sent as VAD stopped is refused as empty, the user goes on, and a second hand commit mid-speech
+    commits that speech; the session closes before its acknowledgement is read. Each turn is recorded once (the
+    probe frames this follows are pinned in `test_openai_lifecycle.py`)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop(deliver=False)
+        sim.commit_audio()
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.commit_audio()
+        # VAD's stop, commit and item, the refusal of the first hand commit, and the second turn's start: not its
+        # commit.
+        sim.deliver(5)
+        sim.close()
+        sim.settle()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False, vad_responds=False)), scenario
+    )
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])

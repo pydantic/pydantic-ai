@@ -438,39 +438,6 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
-def _hand_commit_raced_by_vad(sim: Simulation) -> bool:
-    """Under server VAD, a turn `commit_audio()` committed whose acknowledgement the client hadn't read when the
-    session ended or the connection dropped."""
-    options = getattr(sim, 'openai', None)
-    truth = sim.truth
-    ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
-    return (
-        ended
-        and options is not None
-        and options.turn_detection != 'manual'
-        and any(
-            input_.kind == 'speech' and input_.committed_by_client and input_.committed_read is None
-            for input_ in truth.inputs
-        )
-    )
-
-
-HAND_COMMIT_RACED_BY_VAD = Finding(
-    id='SIM-40',
-    title=(
-        'under server VAD, a turn `commit_audio()` committed after VAD committed the turn before it is lost when the '
-        "session ends or the connection drops before its acknowledgement is read: VAD's acknowledgement is taken for "
-        "the hand commit's, and a commit still unacknowledged once VAD stopped can't be told from one that committed "
-        'nothing'
-    ),
-    tracked_by='telling VAD commits from hand commits by their acknowledgement; found by this simulator on #10652',
-    evidence='simulated',
-    codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_raced_by_vad(sim),
-)
-
-
 def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
     from pydantic_ai.realtime import RealtimeError
 
@@ -650,7 +617,6 @@ KNOWN_FINDINGS.extend(
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
-        HAND_COMMIT_RACED_BY_VAD,
     ]
 )
 
