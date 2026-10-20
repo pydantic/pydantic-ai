@@ -1236,6 +1236,16 @@ async def test_working_dir_is_reverified_after_aclose(fake_daytona: FakeDaytona)
         await backend.working_dir()
 
 
+async def test_concurrent_acloses_close_the_client_once(
+    fake_daytona: FakeDaytona, caplog: pytest.LogCaptureFixture
+) -> None:
+    backend = DaytonaSandboxBackend()
+    await backend.get_sandbox()
+    await asyncio.gather(backend.aclose(), backend.aclose())
+    assert fake_daytona.closed_clients == 1
+    assert 'Daytona API client' not in caplog.text
+
+
 @pytest.mark.parametrize('failure', ['error', 'hang'])
 async def test_failed_close_is_logged(
     fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: str
