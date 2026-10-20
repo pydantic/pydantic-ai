@@ -167,7 +167,7 @@ Gotchas:
 
 Delivers finished background-task reports from a `DelegationTasks` owner into a parent run. Each
 report is a framework notice (`SystemPromptPart`) followed by the child's output as framed
-`<task-output ...>` data in a `UserPromptPart`; `is_task_report(part)` identifies that part by its
+`<task_output ...>` data in a `UserPromptPart`; `is_task_report(part)` identifies that part by its
 metadata, so hosts can keep it out of user-prompt listings. Like `BackgroundTools` completions, the
 metadata is never sent to the model, but the Vercel AI and AG-UI message conversions omit it: a
 history that round-trips through them returns the report as plain user text, and `is_task_report`

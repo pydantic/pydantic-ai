@@ -79,7 +79,7 @@ class DelegationTask:
         """The settled task's report: a framework notice, then the child's output framed as task data.
 
         The notice is framework voice. The output was written by a model and may carry instructions
-        from whatever the child read, so it travels on the user channel inside `<task-output>`, never in
+        from whatever the child read, so it travels on the user channel inside `<task_output>`, never in
         system voice. The `TextContent` metadata identifies the report without matching its text.
         """
         notice = SystemPromptPart(
