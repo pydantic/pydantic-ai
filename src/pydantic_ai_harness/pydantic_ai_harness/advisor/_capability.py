@@ -190,7 +190,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         super().__init__(
             native=native,
             local=local,
-            id=type(self).id,
+            id=self.id,
         )
 
     @classmethod
