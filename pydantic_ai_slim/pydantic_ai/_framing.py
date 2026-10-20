@@ -19,7 +19,7 @@ import html
 import re
 from typing import Final, Literal, get_args
 
-FramingTag = Literal['system', 'tool_result', 'assistant_thinking']
+FramingTag = Literal['system', 'tool_result', 'assistant_thinking', 'context', 'context-diff']
 """Every tag the framework writes into prompt text."""
 
 SYSTEM_TAG: Final = 'system'
@@ -31,6 +31,12 @@ TOOL_RESULT_TAG: Final = 'tool_result'
 ASSISTANT_THINKING_TAG: Final = 'assistant_thinking'
 """Frames another model's reasoning carried into a user turn, naming the model that produced it."""
 
+CONTEXT_TAG: Final = 'context'
+"""Frames an instruction block's text with the id a later `<context>` element replaces it by."""
+
+CONTEXT_DIFF_TAG: Final = 'context-diff'
+"""Frames a unified diff from an instruction block's previous text to its new text."""
+
 _CLOSING_TAG_OPENERS: Final = {
     tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]))', re.IGNORECASE) for tag in get_args(FramingTag)
 }
@@ -41,13 +47,15 @@ That covers any case, whitespace around the `/`, and a closing tag that carries 
 """
 
 
-def neutralize_closing_tag(text: str, tag: FramingTag) -> str:
-    """Escape the `<` of every closing `tag` in `text` as `&lt;`, and leave everything else as written.
+def neutralize_closing_tag(text: str, *tags: FramingTag) -> str:
+    """Escape the `<` of every closing tag among `tags` in `text` as `&lt;`, and leave everything else as written.
 
-    For text that will sit inside `tag` without being wrapped here, such as a value interpolated into
-    a statement that a later step wraps.
+    For text that will sit inside those tags without being wrapped here, such as an element that a
+    later step wraps in another.
     """
-    return _CLOSING_TAG_OPENERS[tag].sub('&lt;', text)
+    for tag in tags:
+        text = _CLOSING_TAG_OPENERS[tag].sub('&lt;', text)
+    return text
 
 
 def open_tag(tag: FramingTag, /, **attrs: str | None) -> str:

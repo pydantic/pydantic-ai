@@ -6,7 +6,6 @@ import difflib
 import hashlib
 import mimetypes
 import os
-import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -58,7 +57,16 @@ from ._event_registry import (
     shadowed_envelope_fields as _shadowed_envelope_fields,
     undecorated_field_base as _undecorated_field_base,
 )
-from ._framing import TOOL_RESULT_TAG, close_tag, open_tag
+from ._framing import (
+    CONTEXT_DIFF_TAG,
+    CONTEXT_TAG,
+    SYSTEM_TAG,
+    TOOL_RESULT_TAG,
+    close_tag,
+    neutralize_closing_tag,
+    open_tag,
+    wrap,
+)
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._warnings import PydanticAIDeprecationWarning
@@ -2547,22 +2555,22 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-_CLOSING_FRAMING_TAG = re.compile(r'</(context-diff|context|system)\s*>', re.IGNORECASE)
-
-
-def _neutralize_closing_tags(content: str) -> str:
-    """Escape closing framing tags in a block's text, so the text can't end its own element early."""
-    return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
-
-
-def _id_attribute(instruction_id: InstructionId | None) -> str:
-    """The `id` attribute naming a block, or nothing for a change a newer version wrote that this one can't address."""
-    return f' id="{html.escape(str(instruction_id))}"' if instruction_id is not None else ''
-
-
 def _context_element(instruction_id: InstructionId | None, content: str) -> str:
-    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
-    return f'<context{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(content)}\n</context>'
+    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
+
+    Every framing closer in the text is neutralized, not only `</context>`: the element is itself
+    `<system>`-wrapped on a model without mid-conversation system messages.
+    """
+    return wrap(CONTEXT_TAG, f'\n{_neutralize_framing_closers(content)}\n', id=_id_attribute(instruction_id))
+
+
+def _neutralize_framing_closers(text: str) -> str:
+    return neutralize_closing_tag(text, SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
+
+
+def _id_attribute(instruction_id: InstructionId | None) -> str | None:
+    """The `id` attribute naming a block, or `None` for a change a newer version wrote that this one can't address."""
+    return str(instruction_id) if instruction_id is not None else None
 
 
 def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
@@ -2570,7 +2578,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return f'<context-diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context-diff>'
+    return wrap(CONTEXT_DIFF_TAG, f'\n{_neutralize_framing_closers(diff)}\n', id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
