@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -26,7 +27,7 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._framing import SYSTEM_TAG, neutralize_closing_tag, wrap
+from .._framing import SYSTEM_TAG, wrap
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -3024,6 +3025,13 @@ def _unconverted_speech_part_error() -> UserError:  # pyright: ignore[reportUnus
     )
 
 
+_ANNOUNCEABLE_TOOL_NAME = re.compile(r'[A-Za-z0-9_.-]{1,128}')
+"""The tool names a tool-availability announcement may name: the characters and length the MCP spec says names SHOULD use.
+
+https://modelcontextprotocol.io/specification/2025-11-25/server/tools#tool-names
+"""
+
+
 TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tool(s) are now available: {names}'
 """What a tool-availability change says to a model whose API can't express one itself.
 
@@ -3206,12 +3214,18 @@ def _announce_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
-            # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
+            # A delta that adds nothing has nothing to announce, so it drops out entirely. A name can come
+            # from a remote MCP server, and the announcement is system voice, so only a name shaped like an
+            # identifier is named: anything else could be prose, or close the `<system>` wrap on a fallback
+            # model. The tool itself still goes on the wire; it just isn't announced.
+            added = [
+                name
+                for name in part.tools_added
+                if (deferred_tool_names is None or name in deferred_tool_names)
+                and _ANNOUNCEABLE_TOOL_NAME.fullmatch(name)
+            ]
             if added:
-                # A name can come from a remote MCP server, so one carrying `</system>` must not be able to
-                # end the `<system>` statement `_wrap_non_leading_system_prompts` frames this in.
-                names = ', '.join(f'`{neutralize_closing_tag(name, SYSTEM_TAG)}`' for name in added)
+                names = ', '.join(f'`{name}`' for name in added)
                 replacement_parts.append(SystemPromptPart(content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=names)))
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
