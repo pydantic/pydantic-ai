@@ -1,6 +1,6 @@
 ---
 title: Grain
-description: Connect a Pydantic AI agent to Grain's hosted MCP server to search and read meetings, transcripts, and notes.
+description: Connect a Pydantic AI agent to Grain's hosted MCP server to search and read meetings, transcripts, and notes, and to create clips and tag meetings.
 ---
 
 # Grain

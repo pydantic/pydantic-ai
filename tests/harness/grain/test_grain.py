@@ -114,6 +114,13 @@ class TestGrain:
         agent = Agent(TestModel(), capabilities=[Grain(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
 
+    @pytest.mark.parametrize('auth', ['grain-token', per_user_token], ids=['token', 'function'])
+    async def test_read_only_applies_to_the_hosted_connection(
+        self, auth: str | Callable[[RunContext[str | None]], str | None]
+    ) -> None:
+        capability = Grain[str | None](auth=auth, read_only=True)
+        assert await tool_names_for(capability, 'alice-token') == ['search_meetings']
+
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('grain-fake', instructions='Grain instructions.')
@@ -211,13 +218,6 @@ class TestPerRunAuth:
         monkeypatch.setenv('GRAIN_ACCESS_TOKEN', 'deployment-token')
         capability = Grain[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
-
-    @pytest.mark.parametrize('auth', ['grain-token', per_user_token], ids=['token', 'function'])
-    async def test_read_only_applies_to_the_hosted_connection(
-        self, auth: str | Callable[[RunContext[str | None]], str | None]
-    ) -> None:
-        capability = Grain[str | None](auth=auth, read_only=True)
-        assert await tool_names_for(capability, 'alice-token') == ['search_meetings']
 
     async def test_function_returning_oauth_raises(self) -> None:
         capability = Grain[str | None](auth=per_user_token)
