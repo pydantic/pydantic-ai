@@ -54,6 +54,9 @@ from pydantic_ai_harness.browser_use import (
 
 T = TypeVar('T', bound=BaseModel)
 
+_LOCAL_FILE_RULES = ['[fF][iI][lL][eE]://*', '[!a-zA-Z]*/*', '*[\t\n\r]*/*']
+"""The prohibited-URL patterns that keep `file://` unreachable in any spelling Chromium accepts."""
+
 
 @pytest.fixture
 def kill_calls(monkeypatch: pytest.MonkeyPatch) -> list[BrowserSession]:
@@ -300,7 +303,7 @@ class TestBrowserUseToolset:
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.headless is True
         assert session_profile.block_ip_addresses is True
-        assert session_profile.prohibited_domains == ['[fF][iI][lL][eE]://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
         # In 'call' scope the sub-agent may tear the session down itself; the
         # tool kills it in `finally` regardless.
         assert not session_profile.keep_alive
@@ -316,7 +319,7 @@ class TestBrowserUseToolset:
         assert session_profile.allowed_domains == ['http*://docs.example.com']
         assert session_profile.user_agent == 'harness-test'
         assert session_profile.block_ip_addresses is True
-        assert session_profile.prohibited_domains == ['[fF][iI][lL][eE]://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
 
     async def test_sensitive_data_disables_cross_origin_iframes_without_a_profile(
         self, kill_calls: list[BrowserSession]
@@ -409,7 +412,7 @@ class TestBrowserUseToolset:
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.allowed_domains == expected_allowed_domains
-        assert session_profile.prohibited_domains == ['[fF][iI][lL][eE]://*', 'localhost', 'localhost.*', '*.localhost']
+        assert session_profile.prohibited_domains == [*_LOCAL_FILE_RULES, 'localhost', 'localhost.*', '*.localhost']
 
     @pytest.mark.parametrize(
         'capability',
@@ -468,7 +471,7 @@ class TestBrowserUseToolset:
 
         session_profile = factory.requests[0].browser_session.browser_profile
         assert session_profile.block_ip_addresses is False
-        assert session_profile.prohibited_domains == ['[fF][iI][lL][eE]://*']
+        assert session_profile.prohibited_domains == _LOCAL_FILE_RULES
 
     async def test_private_network_setting_overrides_browser_profile(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
@@ -503,7 +506,7 @@ class TestBrowserUseToolset:
         assert factory.requests[0].browser_session.browser_profile.prohibited_domains == [
             'blocked.example',
             'file://*',
-            '[fF][iI][lL][eE]://*',
+            *_LOCAL_FILE_RULES,
         ]
 
     async def test_session_killed_after_success(self, kill_calls: list[BrowserSession]) -> None:
@@ -1329,6 +1332,18 @@ class TestSensitiveDataSafety:
             'a=<secret>x_pass</secret>, b=<secret>x_pass</secret>, kept=plain text'
         )
 
+    async def test_a_placeholder_left_in_the_result_is_kept_whole(self, kill_calls: list[BrowserSession]) -> None:
+        """Off the allowlist browser-use leaves the placeholder, which can contain a secret value."""
+        history = _FakeHistory(result='typed <secret>x_password</secret>, not secret', success=True)
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'secret'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'typed <secret>x_password</secret>, not <secret>x_password</secret>'
+
     async def test_secret_values_are_redacted_from_step_errors(self, kill_calls: list[BrowserSession]) -> None:
         history = _FakeHistory(step_errors=['typed hunter2 into a field that rejected it'])
         capability = BrowserUse[None](
@@ -1388,7 +1403,7 @@ class TestSensitiveDataSafety:
         """
         factory = _success_factory()
         capability = BrowserUse[None](
-            allowed_domains=['safe.example', 'https://login.safe.example/sso'],
+            allowed_domains=['safe.example', 'https://login.safe.example/sso', 'https://api.safe.example?v=1'],
             sensitive_data={
                 'x_password': 'hunter2',
                 'https://safe.example': {'x_password': 'scoped'},
@@ -1410,6 +1425,7 @@ class TestSensitiveDataSafety:
                 'https://safe.example/login',
                 'https://www.safe.example/',
                 'https://login.safe.example/sso/start',
+                'https://api.safe.example/v1',
                 'data:text/html,<input>',
                 'https://attacker.test/',
             ]
@@ -1418,6 +1434,7 @@ class TestSensitiveDataSafety:
             'https://safe.example/login': 'scoped',
             'https://www.safe.example/': 'www-only',
             'https://login.safe.example/sso/start': 'hunter2',
+            'https://api.safe.example/v1': 'hunter2',
             'data:text/html,<input>': '<secret>x_password</secret>',
             'https://attacker.test/': '<secret>x_password</secret>',
         }
@@ -1731,6 +1748,10 @@ class TestLocalFileNavigation:
             'FILE:///etc/passwd',
             'FILE://localhost/etc/passwd',
             'File://localhost/etc/passwd',
+            ' file://localhost/etc/passwd',
+            '\nfile://localhost/etc/passwd',
+            'fi\tle://localhost/etc/passwd',
+            'file://local\nhost/etc/passwd',
             'file:///C:/Windows/win.ini',
         ],
     )
@@ -1743,6 +1764,8 @@ class TestLocalFileNavigation:
     @pytest.mark.parametrize(
         ('allowed_domains', 'block_ip_addresses', 'url'),
         [
+            (None, False, 'https://example.com/?next=file://localhost/etc/passwd'),
+            (None, False, 'http://localhost:3000/'),
             (['*'], False, 'https://example.com/'),
             (['example.com'], True, 'https://example.com/'),
             (['example.com'], True, 'https://www.example.com/'),
@@ -1752,7 +1775,7 @@ class TestLocalFileNavigation:
         ],
     )
     async def test_http_navigation_survives_the_file_restriction(
-        self, allowed_domains: list[str], block_ip_addresses: bool, url: str
+        self, allowed_domains: list[str] | None, block_ip_addresses: bool, url: str
     ) -> None:
         session = await self._resolved_session(allowed_domains, block_ip_addresses)
         assert await self._navigation_allowed(session, url) is True

@@ -374,7 +374,7 @@ substitute a fake in tests so nothing launches a browser. It receives a
 resolved `settings`, and returns the agent to run:
 
 ```python
-from browser_use import Agent as BrowserUseAgent
+from browser_use import Agent as BrowserUseAgent, Tools
 
 from pydantic_ai_harness import BrowserUse
 from pydantic_ai_harness.browser_use import BrowserAgent, BrowserTask
@@ -390,6 +390,8 @@ def factory(request: BrowserTask) -> BrowserAgent:
         sensitive_data=request.sensitive_data,
         extend_system_message=request.extend_system_message,
         enable_signal_handler=False,
+        # Page scripts can send a substituted secret anywhere, so drop `evaluate` beside secrets.
+        tools=Tools(exclude_actions=['evaluate']) if request.sensitive_data else None,
         use_judge=request.settings.use_judge,
         skill_ids=['*'],
     )
@@ -403,8 +405,8 @@ existing factories: unpack what you forward, ignore the rest (the default
 factory, `default_browser_agent`, forwards all of `settings`). The factory
 must not start or stop the session itself; the tool owns the session
 lifecycle. `request.sensitive_data` arrives with flat values keyed by the
-allowlist entries; when it is set, exclude browser-use's `evaluate` action from
-the agent's `Tools`, as the default factory does.
+allowlist entries; when it is set, exclude browser-use's `evaluate` action, as
+the example and the default factory do.
 
 ## BrowserUse vs PlaywrightBrowser
 

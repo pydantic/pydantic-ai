@@ -36,13 +36,17 @@ logger = logging.getLogger(__name__)
 
 _TOOL_NAME = 'browse_web'
 # browser-use matches a prohibited URL pattern case-sensitively against the raw URL, while
-# Chromium reads the scheme case-insensitively: `file://*` alone would let `FILE://localhost/...`
-# through.
-_LOCAL_FILE_PATTERNS = ['[fF][iI][lL][eE]://*']
+# Chromium reads the scheme case-insensitively and drops leading spaces or control characters and
+# any tab or newline. `file://*` alone would let `FILE://localhost/...`, ` file://localhost/...`,
+# or `fi<TAB>le://localhost/...` through, so the patterns also refuse a URL that does not start
+# with a letter or that contains a tab or newline (each ends in `/*` so browser-use matches it
+# against the whole URL).
+_LOCAL_FILE_PATTERNS = ['[fF][iI][lL][eE]://*', '[!a-zA-Z]*/*', '*[\t\n\r]*/*']
 _LOCALHOST_PATTERNS = ['localhost', 'localhost.*', '*.localhost']
 _LOCALHOST_HOSTS = ('localhost', 'localhost.example', 'example.localhost')
 
 _HTTP_SCHEME_GLOB = 'http*'
+_AUTHORITY_END = re.compile(r'[/?#]')
 
 _FILE_SCHEME_ALLOWLIST_ERROR = (
     'An `allowed_domains` entry that permits only `file://` URLs is not supported; '
@@ -197,13 +201,13 @@ def _secret_scope(pattern: str) -> str:
     """The browser-use `sensitive_data` domain key matching the same sites as a normalized allowlist entry.
 
     browser-use's secret matcher compares scheme and host only and rejects path globs, so
-    the path is dropped. A host-only `*.`-glob gets the `http`/`https` scheme glob the
+    the path, query, fragment, and userinfo are dropped. A host-only `*.`-glob gets the `http`/`https` scheme glob the
     navigation guard implies for it.
     """
     scheme, separator, rest = pattern.partition('://')
     if not separator:
         return f'{_HTTP_SCHEME_GLOB}://{pattern}'
-    return f'{scheme}://{rest.split("/", maxsplit=1)[0]}'
+    return f'{scheme}://{_AUTHORITY_END.split(rest, maxsplit=1)[0].rpartition("@")[2]}'
 
 
 def _scope_flat_secrets(
@@ -248,6 +252,9 @@ def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None)
     for key, value in secrets:
         if value:
             placeholder = f'<secret>{key}</secret>'
+            # Mapped to itself so a placeholder already in the text is consumed whole,
+            # before a value it happens to contain can match inside it.
+            placeholders.setdefault(placeholder, placeholder)
             placeholders.setdefault(value, placeholder)
             placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
     return placeholders
@@ -731,8 +738,8 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
     def _redact(self, text: str) -> str:
         """Replace each configured secret value in tool output with its placeholder.
 
-        One pass, longest value first, so a value that contains another, or one that
-        appears inside a placeholder already written, is not rewritten twice.
+        One pass, longest match first, so a value that contains another is replaced whole,
+        and a placeholder already in the text is left as it is.
         """
         if self._secret_pattern is None:
             return text
