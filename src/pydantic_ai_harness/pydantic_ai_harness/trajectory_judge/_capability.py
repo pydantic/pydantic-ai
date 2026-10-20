@@ -256,16 +256,11 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         rendered synchronously (no race with later mutation), the judge call and any
         steering enqueue happen concurrently with the run, and the steering is delivered
         when the run next drains its pending messages.
-
-        The trajectory is the run's message history (`ctx.messages`), not the prepared
-        `request_context.messages`: preparing a request for a model without inline system prompts
-        rewrites framework notes as metadata-free `<system>` user text, and the judge identifies
-        earlier steering by its metadata.
         """
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
-            prompt = _judge_prompt([*ctx.messages, response], self.window, ctx.run_id)
+            prompt = _judge_prompt([*request_context.messages, response], self.window, ctx.run_id)
             self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
         return response
 

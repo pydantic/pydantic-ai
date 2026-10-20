@@ -119,8 +119,6 @@ def _ctx() -> Any:
     ctx.usage = RunUsage()
     ctx.usage_limits = None
     ctx.enqueue = MagicMock()
-    # The run's history, which the judge renders; tests set it to the trajectory under review.
-    ctx.messages = []
     ctx.capabilities = {}
     return ctx
 
@@ -350,11 +348,12 @@ class TestSteering:
         assert '<judge_feedback' not in body
         assert '</judge_feedback' not in body
 
-    async def test_a_later_evaluation_sees_steering_on_a_model_without_inline_system_prompts(self) -> None:
-        """The judge renders from the run's history, where the note keeps its metadata.
+    async def test_a_later_evaluation_on_a_model_without_inline_system_prompts(self) -> None:
+        """The judge reads the prepared request, so the message still renders as steering but the note doesn't.
 
-        Preparing the request rewrites the note as metadata-free `<system>` user text; the judge reads the
-        history instead, so the note is omitted like other system prompts and the message renders as steering.
+        Preparing the request rewrites the note as metadata-free `<system>` user text, which the judge can't
+        tell from other user text without matching it; the message keeps its metadata. This is the documented
+        known limit.
         """
         seen: list[str] = []
         first_done = asyncio.Event()
@@ -392,8 +391,8 @@ class TestSteering:
         await agent.run('do the thing')
 
         assert 'trajectory judge focus steered: &lt;judge_feedback judge="focus"&gt;' in seen[1]
-        assert 'A trajectory judge reviewing this run' not in seen[1]
         assert 'user: &lt;judge_feedback' not in seen[1]
+        assert 'user: &lt;system&gt;A trajectory judge reviewing this run' in seen[1]
 
     async def test_steering_stays_identifiable_in_a_continued_conversation(self) -> None:
         """Merging the steering request into its neighbour keeps the metadata, for code and for the judge.
@@ -926,7 +925,6 @@ class TestTranscript:
             )
         ]
 
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('wrap-up')
         )
@@ -950,7 +948,6 @@ class TestTranscript:
             ModelRequest(parts=[UserPromptPart([TextContent('no judge', metadata={'origin': _ORIGIN})])]),
             ModelRequest(parts=[UserPromptPart([TextContent('real steer', metadata=marker)])]),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(ctx, request_context=_request_context(messages), response=_text_response())
         await asyncio.wait_for(done.wait(), timeout=_WAIT)
 
@@ -1002,7 +999,6 @@ class TestTranscript:
                 ]
             ),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('wrap-up')
         )
@@ -1035,7 +1031,6 @@ class TestTranscript:
         run_cap = await cap.for_run(ctx)
 
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('x' * 2000)])]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
         )
@@ -1083,7 +1078,6 @@ class TestTranscript:
         run_cap = await cap.for_run(ctx)
 
         history = [*messages, ModelRequest(parts=[ToolReturnPart('read_file', 'a' * 1000, tool_call_id='c1')])]
-        ctx.messages = history
         await run_cap.after_model_request(
             ctx, request_context=_request_context(history), response=_text_response('recent-marker')
         )
@@ -1108,7 +1102,6 @@ class TestTranscript:
         run_cap = await cap.for_run(ctx)
 
         messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('x' * 2000)])]
-        ctx.messages = messages
         await run_cap.after_model_request(ctx, request_context=_request_context(messages), response=_text_response(''))
         await asyncio.wait_for(done.wait(), timeout=_WAIT)
 
@@ -1130,7 +1123,6 @@ class TestTranscript:
             ModelResponse(parts=[ToolCallPart('read_file', {'path': 'b.py'}, tool_call_id='c2')]),
             ModelRequest(parts=[ToolReturnPart('read_file', 'b' * 1000, tool_call_id='c2')]),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
         )
@@ -1157,7 +1149,6 @@ class TestTranscript:
             ModelResponse(parts=[TextPart('o' * 1000)], run_id='run-1'),
             ModelRequest(parts=[UserPromptPart('Fix the login bug only.')], run_id='run-2'),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
         )
@@ -1180,7 +1171,6 @@ class TestTranscript:
             ModelResponse(parts=[TextPart('o' * 1000)], run_id='run-1'),
             ModelRequest(parts=[UserPromptPart('Fix the login bug only.')], run_id='run-2'),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
         )
@@ -1204,7 +1194,6 @@ class TestTranscript:
             ModelResponse(parts=[TextPart('done')], run_id='run-1'),
             ModelRequest(parts=[UserPromptPart('Fix the login bug only.')], run_id='run-2'),
         ]
-        ctx.messages = messages
         await run_cap.after_model_request(
             ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
         )
