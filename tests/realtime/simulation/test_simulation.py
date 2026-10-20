@@ -1485,8 +1485,10 @@ def test_live_drop_raises_a_realtime_error() -> None:
 
     sim = LiveSimulation()
     run_clean(sim, scenario)
-    assert repr(sim.consumer_error) == snapshot(
-        "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+    assert [repr(error) for error in sim.consumer_errors] == snapshot(
+        [
+            "RealtimeError('OpenAI GPT-Live connection closed: received 1006 (abnormal closure [internal]) simulated drop; no close frame sent')"
+        ]
     )
 
 

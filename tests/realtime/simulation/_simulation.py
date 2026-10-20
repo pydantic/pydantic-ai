@@ -191,6 +191,8 @@ class Simulation(ABC):
         self.events: list[RealtimeEvent] = []
         self.consumer_errors: list[BaseException] = []
         """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
+        self.consumer_errors_at: list[int] = []
+        """When each of `consumer_errors` was raised, on the shared clock."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -313,16 +315,13 @@ class Simulation(ABC):
                     return
                 except BaseException as e:
                     self.consumer_errors.append(e)
-                    if isinstance(e, asyncio.CancelledError) or not self.session_receiving:
+                    self.consumer_errors_at.append(self._now())
+                    # (Once closed, iterating again raises at once: stop rather than spin.)
+                    if isinstance(e, asyncio.CancelledError) or session.closed or not self.session_receiving:
                         return
         finally:
             self.receive_ended = True
             self.receive_ended_at = self._now()
-
-    @property
-    def consumer_error(self) -> BaseException | None:
-        """The latest failure iterating the session raised: the one that ended it, once receiving has ended."""
-        return self.consumer_errors[-1] if self.consumer_errors else None
 
     @property
     def session_receiving(self) -> bool:
@@ -333,7 +332,7 @@ class Simulation(ABC):
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.
 
-    Usually with `consumer_error` set, but not when a send was the first to be told why it ended.
+    Usually with `consumer_errors` set, but not when a send was the first to be told why it ended.
     """
     receive_ended_at: int | None = None
     """When the session's event stream ended, on the shared clock."""
