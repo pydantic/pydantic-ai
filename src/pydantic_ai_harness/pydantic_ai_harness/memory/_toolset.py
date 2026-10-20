@@ -30,6 +30,7 @@ from pydantic_ai_harness.memory._store import (
     MemorySearchResult,
     MemoryStore,
     SearchableMemoryStore,
+    lexical_search,
 )
 
 if TYPE_CHECKING:
@@ -659,8 +660,7 @@ async def _fallback_search(
     max_file_chars: int,
 ) -> MemorySearchResult:
     paths = await store.list_paths(prefix, limit=max_files + 1)
-    terms = query.lower().split()
-    scored: list[tuple[float, str, str]] = []
+    files: list[tuple[str, str]] = []
     scanned = 0
     content_truncated = False
     for path in paths[:max_files]:
@@ -674,37 +674,15 @@ async def _fallback_search(
         if memory_file is None:
             continue
         content_truncated = content_truncated or memory_file.truncated
-        lower_path = name.lower()
-        lower_content = memory_file.content.lower()
-        score = float(sum(lower_content.count(term) + 2 * lower_path.count(term) for term in terms))
-        if score:
-            scored.append((score, path, memory_file.content))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    matches = [
-        MemorySearchMatch(path=path, snippet=_search_snippet(content, query, max_chars), score=score)
-        for score, path, content in scored[:limit]
-    ]
-    return MemorySearchResult(
-        matches=matches,
-        scanned=scanned,
-        truncated=len(paths) > max_files or len(scored) > len(matches) or content_truncated,
+        files.append((path, memory_file.content))
+    result = await lexical_search(
+        files, query, limit=limit, max_files=max_files, max_chars=max_chars, score_prefix=prefix
     )
-
-
-def _search_snippet(content: str, query: str, max_chars: int) -> str:
-    lower = content.lower()
-    positions = [lower.find(term) for term in query.lower().split()]
-    found = [position for position in positions if position >= 0]
-    center = min(found) if found else 0
-    start = max(0, center - max_chars // 3)
-    end = min(len(content), start + max_chars)
-    start = max(0, end - max_chars)
-    snippet = content[start:end]
-    if start and len(snippet) >= 3:
-        snippet = f'...{snippet[3:]}'
-    if end < len(content) and len(snippet) >= 3:
-        snippet = f'{snippet[:-3]}...'
-    return snippet
+    return MemorySearchResult(
+        matches=result.matches,
+        scanned=scanned,
+        truncated=result.truncated or len(paths) > max_files or content_truncated,
+    )
 
 
 def _bounded_search_matches(
