@@ -1084,6 +1084,48 @@ def test_merge_json_schema_defs_pattern_properties_property_names():
     )
 
 
+@pytest.mark.parametrize(
+    'body, expected_body',
+    [
+        ({'contains': {'$ref': '#/$defs/Item'}}, {'contains': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'if': {'$ref': '#/$defs/Item'}}, {'if': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'then': {'$ref': '#/$defs/Item'}}, {'then': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        ({'else': {'$ref': '#/$defs/Item'}}, {'else': {'$ref': '#/$defs/SchemaB_Item_1'}}),
+        (
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/Item'}, 'allowed': True, 'denied': False}},
+            {'dependentSchemas': {'trigger': {'$ref': '#/$defs/SchemaB_Item_1'}, 'allowed': True, 'denied': False}},
+        ),
+        (
+            {'items': [{'$ref': '#/$defs/Item'}, True, False]},
+            {'items': [{'$ref': '#/$defs/SchemaB_Item_1'}, True, False]},
+        ),
+    ],
+    ids=['contains', 'if', 'then', 'else', 'dependentSchemas', 'tuple-items'],
+)
+def test_merge_json_schema_defs_nested_subschemas(body: dict[str, Any], expected_body: dict[str, Any]):
+    """Pin ref rewriting directly, including shared defs that transitively depend on a renamed def."""
+    schema_a = {
+        **body,
+        'title': 'SchemaA',
+        'properties': {'payload': {'$ref': '#/$defs/Wrapper'}},
+        '$defs': {'Item': {'type': 'integer'}, 'Wrapper': copy.deepcopy(body)},
+    }
+    schema_b: dict[str, Any] = copy.deepcopy(schema_a)
+    schema_b['title'] = 'SchemaB'
+    schema_b['$defs']['Item'] = {'type': 'string'}
+    originals = copy.deepcopy([schema_a, schema_b])
+
+    rewritten, defs = merge_json_schema_defs([schema_a, schema_b])
+
+    assert rewritten[1] == {
+        **expected_body,
+        'title': 'SchemaB',
+        'properties': {'payload': {'$ref': '#/$defs/SchemaB_Wrapper_1'}},
+    }
+    assert defs['SchemaB_Wrapper_1'] == expected_body
+    assert [schema_a, schema_b] == originals
+
+
 def test_merge_json_schema_defs_structurally_equal_with_different_ref_targets():
     """Defs that are structurally equal but whose $refs resolve to different types need separate copies."""
     schema_a = {
