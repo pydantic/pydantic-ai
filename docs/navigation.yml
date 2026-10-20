@@ -316,6 +316,12 @@ navigation:
           - page: "pgtask"
             path: "harness/pgtask.md"
             slug: "harness/pgtask"
+          - page: "Durable Task"
+            path: "harness/durabletask.md"
+            slug: "harness/durabletask"
+            aliases:
+              - "durable_execution/durabletask"
+              - "capabilities/durable_execution/durabletask"
           - page: "Apache Airflow"
             path: "durable_execution/airflow.md"
             slug: "capabilities/durable_execution/airflow"

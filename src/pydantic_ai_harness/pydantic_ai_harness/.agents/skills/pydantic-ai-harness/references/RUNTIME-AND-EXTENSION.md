@@ -16,12 +16,26 @@ Agentic Workflow.
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Replay model/tool activities and wait for approvals with Durable Task Scheduler | `DurableTaskDurability` and `DurableTaskAgent` (`pydantic_ai_harness.durabletask`, `[durabletask]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
+
+## DurableTaskDurability
+
+For Durable Task, attach `DurableTaskDurability()` to a named agent, construct
+`DurableTaskAgent(agent)`, and enter `durable.register(worker)` before starting the SDK
+worker. Stop and drain the worker before exiting registration. Start with
+`durable.start(client, prompt)`; reconnect with `durable.get_run(client, instance_id)`.
+`pending_tools()`, `approve()` and `resolve()` use durable external events.
+Live dependencies belong in the capability's async context-manager `deps_factory`;
+orchestrator-side code must be deterministic and I/O-free. Activities are at-least-once:
+tool side effects must be idempotent. Use upstream `RoleBasedOperationConfig` for
+per-tool retries or inline deterministic tools, not native objects in JSON tool metadata.
+See [Durable Task](https://pydantic.dev/docs/ai/harness/durabletask/).
 
 ## StepPersistence
 

@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .durabletask import DurableTaskDurability
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -102,6 +103,7 @@ __all__ = [
     'DeduplicateFileReads',
     'DockerSandbox',
     'DockerSandboxBackend',
+    'DurableTaskDurability',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -185,6 +187,7 @@ _CAPABILITY_EXPORTS = {
     'DaytonaSandbox': 'daytona_sandbox',
     'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DurableTaskDurability': 'durabletask',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'ExaAgent': 'exa',
