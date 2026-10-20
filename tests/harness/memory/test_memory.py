@@ -1117,16 +1117,18 @@ class TestInjection:
         ]
 
     async def test_tag_escaping_is_linear_on_long_runs_of_spaces(self) -> None:
-        # A pattern whose two `\\s*` compete for one run of spaces takes seconds on this; the test budget catches it.
+        # A pattern whose two `\s*` compete for one run of spaces takes minutes on this; the test budget catches it.
         store = InMemoryStore()
-        await _seed(store, 'main/MEMORY.md', '<' + ' ' * 65_000 + 'x')
+        await _seed(store, 'main/MEMORY.md', '<' + ' ' * 250_000 + 'x')
         captured: list[str] = []
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             captured.append(_latest_memory_context(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(FunctionModel(model), capabilities=[Memory(store=store, guidance='')]).run('go')
+        await Agent(FunctionModel(model), capabilities=[Memory(store=store, guidance='', max_memory_size=300_000)]).run(
+            'go'
+        )
 
         # The oversized line does not fit the budget; what matters is that escaping returned at all.
         assert captured == [
