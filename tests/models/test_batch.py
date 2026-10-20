@@ -1015,3 +1015,31 @@ async def test_a_failing_cancel_of_an_abandoned_batch_is_ignored() -> None:
     for _ in range(5):
         await asyncio.sleep(0)
     assert cancel_attempts == [wrapped.created[0].id]
+
+
+def test_checks_back_off_without_overflowing_after_many_polls() -> None:
+    """A batch resumed from history over and over keeps polling at the maximum interval."""
+    model = _batched(TestModel(), poll_interval=timedelta(seconds=30), max_poll_interval=timedelta(minutes=10))
+    assert [model.pool.poll_delay(polls) for polls in (0, 7, 8, 2_000, 1_000_000)] == snapshot(
+        [30.0, 512.578125, 600.0, 600.0, 600.0]
+    )
+
+
+async def test_a_batch_forgets_abandoned_requests_once_it_has_ended() -> None:
+    """A request abandoned while the others still wait leaves no bookkeeping behind once the batch's results arrive."""
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
+    first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
+    await model.cancel_suspended_response(first)
+    assert model.pool._abandoned  # pyright: ignore[reportPrivateUsage]
+
+    prompt = ModelRequest(parts=[UserPromptPart('Hello')])
+    response = await model.request([prompt, second], None, ModelRequestParameters())
+    while response.state == 'suspended':
+        response = await model.request([prompt, response], None, ModelRequestParameters())
+
+    assert model.pool._abandoned == {}  # pyright: ignore[reportPrivateUsage]
+    # Abandoning a request of an ended batch records nothing, and cancels nothing.
+    await model.cancel_suspended_response(first)
+    assert model.pool._abandoned == {}  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.canceled == []

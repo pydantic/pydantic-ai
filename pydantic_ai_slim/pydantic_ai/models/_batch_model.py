@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import itertools
+import math
 import weakref
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Generator
@@ -234,8 +235,10 @@ class BatchPool:
             await asyncio.wait(submissions)
 
     def poll_delay(self, polls: int) -> float:
-        delay = self.poll_interval.total_seconds() * 1.5**polls
-        return min(delay, self.max_poll_interval.total_seconds())
+        interval, max_interval = self.poll_interval.total_seconds(), self.max_poll_interval.total_seconds()
+        # The interval reaches the maximum after this many checks; capping the exponent keeps it from overflowing.
+        saturated = math.ceil(math.log(max_interval / interval, 1.5))
+        return min(interval * 1.5 ** min(polls, saturated), max_interval)
 
     def link(self, requester: _Requester | None, batch: Batch, trace_context: dict[str, str] | None) -> None:
         """Tie a request's span to the batch it waits on: the batch's ID, and a link to the batch's span."""
@@ -352,6 +355,9 @@ class BatchPool:
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether none still does."""
+        if _batch_key(batch) in self._results:
+            # The batch has ended, so there's nothing left to cancel.
+            return False
         abandoned = self._abandoned.setdefault(_batch_key(batch), set())
         abandoned.add(custom_id)
         # A provider cancels whole batches, so only cancel once no request in it is still waiting. This process only
@@ -398,6 +404,8 @@ class BatchPool:
                 return batch, None
             results = {result.custom_id: result for result in await model.batch_results(batch)}
         self._results[_batch_key(batch)] = results
+        # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
+        self._abandoned.pop(_batch_key(batch), None)
         while len(self._results) > _RESULTS_CACHE_SIZE:
             self._results.popitem(last=False)
         return batch, results
