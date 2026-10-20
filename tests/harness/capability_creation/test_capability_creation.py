@@ -479,7 +479,8 @@ class TestCapabilityStore:
     def test_load_active_keeps_an_entry_rewritten_while_loading(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # An error found by a load that started before a re-author must not overwrite the new entry.
+        # An error found by a load that started before a re-author must not land on the re-authored entry,
+        # even when the new entry's fields equal the old one's.
         store = CapabilityStore(tmp_path)
         store.write('x', VALID_CODE)
         gate = _gate_module(monkeypatch, 'entered', 'release')
@@ -492,7 +493,7 @@ class TestCapabilityStore:
         loader.start()
         try:
             assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
-            record = store.write('x', _marker_code('Fixed', 'V2'))
+            record = store.write('x', VALID_CODE)  # the same entry fields as before, with fixed source
         finally:
             _gate(gate, 'release').set()
             loader.join(timeout=_READY_TIMEOUT)
@@ -545,12 +546,15 @@ class TestCapabilityStore:
         assert store.load_active() == []
 
     def test_save_manifest_cleans_temp_on_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # If the atomic replace fails, the temp file must not be left behind.
+        # If the atomic replace of the manifest fails, its temp file must not be left behind.
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
+        real_replace = os.replace
 
-        def _boom(*args: object, **kwargs: object) -> None:
-            raise OSError('replace failed')
+        def _boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                raise OSError('replace failed')
+            real_replace(src, dst)
 
         monkeypatch.setattr(os, 'replace', _boom)
         with pytest.raises(OSError, match='replace failed'):
@@ -579,15 +583,24 @@ class TestCapabilityStore:
         assert last_error is not None
         assert 'is not a `.py` file in the directory' in last_error
 
+    def test_load_active_records_a_missing_module_file(self, tmp_path: Path) -> None:
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        (tmp_path / 'marker.py').unlink()
+        assert store.load_active() == []
+        assert store.list_all()[0].last_error is not None
+
     def test_load_active_persists_new_error(self, tmp_path: Path) -> None:
         # A capability that validated once but later fails to load gets its error
         # persisted to the manifest, so list_all reflects the real state.
         store = CapabilityStore(tmp_path)
+        healthy = store.write('healthy', VALID_CODE)
         store.write('marker', VALID_CODE)
-        assert store.list_all()[0].last_error is None
+        assert store.list_all()[1].last_error is None
         (tmp_path / 'marker.py').write_text(NO_SUBCLASS_CODE, encoding='utf-8')
-        assert store.load_active() == []
-        record = store.list_all()[0]
+        assert len(store.load_active()) == 1
+        assert store.list_all()[0] == healthy
+        record = store.list_all()[1]
         assert record.last_error is not None
         assert 'no `AbstractCapability` subclass' in record.last_error
 

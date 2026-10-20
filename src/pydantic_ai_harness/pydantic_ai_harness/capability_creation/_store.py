@@ -15,6 +15,7 @@ are not coordinated.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -188,30 +189,42 @@ class CapabilityStore:
         """
         manifest = self._load_manifest()
         instances: list[AbstractCapability[object]] = []
-        changed: dict[str, AuthoredCapability] = {}
+        changed: dict[str, tuple[AuthoredCapability, str | None, AuthoredCapability]] = {}
         for record in manifest.capabilities:
             if record.status != 'active':
                 continue
+            digest = self._source_digest(record)
             try:
                 instances.append(load_capability_instance(self._module_path(record)))
                 error = None
             except CapabilityValidationError as exc:
                 error = str(exc)
             if record.last_error != error:
-                changed[record.name] = record.model_copy(update={'last_error': error})
+                changed[record.name] = (record, digest, record.model_copy(update={'last_error': error}))
         if changed:
-            self._record_load_errors(manifest.capabilities, changed)
+            self._record_load_errors(changed)
         return instances
 
-    def _record_load_errors(self, loaded: list[AuthoredCapability], changed: dict[str, AuthoredCapability]) -> None:
-        """Save the new `last_error` of each changed entry that no write replaced while it was loading."""
-        unchanged = {record.name: record for record in loaded}
+    def _source_digest(self, record: AuthoredCapability) -> str | None:
+        """A hash of the record's module source, or `None` when there is none to read."""
+        try:
+            return hashlib.sha256(self._module_path(record).read_bytes()).hexdigest()
+        except (CapabilityValidationError, OSError):
+            return None
+
+    def _record_load_errors(
+        self, changed: dict[str, tuple[AuthoredCapability, str | None, AuthoredCapability]]
+    ) -> None:
+        """Save each new `last_error` whose entry and source no write replaced while it was loading."""
         with _directory_lock(self.directory):
             manifest = self._load_manifest()
             updated = False
             for index, record in enumerate(manifest.capabilities):
-                if record.name in changed and record == unchanged[record.name]:
-                    manifest.capabilities[index] = changed[record.name]
+                if record.name not in changed:
+                    continue
+                loaded, digest, result = changed[record.name]
+                if record == loaded and self._source_digest(record) == digest:
+                    manifest.capabilities[index] = result
                     updated = True
             if updated:
                 self._save_manifest(manifest)
