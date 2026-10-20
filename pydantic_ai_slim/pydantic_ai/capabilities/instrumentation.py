@@ -16,9 +16,12 @@ from pydantic_ai._instrumentation import (
     event_to_dict,
     get_agent_run_baggage_attributes,
     get_instructions,
+    mcp_telemetry_sensitive_ids,
+    messages_for_telemetry,
     open_model_request_span,
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
+    request_telemetry_sensitive_ids,
     serialize_any,
 )
 from pydantic_ai._utils import UNSET, Unset
@@ -73,6 +76,7 @@ class Instrumentation(AbstractCapability[Any]):
     # are updated as the run progresses and assume sequential model requests within
     # a run — if the agent loop ever issues concurrent model requests, accesses to
     # these fields would race.
+    _telemetry_sensitive_ids: set[str] = field(default_factory=set[str], repr=False, init=False)
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
@@ -132,6 +136,7 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
+        self._telemetry_sensitive_ids.update(mcp_telemetry_sensitive_ids(ctx.capabilities.values()))
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -204,6 +209,7 @@ class Instrumentation(AbstractCapability[Any]):
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes."""
         settings = self.settings
+        message_history = messages_for_telemetry(message_history, self._telemetry_sensitive_ids)
         new_message_index = self._new_message_index
 
         if settings.version == 1:
@@ -272,6 +278,9 @@ class Instrumentation(AbstractCapability[Any]):
             # (which includes prompted-output template instructions and is properly sorted)
             # instead of falling back to reading `ModelRequest.instructions` from history.
             self._last_model_request_parameters = prepared_request_context.model_request_parameters
+            self._telemetry_sensitive_ids.update(
+                request_telemetry_sensitive_ids(prepared_request_context.model_request_parameters)
+            )
 
             # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
             # This does an apples-to-apples comparison of the final payload sent to the model.

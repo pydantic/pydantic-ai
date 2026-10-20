@@ -12,12 +12,12 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ModelMessage, ModelResponse, models
+from pydantic_ai._instrumentation import request_telemetry_sensitive_ids
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, infer_model_profile, parse_model_id
 from pydantic_ai.models.wrapper import CompletedStreamedResponse, WrapperModel
-from pydantic_ai.native_tools import MCPServerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -43,17 +43,9 @@ class _RequestParams:
 
 def restore_telemetry_sensitive_ids(params: _RequestParams) -> None:
     """Restore request-only provenance, including activity payloads recorded before the sidecar existed."""
-    sensitive_ids = params.telemetry_sensitive_ids
-    if sensitive_ids is None:
-        parameters = params.model_request_parameters
-        sensitive_ids = {tool.id for tool in parameters.native_tools if isinstance(tool, MCPServerTool)}
-        for tool in (*parameters.function_tools, *parameters.output_tools):
-            if tool.capability_id:
-                sensitive_ids.add(tool.capability_id)
-            for native_name in (tool.unless_native, tool.with_native):
-                if native_name and native_name.startswith('mcp_server:'):
-                    sensitive_ids.add(native_name.removeprefix('mcp_server:'))
-    params.model_request_parameters.telemetry_sensitive_ids = sensitive_ids
+    parameters = params.model_request_parameters
+    parameters.telemetry_sensitive_ids = params.telemetry_sensitive_ids
+    parameters.telemetry_sensitive_ids = request_telemetry_sensitive_ids(parameters)
 
 
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]

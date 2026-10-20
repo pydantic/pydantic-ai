@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from dataclasses import dataclass
+from typing import Literal
 
 import pytest
-from pydantic import BaseModel, JsonValue, PlainSerializer, TypeAdapter
+from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -38,21 +38,24 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     include_content_ctx,
+    mcp_telemetry_sensitive_ids,
     model_request_parameters_attributes,
     span_include_content,
 )
+from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
-from pydantic_ai.capabilities.native_tool import NativeTool
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import InstructionPart, NativeToolCallPart, NativeToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
-from pydantic_ai.native_tools import MCPServerTool
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool, MCPServerTool
 from pydantic_ai.output import PromptedOutput
-from pydantic_ai.tools import Tool, ToolDefinition
+from pydantic_ai.tools import RunContext, Tool, ToolDefinition
 
 from .conftest import try_import
 
@@ -167,89 +170,68 @@ def test_mcp_server_credentials_never_reach_request_parameters_attribute(include
     assert tool.headers == {'X-Api-Key': 'SENTINEL-mcp-key', 'Authorization': 'SENTINEL-mcp-auth'}
 
 
-def test_new_request_parameter_fields_are_withheld_from_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
-    @dataclass(kw_only=True)
-    class FutureTool(ToolDefinition):
-        future_credential: str = 'SENTINEL-future-tool'
-
-    @dataclass(kw_only=True)
-    class FutureParameters(ModelRequestParameters):
-        function_tools: list[FutureTool] = field(default_factory=list[FutureTool])  # pyright: ignore[reportIncompatibleVariableOverride]
-        future_credential: str = 'SENTINEL-future-parameters'
-
-    parameters = FutureParameters(function_tools=[FutureTool(name='lookup')])
-    adapter = TypeAdapter(FutureParameters)
-    assert 'SENTINEL-future-parameters' in str(adapter.dump_python(parameters, mode='json'))
-    assert 'SENTINEL-future-tool' in str(adapter.dump_python(parameters, mode='json'))
-
-    monkeypatch.setattr(_instrumentation, '_model_request_parameters_adapter', lambda: adapter)
-    serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
-    assert isinstance(serialized, str)
-    assert 'SENTINEL-future-parameters' not in serialized
-    assert 'SENTINEL-future-tool' not in serialized
-    assert '"name":"lookup"' in serialized
-
-
 @pytest.mark.parametrize('include_content', [True, False])
-@pytest.mark.parametrize(
-    ('field_name', 'value'),
-    [
-        pytest.param(None, [], id='root'),
-        pytest.param('function_tools', None, id='function-tools-collection'),
-        pytest.param('function_tools', [None], id='function-tool-entry'),
-        pytest.param('output_tools', None, id='output-tools-collection'),
-        pytest.param('output_tools', [None], id='output-tool-entry'),
-        pytest.param('native_tools', None, id='native-tools-collection'),
-        pytest.param('native_tools', [], id='native-tools-count'),
-        pytest.param('native_tools', [None], id='native-tool-entry'),
-        pytest.param('native_tools', [{'headers': 'SENTINEL-invalid'}], id='native-tool-headers'),
-        pytest.param('output_object', 'SENTINEL-invalid', id='output-object'),
-        pytest.param('instruction_parts', [None], id='instruction-entry'),
-        pytest.param('instruction_parts', 'SENTINEL-invalid', id='instruction-collection'),
-    ],
-)
-def test_unexpected_request_serialization_is_withheld(
-    monkeypatch: pytest.MonkeyPatch,
-    field_name: str | None,
-    value: JsonValue,
-    include_content: bool,
-) -> None:
-    """Custom serializers must not bypass the reviewed shape with arbitrary JSON.
+def test_mcp_credentials_are_masked_when_request_serialization_uses_string_fallback(include_content: bool) -> None:
+    class Unserializable:
+        def __repr__(self) -> str:
+            return 'SENTINEL-string-fallback'
 
-    A provider cassette cannot check this boundary: the projection is only used for telemetry.
-    """
-    parameters = ModelRequestParameters(native_tools=[MCPServerTool(id='docs', url='https://mcp.example.test')])
-    serialized: JsonValue
-    if field_name is None:
-        serialized = value
-    else:
-        fields: dict[str, JsonValue] = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
-        fields[field_name] = value
-        serialized = fields
-    adapter = TypeAdapter[ModelRequestParameters](
-        Annotated[ModelRequestParameters, PlainSerializer(lambda _parameters: serialized)]
+    tool = MCPServerTool(
+        id='caller-provided-id',
+        url='https://mcp.example.test/private/SENTINEL-fallback-url',
+        authorization_token='SENTINEL-fallback-token',
+        headers={'X-Api-Key': 'SENTINEL-fallback-key'},
     )
-    monkeypatch.setattr(_instrumentation, '_model_request_parameters_adapter', lambda: adapter)
+    parameters = ModelRequestParameters(
+        native_tools=[tool],
+        function_tools=[ToolDefinition(name='lookup', metadata={'unserializable': Unserializable()})],
+    )
 
-    assert model_request_parameters_attributes(parameters, include_content=include_content) == {}
+    attributes = model_request_parameters_attributes(parameters, include_content=include_content)
+
+    exported = str(attributes)
+    assert 'SENTINEL-fallback-url' not in exported
+    assert 'SENTINEL-fallback-token' not in exported
+    assert 'SENTINEL-fallback-key' not in exported
+    assert tool.id == 'caller-provided-id'
+    assert tool.url == 'https://mcp.example.test/private/SENTINEL-fallback-url'
+    assert tool.authorization_token == 'SENTINEL-fallback-token'
+    assert tool.headers == {'X-Api-Key': 'SENTINEL-fallback-key'}
+    if include_content:
+        serialized = attributes['model_request_parameters']
+        assert isinstance(serialized, str)
+        assert 'SENTINEL-string-fallback' in serialized
+        assert 'caller-provided-id' in serialized
+        assert '[REDACTED]' in serialized
 
 
-@pytest.mark.parametrize('kind', ['future_tool', 'web_search'])
-@pytest.mark.filterwarnings('ignore:Pydantic serializer warnings:UserWarning')
-def test_unreviewed_native_tool_kinds_are_withheld(kind: str) -> None:
-    """Unknown kinds and mismatched kind/class pairs cannot opt into a reviewed projection."""
-    tool = MCPServerTool(id='docs', url='https://mcp.example.test', kind=kind)
+def test_unknown_native_tool_extensions_are_retained(request: pytest.FixtureRequest) -> None:
+    """Unrecognized native tool types and their extension fields remain visible."""
+    previous = NATIVE_TOOL_TYPES.get('future_native_tool')
+
+    @dataclass(kw_only=True)
+    class FutureNativeTool(AbstractNativeTool):
+        kind: str = 'future_native_tool'
+        extension: str = 'SENTINEL-native-extension'
+
+    def restore_registry_entry() -> None:
+        if previous is None:
+            NATIVE_TOOL_TYPES.pop('future_native_tool', None)
+        else:
+            NATIVE_TOOL_TYPES['future_native_tool'] = previous
+
+    request.addfinalizer(restore_registry_entry)
+    tool = FutureNativeTool()
     parameters = ModelRequestParameters(native_tools=[tool])
 
     serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
 
     assert isinstance(serialized, str)
-    assert json.loads(serialized)['native_tools'] == []
-    assert tool.kind == kind
+    assert json.loads(serialized)['native_tools'][0]['extension'] == 'SENTINEL-native-extension'
 
 
 @pytest.mark.parametrize('include_content', [True, False])
-def test_tool_metadata_is_withheld_from_request_telemetry(include_content: bool) -> None:
+def test_tool_metadata_is_preserved_in_request_telemetry(include_content: bool) -> None:
     metadata: dict[str, object] = {'meta': {'authorization_token': 'SENTINEL-mcp-meta-token'}}
     tool = ToolDefinition(name='lookup', metadata=metadata)
     parameters = ModelRequestParameters(function_tools=[tool])
@@ -259,38 +241,100 @@ def test_tool_metadata_is_withheld_from_request_telemetry(include_content: bool)
     ]
 
     assert isinstance(serialized, str)
-    assert 'SENTINEL-mcp-meta-token' not in serialized
+    assert 'SENTINEL-mcp-meta-token' in serialized
     assert '"name":"lookup"' in serialized
     assert tool.metadata is metadata
 
 
+def test_mcp_telemetry_identity_collector_walks_wrappers_and_combined_capabilities() -> None:
+    capability = MCP('https://mcp.example.test/private/SENTINEL-nested-mcp-id', native=True, local=False)
+    wrapper = WrapperCapability(capability)
+    combined = CombinedCapability([capability, wrapper])
+
+    assert mcp_telemetry_sensitive_ids([combined, wrapper, capability]) == {capability.id}
+
+
+def test_mcp_empty_id_uses_derived_identity_and_nonempty_id_is_preserved() -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-empty-id'
+    empty_id_capability = MCP(url, id='', native=True, local=False)
+    derived_tool = next(iter(empty_id_capability.get_native_tools()))
+    assert isinstance(derived_tool, MCPServerTool)
+    assert derived_tool.id != ''
+    derived_ids = mcp_telemetry_sensitive_ids([empty_id_capability])
+    assert derived_ids == {derived_tool.id}
+
+    derived_parameters = ModelRequestParameters(native_tools=[derived_tool], telemetry_sensitive_ids=derived_ids)
+    derived_serialized = model_request_parameters_attributes(derived_parameters)['model_request_parameters']
+    assert isinstance(derived_serialized, str)
+    assert json.loads(derived_serialized)['native_tools'][0]['id'] == '[REDACTED]'
+
+    explicit_capability = MCP(url, id='caller-provided-id', native=True, local=False)
+    explicit_tool = next(iter(explicit_capability.get_native_tools()))
+    assert isinstance(explicit_tool, MCPServerTool)
+    assert mcp_telemetry_sensitive_ids([explicit_capability]) == set()
+    explicit_parameters = ModelRequestParameters(
+        native_tools=[explicit_tool], telemetry_sensitive_ids=mcp_telemetry_sensitive_ids([explicit_capability])
+    )
+    explicit_serialized = model_request_parameters_attributes(explicit_parameters)['model_request_parameters']
+    assert isinstance(explicit_serialized, str)
+    assert json.loads(explicit_serialized)['native_tools'][0]['id'] == 'caller-provided-id'
+
+
 @pytest.mark.parametrize('include_content', [True, False])
-def test_mcp_server_url_derived_id_never_reaches_telemetry(include_content: bool) -> None:
+async def test_mcp_server_url_derived_id_is_redacted_from_instrumented_model(include_content: bool) -> None:
     capability = MCP('https://mcp.example.com/private/SENTINEL-mcp-path-token', native=True, local=False)
     tool = next(iter(capability.get_native_tools()))
     assert isinstance(tool, MCPServerTool)
-    parameters = ModelRequestParameters(native_tools=[tool])
+    parameters = ModelRequestParameters(
+        native_tools=[tool], telemetry_sensitive_ids=mcp_telemetry_sensitive_ids([capability])
+    )
     tool_name = f'mcp_server:{tool.id}'
     call = NativeToolCallPart(tool_name=tool_name, tool_call_id='call-1', provider_name='openai')
     returned = NativeToolReturnPart(tool_name=tool_name, tool_call_id='call-1', content={}, provider_name='openai')
-    response = ModelResponse(parts=[call, returned])
-    settings, exporter = redacted_setup(include_content)
 
-    with settings.tracer.start_as_current_span('chat') as span:
-        span.set_attributes(model_request_parameters_attributes(parameters, include_content=include_content))
-        settings.handle_messages([], response, 'openai', span)
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[call, returned])
+
+    settings, exporter = redacted_setup(include_content)
+    model = InstrumentedModel(FunctionModel(respond), settings)
+    await model.request([ModelRequest(parts=[UserPromptPart('go')])], None, parameters)
 
     assert 'SENTINEL-mcp-path-token' in tool.id  # The provider request still uses the derived ID.
     assert call.tool_name == returned.tool_name == tool_name
-    attributes = exporter.get_finished_spans()[0].attributes
+    spans = exporter.get_finished_spans()
+    assert spans
+    exported = '\n'.join(_span_text(span) for span in spans)
+    assert 'SENTINEL-mcp-path-token' not in exported
+    attributes = spans[0].attributes
     assert attributes is not None
-    assert 'SENTINEL-mcp-path-token' not in str(attributes)
     request_parameters = attributes['model_request_parameters']
     output_messages = attributes['gen_ai.output.messages']
     assert isinstance(request_parameters, str)
     assert isinstance(output_messages, str)
     assert '"id":"[REDACTED]"' in request_parameters
     assert output_messages.count('mcp_server:[REDACTED]') == 2
+
+
+@pytest.mark.parametrize('serialized', [{'instruction_parts': [None]}, {'instruction_parts': 'unstructured'}])
+@pytest.mark.parametrize('include_content', [True, False])
+def test_malformed_instruction_shape_only_withheld_when_content_is_disabled(
+    monkeypatch: pytest.MonkeyPatch, serialized: JsonValue, include_content: bool
+) -> None:
+    parameters = ModelRequestParameters()
+
+    def serialize(_value: object) -> JsonValue:
+        return serialized
+
+    monkeypatch.setattr(_instrumentation, 'serialize_any', serialize)
+
+    attributes = model_request_parameters_attributes(parameters, include_content=include_content)
+
+    if include_content:
+        exported = attributes['model_request_parameters']
+        assert isinstance(exported, str)
+        assert json.loads(exported) == serialized
+    else:
+        assert attributes == {}
 
 
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
@@ -340,11 +384,21 @@ async def test_mcp_url_derived_identity_never_reaches_request_telemetry(include_
 
 @pytest.mark.parametrize('version', [1, 5])
 async def test_direct_instrumented_model_preserves_provider_authored_arguments(version: Literal[1, 5]) -> None:
-    tool = MCPServerTool(id='SENTINEL-mcp-server-id', url='https://mcp.example.test/private')
+    capability = MCP(
+        'https://mcp.example.test/private/SENTINEL-mcp-path-token',
+        id='SENTINEL-caller-mcp-id',
+        native=True,
+        local=False,
+    )
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
     parameters = ModelRequestParameters(native_tools=[tool])
+    tool_name = f'mcp_server:{tool.id}'
+    call = NativeToolCallPart(tool_name=tool_name, tool_call_id='call-1', provider_name='openai')
+    returned = NativeToolReturnPart(tool_name=tool_name, tool_call_id='call-1', content={}, provider_name='openai')
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('lookup', {'id': tool.id})])
+        return ModelResponse(parts=[call, returned, ToolCallPart('lookup', {'id': tool.id})])
 
     settings, exporter = redacted_setup(include_content=True)
     settings.version = version
@@ -354,8 +408,11 @@ async def test_direct_instrumented_model_preserves_provider_authored_arguments(v
     spans = exporter.get_finished_spans()
     chat = next(span for span in spans if 'model_request_parameters' in (span.attributes or {}))
     assert chat.attributes is not None
-    assert tool.id not in str(chat.attributes['model_request_parameters'])
+    assert tool.id in str(chat.attributes['model_request_parameters'])
     assert tool.id in '\n'.join(_span_text(span) for span in spans)
+    if version == 5:  # Version 1 events omit native tool parts.
+        assert tool_name in '\n'.join(_span_text(span) for span in spans)
+    assert call.tool_name == returned.tool_name == tool_name
 
 
 @pytest.mark.parametrize('version', [1, 5])
@@ -365,24 +422,36 @@ async def test_native_tool_capability_preserves_model_text_and_run_metadata(vers
         def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
             return frozenset({MCPServerTool})
 
-    tool = MCPServerTool(id='SENTINEL-mcp-server-id', url='https://mcp.example.test/private')
+    url = 'https://mcp.example.test/private/SENTINEL-mcp-path-token'
+    tool = MCPServerTool(id='SENTINEL-caller-mcp-id', url=url)
+    capability = MCP(url, native=tool, local=False)
+    tool_name = f'mcp_server:{tool.id}'
+    call = NativeToolCallPart(tool_name=tool_name, tool_call_id='history-call', provider_name='openai')
+    returned = NativeToolReturnPart(
+        tool_name=tool_name, tool_call_id='history-call', content={}, provider_name='openai'
+    )
 
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(f'used {tool.id}')])
 
     settings, exporter = redacted_setup(include_content=True)
     settings.version = version
-    agent = Agent(SupportsMCP(respond), capabilities=[NativeTool(tool), Instrumentation(settings=settings)])
-    await agent.run('go', metadata={'mcp_id': tool.id})
+    agent = Agent(SupportsMCP(respond), capabilities=[capability, Instrumentation(settings=settings)])
+    history = [ModelRequest(parts=[UserPromptPart('previous request')]), ModelResponse(parts=[call, returned])]
+    await agent.run('go', message_history=history, metadata={'mcp_id': tool.id})
 
     spans = exporter.get_finished_spans()
     chat = next(span for span in spans if 'model_request_parameters' in (span.attributes or {}))
     run = next(span for span in spans if span.attributes and 'metadata' in span.attributes)
     assert chat.attributes is not None
     assert run.attributes is not None
-    assert tool.id not in str(chat.attributes['model_request_parameters'])
+    assert tool.id in str(chat.attributes['model_request_parameters'])
     assert tool.id in str(run.attributes['metadata'])
     assert tool.id in '\n'.join(_span_text(span) for span in spans)
+    assert 'SENTINEL-mcp-path-token' not in '\n'.join(_span_text(span) for span in spans)
+    if version == 5:
+        assert tool_name in '\n'.join(_span_text(span) for span in spans)
+    assert call.tool_name == returned.tool_name == tool_name
 
 
 @pytest.mark.parametrize('version', [1, 5])
@@ -391,7 +460,9 @@ def test_short_mcp_id_preserves_ordinary_content(version: Literal[1, 5]) -> None
     assert capability.id == 'id'
     tool = next(iter(capability.get_native_tools()))
     assert isinstance(tool, MCPServerTool)
-    parameters = ModelRequestParameters(native_tools=[tool])
+    parameters = ModelRequestParameters(
+        native_tools=[tool], telemetry_sensitive_ids=mcp_telemetry_sensitive_ids([capability])
+    )
     response = ModelResponse(parts=[TextPart('The id is 42.')])
     settings, exporter = redacted_setup(include_content=True)
     settings.version = version
@@ -546,6 +617,51 @@ async def test_no_content_reaches_telemetry_when_a_tool_raises(include_content: 
 
 
 @pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_when_before_run_fails(include_content: bool) -> None:
+    """Derived MCP labels in history are redacted even when before_run fails."""
+    settings, exporter = redacted_setup(include_content)
+    requests = 0
+    capability = MCP('https://mcp.example.test/private/SENTINEL-before-run-mcp-id', native=True, local=False)
+    tool = next(iter(capability.get_native_tools()))
+    assert isinstance(tool, MCPServerTool)
+    tool_name = f'mcp_server:{tool.id}'
+    call = NativeToolCallPart(tool_name=tool_name, tool_call_id='history-call', provider_name='openai')
+    returned = NativeToolReturnPart(
+        tool_name=tool_name, tool_call_id='history-call', content={}, provider_name='openai'
+    )
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[TextPart('unexpected')])
+
+    @dataclass
+    class FailingCapability(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            raise ValueError(SECRETS['tool_exception'])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[capability, FailingCapability(), Instrumentation(settings=settings)],
+    )
+    with pytest.raises(ValueError, match=SECRETS['tool_exception']):
+        await agent.run(
+            SECRETS['user_prompt'],
+            message_history=[
+                ModelRequest(parts=[UserPromptPart('old request')]),
+                ModelResponse(parts=[call, returned]),
+            ],
+        )
+
+    assert requests == 0
+    assert call.tool_name == returned.tool_name == tool_name
+    exported = '\n'.join(_span_text(span) for span in exporter.get_finished_spans())
+    assert 'SENTINEL-before-run-mcp-id' not in exported
+    assert 'mcp_server:[REDACTED]' in exported
+    check(exporter, include_content, {'tool_exception'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_when_an_output_validator_retries(include_content: bool) -> None:
     """A retry raised outside a tool call, which is the GHSA-3gh4-cghq-f8v4 shape."""
     settings, exporter = redacted_setup(include_content)
@@ -611,36 +727,38 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
 
 
 @pytest.mark.parametrize('include_content', [True, False])
-async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_serialized(
-    include_content: bool,
-) -> None:
-    """A tool carrying arbitrary metadata, which no schema can serialize.
-
-    The entire attribute is withheld when its declared schema cannot serialize it, even when
-    content capture is enabled. Inferred serialization could bypass field exclusions.
-    """
+async def test_request_parameter_string_fallback_respects_content_setting(include_content: bool) -> None:
+    """Unsupported metadata uses the string fallback only when content capture is enabled."""
     settings, exporter = redacted_setup(include_content)
 
     def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('done')])
 
+    class Unserializable:
+        def __repr__(self) -> str:
+            return 'SENTINEL-string-fallback'
+
     def lookup(query: str) -> str:  # pragma: no cover
-        """The tool is never called; its definition alone defeats serialization."""
         return 'unused'
 
     agent = Agent(
         FunctionModel(respond),
         instructions=SECRETS['instructions'],
-        tools=[Tool(lookup, metadata={'unserializable': object()})],
+        tools=[Tool(lookup, metadata={'unserializable': Unserializable()})],
         capabilities=[Instrumentation(settings=settings)],
     )
     await agent.run(SECRETS['user_prompt'])
 
-    # The unrepresentable attribute is withheld for both content settings.
     exported_parameters = [
-        span for span in exporter.get_finished_spans() if 'model_request_parameters' in (span.attributes or {})
+        span.attributes['model_request_parameters']
+        for span in exporter.get_finished_spans()
+        if span.attributes and 'model_request_parameters' in span.attributes
     ]
-    assert not exported_parameters
+    if include_content:
+        assert exported_parameters
+        assert 'SENTINEL-string-fallback' in str(exported_parameters)
+    else:
+        assert 'SENTINEL-string-fallback' not in str(exported_parameters)
 
     check(exporter, include_content, {'user_prompt', 'instructions'})
 
