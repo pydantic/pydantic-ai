@@ -106,13 +106,16 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
   dynamic toolset needs a unique `id`; `Agent(...)` raises a `UserError` otherwise. Don't rename
   either once deployed: in-flight tasks re-run the steps whose names changed.
 - A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises a
-  `UserError` after the tool ran, and that failure is checkpointed: a retry raises it again without
-  running the tool.
+  `UserError` after the tool ran, and that failure is checkpointed. The task still retries under its
+  retry strategy, and each attempt raises the error again without running the tool.
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - While a step runs, it extends the worker's claim on the task, so a model request or tool call can
   take longer than the worker's `claim_timeout`. If the claim can't be extended, because the task was
-  cancelled or another worker claimed it, the step is cancelled and the Absurd SDK's error propagates.
+  cancelled or this attempt already failed (for example, its claim expired and the task was retried),
+  the step is cancelled and the Absurd SDK's error propagates.
+- Inside a task, an `MCPToolset` keeps one session for the whole run. The first step that needs the
+  server connects to it, so connecting is retried with that step.
 - Checkpoints hold model responses and tool results as JSON in the queue's Postgres tables, and a
   retry uses them as stored. Limit write access to the Absurd schema accordingly, and don't return
   secrets from tools unless they may be stored there.
@@ -124,11 +127,11 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
 ## Parallel execution
 
 Inside a task, tool calls run sequentially by default. Pass
-`parallel_execution_mode='parallel_ordered_events'` to run them concurrently; plain `'parallel'`
-raises a `UserError`. Outside a task, the mode doesn't apply and the agent runs tools as it would
-without the capability. Stay sequential if a capability hook
-such as `before_tool_execute` or `wrap_tool_execute` awaits before the tool runs, as that can
-reorder concurrent calls of the same tool on replay.
+`parallel_execution_mode='parallel_ordered_events'` to run them concurrently.
+`AbsurdDurability(parallel_execution_mode='parallel')` raises a `UserError`. Outside a task, the mode
+doesn't apply and the agent runs tools as it would without the capability. Stay sequential if a
+capability hook such as `before_tool_execute` or `wrap_tool_execute` awaits before the tool runs, as
+that can reorder concurrent calls of the same tool on replay.
 
 ## Code Mode
 
