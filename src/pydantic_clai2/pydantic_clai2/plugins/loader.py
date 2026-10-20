@@ -49,6 +49,7 @@ from pydantic_clai2.plugins import (
     PluginStatus,
     Renderer,
     ResultT,
+    SendInput,
     SessionCatalog,
     SessionEnd,
     SessionEndReason,
@@ -188,7 +189,7 @@ class SessionPlugins(Generic[DepsT]):
         full_screen: FullScreen = bare_screen,
         enabled: bool = True,
         submit_prompt: Callable[[str], None] | None = None,
-        send_input: Callable[[str], None] | None = None,
+        send_input: SendInput | None = None,
         interrupt: Callable[[], bool] = lambda: False,
         sessions: SessionCatalog | None = None,
         setting: Callable[[str], JsonValue] | None = None,
@@ -525,7 +526,9 @@ class SessionPlugins(Generic[DepsT]):
             save_settings=save,
             requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
             submit_prompt=(lambda text: here().submit_prompt(text)) if process and submit_prompt else submit_prompt,
-            send_input=(lambda text: here().send_input(text)) if process and send_input else send_input,
+            send_input=(lambda text, images: here().send_input(text, images=images))
+            if process and send_input
+            else send_input,
             interrupt=(lambda: here().interrupt()) if process else self._interrupt,
             commands=self._commands,
             sessions=self._sessions,

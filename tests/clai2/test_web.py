@@ -1,13 +1,14 @@
 """The `web` plugin end to end: a shell driven over HTTP, its WebSocket stream, and the access checks."""
 
 import asyncio
+import base64
 import html
 import io
 import re
 import threading
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeVar
@@ -18,6 +19,7 @@ import httpx
 import httpx2
 import pytest
 from anyio.from_thread import BlockingPortal, start_blocking_portal
+from PIL import Image
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console
 from starlette.testclient import TestClient, WebSocketTestSession
@@ -29,7 +31,7 @@ from websockets.typing import Origin
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -72,11 +74,14 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     ToolDone,
     TurnEnded,
     TurnStarted,
+    image_id,
 )
 from pydantic_clai2.config import PluginSettings, Settings, resolve_settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEndReason
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import decode_images
 from pydantic_clai2.runtime.project_identity import git_checkout, project_identity
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_clai2.runtime.session_workspace import SessionWorkspace
@@ -394,11 +399,161 @@ def test_a_failed_turn(make_web: 'MakeWeb') -> None:
         running.result(timeout=10)
 
 
-def test_input_the_browser_cannot_send(make_web: 'MakeWeb') -> None:
+def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch) -> None:
     web_ = make_web(Agent(TestModel()))
     assert web_.post('/api/input', {'text': '   '}).json() == {'detail': 'Type a prompt or a /command.'}
     response = web_.post('/api/input', {'text': '!ls'})
     assert (response.status_code, response.json()) == (400, {'detail': 'Shell lines (!) run only in the terminal.'})
+    response = web_.post('/api/input', {'text': '/model', 'images': [encoded(png('red'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': 'Images go with a prompt, not with a /command or ! line.'},
+    ), 'not even a command whose menu the page would show'
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(b'not an image')]})
+    assert response.status_code == 400 and response.json()['detail'].startswith('Not an image CLAI can read')
+    assert web_.shell.images.pending == {}
+    response = web_.post('/api/input', {'text': 'look', 'images': ['not base64!']})
+    assert (response.status_code, response.json()) == (400, {'detail': 'Images must be base64-encoded.'})
+    # Images waiting in the terminal's draft, which the page does not show, leave no room.
+    waiting = web_.shell.images.attach(decode_images([encoded(png('red'))])).strip()
+    [blue] = decode_images([encoded(png('blue'))])
+    monkeypatch.setattr(
+        image_codec, 'MAX_PENDING_BYTES', len(web_.shell.images.pending[waiting].data) + len(blue.data) - 1
+    )
+    response = web_.post('/api/input', {'text': 'look', 'images': [encoded(png('blue'))]})
+    assert (response.status_code, response.json()) == (
+        400,
+        {'detail': "Images waiting in this session's prompt leave no room for these (32 MiB limit)."},
+    )
+    assert list(web_.shell.images.pending) == [waiting]
+    with pytest.raises(ValueError, match='send fewer at a time'):
+        web_.shell.send_input('look', images=[blue, blue, blue])
+
+
+def png(color: str) -> bytes:
+    output = io.BytesIO()
+    Image.new('RGB', (3, 2), color=color).save(output, format='PNG')
+    return output.getvalue()
+
+
+def encoded(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def test_images_pasted_in_the_browser_go_with_the_prompt(make_web: 'MakeWeb') -> None:
+    """Images sent with a prompt reach the model after its text, also queued behind a running turn, also alone."""
+    started, release = anyio.Event(), anyio.Event()
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        if len(prompts) == 1:
+            started.set()
+            await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'first'})
+        web_.portal.call(started.wait)
+        # Queued in the inbox of a session no editor reads, until the running turn ends.
+        queued = web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+        assert queued.json() == {'menu': None}
+        assert web_.post('/api/input', {'text': ' ', 'images': [encoded(png('blue'))]}).status_code == 200
+        web_.portal.call(release.set)
+        messages: list[ServerMessage] = []
+        for _ in range(3):
+            messages += receive_until(socket, TurnEnded)[0]
+        started_items = [message.item for message in messages if isinstance(message, TurnStarted)]
+        red, blue = decode_images([encoded(png('red')), encoded(png('blue'))])
+        shown: list[tuple[str, list[str]]] = [('first', []), ('what is this?', [image_id(red)]), ('', [image_id(blue)])]
+        assert [(item.text, item.images) for item in started_items if item] == shown
+        history = [item for item in web_.get('/api/state').json()['items'] if item['kind'] == 'user']
+        assert [(item['text'], item['images']) for item in history] == shown, 'the same IDs after a reload'
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+    assert prompts == ['first', ['what is this?', red], [blue]], 'no empty text block beside images alone'
+    assert web_.shell.images.pending == {}, 'sent images are let go'
+
+
+def test_the_transcript_fetches_the_images_of_a_session(make_web: 'MakeWeb') -> None:
+    """A prompt's images are served by ID, from a running turn's prompt and from the saved history."""
+    started, release = anyio.Event(), anyio.Event()
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        started.set()
+        await release.wait()
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    [red] = decode_images([encoded(png('red'))])
+    route = f'/api/sessions/{web_.shell.session.conversation_id}/images/{image_id(red)}'
+    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+        socket.receive_text()
+        running = web_.run()
+        web_.post('/api/input', {'text': 'look', 'images': [encoded(png('red'))]})
+        web_.portal.call(started.wait)
+        for path in (route, f'/api/images/{image_id(red)}'):
+            response = web_.get(path)
+            assert (response.status_code, response.content) == (200, red.data), 'while its turn runs'
+            assert response.headers['content-type'] == 'image/png'
+            assert response.headers['cache-control'] == 'private, max-age=31536000, immutable'
+        web_.portal.call(release.set)
+        receive_until(socket, TurnEnded)
+        # A later prompt without images leaves only the saved history to find it in.
+        web_.post('/api/input', {'text': 'again'})
+        receive_until(socket, TurnEnded)
+        assert web_.get(route).content == red.data, 'from the saved history'
+        unknown = web_.get(f'/api/images/{"0" * 64}')
+        assert (unknown.status_code, unknown.json()) == (404, {'detail': 'No such image in this session.'})
+        assert web_.client.get(route).status_code == 403, 'not without the token'
+        # A new conversation lets go of the old one's images.
+        web_.post('/api/input', {'text': '/new'})
+        assert receive_until(socket, Snapshot)[1].items == []
+        assert web_.get(f'/api/images/{image_id(red)}').status_code == 404
+        web_.post('/api/input', {'text': '/exit'})
+        running.result(timeout=10)
+
+
+def test_a_prompt_keeps_its_images_while_it_waits_for_the_terminal(
+    make_web: 'MakeWeb', monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Images are read as the prompt leaves the queue, so the terminal moving here meanwhile cannot let them go."""
+    prompts: list[str | Sequence[UserContent]] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompts.extend(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        yield 'seen'
+
+    web_ = make_web(Agent(FunctionModel(stream_function=stream)))
+    waiting, announced = anyio.Event(), anyio.Event()
+    busy = web_.shell.forks.busy
+
+    @asynccontextmanager
+    async def after_an_announcement() -> AsyncGenerator[None]:
+        # As when a fork's announcement holds the terminal.
+        if not announced.is_set():
+            waiting.set()
+            await announced.wait()
+        async with busy():
+            yield
+
+    monkeypatch.setattr(web_.shell.forks, 'busy', after_an_announcement)
+    running = web_.run()
+    web_.post('/api/input', {'text': 'what is this?', 'images': [encoded(png('red'))]})
+    web_.portal.call(waiting.wait)
+    # As the terminal showing this session now does, with nothing left in its queue.
+    web_.portal.call(web_.shell.images.retain, list[str]())
+    web_.post('/api/input', {'text': '/exit'})
+    web_.portal.call(announced.set)
+    running.result(timeout=10)
+    assert prompts == [['what is this?', *decode_images([encoded(png('red'))])]]
 
 
 def test_completion_and_models(make_web: 'MakeWeb') -> None:

@@ -7,13 +7,13 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.messages import ModelMessage, UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.protocol import (
     CompletionInfo,
     EventTranslator,
-    Item,
+    ImageIds,
     ItemAdded,
     ItemLog,
     Notice,
@@ -28,10 +28,12 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
     TurnEnded,
     TurnStarted,
     dump,
+    history_images,
     history_items,
     usage_info,
     usage_report,
-    user_text,
+    user_images,
+    user_item,
 )
 from pydantic_clai2.builtin_plugins.web.workers import Workers, task_entry
 from pydantic_clai2.commands import is_command_input
@@ -74,6 +76,9 @@ class SessionChannel:
         self._status_sent = 0.0
         self._usage: RunUsage | None = None
         """The running turn's usage, as its run context reports it; `None` between turns."""
+        self._prompt_images: list[BinaryContent] = []
+        """The last prompt's images, which its run may not have added to the conversation yet."""
+        self._image_ids = ImageIds()
 
     @property
     def id(self) -> str:
@@ -91,7 +96,8 @@ class SessionChannel:
 
     def snapshot(self) -> Snapshot:
         conversation = self.session.conversation
-        items = history_items(conversation.messages)
+        items = history_items(conversation.messages, image_ids=self._image_ids)
+        self._image_ids.keep([*self._prompt_images, *history_images(conversation.messages)])
         if self.running:
             items += self._turn.items.values()
         service = self.service
@@ -112,6 +118,10 @@ class SessionChannel:
             version=service.version,
             update=service.update,
         )
+
+    def image(self, image_id: str) -> BinaryContent | None:
+        """The image the transcript lists as `image_id`: the last prompt's, or one of the conversation's prompts."""
+        return self._image_ids.find(image_id)
 
     def status(self) -> StatusInfo:
         status = self.session.status
@@ -168,7 +178,9 @@ class SessionChannel:
         self._turn.clear()
         item = None
         if prompt is not None:
-            item = Item(id=f'prompt{time.monotonic_ns()}', kind='user', text=user_text(UserPromptPart(prompt)))
+            part = UserPromptPart(prompt)
+            self._prompt_images = user_images(part)
+            item = user_item(part, id=f'prompt{time.monotonic_ns()}', image_ids=self._image_ids)
         self.publish(TurnStarted(item=item))
         self.publish_status()
 
@@ -196,6 +208,7 @@ class SessionChannel:
         hub.rename(self.shown, self.id)
         self.shown = self.id
         self.workers.reset()
+        self._prompt_images = []
         # To the browsers following it; one that watched the new conversation before gets it from `follow`.
         hub.send([client for client in hub.connected() if self.session.id in client.unwatch], dump(self.snapshot()))
         return True
@@ -210,20 +223,25 @@ class SessionChannel:
 
     # What the browser does.
 
-    def send(self, text: str) -> str | None:
+    def send(self, text: str, *, images: Sequence[BinaryContent] = ()) -> str | None:
         """Enter a prompt or `/command` as if typed at the prompt, unless it is a bare command that declares a menu.
 
         That menu opens in the page instead of the terminal: the name of its command is returned, and
-        nothing is entered. Otherwise the result is `None`.
+        nothing is entered. Otherwise the result is `None`. `images` go with a prompt, which may then be blank.
         """
         text = text.strip()
-        if not text:
+        if not text and not images:
             raise ValueError('Type a prompt or a /command.')
         if text.startswith('!'):
             raise ValueError('Shell lines (!) run only in the terminal.')
-        if is_command_input(text) and len(text.split()) == 1 and self.service.host.command_menu(text[1:]) is not None:
+        if (
+            not images
+            and is_command_input(text)
+            and len(text.split()) == 1
+            and self.service.host.command_menu(text[1:]) is not None
+        ):
             return text[1:]
-        self.session.send_input(text)
+        self.session.send_input(text, images=images)
         return None
 
     def switch(self, key: Switch, on: bool) -> None:
