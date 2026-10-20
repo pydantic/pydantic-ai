@@ -19,7 +19,7 @@ from pydantic_core import PydanticSerializationError, to_json, to_jsonable_pytho
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.function_signature import FunctionSignature
@@ -510,20 +510,24 @@ def _tool_search_addendum(search_tool_name: str) -> str:
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
 
-def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
-    """Whether a tool executes its string argument as a program when called.
+def _declared_native(tool_def: ToolDefinition) -> bool:
+    """Whether the tool's author keeps it out of `run_code`, whatever the `tools` selector says.
 
-    Such tools carry `code_arg_name` metadata -- the same marker instrumentation reads to render
-    the argument as code. It covers script sandboxes (this `run_code`, DynamicWorkflow's
-    `run_workflow`), shell surfaces that hand the argument to a shell (`Shell`'s
-    `run_command`/`start_command`), and tools that import the
-    argument as Python (`CapabilityCreation`'s `author_capability`). They must not be folded
-    into `run_code`: nesting one code surface inside another would make the model write a script
-    that passes a second script as a string literal. They stay native so the two code surfaces
-    sit side by side. Tools whose string argument is data (file contents, an argv-style command
-    parsed with `shlex`) are folded as usual.
+    `metadata={'code_mode_native': True}` keeps a tool native and `False` lets the selector decide.
+    Tools that run their string argument as a program declare it: script sandboxes (DynamicWorkflow's
+    `run_workflow`), shell surfaces (all of `Shell`'s tools, so a background command's lifecycle
+    stays on one calling convention), and tools that import the argument as Python
+    (`CapabilityCreation`'s `author_capability`). Folding one into `run_code` would make the model
+    write a script that passes a second script as a string literal.
+
+    Without the key, a tool carrying `code_arg_name` -- instrumentation's hint that an argument
+    holds code -- stays native, so code tools that predate the key keep their behavior. A tool
+    wanting code rendering in traces while still being sandboxed sets `code_mode_native=False`.
     """
-    return bool(tool_def.metadata and 'code_arg_name' in tool_def.metadata)
+    metadata = tool_def.metadata or {}
+    if 'code_mode_native' in metadata:
+        return metadata['code_mode_native'] is True
+    return 'code_arg_name' in metadata
 
 
 def _sanitize_tool_name(name: str) -> str:
@@ -767,6 +771,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
+    - Tools whose metadata declares `code_mode_native=True`, or that carry `code_arg_name`
+      without declaring `code_mode_native` at all.
+    - Tools contributed by a capability listed in `native_capabilities`.
 
     To keep a Tool Search corpus native even after discovery (e.g. for prompt-cache
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
@@ -788,6 +795,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     Budget is reserved before each call is scheduled, so a snippet cannot allocate host tasks
     beyond this many. Calls past the budget are refused at the sandbox call site.
     """
+
+    native_capabilities: Sequence[type[AbstractCapability[Any]]] = field(default=(), kw_only=True)
+    """Capability classes whose tools stay native, matched against each tool's owning capability."""
 
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = field(default=None, kw_only=True)
     """Sandbox execution limits.
@@ -972,9 +982,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # Keep the local fallback native so `Model.prepare_request` can drop it
                 # when the provider supports the native tool.
                 native_tools[name] = tool
-            elif _is_code_execution_tool(tool.tool_def):
-                # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-                # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+            elif _declared_native(tool.tool_def) or self._from_native_capability(ctx, tool.tool_def):
                 native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
@@ -1105,6 +1113,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if self.capability is None:
             return None
         return next((run_id for run_id, cap in ctx.capabilities.items() if cap is self.capability), None)
+
+    def _from_native_capability(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
+        """Whether the tool's capability, or one it wraps (e.g. `PrefixTools`), is a `native_capabilities` instance."""
+        kinds = tuple(self.native_capabilities)
+        owner = ctx.capabilities.get(tool_def.capability_id or '')
+        while owner is not None:
+            if isinstance(owner, kinds):
+                return True
+            owner = owner.wrapped if isinstance(owner, WrapperCapability) else None
+        return False
 
     async def _execute_code(  # noqa: C901
         self,

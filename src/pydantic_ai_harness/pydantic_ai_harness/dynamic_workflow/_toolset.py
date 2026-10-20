@@ -667,7 +667,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                     name=self.tool_name,
                     description=self._description,
                     parameters_json_schema=_WORKFLOW_ARGS_JSON_SCHEMA,
-                    metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+                    metadata={'code_mode_native': True, 'code_arg_name': 'code', 'code_arg_language': 'python'},
                     sequential=True,
                 ),
                 max_retries=self.max_retries,

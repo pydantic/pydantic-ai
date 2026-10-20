@@ -79,11 +79,17 @@ agent = Agent(
 )
 ```
 
-Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and other
-code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
-`author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
+Non-matching tools remain regular tool calls. Some tools stay native whatever `tools` selects:
+framework control tools, undiscovered deferred (`defer_loading=True`) tools, native fallbacks, and tools
+whose metadata declares `code_mode_native=True` -- every `Shell` tool, `DynamicWorkflow`'s `run_workflow`,
+`CapabilityCreation`'s `author_capability`, and the ACP terminal's `run_command`.
+A tool with `code_arg_name` metadata and no `code_mode_native` key also stays native.
+All `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.
+
+Keep a whole capability's tools native without naming them with `CodeMode(native_capabilities=[FileSystem])`.
+Mark your own program-taking tool with `Tool(fn, metadata={'code_mode_native': True})`, and override a
+declaration on someone else's tool with `SetToolMetadata(tools=['shell'], code_mode_native=False)`.
 
 With the default `tools='all'`, approval-gated tools and every tool from MCP or hosted-integration
 capabilities (for example `GitHub` or `Linear` write tools) move behind `run_code` too, where an
@@ -191,6 +197,7 @@ CodeMode(
     max_retries: int = 3,
     *,
     max_tool_calls: int = 100,
+    native_capabilities: Sequence[type[AbstractCapability]] = (),  # their tools stay regular tool calls
     os_access: CodeModeOS | None = None,
     mount: CodeModeMount | None = None,
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,

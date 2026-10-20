@@ -126,12 +126,15 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         }
         for name in SHELL_TOOL_NAMES:
             if name in self._tools:
-                metadata: dict[str, Any] = (
-                    command_metadata.copy() if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME) else {}
-                )
+                # `CodeMode` keeps every shell tool native: a command line would otherwise be quoted
+                # inside generated Python, and a background command's id would cross between a native
+                # `start_command` result and sandboxed `check_command`/`stop_command` calls.
+                metadata: dict[str, Any] = {'code_mode_native': True}
+                if name in ('run_command', 'start_command', PERSISTENT_TOOL_NAME):
+                    metadata.update(command_metadata)
                 if name in ('run_command', PERSISTENT_TOOL_NAME):
                     metadata['temporal'] = {'start_to_close_timeout': timedelta(seconds=MAX_FOREGROUND_WAIT + 30)}
-                self.add_function(registrations[name], name=name, metadata=metadata or None)
+                self.add_function(registrations[name], name=name, metadata=metadata)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh instance per run when `persist_cwd` tracks a cwd, so each run has its own.

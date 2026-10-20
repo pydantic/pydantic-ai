@@ -5,9 +5,9 @@ launches of `SPECULATIVE_TOOLS` and the guidance that teaches the snippet shape 
 
 Every tool the run has, plugin and MCP tools included, becomes a function inside harness
 `CodeMode`'s `run_code` except `write_file` and `edit_file`, which stay native so their diffs
-render as usual. `shell` folds in too, as Code Puppy's shell tool does: harness `CodeMode` keeps
-tools marked with `code_arg_name` metadata native by default, so `SpeculativeExecution` clears
-that marker on `shell` only (`FOLDED_CODE_TOOLS`). Without it, a coding turn is all native `shell` calls
+render as usual. `shell` folds in too, as Code Puppy's shell tool does: harness `Shell` declares
+`code_mode_native` so `CodeMode` keeps it native by default, and `SpeculativeExecution` overrides
+that declaration on `shell` only (`FOLDED_CODE_TOOLS`). Without it, a coding turn is all native `shell` calls
 and eager execution never starts a build or test while the model is still writing.
 
 Only the read-only tools in `SPECULATIVE_TOOLS`, provided by the capability listed there, may
@@ -84,7 +84,7 @@ NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
 """CLAI's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
 
 FOLDED_CODE_TOOLS = frozenset({'shell'})
-"""Tools marked `code_arg_name` that fold in anyway, as Code Puppy's shell tool does.
+"""Tools declared `code_mode_native` that fold in anyway, as Code Puppy's shell tool does.
 
 Other code-running tools, such as a workflow or capability-authoring plugin, keep harness
 `CodeMode`'s default and stay native, so the model never passes a program as a string literal.
@@ -347,7 +347,7 @@ def _declarations(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> dict
     """
     metadata: dict[str, object] = dict(tool_def.metadata or {})
     if tool_def.name in FOLDED_CODE_TOOLS:
-        metadata.pop('code_arg_name', None)
+        metadata['code_mode_native'] = False
     owner = SPECULATIVE_TOOLS.get(tool_def.name)
     trusted = owner is not None and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), owner)
     metadata['read_only'] = trusted

@@ -36,7 +36,15 @@ from pydantic_ai import (
     Tool,
     ToolDefinition,
 )
-from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    DynamicCapability,
+    Instrumentation,
+    PrefixTools,
+    ToolSearch,
+    Toolset,
+)
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -1891,35 +1899,99 @@ class TestCodeMode:
         assert 'load_capability' in tools
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
 
-    async def test_code_execution_tool_not_sandboxed(self) -> None:
-        """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
+    @pytest.mark.parametrize(
+        ('metadata', 'sandboxed'),
+        [
+            pytest.param({'code_mode_native': True}, False, id='declared-native'),
+            pytest.param({'code_arg_name': 'code', 'code_arg_language': 'python'}, False, id='code-arg-undeclared'),
+            pytest.param({'code_mode_native': False, 'code_arg_name': 'code'}, True, id='code-arg-declared-foldable'),
+        ],
+    )
+    async def test_tool_declares_whether_it_stays_native(self, metadata: dict[str, Any], sandboxed: bool) -> None:
+        """A tool's `code_mode_native` declaration is honored even when `tools` names the tool.
 
-        Folding one code-execution tool into `run_code` would make the model pass a script as a
-        string argument to a function inside another script. Such a tool (e.g. DynamicWorkflow's
-        `run_workflow`) is a peer of `run_code`, exposed alongside it, not inside it. The guard
-        keys off `code_arg_name` alone, whatever `code_arg_language` says, so shell surfaces
-        marked with a `command` argument stay native the same way.
+        Code tools (e.g. DynamicWorkflow's `run_workflow`) declare `True`: folding one into `run_code`
+        would make the model pass a script as a string argument to a function inside another script.
+        A tool that carries `code_arg_name` without declaring stays native as before; declaring
+        `False` keeps the trace rendering that `code_arg_name` drives while letting it be sandboxed.
         """
         td_run_workflow = ToolDefinition(
             name='run_workflow',
             description='Run an orchestration script.',
             parameters_json_schema={'type': 'object', 'properties': {'code': {'type': 'string'}}, 'required': ['code']},
             return_schema={'type': 'string'},
-            metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+            metadata=metadata,
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_run_workflow])
-        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        wrapper = CodeMode[object](tools=['get_user', 'run_workflow']).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        # Ordinary tools are still sandboxed...
         assert 'async def get_user' in description
-        # ...but the code-execution tool stays native and is not folded into run_code.
-        assert 'run_workflow' not in description
-        assert 'run_workflow' in tools
+        assert ('async def run_workflow' in description) is sandboxed
+        assert ('run_workflow' in tools) is not sandboxed
+
+    @pytest.mark.parametrize('wrapping', ['direct', 'prefixed', 'dynamic'])
+    async def test_native_capabilities_keep_a_capabilitys_tools_native(
+        self, wrapping: Literal['direct', 'prefixed', 'dynamic']
+    ) -> None:
+        """`native_capabilities` matches a tool by the capability that contributed it, not by its name.
+
+        A capability inside a wrapper, such as `PrefixTools` or a resolved `DynamicCapability`, still
+        matches by its own class.
+        """
+        offered: dict[str, str | None] = {}
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            offered.update({tool.name: tool.description for tool in info.function_tools})
+            return ModelResponse(parts=[TextPart('done')])
+
+        # Only the tool surface is inspected, so these bodies never run.
+        def search(query: str) -> str:
+            """Search the catalog."""
+            return query  # pragma: no cover
+
+        def lookup_user(user_id: str) -> str:
+            """Look up a user."""
+            return user_id  # pragma: no cover
+
+        def lookup_order(order_id: str) -> str:
+            """Look up an order."""
+            return order_id  # pragma: no cover
+
+        class Lookups(AbstractCapability[object]):
+            def get_toolset(self) -> FunctionToolset[object]:
+                return FunctionToolset([lookup_user, lookup_order])
+
+        lookups = Lookups()
+        owner: AbstractCapability[object] = lookups
+        if wrapping == 'prefixed':
+            owner = PrefixTools(wrapped=lookups, prefix='db')
+        elif wrapping == 'dynamic':
+            owner = DynamicCapability[object](lambda ctx: lookups)
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[Toolset(FunctionToolset([search])), owner, CodeMode[object](native_capabilities=[Lookups])],
+        )
+        await agent.run('go')
+
+        prefix = 'db_' if wrapping == 'prefixed' else ''
+        assert sorted(offered) == [f'{prefix}lookup_order', f'{prefix}lookup_user', 'run_code']
+        run_code_description = offered['run_code']
+        assert run_code_description is not None
+        assert 'async def search' in run_code_description
+        assert 'lookup_' not in run_code_description
+
+    def test_native_capabilities_rejects_names(self) -> None:
+        """A spec can only pass capability names, which `native_capabilities` can't match, so fail at construction."""
+        with pytest.raises(
+            UserError, match="`native_capabilities` takes capability classes such as `FileSystem`, not 'FileSystem'"
+        ):
+            CodeMode[object].from_spec(native_capabilities=['FileSystem'])
 
     async def test_unless_native_tool_not_sandboxed(self) -> None:
         """Tools annotated with `unless_native` stay native so `Model.prepare_request` can filter them."""

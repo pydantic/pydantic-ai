@@ -463,7 +463,7 @@ async def test_tool_def_is_sequential_with_code_metadata() -> None:
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], max_retries=5)
     tool = (await ts.get_tools(_ctx()))['run_workflow']
     assert tool.tool_def.sequential is True
-    assert tool.tool_def.metadata == {'code_arg_name': 'code', 'code_arg_language': 'python'}
+    assert tool.tool_def.metadata == {'code_mode_native': True, 'code_arg_name': 'code', 'code_arg_language': 'python'}
     # The configured retry budget must reach the served tool, not just sit on the toolset.
     assert tool.max_retries == 5
 

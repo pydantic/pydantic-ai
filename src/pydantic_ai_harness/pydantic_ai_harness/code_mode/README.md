@@ -86,12 +86,9 @@ The `code-mode` extra is also supported as an alias.
 ## Selective tool sandboxing
 
 By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools,
-undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell
-surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has
-to quote a shell command inside a generated Python string. `CapabilityCreation`'s
-`author_capability` stays native for the same reason: its argument is a complete Python module.
-Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
-any other tool. You can control which eligible tools go through the sandbox:
+undiscovered deferred tools, native fallbacks, and tools that
+[declare themselves native](#keeping-tools-native), such as all of `Shell`'s, remain native. You
+can control which eligible tools go through the sandbox:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -176,6 +173,70 @@ agent = Agent(
 Here `search` and `fetch` are removed from the model-facing tool list and
 become callable functions inside `run_code`. Tools without
 `metadata['code_mode'] == True` stay visible as regular tool calls.
+
+### Keeping tools native
+
+Some tools take a program as their argument, or belong to a family of tools that
+does. Folding one into `run_code` would make the model write Python that passes a
+second script as a string literal, so these tools sit beside `run_code`, whatever
+`tools` selects:
+
+- every `Shell` tool, so a background command is started, checked, and stopped
+  through the same kind of call
+- `DynamicWorkflow`'s `run_workflow` and `CapabilityCreation`'s `author_capability`
+- the ACP terminal's `run_command`
+
+To keep all of another capability's tools native without knowing their names,
+list its class in `native_capabilities`. A tool matches when the capability that
+contributed it, or a capability that one wraps (as `PrefixTools` does), is an
+instance of a listed class:
+
+```python
+from pydantic_ai_harness import CodeMode, FileSystem
+
+CodeMode(native_capabilities=[FileSystem])
+```
+
+Tool and capability authors declare this on the tool with
+`metadata={'code_mode_native': True}`:
+
+```python
+from pydantic_ai import Tool
+
+
+def run_script(script: str) -> str:
+    """Run a script in the project's interpreter."""
+    return script
+
+
+run_script_tool = Tool(run_script, metadata={'code_mode_native': True})
+```
+
+`code_mode_native` is separate from `code_arg_name`, the instrumentation hint
+that renders an argument as code in traces. A tool that carries `code_arg_name`
+without declaring `code_mode_native` also stays native, as code tools did before
+the key existed; declare `code_mode_native=False` to keep the trace rendering
+and let `tools` decide.
+
+To override a declaration on a tool you didn't write, set the key with
+[`SetToolMetadata`](https://pydantic.dev/docs/ai/capabilities/set-tool-metadata/).
+This folds `Shell`'s persistent `shell` tool into `run_code`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
+from pydantic_ai_harness import CodeMode, Shell
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        LocalWorkspace('.'),
+        Shell(tools=['shell']),
+        SetToolMetadata(tools=['shell'], code_mode_native=False),
+        CodeMode(),
+    ],
+)
+```
 
 ## Return values
 
@@ -782,6 +843,7 @@ CodeMode(
     tools='all',          # 'all', list[str], callable, or metadata dict
     max_retries=3,        # retries on sandbox execution errors
     max_tool_calls=100,   # nested tool calls allowed in one run_code call
+    native_capabilities=(),  # capability classes whose tools stay regular tool calls
     id=None,              # required when defer_loading=True
     description=None,     # one-line catalog entry shown while deferred
     defer_loading=False,
