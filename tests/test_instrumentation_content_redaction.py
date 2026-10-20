@@ -523,13 +523,20 @@ async def test_unrelated_toolset_id_matching_mcp_url_id_is_retained() -> None:
     def lookup() -> str:
         return 'ok'
 
+    requests = 0
+
     def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return ModelResponse(parts=[ToolCallPart('lookup', {})])
         return ModelResponse(parts=[TextPart('done')])
 
     settings, exporter = redacted_setup()
-    await Agent(
+    result = await Agent(
         SupportsMCP(respond), toolsets=[unrelated], capabilities=[capability, Instrumentation(settings=settings)]
     ).run('go')
+    assert result.output == 'done'
     chat = next(
         span
         for span in exporter.get_finished_spans()

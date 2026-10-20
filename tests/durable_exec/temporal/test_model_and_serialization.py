@@ -2113,16 +2113,11 @@ def test_temporal_legacy_payload_recovers_dynamic_local_mcp_capability_id(derive
 
 
 def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
-    def ping() -> str:
-        return 'pong'
-
     model = TestModel()
     agent = Agent(
         model,
         name='telemetry_recovery',
-        capabilities=[
-            DynamicCapability(lambda _ctx: Capability(id='chosen-id', tools=[ping]), id='dynamic-capability')
-        ],
+        capabilities=[DynamicCapability(lambda _ctx: Capability(id='chosen-id'), id='dynamic-capability')],
     )
     bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
     assert isinstance(bound_durability, TemporalDurability)
@@ -2145,16 +2140,17 @@ def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
     assert json.loads(serialized)['function_tools'][0]['toolset_id'] == 'chosen-id'
 
 
-@pytest.mark.parametrize('explicit_native_tool', [False, True])
-def test_temporal_legacy_payload_preserves_static_explicit_mcp_id_matching_url(explicit_native_tool: bool) -> None:
+@pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'local_only'])
+def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
     identity = 'mcp.example.test-SENTINEL-path-token'
     model = TestModel()
-    capability = (
-        MCP(native=MCPServerTool(id=identity, url=url), local=False)
-        if explicit_native_tool
-        else MCP(url, native=True, local=False, id=identity)
-    )
+    if strategy == 'provided_native':
+        capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
+    elif strategy == 'generated_native':
+        capability = MCP(url, native=True, local=False, id=identity)
+    else:
+        capability = MCP(url, native=False, local=True, id=identity)
     agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
     bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
     assert isinstance(bound_durability, TemporalDurability)
@@ -2169,11 +2165,11 @@ def test_temporal_legacy_payload_preserves_static_explicit_mcp_id_matching_url(e
     loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
     parameters = loaded.model_request_parameters
 
-    assert not parameters._telemetry_mcp_url_ids  # pyright: ignore[reportPrivateUsage]
+    assert parameters._telemetry_mcp_url_ids == ({identity} if strategy == 'local_only' else set())  # pyright: ignore[reportPrivateUsage]
     serialized = model_request_parameters_attributes(parameters)['model_request_parameters']
     assert isinstance(serialized, str)
     assert 'SENTINEL-path-token' not in json.loads(serialized)['native_tools'][0]['url']
-    assert json.loads(serialized)['native_tools'][0]['id'] == identity
+    assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if strategy == 'local_only' else identity)
 
 
 def test_temporal_legacy_payload_recovers_run_override_native_mcp_id() -> None:

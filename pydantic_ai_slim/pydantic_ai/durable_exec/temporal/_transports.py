@@ -309,8 +309,8 @@ def restore_telemetry_mcp_url_ids(
             # from the agent; dynamic and per-run overrides leave only the resolved native tool.
             for capability in configured_capabilities:
                 if isinstance(capability, MCP) and capability._telemetry_url_derived_id is None:  # pyright: ignore[reportPrivateUsage]
-                    explicit_ids.add((capability.id, capability.url))
                     if isinstance(capability.native, MCPServerTool):
+                        # A local-only capability cannot claim an unrelated native payload.
                         explicit_ids.add((capability.native.id, capability.native.url))
         # An unconfigured native tool could come from a dynamic or per-run capability, or a
         # direct request. Legacy wire data cannot distinguish an equal caller-chosen ID, so
@@ -329,8 +329,7 @@ def restore_telemetry_mcp_url_ids(
             if isinstance(capability_toolset := agent.root_capability.get_toolset(), AbstractToolset):
                 toolset_ids.update(mcp_telemetry_url_toolset_ids(capability_toolset))  # pyright: ignore[reportUnknownArgumentType]
             for toolset in agent.toolsets:
-                if isinstance(toolset, AbstractToolset):
-                    toolset_ids.update(mcp_telemetry_url_toolset_ids(toolset))
+                toolset_ids.update(mcp_telemetry_url_toolset_ids(toolset))
     parameters._telemetry_mcp_url_toolset_ids = toolset_ids  # pyright: ignore[reportPrivateUsage]
     parameters._telemetry_mcp_url_tool_names = tool_names  # pyright: ignore[reportPrivateUsage]
 
