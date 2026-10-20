@@ -1532,6 +1532,7 @@ class TestSearchFiles:
             ('(a+){1}', False),
             ('(a?)+', False),
             ('(ab)+c*', False),
+            ('(?x) needle # trailing )', False),
             (r'\(a+\)+', False),
             ('([+*])+', False),
             ('([]+)])+', False),

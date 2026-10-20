@@ -467,7 +467,7 @@ def _has_nested_quantifier(pattern: str) -> bool:
         elif char == '(':
             enclosing.append(repeats)
             repeats = False
-        elif char == ')':  # the pattern compiled, so every unescaped `)` closes a group
+        elif char == ')' and enclosing:  # a verbose-mode comment can hold an unmatched `)`
             if repeats and _repeats_at(pattern, index + 1):
                 return True
             repeats = enclosing.pop() or repeats
