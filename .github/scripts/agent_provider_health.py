@@ -409,7 +409,7 @@ def _parse_zai_quota(value: object) -> Quota:
         entry = _mapping(item)
         if entry is None:
             return _unknown_quota('invalid_limit_row')
-        if entry.get('type') != 'TOKENS_LIMIT':
+        if entry.get('type') not in ('TOKENS_LIMIT', 'CREDIT_LIMIT'):
             continue
         unit = entry.get('unit')
         if isinstance(unit, bool) or not isinstance(unit, int) or unit not in (3, 6):
