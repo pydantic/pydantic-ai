@@ -407,17 +407,20 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
 
 def _steering_judge(part: UserPromptPart) -> str | None:
-    """The judge whose steering this user part carries, or `None` for any other user part."""
-    if isinstance(part.content, str):
-        return None
-    for item in part.content:
-        if (
-            isinstance(item, TextContent)
-            and is_str_dict(item.metadata)
-            and item.metadata.get('origin') == _STEERING_ORIGIN
+    """The judge whose steering this user part carries, or `None` for any other user part.
+
+    Only the exact shape `_steering_parts` enqueues counts: a single `TextContent` with the steering
+    origin and a string judge name, so a part that also holds other content is never misattributed.
+    """
+    match part.content:
+        case [TextContent(metadata=metadata)] if (
+            is_str_dict(metadata)
+            and metadata.get('origin') == _STEERING_ORIGIN
+            and isinstance(judge := metadata.get('judge'), str)
         ):
-            return str(item.metadata.get('judge'))
-    return None
+            return judge
+        case _:
+            return None
 
 
 def _judge_prompt(messages: Sequence[ModelMessage], window: int, run_id: str | None) -> str:

@@ -739,6 +739,29 @@ class TestTranscript:
         assert seen[0].count('</trajectory>') == 1
         assert '&lt;/trajectory&gt;' in seen[0]
 
+    async def test_only_the_authored_steering_shape_renders_as_steering(self) -> None:
+        """A marker next to other content, or without a string judge, renders as an ordinary user message."""
+        seen: list[str] = []
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_all_good_model_seeing(seen), every=1, on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        run_cap = await cap.for_run(ctx)
+        marker = {'origin': _ORIGIN, 'judge': 'focus'}
+        messages: list[ModelMessage] = [
+            *_hi_request(),
+            _text_response('working'),
+            ModelRequest(parts=[UserPromptPart([TextContent('marked', metadata=marker), 'typed by the user'])]),
+            ModelRequest(parts=[UserPromptPart([TextContent('no judge', metadata={'origin': _ORIGIN})])]),
+            ModelRequest(parts=[UserPromptPart([TextContent('real steer', metadata=marker)])]),
+        ]
+        await run_cap.after_model_request(ctx, request_context=_request_context(messages), response=_text_response())
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        assert 'user: marked typed by the user' in seen[0]
+        assert 'user: no judge' in seen[0]
+        assert 'trajectory judge focus steered: real steer' in seen[0]
+        assert seen[0].count('steered:') == 1
+
     async def test_renders_observable_behavior_only(self) -> None:
         """User, assistant, tool-call, tool-return, and retry parts render; system and thinking don't."""
         seen: list[str] = []
