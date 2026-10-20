@@ -130,9 +130,23 @@ _LLM_MAX_RETRIES = 4
 
 # Wall-clock caps (seconds).  These are last-resort guards on top of the
 # per-request timeout so a burst of slow requests can't accumulate forever.
-RUN_TIMEOUT_SECS = 28 * 60  # 28 min — just under the 30 min gh-aw job cap
-SUBAGENT_TIMEOUT_SECS = 15 * 60  # 15 min per Task sub-agent
+DEFAULT_JOB_TIMEOUT_MINS = 30
+JOB_TIMEOUT_HEADROOM_MINS = 2
+SUBAGENT_TIMEOUT_SECS = 15 * 60
 COMPACTION_TIMEOUT_SECS = 120  # 2 min for the compaction summariser call
+
+
+def _run_timeout_secs() -> int:
+    """Leave teardown headroom within the workflow's configured job timeout."""
+    raw = os.environ.get('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '')
+    try:
+        job_mins = int(raw)
+    except ValueError:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    if job_mins <= JOB_TIMEOUT_HEADROOM_MINS:
+        job_mins = DEFAULT_JOB_TIMEOUT_MINS
+    return (job_mins - JOB_TIMEOUT_HEADROOM_MINS) * 60
+
 
 # Static prefix for `Agent(instructions=[INSTRUCTIONS, prompt])`. Sequence
 # form lets Anthropic's prompt-prefix cache hit `INSTRUCTIONS` across runs.
@@ -785,11 +799,16 @@ async def task(ctx: RunContext[None], description: str, prompt: str) -> str:
     # Fresh `RunUsage` so `SUBAGENT_REQUEST_LIMIT` bounds the sub-agent, not
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
+    # Scale independent reviews with longer jobs; default jobs keep 15 minutes.
+    timeout = max(SUBAGENT_TIMEOUT_SECS, _run_timeout_secs() // 2)
     try:
         result = await asyncio.wait_for(
             sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=SUBAGENT_REQUEST_LIMIT), usage=sub_usage),
-            timeout=SUBAGENT_TIMEOUT_SECS,
+            timeout=timeout,
         )
+    except asyncio.TimeoutError:
+        ctx.usage.incr(sub_usage)
+        return f'error: sub-agent timed out after {timeout // 60}min'
     except Exception as exc:
         ctx.usage.incr(sub_usage)
         return f'error: sub-agent failed: {exc}'
@@ -807,15 +826,16 @@ async def _run_with_timeout(
     session_id: str,
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
+    budget = _run_timeout_secs()
     try:
         return await asyncio.wait_for(
             run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
-            timeout=RUN_TIMEOUT_SECS,
+            timeout=budget,
         )
     except asyncio.TimeoutError:
-        logger.error('run timed out after %.0f min', RUN_TIMEOUT_SECS / 60)
+        logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
-            f'run timed out after {RUN_TIMEOUT_SECS // 60}min',
+            f'run timed out after {budget // 60}min',
             usage=None,
             session_id=session_id,
             is_error=True,
