@@ -48,7 +48,7 @@ Compaction keeps the live history inside the context window, so an exact detail 
 
 `StepPersistence` saves the full history at every step. A compaction that persists its edits (like `SummarizingCompaction`) changes later snapshots only, so the earlier snapshots of the same run still hold the originals.
 
-`SnapshotHistorySource` replays a run's `complete` snapshots in order, drops summary artifacts, and appends only what each snapshot adds past its longest overlap with what it has collected so far. `interrupted` snapshots (unsettled tool work, synthesized tool returns) stay out. Overlap is matched on a content hash of each message, because durable executors (Temporal, DBOS) re-instantiate messages between steps.
+`SnapshotHistorySource` replays a run's `complete` snapshots in order, drops summary artifacts, and appends only what each snapshot adds past its longest overlap with what it has collected so far. `interrupted` snapshots (unsettled tool work, synthesized tool returns) stay out. Overlap is matched on a content hash of each message, because durable executors (Temporal, DBOS) re-instantiate messages between steps. The hash leaves out what core adds to a message after it is first saved (timestamps, run ids, instruction changes appended by `on_change='append'`), and the later copy is kept.
 
 `HistorySource` is the seam: a substrate that keeps an append-only entry log can implement it by replay and replace the snapshot adapter without touching the search layer.
 

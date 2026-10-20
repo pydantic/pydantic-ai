@@ -26,6 +26,8 @@ from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -100,13 +102,17 @@ def _canonical_message(message: ModelMessage) -> ModelMessage:
     pydantic-ai stamps `timestamp`, `run_id`, and `conversation_id` onto a
     message (and fills `instructions` on requests) after the boundary snapshot
     that first carries it is serialized, so the same logical message has
-    different bytes before and after stamping. Clearing exactly those fields
-    makes the dedup key stable across the boundary; every other field keeps
-    participating in the key, so two genuinely distinct messages sharing parts
-    stay distinct.
+    different bytes before and after stamping. It likewise appends instruction
+    bookkeeping to a request that an earlier snapshot already holds: an
+    `InstructionDeltaPart` when an `on_change='append'` block changes, an
+    `InstructionBaselinePart` when an instruction window opens or closes.
+    Clearing exactly those makes the dedup key stable across
+    the boundary; every other field keeps participating in the key, so two
+    genuinely distinct messages sharing parts stay distinct.
     """
     if isinstance(message, ModelRequest):
-        return replace(message, timestamp=None, run_id=None, conversation_id=None, instructions=None)
+        parts = [part for part in message.parts if not isinstance(part, InstructionDeltaPart | InstructionBaselinePart)]
+        return replace(message, parts=parts, timestamp=None, run_id=None, conversation_id=None, instructions=None)
     # `ModelMessage` is exactly the `ModelRequest | ModelResponse` union, so any
     # other message is a `ModelResponse`.
     return replace(message, timestamp=None, run_id=None, conversation_id=None)
@@ -186,6 +192,9 @@ class SnapshotHistorySource:
             messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
+            # Keep the later copies of the overlap: they carry what core added after the
+            # earlier snapshot, such as an instruction change, which the hash leaves out.
+            history[len(history) - overlap :] = messages[:overlap]
             history.extend(messages[overlap:])
             history_hashes.extend(snapshot_hashes[overlap:])
         return history

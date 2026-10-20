@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import warnings
 from contextlib import AbstractAsyncContextManager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,8 +21,13 @@ from inline_snapshot import snapshot
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     BinaryContent,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -136,6 +141,35 @@ class _StubSource:
         return self._histories[run_id]
 
 
+@dataclass
+class _Todo:
+    status: str = 'pending'
+
+
+_todos = Capability[_Todo](id='todos')
+"""Appends a change to its instruction when `finish_todo` runs, as core's `on_change='append'` docs show."""
+
+
+@_todos.instructions(name='state', on_change='append')
+def _todo_state(ctx: RunContext[_Todo]) -> str:
+    return f'Todo status: {ctx.deps.status}.'
+
+
+@_todos.tool(name='finish_todo')
+def _finish_todo(ctx: RunContext[_Todo]) -> str:
+    ctx.deps.status = 'done'
+    return 'Saved.'
+
+
+_status_mode = Capability[_Todo](id='status_mode')
+"""Rewrites its instruction as the todo status changes, so `finish_todo` opens a new instruction window."""
+
+
+@_status_mode.instructions(name='mode')
+def _status_mode_text(ctx: RunContext[_Todo]) -> str:
+    return f'Mode: {ctx.deps.status}.'
+
+
 class TestSnapshotHistorySource:
     async def test_union_recovers_precompaction_originals(self) -> None:
         store = InMemoryStepStore()
@@ -233,11 +267,20 @@ class TestSnapshotHistorySource:
         # `conversation_id` (and fills request `instructions`) after the boundary
         # snapshot that first carries a message is serialized. The overlap key
         # must hash the same logical message equally before and after stamping,
-        # so those fields are cleared before hashing; distinct parts still hash
+        # so those fields are cleared before hashing, as are the instruction changes
+        # core appends to an already-saved request; distinct parts still hash
         # differently.
         request = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='result', tool_call_id='call-1')])
         stamped_request = replace(request, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
         assert message_hash(request) == message_hash(stamped_request)
+        delta = InstructionDeltaPart(
+            id=InstructionId(AgentInstructionSource(), name='state'), content='Todo status: done.'
+        )
+        assert message_hash(request) == message_hash(replace(request, parts=[*request.parts, delta]))
+        baseline = InstructionBaselinePart(instructions=[])
+        assert message_hash(request) == message_hash(replace(request, parts=[*request.parts, baseline]))
+        other_return = ToolReturnPart(tool_name='lookup', content='other', tool_call_id='call-1')
+        assert message_hash(request) != message_hash(ModelRequest(parts=[other_return, delta]))
 
         reply = _reply('done')
         stamped_reply = replace(reply, timestamp=datetime.now(UTC), run_id='r1', conversation_id='c1')
@@ -356,6 +399,48 @@ class TestSnapshotHistorySource:
         assert history == [reply, follow_up, latest]
         assert 'ONYX' in await _search(SnapshotHistorySource(store), 'ONYX')
         assert 'No matches' in await _search(SnapshotHistorySource(store), 'ZEBRA')
+
+    async def test_an_appended_instruction_change_does_not_duplicate_the_run(self) -> None:
+        """Core adds an instruction change to a request an earlier snapshot already holds.
+
+        The overlap must still match, and the record must keep the later copy so the change
+        itself stays searchable.
+        """
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(), deps_type=_Todo, capabilities=[_todos, StepPersistence(store=store)])
+        result = await agent.run('Finish the PELICAN todo.', deps=_Todo(), conversation_id='c1')
+        run_id = (await store.list_runs())[0].run_id
+        assert len(await store.list_snapshots(run_id=run_id)) == 2
+
+        history = await SnapshotHistorySource(store).run_history(run_id=run_id)
+
+        assert [message_hash(message) for message in history] == [
+            message_hash(message) for message in result.all_messages()
+        ]
+        assert any(isinstance(part, InstructionDeltaPart) for message in history for part in message.parts)
+        source = SnapshotHistorySource(store)
+        assert (await _search(source, 'PELICAN', scope='conversation', conversation_id='c1')).count('[score:') == 1
+        assert 'Todo status: done.' in await _search(source, 'done', scope='conversation', conversation_id='c1')
+
+    async def test_a_new_instruction_window_does_not_duplicate_the_run(self) -> None:
+        """Core records a new baseline on a request an earlier snapshot already holds."""
+        store = InMemoryStepStore()
+        agent = Agent(TestModel(), deps_type=_Todo, capabilities=[_todos, _status_mode, StepPersistence(store=store)])
+        result = await agent.run('Finish the IBIS todo.', deps=_Todo(), conversation_id='c1')
+        run_id = (await store.list_runs())[0].run_id
+        first, second = await store.list_snapshots(run_id=run_id)
+        # The same tool-return request, which core gives a new baseline after the first save.
+        assert message_hash(first.messages[2]) == message_hash(second.messages[2])
+        assert not any(isinstance(part, InstructionBaselinePart) for part in first.messages[2].parts)
+        assert any(isinstance(part, InstructionBaselinePart) for part in second.messages[2].parts)
+
+        history = await SnapshotHistorySource(store).run_history(run_id=run_id)
+
+        assert [message_hash(message) for message in history] == [
+            message_hash(message) for message in result.all_messages()
+        ]
+        rendered = await _search(SnapshotHistorySource(store), 'IBIS', scope='conversation', conversation_id='c1')
+        assert rendered.count('[score:') == 1
 
 
 class TestConversationSearch:
@@ -1164,6 +1249,49 @@ Found 2 match(es) for 'ORCHID' in 4 persisted messages:
         assert len(runs) == 2
         assert rendered.count('[score:') == 2
         assert all(f'run: {run.run_id}' in rendered for run in runs)
+
+    async def test_an_instruction_change_on_inherited_history_stays_indexed(self) -> None:
+        """A resumed run can append an instruction change to the request it inherited.
+
+        The hash ignores the change, so the request must still count as new in that run, or the
+        change would never be indexed.
+        """
+        user = _user('finish the HERON task')
+        call = ModelResponse(parts=[ToolCallPart(tool_name='finish', args={}, tool_call_id='c1')])
+        tool_return = ModelRequest(parts=[ToolReturnPart(tool_name='finish', content='ok', tool_call_id='c1')])
+        changed = replace(
+            tool_return,
+            parts=[
+                *tool_return.parts,
+                InstructionDeltaPart(
+                    id=InstructionId(AgentInstructionSource(), name='state'), content='status FINISHED'
+                ),
+            ],
+        )
+        reply = _reply('all set')
+        # `r3` continues `r2`, so it inherits the changed request and must not index the change again.
+        source = _StubSource(
+            {
+                'r1': [user, call, tool_return],
+                'r2': [user, call, changed, reply],
+                'r3': [user, call, changed, reply, _user('next step')],
+            }
+        )
+
+        rendered = await _search(source, 'FINISHED', context_lines=0)
+
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'FINISHED' in 6 persisted messages:
+
+[score: 1.0 | run: r2]
+[2] Tool [finish]: ok
+System: <context id="agent:state">
+status FINISHED
+</context>\
+""")
+        assert (await _search(source, 'HERON')).count('[score:') == 1
+        # The request that carries the change is indexed whole, so its tool return repeats once.
+        assert (await _search(source, 'ok')).count('[score:') == 2
 
 
 class TestExcerptRendering:
