@@ -484,12 +484,16 @@ def proxy_env(provider: str, model: str) -> dict[str, str]:
 def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
-        {**proxy_env('github', 'copilot/claude-sonnet-4-5'), 'COPILOT_GITHUB_TOKEN': 'a-token'},
+        {
+            **proxy_env('github', 'copilot/claude-sonnet-4-5'),
+            'COPILOT_GITHUB_TOKEN': 'a-token',
+            'OPENAI_API_KEY': 'inherited-openai-key',
+        },
     )
 
     assert invocation.argv[:2] == ['-P', '-c']
     assert invocation.target == 'gh_aw_agent:agent'
-    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'openai-chat:claude-sonnet-4.5']
+    assert invocation.cli_args == ['-a', 'gh_aw_agent:agent', '-m', 'github-copilot:claude-sonnet-4.5']
     assert invocation.prompt_file.read_text(encoding='utf-8') == PROMPT
     frame_key = invocation.frame_key
     assert re.fullmatch(r'[0-9a-f]{32}', frame_key)
@@ -504,6 +508,25 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     # gh-aw sets this for the copilot backend; the proxy holds the real credential,
     # so the agent has no use for it.
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
+    assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:10002/v1'
+    assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
+    assert 'OPENAI_API_KEY' not in invocation.env
+
+
+def test_copilot_falls_back_to_the_proxy_url_gh_aw_sets_without_reflect(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {
+            'GH_AW_LLM_PROVIDER': 'github',
+            'PAI_MODEL': 'copilot/gpt-5',
+            'OPENAI_BASE_URL': 'http://host.docker.internal:12345',
+            'GITHUB_COPILOT_API_KEY': 'inherited-key',
+        },
+    )
+
+    assert invocation.cli_args[3] == 'github-copilot:gpt-5'
+    assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:12345'
+    assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
 
 
 def test_a_large_prompt_is_not_passed_as_an_oversized_process_argument(tmp_path: Path) -> None:
@@ -687,7 +710,7 @@ def test_the_anthropic_backend_is_addressed_with_the_messages_api(tmp_path: Path
 
 @pytest.mark.parametrize(
     ('provider', 'model', 'port'),
-    [('github', 'copilot/gpt-5', 10002), ('openai', 'openai/gpt-5', 10000)],
+    [('openai', 'openai/gpt-5', 10000), ('openai', 'codex/gpt-5', 10000)],
 )
 def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, provider: str, model: str, port: int) -> None:
     invocation = launch(tmp_path, proxy_env(provider, model))
@@ -697,16 +720,17 @@ def test_openai_shaped_backends_stay_on_chat_completions(tmp_path: Path, provide
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
 
 
-@pytest.mark.parametrize('model', ['anthropic/claude-sonnet-4-5', 'copilot/gpt-5', 'openai/gpt-5'])
+@pytest.mark.parametrize('model', ['anthropic/claude-sonnet-4-5', 'copilot/claude-sonnet-4-5', 'openai/gpt-5'])
 def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, model: str) -> None:
     invocation = launch(
         tmp_path,
         {'GH_AW_LLM_PROVIDER': 'openai', 'PAI_MODEL': model, 'PAI_BASE_URL': 'https://endpoint.example.com/v1'},
     )
 
-    assert invocation.cli_args[3].startswith('openai-chat:')
+    assert invocation.cli_args[3] == f'openai-chat:{model.split("/", 1)[1]}'
     assert invocation.env['OPENAI_BASE_URL'] == 'https://endpoint.example.com/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
+    assert 'GITHUB_COPILOT_BASE_URL' not in invocation.env
 
 
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(

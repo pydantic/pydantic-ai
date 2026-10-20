@@ -54,7 +54,11 @@ of the AWF api-proxy serves the request. The proxy holds the credentials, so a
 workflow supplies none. `anthropic/` is served over the Anthropic Messages API,
 because that backend forwards the request path to `api.anthropic.com` unchanged and
 does not translate Chat Completions into Messages; the other three are
-OpenAI-shaped and use Chat Completions.
+OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
+`github-copilot:` model, which applies Copilot's per-family model profiles and reads
+the thinking Copilot's Claude and Gemini models return in `reasoning_text`. The
+engine points it at the proxy with `GITHUB_COPILOT_BASE_URL` and a placeholder
+`GITHUB_COPILOT_API_KEY`.
 
 ## What actually runs
 
@@ -309,9 +313,9 @@ Three things to get right:
 - **Keep the `provider/` prefix on `model`.** gh-aw requires it and only accepts its
   four known providers, but the engine strips it before calling the endpoint. Write
   `openai/<model-id>`, and `<model-id>` is what goes upstream. `openai` here means
-  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps Chat Completions
-  whichever prefix is written, `anthropic/` included: it names an endpoint of that
-  shape by definition.
+  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps the generic
+  Chat Completions client whichever prefix is written, `anthropic/` and `copilot/`
+  included: it names an endpoint of that shape by definition.
 
 `PAI_BASE_URL` is a variable of this engine's own rather than `OPENAI_BASE_URL`,
 because gh-aw sets `OPENAI_BASE_URL` itself, pointing at the proxy. It is always

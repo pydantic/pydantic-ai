@@ -572,15 +572,19 @@ engine:
         // not translate Chat Completions into Messages. So `anthropic/` is addressed
         // with the Messages API: `anthropic:` on `-m`, and ANTHROPIC_BASE_URL for
         // the endpoint. The Copilot and Codex backends are OpenAI-shaped and stay on
-        // Chat Completions, and `PAI_BASE_URL` names a Chat Completions endpoint by
-        // definition, so it keeps every provider there too.
+        // Chat Completions. `copilot/` runs on the `github-copilot:` model, which
+        // applies Copilot's per-family profiles and reads the thinking its Claude
+        // and Gemini models return in `reasoning_text`. `PAI_BASE_URL` names a
+        // generic Chat Completions endpoint by definition, so it keeps every
+        // provider on `openai-chat:`.
         const useMessagesAPI = !configuredBaseUrl && modelProvider === "anthropic";
+        const useCopilotAPI = !configuredBaseUrl && modelProvider === "copilot";
         // The dotted-alias rewrite describes the api-proxy's Copilot backend,
         // which publishes Copilot's Claude models under dotted IDs. Every other
         // destination (the anthropic and openai backends, or an endpoint named
         // by PAI_BASE_URL) gets the id the workflow wrote: a model actually
         // called `claude-sonnet-4-5` there has to arrive as that.
-        const model = !configuredBaseUrl && modelProvider === "copilot"
+        const model = useCopilotAPI
           ? requestedModel.replace(/^(claude-(?:haiku|sonnet|opus)-\d+)-(\d+)$/, "$1.$2")
           : requestedModel;
 
@@ -645,12 +649,17 @@ engine:
           );
         }
         // The AWF api-proxy injects the real upstream credentials and ignores the
-        // inbound key, but neither client constructs itself without one. Setting it
+        // inbound key, but no client constructs itself without one. Setting it
         // also replaces whatever key this step inherited, so the agent process holds
-        // the placeholder rather than a provider credential.
+        // the placeholder rather than a provider credential. The Copilot client reads
+        // its own variables, so an inherited OpenAI key is removed instead.
         if (useMessagesAPI) {
           env.ANTHROPIC_BASE_URL = baseUrl;
           env.ANTHROPIC_API_KEY = "awf-anthropic-proxy";
+        } else if (useCopilotAPI) {
+          env.GITHUB_COPILOT_BASE_URL = baseUrl;
+          env.GITHUB_COPILOT_API_KEY = "awf-copilot-proxy";
+          delete env.OPENAI_API_KEY;
         } else {
           env.OPENAI_BASE_URL = baseUrl;
           env.OPENAI_API_KEY = "awf-copilot-proxy";
@@ -668,7 +677,7 @@ engine:
         const cliArgs = [
           ...commandArgs,
           "-a", agentTarget,
-          "-m", `${useMessagesAPI ? "anthropic" : "openai-chat"}:${model}`,
+          "-m", `${useMessagesAPI ? "anthropic" : useCopilotAPI ? "github-copilot" : "openai-chat"}:${model}`,
         ];
         // The config adapter writes this file only for a workflow that configures
         // MCP tools, so its
