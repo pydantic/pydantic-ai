@@ -976,7 +976,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if terminal is not None:
             self.process.live.focused = self.live_session.id
         self.bind(terminal.editor if terminal is not None else None)
+        # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
+        self._retain_images()
         self.live_session.changed()
+
+    def _retain_images(self) -> None:
+        """Let go of images that neither the draft nor a queued prompt of this session uses."""
+        self.images.retain(
+            [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else self._inbox.texts
+        )
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
@@ -1123,11 +1131,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages]
-                if self.editor is not None
-                else self._inbox.texts
-            )
+            self._retain_images()
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace

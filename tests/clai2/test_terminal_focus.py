@@ -481,6 +481,11 @@ async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
         home.images.retry_text = rejected
         home.send_input('/resume')
         await until(desk.live, lambda: terminal.shown is other)
+        held = {
+            name: sorted(image.data for image in images.pending.values())
+            for name, images in [('home', home.images), ('terminal', terminal.images)]
+        }
+        assert held == {'home': [b'green', b'red'], 'terminal': [b'blue']}, 'no image is held, and counted, twice'
         assert home.images.retry_text == rejected and home.images.resolve(rejected)[1] == [green]
         assert terminal.images.retry_text == '', 'it went with its session, not left for the one shown'
         release['home'].set()
