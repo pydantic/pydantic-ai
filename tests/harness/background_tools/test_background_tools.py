@@ -1294,7 +1294,9 @@ class TestBackgroundTools:
             await agent.run('go')
 
     @pytest.mark.parametrize(
-        'args', ['{', '[]', '{"run_in_background": "yes"}'], ids=['not-json', 'not-object', 'flag-not-boolean']
+        'args',
+        ['{', '[' * 100_000 + ']' * 100_000, '[]', '{"run_in_background": "yes"}'],
+        ids=['not-json', 'too-deeply-nested', 'not-object', 'flag-not-boolean'],
     )
     async def test_invalid_args_for_optional_tool_are_retried(self, args: str) -> None:
         retry_seen = False

@@ -235,8 +235,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         if isinstance(args, str):
             try:
                 parsed = json.loads(args)
-            except ValueError:
-                return args  # Core turns malformed JSON into a retry.
+            except (ValueError, RecursionError):
+                return args  # Core turns malformed or too deeply nested JSON into a retry.
         if not isinstance(parsed, dict):
             return args
         # The tool's validator rejects unknown arguments, so the flag is removed and checked here.
