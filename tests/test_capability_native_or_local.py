@@ -779,6 +779,15 @@ class TestMCPCapability:
             match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
         ):
             await agent.run('hi', capabilities=[MCP(url='https://mcp.example.com/b', native=True, local=False)])
+        # A wrapper that adopts the capability's id is the same capability, so it collides the same way.
+        wrapped = Agent(
+            model, capabilities=[MCP(url='https://mcp.example.com/a', native=True, local=False).prefix_tools('a')]
+        )
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await wrapped.run('hi', capabilities=[MCP(url='https://mcp.example.com/b', native=True, local=False)])
 
         # The same server stated again for a run replaces the agent's configuration of it.
         await agent.run(
