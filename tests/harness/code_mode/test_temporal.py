@@ -55,7 +55,7 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
@@ -156,12 +156,19 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
     if len(returns) == 2:
         return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
 
+    code = 'result = await add(a=3, b=4)\nresult'
+    if any(
+        isinstance(part, UserPromptPart) and part.content == 'Gather two additions'
+        for message in messages
+        for part in message.parts
+    ):
+        code = 'import asyncio\nawait asyncio.gather(add(a=3, b=4), add(a=5, b=6))'
     # First call -- emit run_code.
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='run_code',
-                args={'code': 'result = await add(a=3, b=4)\nresult'},
+                args={'code': code},
                 tool_call_id='test_tc_1',
             )
         ]
@@ -369,8 +376,11 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert replay_result.replay_failure is None
 
 
-async def test_tool_calls_limit_fails_and_replays(client: Client) -> None:
-    workflow_id = 'test_code_mode_temporal_tool_calls_limit'
+@pytest.mark.parametrize(
+    'prompt,limit', [('Calculate 3 + 4', 1), ('Gather two additions', 2)], ids=['sequential', 'gather']
+)
+async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, limit: int) -> None:
+    workflow_id = f'test_code_mode_temporal_tool_calls_limit_{limit}'
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -381,7 +391,7 @@ async def test_tool_calls_limit_fails_and_replays(client: Client) -> None:
         with pytest.raises(WorkflowFailureError) as exc_info:
             await client.execute_workflow(
                 CodeModeWorkflow.run,
-                args=['Calculate 3 + 4', 1],
+                args=[prompt, limit],
                 id=workflow_id,
                 task_queue=TASK_QUEUE,
             )
@@ -389,7 +399,7 @@ async def test_tool_calls_limit_fails_and_replays(client: Client) -> None:
     cause = exc_info.value.__cause__
     assert isinstance(cause, ApplicationError)
     assert cause.type == UsageLimitExceeded.__name__
-    assert 'tool_calls_limit of 1 (tool_calls=2)' in cause.message
+    assert f'tool_calls_limit of {limit} (tool_calls={limit + 1})' in cause.message
 
     history = await client.get_workflow_handle(workflow_id).fetch_history()
     replay_result = await Replayer(

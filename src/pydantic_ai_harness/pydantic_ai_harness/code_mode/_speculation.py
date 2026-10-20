@@ -114,7 +114,7 @@ class SpeculativeCall:
         """Where this launch currently stands, for settled and eviction events."""
         if not self.task.done() or self.task.cancelled():
             return 'pending'
-        if self.task.exception() is not None:  # pragma: no cover - the runner settles, never raises
+        if self.task.exception() is not None:
             return 'failed'
         return 'failed' if self.task.result().error is not None else 'ready'
 
@@ -768,9 +768,16 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         for watch in watches:
             queue = watch.calls.get(key, deque[SpeculativeCall]())
             for call in queue:
-                if not (call.task.done() and call.task.result().usage_limit_exceeded is not None):
-                    queue.remove(call)
-                    return call
+                # Consume exceptional launches before adoption raises, so a retry can run cold.
+                if (
+                    call.task.done()
+                    and not call.task.cancelled()
+                    and call.task.exception() is None
+                    and call.task.result().usage_limit_exceeded is not None
+                ):
+                    continue
+                queue.remove(call)
+                return call
         return None
 
     async def adopt(

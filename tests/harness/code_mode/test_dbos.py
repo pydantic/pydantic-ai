@@ -35,7 +35,15 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
@@ -89,11 +97,18 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
             if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
                 return ModelResponse(parts=[TextPart(content=f'done: {part.content}')])
 
+    code = 'result = await add(a=3, b=4)\nresult'
+    if any(
+        isinstance(part, UserPromptPart) and part.content == 'Gather two additions'
+        for message in messages
+        for part in message.parts
+    ):
+        code = 'import asyncio\nawait asyncio.gather(add(a=3, b=4), add(a=5, b=6))'
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='run_code',
-                args={'code': 'result = await add(a=3, b=4)\nresult'},
+                args={'code': code},
                 tool_call_id='test_tc_1',
             )
         ]
@@ -122,9 +137,9 @@ _limit_errors: list[str] = []
 
 
 @DBOS.workflow()
-def run_limited_code_mode_agent() -> None:
+def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
     try:
-        code_mode_agent.run_sync('Calculate 3 + 4', usage_limits=UsageLimits(tool_calls_limit=1))
+        code_mode_agent.run_sync(prompt, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
     except UsageLimitExceeded as error:
         _limit_errors.append(str(error))
         if len(_limit_errors) == 1:
@@ -258,15 +273,18 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
     assert step_names.count('code_mode_dbos_agent__model.request') == 2
 
 
-def test_tool_calls_limit_refuses_during_recovery(dbos_instance: DBOS) -> None:
+@pytest.mark.parametrize(
+    'prompt,limit', [('Calculate 3 + 4', 1), ('Gather two additions', 2)], ids=['sequential', 'gather']
+)
+def test_tool_calls_limit_refuses_during_recovery(dbos_instance: DBOS, prompt: str, limit: int) -> None:
     _limit_errors.clear()
     _captured_tool_defs.clear()
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):
-        run_limited_code_mode_agent()
+        run_limited_code_mode_agent(prompt, limit)
 
     handle = DBOS.resume_workflow(workflow_id)
-    with pytest.raises(UsageLimitExceeded, match=r'tool_calls_limit of 1 \(tool_calls=2\)'):
+    with pytest.raises(UsageLimitExceeded, match=rf'tool_calls_limit of {limit} \(tool_calls={limit + 1}\)'):
         handle.get_result()
 
     assert len(_limit_errors) == 2

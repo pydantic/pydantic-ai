@@ -21,7 +21,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.exceptions import ApprovalRequired, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CapabilityEvent,
@@ -510,6 +510,67 @@ class TestSpeculationEdgeCases:
         assert run_capability.speculation_stats.adopted == 1
         claimed = [event for event in emitted(ctx) if isinstance(event, SpeculativeCallClaimedEvent)]
         assert [event.tool_call_id for event in claimed] == ['rekeyed']
+
+    @pytest.mark.parametrize('cancelled', [False, True], ids=['raised', 'cancelled'])
+    async def test_exceptional_launch_is_consumed_before_a_retry(self, cancelled: bool) -> None:
+        class PanicException(BaseException):
+            """Match the recoverable native panic without letting it escape the pytest task."""
+
+        failure = asyncio.CancelledError if cancelled else PanicException
+        settled = asyncio.Event()
+        calls = 0
+
+        async def search(query: str) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                settled.set()
+                raise failure('speculative failure')
+            return query
+
+        code = 'query = "x"\nresult = await search(query=query)\nresult'
+        streamed_code = 'await search(query="x")\n'
+        async with prepared_toolset([Tool(search)], CodeMode[None](speculate=['search'])) as (
+            capability,
+            toolset,
+            ctx,
+            run_code,
+        ):
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartStartEvent(index=0, part=ToolCallPart(tool_name='run_code', args={}, tool_call_id='streamed')),
+                    PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': streamed_code})),
+                ],
+            )
+            assert capability.speculation_stats.launched == 1
+            await asyncio.wait_for(settled.wait(), timeout=5)
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartEndEvent(
+                        index=0,
+                        part=ToolCallPart(tool_name='run_code', args={'code': streamed_code}, tool_call_id='streamed'),
+                    )
+                ],
+            )
+
+            (first,) = await asyncio.gather(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'attempt-1'), run_code),
+                return_exceptions=True,
+            )
+            assert isinstance(first, asyncio.CancelledError if cancelled else ModelRetry)
+            (result,) = await asyncio.gather(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'attempt-2'), run_code),
+                return_exceptions=True,
+            )
+
+        assert isinstance(result, ToolReturn)
+        assert result.return_value == 'x'
+        assert calls == 2
+        assert len([event for event in emitted(ctx) if isinstance(event, SpeculativeCallSettledEvent)]) == 1
 
     async def test_failed_snippet_keeps_launches_for_the_retry(self):
         """A snippet that dies before dispatching keeps its launches; the retry claims them.
