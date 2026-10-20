@@ -769,11 +769,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         segments: list[tuple[Literal['system', 'user'], list[UIMessagePart]]] = []
 
         def add(role: Literal['system', 'user'], *ui_parts: UIMessagePart) -> None:
-            if not ui_parts:
-                return
             if segments and segments[-1][0] == role:
                 segments[-1][1].extend(ui_parts)
-            else:
+            elif ui_parts:
+                # A part that dumps to nothing, like an empty user prompt, opens no segment of its own.
                 segments.append((role, list(ui_parts)))
 
         seen_user_prompt = False

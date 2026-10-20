@@ -12486,6 +12486,15 @@ def test_retry_feedback_after_user_content_keeps_its_place():
     assert reloaded.metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
 
 
+def test_an_empty_user_prompt_opens_no_ui_message():
+    """A part that dumps to no UI parts doesn't leave an empty `UIMessage` behind it."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='be brief'), UserPromptPart(content=[])])
+    ]
+
+    assert [(msg.role, len(msg.parts)) for msg in VercelAIAdapter.dump_messages(messages)] == [('system', 1)]
+
+
 async def test_retried_tool_return_error_text_carries_no_instruction_framing():
     """A retry's `errorText` is the feedback itself.
 
