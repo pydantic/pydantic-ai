@@ -2334,7 +2334,24 @@ class CapabilityInstructionSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-InstructionSource: TypeAlias = AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource
+@dataclass(frozen=True, repr=False)
+class RunInstructionSource:
+    """Instructions passed to a run method's `instructions` argument.
+
+    Only a named [`InstructionPart`][pydantic_ai.messages.InstructionPart] is addressed by it, as
+    `'run:<name>'`: a run's instructions belong to whoever starts the run, and the name is what says
+    a value passed to a later run of the same conversation is the same block.
+    """
+
+    def __str__(self) -> str:
+        return 'run'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+InstructionSource: TypeAlias = (
+    AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource | RunInstructionSource
+)
 """The source that authored an instruction part."""
 
 
@@ -2343,7 +2360,7 @@ class InstructionId:
     """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
     source: InstructionSource
-    """Who contributed the part: the agent, a toolset with an `id`, or a capability with an `id`."""
+    """Who contributed the part: the agent, a toolset with an `id`, a capability with an `id`, or a run."""
 
     _: KW_ONLY
 
@@ -2368,6 +2385,8 @@ def _deserialize_instruction_id(value: str | InstructionId | None) -> Instructio
         return InstructionId(AgentInstructionSource())
     if value.startswith('agent:'):
         return InstructionId(AgentInstructionSource(), name=value.removeprefix('agent:'))
+    if value.startswith('run:'):
+        return InstructionId(RunInstructionSource(), name=value.removeprefix('run:'))
     for namespace, source_type in (
         ('toolset', ToolsetInstructionSource),
         ('capability', CapabilityInstructionSource),
@@ -2455,6 +2474,7 @@ class InstructionPart:
     - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
     - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
     - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
+    - [`RunInstructionSource`][pydantic_ai.messages.RunInstructionSource] — a named part passed to a run method's `instructions`
 
     An id renders and serializes as its segments joined by `:` — `'agent'`, `'toolset:weather'`, or
     `'capability:budget:remaining'`.

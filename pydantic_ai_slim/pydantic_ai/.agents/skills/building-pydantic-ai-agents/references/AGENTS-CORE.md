@@ -103,6 +103,7 @@ The callback still runs before each request; changed values become full replacem
 Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
 Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` under their own `id`.
+Per-run context passed to `agent.run(..., instructions=...)` appends when it's a named part: `instructions=InstructionPart(..., name='page', on_change='append')` is keyed `run:page`; unnamed runtime instructions always rewrite.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
 Use a durable operation for instruction callbacks that read external state during durable execution.
