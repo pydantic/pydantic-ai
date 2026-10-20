@@ -914,6 +914,21 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     return pairs
 
 
+def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
+    """*part* with its content replaced by *placeholder*, or `None` if its type can't hold one.
+
+    A typed `ToolReturnPart` subclass keeps its type when its kind declares no content shape, like
+    `FileSystem`'s `ReadFileReturnPart`. One whose kind declares a shape the placeholder doesn't fit,
+    like `ToolSearchReturnPart`, is left alone: core re-parses (and trusts) that structured content on
+    every request -- see `parse_discovered_tools` -- so blanking it would break the next request and
+    discard state the run still needs.
+    """
+    cleared = replace(part, content=placeholder)
+    if type(part) is ToolReturnPart or cleared.typed_content is not None:
+        return cleared
+    return None
+
+
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
     clear_return_ids: set[str],
@@ -931,17 +946,15 @@ def rebuild_with_cleared(
             request_parts: list[ModelRequestPart] = []
             changed = False
             for part in msg.parts:
-                # Exact type, not `isinstance`: typed `ToolReturnPart` subclasses such as
-                # `ToolSearchReturnPart` carry structured `TypedDict` content that core re-parses
-                # (and trusts to be valid) on every request -- see `parse_discovered_tools`. Blanking
-                # it to a string both breaks that invariant (crash next request) and discards
-                # discovery state, so only untyped tool results are cleared.
-                if (
-                    type(part) is ToolReturnPart
+                cleared = (
+                    _cleared_return(part, placeholder)
+                    if isinstance(part, ToolReturnPart)
                     and part.tool_call_id in clear_return_ids
                     and str(part.content) != placeholder
-                ):
-                    request_parts.append(replace(part, content=placeholder))
+                    else None
+                )
+                if cleared is not None:
+                    request_parts.append(cleared)
                     changed = True
                 else:
                     request_parts.append(part)

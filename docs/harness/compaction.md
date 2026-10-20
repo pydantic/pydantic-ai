@@ -311,7 +311,7 @@ TieredCompaction(
 
 Tool outputs typically dominate an agent's context, and the agent can usually re-run a tool if it needs the data again. `ClearToolResults` replaces the content of the oldest tool *results* with a short placeholder while keeping the most recent `keep_pairs` tool-call / tool-return pairs intact. The tool calls stay paired with their now-blanked results, so the history stays valid.
 
-Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are left intact (a small token floor), because their structured content is re-parsed on later requests and rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
+Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are left intact (a small token floor), because their structured content is re-parsed on later requests and rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. A typed result whose kind declares no content shape, like the `ReadFileReturnPart` that [`FileSystem`](filesystem.md)'s `read_file` returns, is cleared like any other and keeps its type.
 
 ```python
 from pydantic_ai import Agent

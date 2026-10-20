@@ -193,7 +193,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             return False
         for since_last_clear, message in enumerate(reversed(messages)):
             if isinstance(message, ModelRequest) and any(
-                type(part) is ToolReturnPart and str(part.content) == self.placeholder for part in message.parts
+                isinstance(part, ToolReturnPart) and str(part.content) == self.placeholder for part in message.parts
             ):
                 break
         else:
