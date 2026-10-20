@@ -498,6 +498,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -583,6 +584,105 @@ async def test_cache_point_as_first_content_raises_error(allow_model_requests: N
         ),
     ):
         await agent.run([CachePoint(), 'This should fail'])
+
+
+def _replayed_mcp_tool_result_history(padding: str) -> list[ModelMessage]:
+    """A conversation whose assistant turn ends in a replayed DeepWiki MCP tool result.
+
+    The opening prompt is padded past the model's minimum cacheable prefix, so a breakpoint on the
+    MCP result writes a cache entry the next request can read back. Each test pads with its own
+    sentence so one test's recording can't read the cache entry another one wrote.
+    """
+    return [
+        ModelRequest(
+            parts=[UserPromptPart(content=f'{padding} ' * 150 + '\nWhat is the pydantic/pydantic-ai repository?')]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='mcp_server:deepwiki',
+                    args={
+                        'action': 'call_tool',
+                        'tool_name': 'ask_question',
+                        'tool_args': {'repoName': 'pydantic/pydantic-ai', 'question': 'What is it?'},
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='mcp_server:deepwiki',
+                    content={
+                        'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                        'is_error': False,
+                    },
+                    tool_call_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+
+@pytest.mark.vcr()
+async def test_cache_point_after_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """A `CachePoint` opening a user message puts its boundary on a replayed MCP tool result ending the previous turn.
+
+    Run twice: the second request reads back the prefix the first one wrote, which pins that the API
+    accepts and honors `cache_control` on an `mcp_tool_result` block.
+    """
+    agent = Agent(
+        anthropic_model('claude-sonnet-4-5', capture=True),
+        capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))],
+    )
+
+    usages: list[RunUsage] = []
+    for _ in range(2):
+        result = await agent.run(
+            [CachePoint(), 'Summarize that in five words.'],
+            message_history=_replayed_mcp_tool_result_history(
+                'A leading cache point lands on the replayed MCP result.'
+            ),
+        )
+        usages.append(result.usage)
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert content_blocks(request_capture.body('/v1/messages'), 'mcp_tool_result') == snapshot(
+        [
+            {
+                'content': [{'citations': None, 'text': 'Pydantic AI is an agent framework.', 'type': 'text'}],
+                'is_error': False,
+                'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                'type': 'mcp_tool_result',
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            }
+        ]
+    )
+    assert [(usage.cache_write_tokens, usage.cache_read_tokens) for usage in usages] == snapshot([(2907, 0), (0, 2907)])
+
+
+@pytest.mark.vcr()
+async def test_cache_messages_with_trailing_replayed_mcp_tool_result(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
+    """Automatic caching handles a history ending in an assistant turn whose last block is a replayed MCP tool result.
+
+    The breakpoint lands on the MCP result and the API writes the prefix it ends to the cache.
+    `max_tokens` stops the continuation before the model can call the MCP server again, which would
+    fold that call's own cache traffic into the usage.
+    """
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+
+    response = await model.request(
+        _replayed_mcp_tool_result_history('Automatic message caching ends on the replayed MCP result.'),
+        AnthropicModelSettings(anthropic_cache_messages=True, max_tokens=5),
+        ModelRequestParameters(native_tools=[MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')]),
+    )
+
+    assert cache_breakpoints(request_capture.body('/v1/messages')) == snapshot((None, ['messages[1].content[1]']))
+    assert (response.usage.cache_write_tokens, response.usage.cache_read_tokens) == snapshot((3057, 0))
 
 
 async def test_cache_point_with_image_content(allow_model_requests: None):
@@ -874,55 +974,6 @@ def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
     )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
-
-
-@pytest.mark.parametrize(
-    'cache_value,expected_ttl',
-    [
-        pytest.param(True, '5m', id='default-5m'),
-        pytest.param('1h', '1h', id='custom-1h'),
-    ],
-)
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
-    allow_model_requests: None,
-    cache_value: bool | Literal['1h'],
-    expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
-):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
-
-    On these platforms the top-level cache_control parameter is not supported,
-    so per-block cache_control is applied to the last user message instead.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.timeout = DEFAULT_TIMEOUT
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
-
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
-
-    result = await agent.run('Hello')
-    assert result.output == 'Response'
-
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is OMIT
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
 
 @pytest.mark.parametrize(
@@ -2356,9 +2407,9 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
 @pytest.mark.parametrize(
     ('client_cls', 'expected_ttls'),
     [
-        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
         pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
         pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
     ],
 )
@@ -4019,6 +4070,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'output_tokens': 277,
                         'thinking_tokens': 32,
                     },
+                    output_reasoning_tokens=32,
                     cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4078,6 +4130,7 @@ I should provide practical advice for crossing a river safely.\
                         'output_tokens': 440,
                         'thinking_tokens': 98,
                     },
+                    output_reasoning_tokens=98,
                     cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4097,7 +4150,9 @@ I should provide practical advice for crossing a river safely.\
 async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model_requests: None):
     """A thinking part with an empty signature (e.g. left behind by an interrupted stream)
     must not be replayed as a `thinking` block: the API rejects empty signatures with a 400.
-    It falls back to tagged text instead, like thinking parts from other providers.
+    It goes back as tagged text instead, carried in a user message ahead of the turn it was
+    produced in like any other reasoning that can't ride the native channel — see
+    `ModelProfile.mimics_assistant_message_formatting`.
     """
     c = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
@@ -4119,13 +4174,13 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
         [
             {'role': 'user', 'content': [{'text': 'Think about crossing the street.', 'type': 'text'}]},
             {
-                'role': 'assistant',
+                'role': 'user',
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking>
 I was interrupted mid-thought
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
@@ -4285,6 +4340,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 91,
                         'thinking_tokens': 42,
                     },
+                    output_reasoning_tokens=42,
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4727,6 +4783,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 274,
                         'thinking_tokens': 160,
                     },
+                    output_reasoning_tokens=160,
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -6174,6 +6231,7 @@ def test_streaming_usage_thinking_tokens():
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -9632,6 +9690,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 113,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -9701,6 +9760,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 103,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -13734,8 +13794,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13815,8 +13878,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13889,17 +13955,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -14363,6 +14430,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()

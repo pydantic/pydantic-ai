@@ -982,7 +982,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
 
     def test_anthropic_variant_thinking_false(self):
@@ -995,7 +995,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'thinking': {'type': 'disabled'}}
 
     def test_openai_variant_thinking_false(self):
@@ -1009,7 +1009,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # thinking=False: no reasoning_effort set, returns None
         assert result is None
 
@@ -1023,7 +1023,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning_effort': 'high'}
 
     def test_qwen_variant_thinking_true(self):
@@ -1036,7 +1036,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=True)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'reasoning_config': 'high'}
 
     def test_qwen_variant_thinking_false(self):
@@ -1050,7 +1050,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
         assert result is None
 
@@ -1060,7 +1060,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         # No variant set, so no thinking fields are added
         assert result is None
 
@@ -1069,7 +1069,7 @@ class TestBedrockThinkingTranslation:
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=None)
-        result = model._build_additional_model_request_fields(settings, params)
+        result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
 
     def _adaptive_model(self, *, supports_effort: bool = True):
@@ -1086,7 +1086,7 @@ class TestBedrockThinkingTranslation:
         """Bare thinking=True enables adaptive but doesn't set effort (matches AnthropicModel)."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=True)
+            BedrockModelSettings(), ModelRequestParameters(thinking=True), []
         )
         assert result == {'thinking': {'type': 'adaptive'}}
 
@@ -1094,7 +1094,7 @@ class TestBedrockThinkingTranslation:
         """thinking='high' on adaptive model adds output_config.effort sibling per AWS docs."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+            BedrockModelSettings(), ModelRequestParameters(thinking='high'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'high'}}
 
@@ -1106,7 +1106,7 @@ class TestBedrockThinkingTranslation:
         """Effort map: minimal/low → low, medium → medium, high → high, xhigh → max (best-effort)."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=level)
+            BedrockModelSettings(), ModelRequestParameters(thinking=level), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
 
@@ -1129,7 +1129,7 @@ class TestBedrockThinkingTranslation:
             )
         )
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
 
@@ -1137,7 +1137,7 @@ class TestBedrockThinkingTranslation:
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""
         model = self._adaptive_model(supports_effort=False)
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking='high')
+            BedrockModelSettings(), ModelRequestParameters(thinking='high'), []
         )
         assert result == {'thinking': {'type': 'adaptive'}}
 
@@ -1145,14 +1145,14 @@ class TestBedrockThinkingTranslation:
         """User-provided output_config in bedrock_additional_model_requests_fields is preserved."""
         model = self._adaptive_model()
         settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}})
-        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'))
+        result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'), [])
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
 
     def test_anthropic_variant_adaptive_thinking_false_omits(self):
         """thinking=False on adaptive model omits both thinking and output_config."""
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
         )
         assert result is None
 
@@ -1167,7 +1167,7 @@ class TestBedrockThinkingTranslation:
             )
         )
         result = model._build_additional_model_request_fields(
-            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
         )
         assert result == {'thinking': {'type': 'disabled'}}
 
@@ -2249,11 +2249,12 @@ _CROSS_SCOPE_CASES = [
 
 async def _send(probe: Probe, settings: ModelSettings) -> tuple[dict[str, Any], list[str]]:
     """The probed request, and any cross-scope precedence warnings it raised."""
-    with warnings.catch_warnings(record=True) as caught:
+    # The probe records the warnings its request raises; `always` keeps the suite's `error` filter from aborting it.
+    with warnings.catch_warnings():
         warnings.simplefilter('always')
-        payload = await probe(settings)
-    assert payload is not None
-    return json.loads(payload), [str(w.message) for w in caught if 'takes precedence over `thinking' in str(w.message)]
+        result = await probe(settings)
+    assert result.payload is not None
+    return json.loads(result.payload), [m for m in result.observed.messages if 'takes precedence over `thinking' in m]
 
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in _CROSS_SCOPE_CASES])

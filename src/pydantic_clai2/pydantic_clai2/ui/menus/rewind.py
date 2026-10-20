@@ -86,7 +86,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         .style(markdown_style())
         .items(list(reversed(items)) or [MenuItem('No earlier prompts to rewind to.', disabled=True)])
         .preview(_preview)
-        .footer_hint('Up/Down select - Enter rewind - Esc cancel | does NOT undo files')
+        .footer_hint('Up/Down select - Enter rewind - Esc cancel - does NOT undo files')
         .key_source(menu_key)
         .build()
     )

@@ -3,15 +3,19 @@
 The list order is the order `PROVIDER@*:MODEL` tries accounts in. Adding an account picks a
 provider, fills in a free name, and signs in; the menu closes for the sign-in, which may open a
 browser or ask for a key, and reopens after it.
+
+Adding, renaming, and signing out ask through `Dialogs`, so `accounts_settings_menu` runs the same
+steps from the web UI's Settings window.
 """
 
 import textwrap
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from itertools import groupby
 
 from anyio import create_task_group, to_thread
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.keys import Key
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.terminal import terminal_size
@@ -22,7 +26,9 @@ from pydantic_clai2.models.accounts import Account, LoginChoice, accounts, login
 from pydantic_clai2.models.profiles import ALL, DEFAULT, check_name, provider_of, with_profile
 from pydantic_clai2.models.usage import UsageFetch
 from pydantic_clai2.plugins import PluginLogin
+from pydantic_clai2.plugins.menus import Action, Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.ui.menus.account_usage import UsageBoard
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
     TERMINAL,
@@ -35,7 +41,7 @@ from pydantic_clai2.ui.menus.plugin_menu import Redrawable
 from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
-_HINT = 'a add · r rename · d sign out · [ ] reorder · enter sign in again · esc close'
+_HINT = 'Enter sign in again - a add - r rename - d sign out - [ ] reorder - Esc close'
 _ADD = 'add'
 _REDRAW = 'accounts:usage'
 """A key no keyboard sends and no handler takes: termflow repaints after it, showing new usage."""
@@ -237,29 +243,28 @@ async def _run_menu(
     load_usage: Callable[[list[Account]], None],
 ) -> str:
     messages: list[str] = []
+    dialogs = TerminalDialogs(runners)
     while True:
         load_usage(await to_thread.run_sync(accounts, store))
         result = await run_worker(lambda: runners.run_list(menu.build()))
         value = result.item.value if not result.cancelled and result.item is not None else None
         if value == _ADD:
-            available = plugins()
             try:
-                target = await run_worker(lambda: new_account(store, available, runners))
+                target = await new_account(store, plugins(), dialogs)
             except ValueError as exc:
                 menu.notice = str(exc)
                 continue
         elif isinstance(value, Account):
             target = value.login
         elif isinstance(value, _Rename):
-            renamed = value.account
-            menu.focus = renamed.login
-            menu.notice = await run_worker(lambda: _rename(store, renamed, runners))
+            menu.focus = value.account.login
+            menu.notice = await rename_account(store, value.account, dialogs) or None
             continue
         elif isinstance(value, _SignOut):
             leaving = value.account
             # A usage fetch may refresh this account's tokens; let it end before they are deleted.
             await menu.usage.stop(leaving.login)
-            menu.notice = await run_worker(lambda: _sign_out(store, leaving, runners))
+            menu.notice = await sign_out_account(store, leaving, dialogs) or None
             if menu.notice is not None:
                 forget(leaving.login)
                 messages.append(menu.notice)
@@ -278,29 +283,19 @@ async def _run_menu(
         messages.append(menu.notice)
 
 
-def new_account(store: SettingsStore, plugins: Mapping[str, PluginLogin], runners: Runners) -> str | None:
+async def new_account(store: SettingsStore, plugins: Mapping[str, PluginLogin], dialogs: Dialogs) -> str | None:
     """Pick a provider and a free name; returns the `/login` argument, or `None` when cancelled."""
-    choices = login_choices(plugins)
-    rows: list[MenuItem] = []
-    for kind, group in groupby(choices, key=lambda choice: choice.kind):
-        rows.append(MenuItem(_KINDS[kind], disabled=True))
-        rows += [MenuItem(f'  {choice.login}', value=choice) for choice in group]
-    picked = runners.run_list(
-        MenuBuilder('Add an account')
-        .style(markdown_style())
-        .items(rows)
-        .searchable()
-        .initial_index(1)
-        .list_width(_LIST_WIDTH)
-        .preview(_choice_details)
-        .footer_hint('type to filter - Enter choose - Esc back')
-        .key_source(menu_key)
-        .build()
+    choices = await to_thread.run_sync(login_choices, plugins)
+    login = await dialogs.choose(
+        title='Add an account',
+        options=[
+            Option(value=choice.login, label=choice.login, description=_choice_details(choice)) for choice in choices
+        ],
     )
-    choice = picked.item.value if not picked.cancelled and picked.item is not None else None
-    if not isinstance(choice, LoginChoice):
+    choice = next((choice for choice in choices if choice.login == login), None)
+    if choice is None:
         return None
-    taken = [item for item in accounts(store) if item.provider == choice.provider]
+    taken = [item for item in await to_thread.run_sync(accounts, store) if item.provider == choice.provider]
     if choice.has_default and not any(item.profile is None and item.signed_in for item in taken):
         return choice.login
     if not choice.profiles:
@@ -309,40 +304,36 @@ def new_account(store: SettingsStore, plugins: Mapping[str, PluginLogin], runner
     suggestion = next(
         f'account-{number}' for number in range(len(taken) + 1, len(taken) + 100) if f'account-{number}' not in used
     )
-    typed = runners.run_text(
-        TextInputBuilder(f'Name the new {choice.provider} account')
-        .style(markdown_style())
-        .prompt('Name: ')
-        .initial(suggestion)
-        .validator(lambda text: _name_problem(text.strip(), used))
-        .footer_hint('Enter keeps this name - Esc back')
-        .key_source(menu_key)
-        .build()
+    name = await dialogs.text(
+        title=f'Name the new {choice.provider} account',
+        label='Name',
+        initial=suggestion,
+        check=partial(_name_problem, used=used),
     )
-    if typed.cancelled or typed.value is None:
+    if not name:
         return None
-    return f'{choice.login}@{typed.value.strip()}'
+    # Checked again: the terminal checks as you type, but the page sends what it sends.
+    if (problem := _name_problem(name, used=used)) is not None:
+        raise ValueError(problem)
+    return f'{choice.login}@{name}'
 
 
 _KINDS = {
-    'subscription': 'Subscriptions',
-    'plugin': 'Plugin sign-ins',
-    'connection': 'Connections',
-    'api key': 'API keys',
+    'subscription': 'Subscription',
+    'plugin': 'Plugin sign-in',
+    'connection': 'Connection',
+    'api key': 'API key',
+}
+_HOW = {
+    'subscription': 'Signs in through the browser.',
+    'plugin': 'Signs in through the plugin.',
+    'connection': 'Asks for a server or key, as /model add does.',
+    'api key': 'Asks for a key or a /keys entry. Other settings come from the environment.',
 }
 
 
-def _choice_details(item: MenuItem) -> str:
-    choice = item.value
-    if not isinstance(choice, LoginChoice):
-        return ''
-    how = {
-        'subscription': 'Signs in through the browser.',
-        'plugin': 'Signs in through the plugin.',
-        'connection': 'Asks for a server or key, as /model add does.',
-        'api key': 'Asks for a key or a /keys entry.\nOther settings come from the environment.',
-    }[choice.kind]
-    return f'{choice.login}\n\n{how}\nModels run as {choice.provider}@NAME:MODEL.'
+def _choice_details(choice: LoginChoice) -> str:
+    return f'{_KINDS[choice.kind]}. {_HOW[choice.kind]} Models run as {choice.provider}@NAME:MODEL.'
 
 
 def _name_problem(text: str, used: set[str | None]) -> str | None:
@@ -355,36 +346,176 @@ def _name_problem(text: str, used: set[str | None]) -> str | None:
     return 'default is the account without a name.' if text == 'default' else None
 
 
-def _rename(store: SettingsStore, item: Account, runners: Runners) -> str | None:
-    typed = runners.run_text(
-        TextInputBuilder(f'Rename {item.login}')
-        .style(markdown_style())
-        .prompt('Shown as: ')
-        .initial(item.label or '')
-        .footer_hint('Enter save (empty shows the profile) - Esc back')
-        .key_source(menu_key)
-        .build()
+async def rename_account(store: SettingsStore, item: Account, dialogs: Dialogs) -> str:
+    """Ask for the name to show for `item` and save it; empty when backed out of."""
+    label = await dialogs.text(
+        title=f'Rename {item.login}', label='Shown as', initial=item.label or '', description='Empty shows the profile.'
     )
-    if typed.cancelled or typed.value is None:
-        return None
-    label = typed.value.strip() or None
-    store.rename_account(provider=item.provider, profile=item.profile, label=label)
+    if label is None:
+        return ''
+    rename = partial(store.rename_account, provider=item.provider, profile=item.profile, label=label or None)
+    await to_thread.run_sync(rename)
     return f'{item.login} is shown as {label or item.profile or "default"}.'
 
 
-def _sign_out(store: SettingsStore, item: Account, runners: Runners) -> str | None:
-    confirmation = runners.run_choice(
-        MenuBuilder(f'Sign out of {item.login}?')
-        .style(markdown_style())
-        .items([MenuItem('Keep account', value=False), MenuItem('Sign out', value=True)])
-        .preview(lambda row: 'Deletes the saved login. Models\nnaming this account stop working.')
-        .footer_hint('Enter select - Esc keep')
-        .key_source(menu_key)
-        .build()
-    )
-    if confirmation.cancelled or confirmation.item is None or confirmation.item.value is not True:
-        return None
-    return sign_out(store, item)
+async def sign_out_account(store: SettingsStore, item: Account, dialogs: Dialogs) -> str:
+    """Sign out of `item` once the user confirms; empty when they keep it."""
+    if not await dialogs.confirm(
+        title=f'Sign out of {item.login}?',
+        yes='Sign out',
+        no='Keep account',
+        description='Deletes the saved login. Models naming this account stop working.',
+    ):
+        return ''
+    return await to_thread.run_sync(sign_out, store, item)
+
+
+ADD = 'add'
+"""The settings menu's row that adds an account; no account's row key is this."""
+
+SignIn = Callable[[str, Dialogs], Awaitable[str]]
+"""`/login`'s handler for one target, such as `openai-codex@work`, asking through the given dialogs."""
+
+
+def account_key(item: Account) -> str:
+    """The account's row in `accounts_settings_menu`: its `/login` name, with `/` (a route separator) as `:`."""
+    return item.login.replace('/', ':')
+
+
+def _summary(item: Account, found: Sequence[Account]) -> str:
+    """What the page says about an account: how to use it, and its place among the provider's."""
+    lines = [f'Use {item.pinned("MODEL")}.']
+    siblings = [other for other in found if other.provider == item.provider and other.signed_in]
+    if item in siblings and len(siblings) > 1:
+        place = siblings.index(item) + 1
+        lines.append(f'{item.provider}@*:MODEL tries {len(siblings)} accounts; this one is number {place}.')
+    if item.plugin_login is not None:
+        lines.append('Its plugin keeps the sign-in.')
+    return ' '.join(lines)
+
+
+def _state(item: Account) -> str:
+    return 'signed in' if item.signed_in else 'signed out'
+
+
+class AccountsSource:
+    """Every account as a row, in the order `@*` tries them, and a row that adds one."""
+
+    title = 'Accounts'
+
+    def __init__(self, store: SettingsStore) -> None:
+        """Read accounts from `store` each time the rows are read."""
+        self._store = store
+        self._found: dict[str, Account] = {}
+
+    def rows(self) -> list[FieldRow]:
+        """A row per account, then the row that adds one."""
+        found = accounts(self._store)
+        self._found = {account_key(item): item for item in found}
+        # Its state is its default too: there is nothing to reset an account to.
+        rows = [
+            FieldRow(
+                key=account_key(item),
+                label=f'{item.provider} · {item.name}',
+                description=_summary(item, found),
+                default=_state(item),
+            )
+            for item in found
+        ]
+        add = FieldRow(key=ADD, label='Add an account', description='Sign in to another account.', default='')
+        return [*rows, add]
+
+    def current(self, row: FieldRow) -> str:
+        """Whether the account was signed in when the rows were last read."""
+        item = self._found.get(row.key)
+        return '' if item is None else _state(item)
+
+    def problem(self, row: FieldRow, text: str) -> str | None:
+        """Accounts change through their action, not typed text."""
+        return 'Choose the account to change it.'
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        """Accounts change through their action, not typed text."""
+        raise ValueError('Choose the account to change it.')
+
+    def reset(self, row: FieldRow) -> str:
+        """Signing out asks first, through the account's action."""
+        raise ValueError('Choose the account to sign out of it.')
+
+
+async def _signed_in(sign_in: SignIn, target: str, dialogs: Dialogs) -> list[str]:
+    """Sign in to `target`; a failed sign-in is an error the page shows."""
+    try:
+        message = await sign_in(target, dialogs)
+    except (UserError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+    return [message] if message else []
+
+
+async def _add(
+    dialogs: Dialogs, *, store: SettingsStore, sign_in: SignIn, plugins: Callable[[], Mapping[str, PluginLogin]]
+) -> list[str]:
+    target = await new_account(store, plugins(), dialogs)
+    return [] if target is None else await _signed_in(sign_in, target, dialogs)
+
+
+async def _change(
+    dialogs: Dialogs, *, key: str, store: SettingsStore, sign_in: SignIn, forget: Callable[[str], None]
+) -> list[str]:
+    found = await to_thread.run_sync(accounts, store)
+    item = next((item for item in found if account_key(item) == key), None)
+    if item is None:
+        raise LookupError(f'{key} is no longer an account.')
+    siblings = [other for other in found if other.provider == item.provider]
+    place = siblings.index(item)
+    order = f'{item.provider}@*:MODEL tries accounts in this order.'
+    options = [
+        Option(value='sign-in', label='Sign in again' if item.signed_in else 'Sign in'),
+        Option(value='rename', label='Rename...', description='Change the name shown for it.'),
+    ]
+    if place > 0:
+        options.append(Option(value='earlier', label='Try it earlier', description=order))
+    if place < len(siblings) - 1:
+        options.append(Option(value='later', label='Try it later', description=order))
+    leave = 'Remove from the list' if item.plugin_login is not None else 'Sign out...'
+    options.append(Option(value='sign-out', label=leave))
+    title = f'{item.provider} · {item.name}'
+    match await dialogs.choose(title=title, options=options, description=_summary(item, found)):
+        case 'sign-in':
+            return await _signed_in(sign_in, item.login, dialogs)
+        case 'rename':
+            message = await rename_account(store, item, dialogs)
+        case 'earlier' | 'later' as direction:
+            offset = -1 if direction == 'earlier' else 1
+            await to_thread.run_sync(
+                partial(store.move_account, provider=item.provider, profile=item.profile, offset=offset)
+            )
+            message = f'{item.provider}@*:MODEL now tries {item.login} {direction}.'
+        case 'sign-out':
+            message = await sign_out_account(store, item, dialogs)
+            if message:
+                forget(item.login)
+        case _:
+            message = ''
+    return [message] if message else []
+
+
+def accounts_settings_menu(
+    store: SettingsStore,
+    *,
+    sign_in: SignIn,
+    plugins: Callable[[], Mapping[str, PluginLogin]],
+    forget: Callable[[str], None],
+) -> SettingsMenu:
+    """`/accounts` as a declared menu: a row per account to sign in, rename, reorder, or sign out, and one to add one.
+
+    `sign_in` is `/login`'s handler for one target, `plugins` the loaded plugins' sign-ins, and `forget`
+    drops a cached provider once its account signs out. Reads the accounts, so call it off the loop.
+    """
+    change = partial(_change, store=store, sign_in=sign_in, forget=forget)
+    actions: dict[str, Action] = {account_key(item): partial(change, key=account_key(item)) for item in accounts(store)}
+    actions[ADD] = partial(_add, store=store, sign_in=sign_in, plugins=plugins)
+    return SettingsMenu(source=AccountsSource(store), actions=actions, searchable=False)
 
 
 def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | None:
@@ -395,22 +526,14 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
     account is returned as it is. A picked account is pinned, the default one as `PROVIDER@default`,
     so `accounts.pool` does not spread it over the others.
     """
-    provider, _, name = model.partition(':')
-    if '@' in provider:
+    options = account_options(store, model)
+    if not options:
         return model
-    options = [item for item in accounts(store) if item.provider == provider_of(model)]
-    if not any(item.profile is not None for item in options):
-        return model
-    rows = [MenuItem(f'{item.name}  ({item.login})', value=item.pinned(name)) for item in options if item.signed_in]
-    if not any(item.profile is None for item in options):
-        rows.insert(0, MenuItem('default', value=with_profile(model, DEFAULT)))
-    if sum(item.signed_in for item in options) > 1:
-        rows.append(MenuItem('all accounts, in /accounts order', value=with_profile(model, ALL)))
     result = runners.run_choice(
-        MenuBuilder(f'Which {provider} account?')
+        MenuBuilder(f'Which {model.partition(":")[0]} account?')
         .style(markdown_style())
-        .items(rows)
-        .preview(lambda item: f'Runs as {item.value}' if isinstance(item.value, str) else '')
+        .items([MenuItem(option.label, value=option.value) for option in options])
+        .preview(lambda item: f'Runs as {item.value}')
         .footer_hint('Enter choose - Esc back')
         .key_source(menu_key)
         .build()
@@ -418,3 +541,19 @@ def choose_account(store: SettingsStore, model: str, runners: Runners) -> str | 
     if result.cancelled or result.item is None or not isinstance(result.item.value, str):
         return None
     return result.item.value
+
+
+def account_options(store: SettingsStore, model: str) -> list[Option]:
+    """The accounts `choose_account` offers to run `model`, each the model name it picks; none when there is no choice."""
+    provider, _, name = model.partition(':')
+    if '@' in provider:
+        return []
+    found = [item for item in accounts(store) if item.provider == provider_of(model)]
+    if not any(item.profile is not None for item in found):
+        return []
+    choices = [(item.pinned(name), f'{item.name}  ({item.login})') for item in found if item.signed_in]
+    if not any(item.profile is None for item in found):
+        choices.insert(0, (with_profile(model, DEFAULT), 'default'))
+    if sum(item.signed_in for item in found) > 1:
+        choices.append((with_profile(model, ALL), 'all accounts, in /accounts order'))
+    return [Option(value=value, label=label, description=f'Runs as {value}') for value, label in choices]

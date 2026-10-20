@@ -24,10 +24,13 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    EnqueuedMessagesEvent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -50,7 +53,10 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import BackgroundTools
+from pydantic_ai_harness import BackgroundTools, CodeMode
+from tests.harness.conftest import IsStr
+
+from ...realtime_connections import InferredConnection
 
 
 def _ack_seen(messages: list[ModelMessage]) -> bool:
@@ -68,9 +74,9 @@ def _follow_up_seen(messages: list[ModelMessage], needle: str) -> bool:
     return any(
         isinstance(part, UserPromptPart)
         and any(
-            needle in item
+            needle in (item.content if isinstance(item, TextContent) else item)
             for item in ([part.content] if isinstance(part.content, str) else part.content)
-            if isinstance(item, str)
+            if isinstance(item, str | TextContent)
         )
         for msg in messages
         if isinstance(msg, ModelRequest)
@@ -93,16 +99,16 @@ def _model_calling(tool_name: str, args: str = '{}', ack_callback: Callable[[], 
     return FunctionModel(model_fn)
 
 
-class _BackgroundRealtimeConnection(RealtimeConnection):
+class _BackgroundRealtimeConnection(InferredConnection):
     def __init__(self) -> None:
         self.sent: list[RealtimeInput] = []
         self.sent_event = asyncio.Event()
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         self.sent.append(content)
         self.sent_event.set()
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='structured', args='{}')
         yield ResponseDone()
         await asyncio.Event().wait()
@@ -180,13 +186,18 @@ class TestBackgroundTools:
             'Continue independent work, or end your response.'
         )
         follow_up = next(
-            part.content
-            for part in parts
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str) and 'Background tool' in part.content
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, list)
         )
-        assert follow_up == (
-            f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic"
-        )
+        assert follow_up.content == [
+            TextContent(
+                f"Background tool 'slow_research' (task {match['task_id']}) completed.\nResult: researched topic",
+                metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': match['task_id']},
+            )
+        ]
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
         image = BinaryContent(data=b'image bytes', media_type='image/png')
@@ -253,6 +264,17 @@ class TestBackgroundTools:
         result = await agent.run('go')
 
         assert _follow_up_seen(result.all_messages(), expected)
+        call = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+        )
+        follow_up = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
+        part = follow_up.parts[0]
+        assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
+        assert isinstance(part.content[0], TextContent)
+        assert part.content[0].metadata == {
+            'origin': 'pydantic-ai-harness.background_tools.result.v1',
+            'tool_call_id': call.tool_call_id,
+        }
         if private_detail is not None:
             assert not _follow_up_seen(result.all_messages(), private_detail)
 
@@ -421,7 +443,7 @@ class TestBackgroundTools:
                 release.set()
                 yield 'waiting'
             else:
-                yield {0: DeltaToolCall(name='slow', json_args='{}')}
+                yield {0: DeltaToolCall(name='slow', json_args='{}', tool_call_id='call-1')}
 
         agent = Agent(FunctionModel(stream_function=model_fn), capabilities=[BackgroundTools()])
 
@@ -431,12 +453,24 @@ class TestBackgroundTools:
             return 'value'
 
         output = None
+        delivered_messages: list[ModelMessage] = []
         async with agent.run_stream_events('go') as events:
             async for event in events:
                 if isinstance(event, AgentRunResultEvent):
                     output = event.result.output
+                elif isinstance(event, EnqueuedMessagesEvent):
+                    delivered_messages.extend(event.messages)
 
         assert output == 'done'
+        assert len(delivered_messages) == 1
+        part = delivered_messages[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == [
+            TextContent(
+                "Background tool 'slow' (task call-1) completed.\nResult: value",
+                metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'call-1'},
+            )
+        ]
 
     async def test_iter_delivers_background_result(self) -> None:
         agent = Agent(_model_calling('slow'), capabilities=[BackgroundTools()])
@@ -551,6 +585,33 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: first result')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: shared result')
 
+    @pytest.mark.parametrize(
+        ('background', 'args'),
+        [(True, '{}'), ('optional', '{"run_in_background": true}')],
+        ids=['always', 'optional-flag-set'],
+    )
+    async def test_instances_with_distinct_ids_schedule_a_call_once(self, background: bool | str, args: str) -> None:
+        """When two instances select the same tool, the outer one runs it and the inner one stays out of the way."""
+
+        agent = Agent(_model_calling('slow', args), capabilities=[BackgroundTools(id='a'), BackgroundTools(id='b')])
+
+        @agent.tool_plain(metadata={'background': background})
+        async def slow() -> str:
+            return 'slow result'
+
+        result = await agent.run('go')
+
+        follow_ups = [
+            item.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent)
+        ]
+        assert follow_ups == [IsStr(regex=r"Background tool 'slow' \(task \S+\) completed\.\nResult: slow result")]
+
     async def test_background_tool_uses_context_cancel_to_stop_the_run(self) -> None:
         first_started = asyncio.Event()
         second_started = asyncio.Event()
@@ -617,8 +678,8 @@ class TestBackgroundTools:
 
         result = await agent.run('go')
 
-        follow_up = next(
-            part
+        follow_up_message, follow_up = next(
+            (message, part)
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -626,12 +687,45 @@ class TestBackgroundTools:
         )
         assert isinstance(follow_up.content, list)
         assert len(follow_up.content) == 3
-        assert isinstance(follow_up.content[0], str)
-        assert follow_up.content[0].startswith("Background tool 'structured' (task ")
-        assert follow_up.content[0].endswith(') completed.\nResult: public answer')
+        assert isinstance(follow_up.content[0], TextContent)
+        assert follow_up.content[0].content.startswith("Background tool 'structured' (task ")
+        assert follow_up.content[0].content.endswith(') completed.\nResult: public answer')
         assert follow_up.content[1:] == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up.content)
         assert 'deferred_tool' not in str(follow_up.content)
+        call = next(
+            part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
+        )
+        assert follow_up.content[0].metadata == {
+            'origin': 'pydantic-ai-harness.background_tools.result.v1',
+            'tool_call_id': call.tool_call_id,
+        }
+        restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([follow_up_message]))
+        restored_part = restored[0].parts[0]
+        assert isinstance(restored_part, UserPromptPart)
+        assert isinstance(restored_part.content, list)
+        assert restored_part.content[:2] == follow_up.content[:2]
+        restored_image = restored_part.content[2]
+        assert isinstance(restored_image, BinaryContent)
+        assert restored_image.data == image.data
+        assert restored_image.media_type == image.media_type
+
+        def resumed_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert len(messages) == 1
+            assert messages[0].parts == [steering, restored_part]
+            part = messages[0].parts[1]
+            assert isinstance(part, UserPromptPart) and isinstance(part.content, list)
+            assert isinstance(part.content[0], TextContent)
+            assert part.content[0].metadata == {
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': call.tool_call_id,
+            }
+            return ModelResponse(parts=[TextPart('done')])
+
+        steering = UserPromptPart('steering')
+        await Agent(FunctionModel(resumed_model)).run(
+            message_history=[ModelRequest(parts=[steering]), *restored],
+        )
 
     async def test_tool_return_preserves_string_content(self) -> None:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])
@@ -794,7 +888,10 @@ class TestBackgroundTools:
                 release['fast_bg'].set()
                 return ModelResponse(parts=[TextPart(content='waiting')])
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='fast_bg', args='{}'), ToolCallPart(tool_name='slow_bg', args='{}')]
+                parts=[
+                    ToolCallPart(tool_name='fast_bg', args='{}', tool_call_id='fast-call'),
+                    ToolCallPart(tool_name='slow_bg', args='{}', tool_call_id='slow-call'),
+                ]
             )
 
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
@@ -812,8 +909,26 @@ class TestBackgroundTools:
         result = await asyncio.wait_for(agent.run('go'), timeout=5)
 
         assert result.output == 'done'
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: fast value')
-        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
+        delivered_results = [
+            item
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for prompt in message.parts
+            if isinstance(prompt, UserPromptPart) and isinstance(prompt.content, list)
+            for item in prompt.content
+            if isinstance(item, TextContent)
+            and ('completed.\nResult: fast value' in item.content or 'completed.\nResult: slow value' in item.content)
+        ]
+        assert delivered_results == [
+            TextContent(
+                "Background tool 'fast_bg' (task fast-call) completed.\nResult: fast value",
+                metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'fast-call'},
+            ),
+            TextContent(
+                "Background tool 'slow_bg' (task slow-call) completed.\nResult: slow value",
+                metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'slow-call'},
+            ),
+        ]
 
     async def test_failed_background_tool_cancels_its_sibling(self) -> None:
         slow_started = asyncio.Event()
@@ -1206,8 +1321,11 @@ class TestBackgroundTools:
         with pytest.raises(UserError, match='already has a'):
             await agent.run('go')
 
+    # The nested case is deep enough to raise `RecursionError` on 3.14+ too, where `json` limits depth by C stack size.
     @pytest.mark.parametrize(
-        'args', ['{', '[]', '{"run_in_background": "yes"}'], ids=['not-json', 'not-object', 'flag-not-boolean']
+        'args',
+        ['{', '[' * 100_000 + ']' * 100_000, '[]', '{"run_in_background": "yes"}'],
+        ids=['not-json', 'too-deeply-nested', 'not-object', 'flag-not-boolean'],
     )
     async def test_invalid_args_for_optional_tool_are_retried(self, args: str) -> None:
         retry_seen = False
@@ -1232,6 +1350,39 @@ class TestBackgroundTools:
         await agent.run('go')
 
         assert retry_seen
+
+    @pytest.mark.parametrize(
+        ('background', 'code'),
+        [
+            (True, 'r = await lookup(n=2)\nr * 10'),
+            ('optional', 'r = await lookup(n=2, run_in_background=True)\nr * 10'),
+        ],
+        ids=['always', 'optional-flag-set'],
+    )
+    async def test_call_from_code_mode_returns_its_value(self, background: bool | str, code: str) -> None:
+        """A background tool called from code mode's `run_code` hands its value to the script, not a started message."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[CodeMode(), BackgroundTools()])
+
+        @agent.tool_plain(metadata={'background': background})
+        async def lookup(n: int) -> int:
+            return n
+
+        result = await agent.run('go')
+
+        run_code_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        )
+        assert run_code_return.content == 20
+        assert not _ack_seen(result.all_messages())
 
     async def test_run_scoped_sequential_mode_does_not_advertise_run_in_background(self) -> None:
         seen: list[ToolDefinition] = []

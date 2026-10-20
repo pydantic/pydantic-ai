@@ -250,6 +250,7 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_pre_agent_steps_tag_fetch.py
           .github/scripts/test_agent_provider_health.py
           .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
@@ -265,6 +266,7 @@ jobs:
           .github/scripts/test_ci_content_classifier.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
+          scripts/test_gather_pydantic_ai_review_context.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -378,8 +380,10 @@ jobs:
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
-          # 156 s, so 200 keeps the same headroom.
-          PYRIGHT_TIME_BUDGET: "200"
+          # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
+          # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
+          # still fails a regression like #8077's.
+          PYRIGHT_TIME_BUDGET: "260"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -736,7 +740,7 @@ jobs:
       }})
     needs: [classify, test-durations-baseline]
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -778,22 +782,47 @@ jobs:
       # `tests/harness/pgtask` runs on pgtask's schema in the same server.
       PGTASK_REQUIRE_LIVE: "1"
       PGTASK_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-    services:
-      postgres:
-        image: postgres:16
-        ports:
-          - 5432:5432
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      # Ubuntu 24.04 includes PostgreSQL 16. Create a separate cluster with the Docker
+      # database's locale; the runner's pre-created cluster defaults to C.UTF-8.
+      - name: start PostgreSQL 16
+        id: postgres
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGDATABASE: postgres
+          PGPASSWORD: postgres
+          PGCONNECT_TIMEOUT: "5"
+        run: |
+          sudo pg_createcluster --port=5432 --locale=en_US.utf8 --start-conf=manual --pgoption=timezone=Etc/UTC 16 ci \
+            -- --auth-local=peer --auth-host=scram-sha-256
+          sudo -u postgres pg_ctlcluster 16 ci start -- -w -t 60
+          sudo -u postgres psql -X -h /var/run/postgresql -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "ALTER ROLE postgres PASSWORD 'postgres'"
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT version(), datcollate, datctype, current_setting('server_encoding')
+          FROM pg_database WHERE datname = current_database();
+          DO $verify$
+          BEGIN
+            ASSERT current_setting('server_version_num')::int / 10000 = 16;
+            ASSERT current_setting('server_encoding') = 'UTF8';
+            ASSERT current_setting('TimeZone') = 'Etc/UTC';
+            ASSERT (SELECT datcollate = 'en_US.utf8' AND datctype = 'en_US.utf8'
+                    FROM pg_database WHERE datname = current_database());
+            ASSERT (SELECT array_agg(v ORDER BY v) FROM
+                    (VALUES ('a'), ('A'), ('z'), ('Z'), ('é'), ('😀')) AS sample(v))
+                    = ARRAY['😀', 'a', 'A', 'é', 'z', 'Z'];
+          END
+          $verify$;
+          SQL
+          if PGPASSWORD=deliberately-wrong psql -X -c 'SELECT 1'; then
+            echo '::error::PostgreSQL accepted an incorrect password'
+            exit 1
+          fi
 
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
@@ -893,6 +922,14 @@ jobs:
             --store-durations --clean-durations --durations-path "$RUNNER_TEMP/test-durations.json"
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
+      - name: stop PostgreSQL 16
+        if: ${{ always() && steps.postgres.outcome != 'skipped' }}
+        run: |
+          sudo -u postgres pg_ctlcluster --mode fast 16 ci stop -- -w -t 30
+          status=0
+          pg_isready -h 127.0.0.1 -p 5432 -t 5 || status=$?
+          test "$status" -eq 2
 
       # Only `main` push runs are ever read back as the baseline (`shard_durations.py fetch`).
       - name: store test durations
@@ -1429,6 +1466,7 @@ jobs:
           --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
           coverage run -m pytest
           tests/test_mcp.py
+          tests/test_mcp_apps.py
           tests/models/test_mcp_sampling.py
           tests/test_conftest.py
         env:
@@ -1458,6 +1496,7 @@ jobs:
     outputs:
       localstack: ${{ steps.detect.outputs.localstack }}
       mongodb: ${{ steps.detect.outputs.mongodb }}
+      postgres: ${{ steps.detect.outputs.postgres }}
       redis: ${{ steps.detect.outputs.redis }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1486,6 +1525,9 @@ jobs:
           detect localstack "$H/pydantic_ai_harness/localstack" tests/harness/localstack "$H/integration_tests/localstack"
           detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
             tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
+          detect postgres "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
+            tests/harness/step_persistence tests/harness/media tests/harness/_postgres_sqlite.py \
+            "$H/integration_tests/postgres"
           detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
 
   harness-localstack-integration:
@@ -1539,8 +1581,10 @@ jobs:
     timeout-minutes: 15
     services:
       mongodb:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/mongo:8
+        # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
+        # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
+        # kernel (https://jira.mongodb.org/browse/SERVER-131779).
+        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
         ports:
           - 27017:27017
         options: >-
@@ -1565,6 +1609,45 @@ jobs:
 
       - run: make integration-mongodb
 
+  harness-postgres-integration:
+    name: harness Postgres integration tests
+    needs: [harness-integration-changes]
+    # No fork clause: the service below reads no secret.
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.postgres == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      POSTGRES_REQUIRE_LIVE: "1"
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-postgres
+
+      - run: make integration-postgres
+
   harness-redis-integration:
     name: harness Redis integration tests
     needs: [harness-integration-changes]
@@ -1575,8 +1658,8 @@ jobs:
     timeout-minutes: 15
     services:
       redis:
-        # AWS's mirror of the official image: Docker Hub rate-limits anonymous pulls from shared runner IPs.
-        image: public.ecr.aws/docker/library/redis:8
+        # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
+        image: redis:8
         ports:
           - 6379:6379
         options: >-
@@ -1678,6 +1761,7 @@ jobs:
       - harness-integration-changes
       - harness-localstack-integration
       - harness-mongodb-integration
+      - harness-postgres-integration
       - harness-redis-integration
       - latest-versions-canary
       - coverage
@@ -1701,20 +1785,20 @@ jobs:
             ${{
               needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,content-checks'
               || needs.classify.outputs.content_only == 'true'
               && needs.classify.outputs.docs_changed != 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
               && needs.classify.outputs.docs_changed == 'true'
-              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || needs.classify.outputs.harness_only == 'true'
-              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,content-checks,mypy,test-temporal-latest,test-examples,test-fastmcp-4,test-clai2-clipboard,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-postgres-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

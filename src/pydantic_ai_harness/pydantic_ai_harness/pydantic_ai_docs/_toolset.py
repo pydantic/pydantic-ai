@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from pathlib import Path
 
 import httpx
+from pydantic import TypeAdapter
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
@@ -17,6 +19,17 @@ and each topic maps to `{base}/{page}` -- byte-identical to a local checkout."""
 
 _FETCH_TIMEOUT = 30.0
 """Per-request timeout (seconds) for the remote markdown fetch."""
+
+_MODEL_ALIAS_RE = re.compile(r'\{\{ ([a-z0-9-]+:[a-z]+)(\.name)? \}\}')
+"""A model alias in a docs page, as the docs site expands it.
+
+`{{ openai:medium }}` stands for the full model string, like `openai:<model>`, and
+`{{ openai:medium.name }}` for the bare model name, like `<model>`."""
+
+_MODEL_ALIASES_FILE = 'model_aliases/aliases.json'
+"""The file, relative to the docs directory, that maps each model alias to the model it stands for."""
+
+_MODEL_ALIASES_ADAPTER = TypeAdapter(dict[str, str])
 
 
 # Preserve string formatting of existing public enum members.
@@ -52,8 +65,10 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
 
     Resolution per call: a configured local checkout first (when the topic's
     page exists there), otherwise a raw-markdown fetch from `main`. The full doc
-    is returned verbatim. Results are memoized in the run-scoped `cache` dict
-    when caching is enabled.
+    is returned with its model aliases, like `{{ openai:medium }}`, replaced by the
+    models they stand for, read from the docs' alias file through the same
+    resolution. Results are memoized in the run-scoped `cache` dict when caching
+    is enabled.
     """
 
     def __init__(
@@ -82,28 +97,48 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         if self._cache is not None and topic in self._cache:
             return self._cache[topic]
 
-        markdown = await self._read_local(ctx, topic)
-        if markdown is None:
-            markdown = await self._fetch_remote(topic)
+        markdown = await self._read(ctx, _PAGES[topic])
+        # Only pages that use aliases need the alias file, so checkouts from before it existed keep working.
+        if _MODEL_ALIAS_RE.search(markdown):
+            try:
+                aliases = _MODEL_ALIASES_ADAPTER.validate_json(await self._read(ctx, _MODEL_ALIASES_FILE))
+            except RuntimeError:
+                # The page is still worth returning with its aliases as written.
+                aliases = {}
+
+            def resolve(match: re.Match[str]) -> str:
+                alias, bare = match.groups()
+                if (model := aliases.get(alias)) is None:
+                    return match.group()
+                return model.partition(':')[2] if bare else model
+
+            markdown = _MODEL_ALIAS_RE.sub(resolve, markdown)
 
         if self._cache is not None:
             self._cache[topic] = markdown
         return markdown
 
-    async def _read_local(self, ctx: RunContext[AgentDepsT], topic: PydanticAIDocsTopic) -> str | None:
-        """Return the local checkout's markdown for `topic`, or `None` to fall back to remote."""
+    async def _read(self, ctx: RunContext[AgentDepsT], file: str) -> str:
+        """Return `file`, relative to the docs directory, from the local checkout, else from the live source."""
+        text = await self._read_local(ctx, file)
+        if text is None:
+            text = await self._fetch_remote(file)
+        return text
+
+    async def _read_local(self, ctx: RunContext[AgentDepsT], file: str) -> str | None:
+        """Return the local checkout's `file`, or `None` to fall back to remote."""
         if self._local_docs_path is None:
             return None
-        local_path = self._local_docs_path / _PAGES[topic]
+        local_path = self._local_docs_path / file
         path = await ctx.workspace.resolve(workspace_path(local_path))
         try:
             return await ctx.workspace.read_text(path)
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return None
 
-    async def _fetch_remote(self, topic: PydanticAIDocsTopic) -> str:
-        """Fetch `topic`'s markdown from the live source, or raise a descriptive error."""
-        url = f'{_REMOTE_BASE}/{_PAGES[topic]}'
+    async def _fetch_remote(self, file: str) -> str:
+        """Fetch `file` from the live source, or raise a descriptive error."""
+        url = f'{_REMOTE_BASE}/{file}'
         try:
             async with httpx.AsyncClient(timeout=_FETCH_TIMEOUT) as client:
                 response = await client.get(url)
@@ -111,7 +146,7 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
         except httpx.HTTPError as exc:
             local = 'no local checkout configured' if self._local_docs_path is None else str(self._local_docs_path)
             raise RuntimeError(
-                f'Could not locate the {topic.value!r} docs. Local source: {local}. '
+                f'Could not locate {file!r} in the Pydantic AI docs. Local source: {local}. '
                 f'Remote fetch from {url} failed: {exc}'
             ) from exc
         return response.text

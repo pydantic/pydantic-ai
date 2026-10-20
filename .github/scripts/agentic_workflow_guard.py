@@ -39,6 +39,10 @@ budget before anyone noticed, documented in #6766:
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
+- `logfire-import` / `logfire-compiled` / `logfire-network` — three Z.AI
+  workflows reached `main` without the shared Logfire import or compiled OTLP
+  settings, so their runs exported no traces (#19). The compiled firewall must
+  also allow all six Logfire ingest hosts or it can silently block export.
 
 Run over the repo with `python .github/scripts/agentic_workflow_guard.py check`,
 or as policy tests via `test_agentic_workflow_guard.py`.
@@ -740,6 +744,55 @@ def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
     return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
 
 
+def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every Z.AI workflow must compile the shared Logfire export settings."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        if 'shared/otel-logfire.md' not in _as_strings(frontmatter.get('imports')):
+            violations.append(
+                Violation(str(source), 'logfire-import', 'Z.AI workflow does not import `shared/otel-logfire.md`.')
+            )
+
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(lock), 'logfire-compiled', 'Z.AI workflow has no compiled lock.'))
+            continue
+        compiled = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        env = _as_mapping(compiled.get('env'))
+        required = ('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_AW_OTLP_ENDPOINTS')
+        if not all(isinstance(env.get(name), str) and env[name] for name in required):
+            violations.append(
+                Violation(str(lock), 'logfire-compiled', 'Compiled Z.AI workflow lacks shared OTLP export settings.')
+            )
+
+        logfire_hosts = {
+            'logfire-api.pydantic.dev',
+            'logfire-eu.pydantic.dev',
+            'logfire-us.pydantic.dev',
+            'logfire-api.pydantic.info',
+            'logfire-eu.pydantic.info',
+            'logfire-us.pydantic.info',
+        }
+        jobs = _as_mapping(compiled.get('jobs'))
+        allowed_domain_sets: list[set[str]] = []
+        for job in jobs.values():
+            steps_value: object = _as_mapping(job).get('steps')
+            if not _is_object_sequence(steps_value):
+                continue
+            for step in steps_value:
+                domains = _as_mapping(_as_mapping(step).get('env')).get('GH_AW_ALLOWED_DOMAINS')
+                if isinstance(domains, str):
+                    allowed_domain_sets.append(set(domains.split(',')))
+        if not allowed_domain_sets or any(not logfire_hosts <= domains for domains in allowed_domain_sets):
+            violations.append(
+                Violation(str(lock), 'logfire-network', 'Compiled Z.AI workflow firewall omits Logfire ingest hosts.')
+            )
+    return violations
+
+
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """Shared and workflow-local engines must use the shared provider configuration."""
     engine_path = workflows_dir / 'shared' / 'engine-zai.md'
@@ -965,6 +1018,43 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     return []
 
 
+def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI workflows must expose the incident-bound recovery input when dispatch can reach the model."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        # The UI review can reach its model only from a pull request event: its
+        # detect job needs `github.event.pull_request.number` before activation.
+        if source.name == 'pydantic-ai-ui-security-review.md':
+            continue
+        trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
+        recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
+        if recovery_input.get('type') != 'string' or recovery_input.get('required') is not False:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-recovery-input',
+                    'Z.AI workflows must expose optional string input `recovery_issue` for operator-verified recovery.',
+                )
+            )
+    health_path = workflows_dir / 'shared' / 'provider-health.md'
+    if (
+        not health_path.is_file()
+        or "PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}"
+        not in health_path.read_text(encoding='utf-8')
+    ):
+        violations.append(
+            Violation(
+                str(health_path),
+                'provider-health-recovery-input',
+                'The trusted provider-health job must pass the optional `recovery_issue` input to its artifact.',
+            )
+        )
+    return violations
+
+
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
     """The serialized monitor only accepts completions from the enumerated Z.AI workflows."""
     monitor_path = workflows_dir / 'agent-provider-health.yml'
@@ -998,6 +1088,21 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Monitor needs schedule and manual recovery triggers.',
             )
         )
+    dispatch_inputs = _as_mapping(_as_mapping(triggers.get('workflow_dispatch')).get('inputs'))
+    expected_recovery_inputs = {
+        'recover_issue': ('number', True),
+    }
+    for input_name, (input_type, required) in expected_recovery_inputs.items():
+        configured = _as_mapping(dispatch_inputs.get(input_name))
+        if configured.get('type') != input_type or configured.get('required') is not required:
+            violations.append(
+                Violation(
+                    str(monitor_path),
+                    'provider-health-monitor-recovery-inputs',
+                    'Manual provider recovery must require the original `recover_issue` input.',
+                )
+            )
+            break
     if str(monitor.get('name', '')) in monitor_names:
         violations.append(
             Violation(
@@ -1068,12 +1173,22 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
     artifact_steps: list[Mapping[str, object]] = [
         step for step in steps if str(step.get('uses', '')).startswith('actions/download-artifact@')
     ]
-    if any(str(step.get('if', '')).strip() != "github.event_name == 'workflow_run'" for step in artifact_steps):
+    source_artifact_condition = "github.event_name == 'workflow_run'"
+    if any(
+        not (
+            (
+                str(step.get('if', '')).strip() == source_artifact_condition
+                or str(step.get('if', '')).strip().startswith(source_artifact_condition + ' && ')
+            )
+            and _as_mapping(step.get('with')).get('run-id') == '${{ github.event.workflow_run.id }}'
+        )
+        for step in artifact_steps
+    ):
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-artifact-trigger',
-                'Agent artifacts may only be downloaded for the allowlisted `workflow_run` event.',
+                'Artifacts may only be downloaded for allowlisted workflow completions and their exact source run.',
             )
         )
     artifact_paths = re.compile(r'(?:^|[\s"\'=])(?:\./)?(?:agent|provider-health)/\S+')
@@ -1131,6 +1246,24 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Completed workflow reconciliation must pass the source workflow run attempt from the workflow_run event.',
             )
         )
+    recovery_steps = [
+        step
+        for step in steps
+        if str(step.get('if', '')).strip() == "github.event_name == 'workflow_dispatch'"
+        and 'ISSUE_NUMBER' in _as_mapping(step.get('env'))
+    ]
+    if (
+        len(recovery_steps) != 1
+        or _as_mapping(recovery_steps[0].get('env')).get('ISSUE_NUMBER') != '${{ inputs.recover_issue }}'
+        or '--recover-issue "$ISSUE_NUMBER"' not in str(recovery_steps[0].get('run', ''))
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-manual-recovery',
+                'Manual provider recovery must pass the original `recover_issue` input to the controller.',
+            )
+        )
     provider_key_events: dict[str, set[str]] = {key: set() for key in provider_keys}
     if any(key in workflow_env or key in job_env for key in provider_keys):
         violations.append(
@@ -1162,7 +1295,11 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             )
         )
     permissions = _as_mapping(monitor_job.get('permissions'))
-    if permissions != {'actions': 'read', 'contents': 'read', 'issues': 'write'}:
+    if permissions != {
+        'actions': 'read',
+        'contents': 'read',
+        'issues': 'write',
+    }:
         violations.append(
             Violation(
                 str(monitor_path),
@@ -1251,9 +1388,11 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_logfire_wiring(workflows_dir)
     violations += check_provider_engine_config(workflows_dir)
     violations += check_provider_health_wiring(workflows_dir)
     violations += check_provider_health_identity(workflows_dir)
+    violations += check_provider_health_recovery_wiring(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:

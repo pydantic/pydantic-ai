@@ -237,6 +237,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
@@ -1223,7 +1224,8 @@ def _get_usage_checking_stream_response(
 
         async def _usage_checking_iterator():
             async for item in events:
-                limits.check_tokens(get_usage())
+                # Omitted usage is warned about once the response completes, not on every event.
+                limits._check_token_limits(get_usage())  # pyright: ignore[reportPrivateUsage]
                 # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
                 if limits.per_request_input_tokens_limit is not None:
                     limits.check_per_request_input_tokens(get_request_input_tokens())

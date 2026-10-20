@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Generator
 from threading import Thread
 from typing import Any
@@ -33,15 +34,17 @@ def test_infer_obj_name():
     assert result is None
 
 
-def test_infer_obj_name_no_frame():
+def test_infer_obj_name_no_frame(monkeypatch: pytest.MonkeyPatch):
     """Test infer_obj_name when frame inspection fails."""
-    # This is hard to trigger without mocking, but we can test that the function
-    # returns None gracefully when it can't find the object
     some_obj = object()
 
     # Call with depth that would exceed the call stack
     result = infer_obj_name(some_obj, depth=1000)
     assert result is None
+
+    # Python implementations without stack frame support return `None` from `inspect.currentframe()`
+    monkeypatch.setattr(inspect, 'currentframe', lambda: None)
+    assert infer_obj_name(some_obj, depth=1) is None
 
 
 global_obj = object()

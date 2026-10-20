@@ -17,7 +17,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 !!! tip
-    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI.
+    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI. To let the users of your open-source or local app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md).
 
 ## Environment variable
 
@@ -32,7 +32,7 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-6-sol')
+agent = Agent('{{ openai:medium }}')
 ...
 ```
 
@@ -48,7 +48,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-6-sol')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -65,7 +65,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -74,7 +74,7 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
-The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
+The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count for a model, agent or run without building the client yourself. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
 
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
@@ -84,7 +84,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -106,7 +106,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-5.2',
+    '{{ openai:medium.name }}',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -150,9 +150,9 @@ You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
-    temperature=0.2,
+    openai_reasoning_effort='low',
     service_tier='flex',
 )
 agent = Agent(model, model_settings=settings)
@@ -164,7 +164,7 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
-OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices.
 
 ### Prompt caching
 
@@ -249,7 +249,7 @@ Both the Responses and Chat Completions APIs can run [moderation](https://platfo
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
     openai_moderation={'model': 'omni-moderation-latest'}
 )
@@ -332,7 +332,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Open a new browser tab')
@@ -346,11 +346,20 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without the setting has no recorded history, and is continued from as before.
+
+!!! warning "Redacting stored history"
+    The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] to make it an HMAC.
+
+    Don't just clear `history_digest`: a response without one is trusted and continued from, while OpenAI still holds the unredacted copy. If you do strip it, also clear `provider_response_id` on the same responses, so nothing continues from them.
+
+Every model continuing the same conversations needs the same `history_digest_key`, including workers under [durable execution](../durable_execution/overview.md); a response recorded with a different key, or none, is resent rather than continued from. Computing the digest serializes the history on each request, which costs local work proportional to the conversation's length.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -373,7 +382,7 @@ As an alternative to passing `message_history`, you can pass a concrete `provide
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -396,7 +405,7 @@ OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversatio
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -404,7 +413,7 @@ result = agent.run_sync('What did we discuss last time?', model_settings=model_s
 print(result.output)
 ```
 
-When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response. OpenAI keeps the conversation itself, so it can't be rewritten from the client: changes to the messages before that response, by a [history processor](../message-history.md#processing-message-history) or [compaction](../capabilities/compaction.md) for instance, don't reach the model. Unlike [`openai_previous_response_id`](#referencing-earlier-responses), which falls back to sending the full history, there is no conversation to fall back to without duplicating its items.
 
 When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 
@@ -412,7 +421,7 @@ When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conver
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -440,7 +449,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction()],
 )
 ```
@@ -456,7 +465,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(token_threshold=100_000)],
 )
 ```
@@ -468,7 +477,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(message_count_threshold=20)],
 )
 ```
@@ -522,7 +531,7 @@ For long-running requests, such as large reasoning or tool-heavy jobs that may e
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(openai_background=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -542,7 +551,7 @@ If you need the [Chat Completions API](https://platform.openai.com/docs/api-refe
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai-chat:gpt-5.2')
+agent = Agent('openai-chat:{{ openai:medium.name }}')
 ...
 ```
 
@@ -550,7 +559,7 @@ agent = Agent('openai-chat:gpt-5.2')
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIChatModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```

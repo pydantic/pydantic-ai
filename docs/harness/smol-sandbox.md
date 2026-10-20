@@ -28,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
@@ -45,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 
 followup = agent.run_sync('Now make it print the first 100.', message_history=result.all_messages())
@@ -63,7 +63,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SmolSandbox(image='python:3.12-alpine'), Shell(), FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(image='python:3.12-alpine'), Shell(), FileSystem()])
 
 
 @agent.tool
@@ -84,7 +84,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(image='python:3.12-alpine'), Coder()])
 
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ref = result.workspace.ref  # store this, e.g. in your database
@@ -120,7 +120,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[SmolSandbox(), Coder()])
+agent = Agent('{{ anthropic:large }}', capabilities=[SmolSandbox(), Coder()])
 
 
 async def main() -> None:

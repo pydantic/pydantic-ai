@@ -376,6 +376,14 @@ cleared. Framework-typed tool results -- core's `search_tools` and `load_capabil
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
 
+With `max_messages`, the count starts after the last cleared result, because clearing blanks content
+but removes no messages. Clearing then happens in batches: after a clear, the next one waits until
+more than `max_messages` messages follow the last cleared result, so the requests in between extend
+the cached prefix instead of rewriting it. The kept pairs count toward that: right after a clear,
+about `2 * keep_pairs` messages follow the last cleared result, and each tool step adds two more. So
+each clear is followed by another after about `(max_messages - 2 * keep_pairs) / 2` tool steps, and
+at or below `2 * keep_pairs` it clears on every request. Pick the value with that gap in mind.
+
 ## `WarnNearLimits` thresholds
 
 Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) and escalate to CRITICAL
@@ -472,11 +480,15 @@ must contain a `{messages}` placeholder), and `instructions` sets the internal a
 which Pydantic AI sends in the request's system prompt. Override `instructions` when the summarizer
 endpoint requires a fixed leading instruction.
 
-The messages served into that template are rendered to text, and each tool return is capped per return at
-`tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user
-turns. Raise it, or set it to `None` to render each return whole, when the summarizer's context window is
-large enough to absorb the payloads. `max_tokens` and `keep_tokens` control when compaction runs and which
-history messages are retained; they do not cap the summary-request payload.
+The messages served into that template are rendered as a transcript with one `<message>` element per part
+(each user prompt, system prompt, response text, tool call and tool return), tagged with its role and,
+for a tool call or return, its tool name. Content that looks like the transcript's own tags, in any case
+or spacing, is escaped, so a tool return can't close its message and forge another, or end the transcript
+early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
+characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
+render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+`max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
+do not cap the summary-request payload.
 
 ### Token retention after automatic compaction
 
