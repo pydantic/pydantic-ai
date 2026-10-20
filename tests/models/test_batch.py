@@ -968,20 +968,20 @@ async def test_requests_cancelled_during_submission_are_abandoned_in_their_batch
 
 async def test_a_request_cancelled_as_its_batch_is_created_is_abandoned_in_it() -> None:
     """Cancelled after the submission handed it its batch, but before it saw it, a request abandons the batch."""
-    requests: list[asyncio.Task[ModelResponse]] = []
+    tasks: list[asyncio.Task[ModelResponse]] = []
 
     class CancellingBatchModel(SlowBatchTestModel):
-        async def batch_create(self, requests_to_create: Sequence[EncodedBatchRequest]) -> Batch:
-            batch = await super().batch_create(requests_to_create)
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            batch = await super().batch_create(requests)
             # Runs before the requests wake up to the batch the submission is about to hand them.
-            asyncio.get_running_loop().call_soon(requests[0].cancel)
+            asyncio.get_running_loop().call_soon(tasks[0].cancel)
             return batch
 
     wrapped = CancellingBatchModel(pending_checks=1000)
     model = _batched(wrapped, **FAST_POLLING, max_requests=1, max_wait=None)
-    requests.append(asyncio.create_task(_pending_response(model)))
+    tasks.append(asyncio.create_task(_pending_response(model)))
     with pytest.raises(asyncio.CancelledError):
-        await requests[0]
+        await tasks[0]
     with anyio.fail_after(5):
         while not wrapped.canceled:
             await asyncio.sleep(0)
@@ -989,27 +989,28 @@ async def test_a_request_cancelled_as_its_batch_is_created_is_abandoned_in_it() 
 
 
 async def test_a_failing_cancel_of_an_abandoned_batch_is_ignored() -> None:
-    requests: list[asyncio.Task[ModelResponse]] = []
+    tasks: list[asyncio.Task[ModelResponse]] = []
     cancel_attempts: list[str] = []
+    cancel_attempted = asyncio.Event()
 
     class FailingCancelModel(SlowBatchTestModel):
-        async def batch_create(self, requests_to_create: Sequence[EncodedBatchRequest]) -> Batch:
-            batch = await super().batch_create(requests_to_create)
-            asyncio.get_running_loop().call_soon(requests[0].cancel)
+        async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+            batch = await super().batch_create(requests)
+            asyncio.get_running_loop().call_soon(tasks[0].cancel)
             return batch
 
         async def batch_cancel(self, batch: Batch) -> Batch:
             cancel_attempts.append(batch.id)
+            cancel_attempted.set()
             raise ModelHTTPError(status_code=500, model_name='test', body='cancel failed')
 
     wrapped = FailingCancelModel(pending_checks=1000)
     model = _batched(wrapped, **FAST_POLLING, max_requests=1, max_wait=None)
-    requests.append(asyncio.create_task(_pending_response(model)))
+    tasks.append(asyncio.create_task(_pending_response(model)))
     with pytest.raises(asyncio.CancelledError):
-        await requests[0]
+        await tasks[0]
     with anyio.fail_after(5):
-        while not cancel_attempts:
-            await asyncio.sleep(0)
+        await cancel_attempted.wait()
     # Let the cancel task finish; an unretrieved exception would fail the test as an unraisable warning.
     for _ in range(5):
         await asyncio.sleep(0)
