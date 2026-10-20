@@ -58,8 +58,8 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   `multi_select`, at least one either way, and no label twice.
 - An answerer may instead return `AskUserAnswer(header=q.header, custom_answer='My own answer')`.
   Leave `selected` empty. Custom text must be nonblank and contain no control characters other
-  than newlines and no format characters (zero-width spaces, joiners, bidi overrides), so run
-  `check_response` on text a user typed. Its length is not limited, so cap free text that
+  than newlines and no format characters such as zero-width spaces, joiners and bidirectional
+  overrides, so run `check_response` on text a user typed. Its length is not limited, so cap free text that
   arrives from a client before returning it. The model receives it as a one-item list under the
   question's header.
   Whether to offer text entry is up to the answerer; the model cannot request it.
