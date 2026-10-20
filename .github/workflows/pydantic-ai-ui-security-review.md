@@ -48,7 +48,9 @@ safe-outputs:
   # verdict since both run as github-actions[bot].
   submit-pull-request-review:
     max: 1
-timeout-minutes: 30
+timeout-minutes: 60
+env:
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '60'
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md

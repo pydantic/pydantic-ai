@@ -36,7 +36,9 @@ safe-outputs:
   submit-pull-request-review:
     supersede-older-reviews: true
     max: 1
-timeout-minutes: 30
+timeout-minutes: 60
+env:
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '60'
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
