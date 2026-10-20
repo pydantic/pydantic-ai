@@ -57,8 +57,9 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   with the picked option labels in `selected`: exactly one unless the question is
   `multi_select`, at least one either way, and no label twice.
 - An answerer may instead return `AskUserAnswer(header=q.header, custom_answer='My own answer')`.
-  Leave `selected` empty. Custom text must be nonblank and contain no control characters
-  other than newlines. Its length is not limited, so cap free text that arrives from a client
+  Leave `selected` empty. Custom text must be nonblank and contain no control characters other
+  than newlines and no invisible formatting (zero-width characters, joiners, bidi overrides), so
+  run `check_response` on text a user typed. Its length is not limited, so cap free text that arrives from a client
   before returning it. The model receives it as a one-item list under the question's header.
   Whether to offer text entry is up to the answerer; the model cannot request it.
 - When the user declines, return `AskUserResponse(cancelled=True)` with no answers. The tool
@@ -70,8 +71,8 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
 - By default, two `ask_user_question` calls in one model response reach the answerer
   concurrently, so serialize in the answerer if your UI shows one request at a time. Other tool
   calls from that response may run while the user decides: an answer shapes the model's next
-  response, not calls it already made. `Agent.parallel_tool_call_execution_mode('sequential')`
-  runs a response's calls one at a time.
+  response, not calls it already made. To run a response's calls one at a time, wrap the run in
+  `with Agent.parallel_tool_call_execution_mode('sequential'):`.
 - The model writes the questions, and a prompt injection can make it ask for a password or a
   token. Present the questions as coming from the model, not as a system or sign-in prompt.
 
@@ -181,19 +182,19 @@ The tool schema mirrors [Code Puppy](https://github.com/mpfaffenberger/code_pupp
 
 | Field | Limit |
 | --- | --- |
-| `questions` | 1 to 10 per call; headers unique, ignoring case |
+| `questions` | 1 to 10 per call; headers unique, ignoring case and character width |
 | `header` | 1 to 25 characters, one line |
 | `question` | 1 to 500 characters, may span lines |
-| `options` | 2 to 6 per question; labels unique, ignoring case |
+| `options` | 2 to 6 per question; labels unique, ignoring case and character width |
 | `label` | 1 to 50 characters, one line |
 | `description` | optional, at most 200 characters, may span lines |
 
 These strings are drawn on terminals, where an escape sequence in a prompt-injected call is an
-attack, so control characters and invisible formatting such as bidirectional overrides are
-rejected, as are zero-width characters. Spaces of any width are allowed, and uniqueness treats
-them as an ordinary space. A call outside these limits, or with a field the schema does not have,
-goes back to the model as a validation retry and never reaches the answerer. Once validated the questions are frozen: what
-the answerer sees is what the model asked.
+attack, so control characters and invisible formatting (zero-width characters, joiners,
+bidirectional overrides) are rejected. Spaces of any width are allowed, and uniqueness treats
+them as an ordinary space. A call outside these limits, or with a field the schema does not
+have, goes back to the model as a validation retry and never reaches the answerer. Once
+validated the questions are frozen: what the answerer sees is what the model asked.
 
 The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence
 `The user declined to answer. Continue without the answer, or ask differently if it is essential.`

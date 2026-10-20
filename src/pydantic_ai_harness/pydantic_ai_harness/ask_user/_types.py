@@ -34,7 +34,7 @@ def _printable(value: str, *, newlines: bool) -> str:
     if not all(
         char.isprintable() or unicodedata.category(char) == 'Zs' or (newlines and char == '\n') for char in value
     ):
-        raise ValueError('must not contain control characters')
+        raise ValueError('must not contain control characters or invisible formatting')
     return value
 
 
@@ -100,7 +100,7 @@ class Question(BaseModel):
 
 
 def _require_unique(values: list[str], *, what: str) -> None:
-    # NFKC folds the wide spaces into ' ', so values that only look alike count as duplicates.
+    # NFKC folds compatibility forms (wide spaces, full-width letters, ligatures), so look-alikes count as duplicates.
     folded = [unicodedata.normalize('NFKC', value).casefold() for value in values]
     if len(folded) != len(set(folded)):
         raise ValueError(f'{what} must be unique')
