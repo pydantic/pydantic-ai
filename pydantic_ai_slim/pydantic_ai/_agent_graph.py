@@ -975,7 +975,7 @@ async def _get_instructions(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest | None, instruction_parts: list[_messages.InstructionPart] | None
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -984,9 +984,10 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone, as it does when
+    there's no request to record them on.
     """
-    if instruction_parts is not None:
+    if request is not None and instruction_parts is not None:
         request.instructions = _messages.InstructionPart.join(instruction_parts)
 
 
@@ -2073,8 +2074,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Instruction parts are request configuration, but the message recording the
             # current step must still reflect what was actually sent.
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
-            if self._capability_load_request is not None:
-                _apply_instruction_parts(self._capability_load_request, model_request_parameters.instruction_parts)
+            _apply_instruction_parts(self._capability_load_request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
