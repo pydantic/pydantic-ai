@@ -109,8 +109,13 @@ fails loudly where it does not:
 - **Tools**: client tools are workspace entities referenced by the agent, so they cannot be
   declared inline per conversation. By default the preflight errors when the session's tools and
   the agent's client tools differ in any way; see [Tool synchronization](#tool-synchronization).
-- **Stays with the agent**: turn-taking and VAD, ASR configuration, audio formats, and platform
+- **Stays with the agent**: turn-taking and VAD, ASR configuration, audio formats, the voice mode, and platform
   settings (auth, privacy, guardrails, knowledge bases, workflows).
+- **Realtime voice mode**: an agent set to a
+  [Realtime model](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models) (its
+  `conversation_config.realtime_model`, which can't be overridden per conversation) has ElevenLabs pick the LLM and
+  TTS model. It would ignore `elevenlabs_agents_llm` and an `elevenlabs_agents_tts` `model_id`, so the preflight
+  raises a [`UserError`][pydantic_ai.exceptions.UserError] for either. Every other override works as in Custom mode.
 
 ### Settings
 

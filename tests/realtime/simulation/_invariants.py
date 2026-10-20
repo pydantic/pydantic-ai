@@ -72,7 +72,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
-import re
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -92,6 +91,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models._speech import assistant_speech_text
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
 from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
@@ -183,13 +183,22 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
     return fingerprints
 
 
-_INTERRUPTION_MARKER = re.compile(r' \[Interrupted(?: after \d+ ms)?\]$')
+def cut_off_replays(messages: list[ModelMessage]) -> dict[str, str]:
+    """How history replays each reply it records as cut off: its marked text, keyed by the plain transcript's fingerprint.
 
-
-def _restored(held: set[str]) -> set[str]:
-    """What a re-dialed conversation holding `held` restored: a reply replayed with the marker saying the listener cut
-    it off restores the reply as it was said (`assistant_speech_text`)."""
-    return held | {_INTERRUPTION_MARKER.sub('', fingerprint) for fingerprint in held}
+    A reply the listener cut off is replayed with a marker (see `assistant_speech_text`), whether or not the provider
+    applied the truncation (a truncation whose send failed may not have reached it).
+    """
+    return {
+        f'assistant:{" ".join(part.transcript.split())}': f'assistant:{" ".join(replayed.split())}'
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for index, part in enumerate(message.parts)
+        if isinstance(part, SpeechPart)
+        and part.speaker != 'user'
+        and part.transcript
+        and (replayed := assistant_speech_text(message, index)) != part.transcript
+    }
 
 
 def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
@@ -791,8 +800,17 @@ class Checker:
                     for call in response.tool_calls
                     for kind in ('function_call', 'function_call_output')
                 }
+        cut_off = cut_off_replays(messages)
         missing = [
-            (restoration, sorted((restoration.before & recorded) - _restored(restoration.held) - settled))
+            (
+                restoration,
+                sorted(
+                    fingerprint
+                    for fingerprint in (restoration.before & recorded) - restoration.held - settled
+                    # (Restored as cut off, which is how history records it.)
+                    if cut_off.get(fingerprint) not in restoration.held
+                ),
+            )
             for restoration in sim.truth.restorations
         ]
         truncated = {
