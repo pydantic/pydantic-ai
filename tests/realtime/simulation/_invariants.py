@@ -72,6 +72,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import os
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -180,6 +181,15 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
         said += [part.transcript for part in message.parts if isinstance(part, SpeechPart) and part.speaker != 'user']
         fingerprints |= {f'assistant:{" ".join(text.split())}' for text in said if text}
     return fingerprints
+
+
+_INTERRUPTION_MARKER = re.compile(r' \[Interrupted(?: after \d+ ms)?\]$')
+
+
+def _restored(held: set[str]) -> set[str]:
+    """What a re-dialed conversation holding `held` restored: a reply replayed with the marker saying the listener cut
+    it off restores the reply as it was said (`assistant_speech_text`)."""
+    return held | {_INTERRUPTION_MARKER.sub('', fingerprint) for fingerprint in held}
 
 
 def is_cut_off_copy(old: ModelMessage, new: ModelMessage) -> bool:
@@ -782,7 +792,7 @@ class Checker:
                     for kind in ('function_call', 'function_call_output')
                 }
         missing = [
-            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            (restoration, sorted((restoration.before & recorded) - _restored(restoration.held) - settled))
             for restoration in sim.truth.restorations
         ]
         truncated = {

@@ -1422,6 +1422,30 @@ def test_baseline_openai_barge_in_and_reconnect() -> None:
     run_clean(OpenAISimulation(), scenario)
 
 
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('cut', ['speech', 'cancel'])
+def test_baseline_reply_cut_off_without_a_truncation_and_reconnect(dialect: Dialect, cut: str) -> None:
+    """A reply cut off before any of it was played (by the user speaking, or a cancel) has nothing to truncate:
+    a reconnect replays its transcript marked as interrupted, which restores it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        if cut == 'speech':
+            sim.speech_start()
+        else:
+            sim.interrupt(mode='cancel')
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.settle()
+        session = sim.server.session
+        assert session is not None and 'assistant:r1w1 [Interrupted]' in session.conversation
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
+
+
 def test_baseline_openai_barge_in_after_the_reply_finished_and_reconnect() -> None:
     """Generation outruns playback: the user cuts off a reply that already finished, which history records as cut
     off, and a reconnect replays it marked as such rather than as heard in full."""
