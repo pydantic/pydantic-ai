@@ -530,11 +530,12 @@ def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[s
 def _quote(tag: str, body: str, **attrs: str) -> str:
     """Quote `body` as data in a `<tag>` element that its content can't close early.
 
-    A closing `</tag>` inside `body` is neutralized as `&lt;/tag>`, and attribute values are
-    HTML-escaped.
+    A closing `</tag>` inside `body` is neutralized as `&lt;/tag>`, and so is `</system>`: on models
+    without native mid-conversation system messages, the reminder is sent inside the core `<system>`
+    wrapper, which quoted text must not close either. Attribute values are HTML-escaped.
     """
     # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping.
-    closing = re.compile(rf'</({re.escape(tag)})\s*>', re.IGNORECASE)
+    closing = re.compile(rf'</({re.escape(tag)}|system)\s*>', re.IGNORECASE)
     escaped = closing.sub(lambda match: f'&lt;/{match.group(1)}>', body)
     attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
     return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'

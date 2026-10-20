@@ -293,6 +293,7 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
             continue
         for part in msg.parts:
             # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
+            # #10573 replaces this prefix detection with a typed `CompactionPart`.
             if (
                 isinstance(part, SystemPromptPart)
                 and part.scope != 'request'
