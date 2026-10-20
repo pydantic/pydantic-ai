@@ -28,7 +28,6 @@ rules:
       # the corresponding .md sources are the editable surface.
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
-      - pydantic-ai-pr-review.lock.yml
       - pydantic-ai-provider-mapping-sweep.lock.yml
       - pydantic-ai-provider-parity-explore.lock.yml
       - pydantic-ai-regression-detector.lock.yml

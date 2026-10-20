@@ -35,6 +35,11 @@ jobs:
         id: install
         run: uv sync --all-extras --no-extra outlines-vllm-offline --all-packages --group lint
 
+      # `main`'s CI Review runs this branch's copy of the script on v1 PRs, and the test sits
+      # outside `testpaths`.
+      - name: Test the review-context script
+        run: uv run pytest scripts/test_gather_pydantic_ai_review_context.py
+
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
           extra_args: --all-files --verbose

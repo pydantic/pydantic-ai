@@ -4,17 +4,17 @@ GitHub picks the workflow file by trigger, and on this maintenance branch that d
 editing a file here changes anything at all.
 
 - **`pull_request` and `push`** run the file at the PR's merge ref or the pushed commit, so `v1`'s
-  own copy runs. That covers `ci.yml`, `pydantic-ai-pr-review.md`,
-  `pydantic-ai-ui-security-review.md`, and the `pull_request_review` triggers of `at-claude.yml`.
-  A `v1` PR that edits one of them tests its own change. A tag push runs the tagged commit's
-  `ci.yml`, release jobs included.
+  own copy runs. That covers `ci.yml`, `pydantic-ai-ui-security-review.md`, and the
+  `pull_request_review` triggers of `at-claude.yml`. A `v1` PR that edits one of them tests its
+  own change. A tag push runs the tagged commit's `ci.yml`, release jobs included.
 - **`pull_request_target`, `workflow_run`, `schedule`, `issues` and `issue_comment`** run the
   [default branch's file](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target),
   `main`'s, whatever branch the PR targets. On a `v1` PR, `PR Bots` (`bots.yml`), `PR Guard`,
-  `Package Label` and `Protect .github` are `main`'s workflows — the last two do not exist on
-  `v1` at all. `v1`'s copies of `bots.yml`, `pr-guard.yml`, `after-ci.yml`, `stale.yml`,
-  `gateway-model-health.yml`, `agentics-maintenance.yml` and the scheduled `pydantic-ai-*`
-  workflows never run. Change those on `main`.
+  `Package Label`, `Protect .github` and `CI Review` (`pydantic-ai-pr-review.md`) are `main`'s
+  workflows — the last three have no file on `v1` at all. `v1`'s copies of `bots.yml`,
+  `pr-guard.yml`, `after-ci.yml`, `stale.yml`, `gateway-model-health.yml`,
+  `agentics-maintenance.yml` and the scheduled `pydantic-ai-*` workflows never run. Change those
+  on `main`.
 - A file that exists only on `v1` never runs under those triggers. `docs-preview.yml` is one:
   the `trigger:docs` label does nothing on a `v1` PR.
 
@@ -29,15 +29,21 @@ descriptive rather than generic. These reviewers run on a `v1` PR:
 
 | Name | Where | Runs when |
 |------|-------|-----------|
-| `Pydantic AI PR Review` | `pydantic-ai-pr-review.md` (`v1`'s copy) | automatically when a PR is opened, pushed to, or marked ready for review, unless it carries the `auto-review` label. Z.AI engine (`shared/engine-zai.md`). Submits `REQUEST_CHANGES` for any surviving HIGH or CRITICAL finding and `APPROVE` otherwise (`shared/prompts/pydantic-ai-pr-review.md`). |
-| `douwebot` | `main`'s `bots.yml` | only on applying the **`douwebot` label**. It checks out the PR's base ref (`v1`) for its instructions, posts inline findings and a formal verdict, and deletes the label when it finishes. |
+| `CI Review` | `main`'s `pydantic-ai-pr-review.md` | automatically, once the `CI` workflow **succeeds** on the PR's current head. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
+| `douwebot` | `main`'s `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`) and Claude Opus 5.5. Deletes the label when it finishes. Posts inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review for the reviewed head. |
 
-**Never apply `auto-review` to a `v1` PR.** It makes `Pydantic AI PR Review` skip, and the
-`bots.yml` `review` job it used to route to never runs, because `main`'s `bots.yml` is the one
-that executes. The PR is left with no automatic review.
+`CI Review` reviews each head once. Its `eligibility` job skips drafts, fork PRs, heads it has
+already reviewed, and PRs whose review decision is `CHANGES_REQUESTED`, and records the reason in
+a neutral `CI Review skipped` check run. It checks out the PR head, so on a `v1` PR it reads
+`v1`'s `AGENTS.md` and runs `v1`'s `scripts/gather-pydantic-ai-review-context.sh`. That script
+writes `.review-context/` at the workspace root, where `main`'s prompt reads it, and copies it
+to `/tmp/gh-aw/.review-context/`, where `v1`'s `Pydantic AI UI Security Review` reads it.
+`douwebot` checks out the PR's base ref (`v1`) for its instructions. Both are documented in
+`main`'s copy of this file.
 
-`main`'s `CI Review` also runs on `workflow_run` after every `CI` run. Its `eligibility` job does
-not filter by base branch.
+**They are independent.** Neither reads the other's state, and the label suppresses
+nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested when a
+PR warrants a second opinion.
 
 Not to be confused with `Pydantic AI UI Security Review`, a separate narrow reviewer that only
 audits the UI-adapter trust boundary. It always submits a `COMMENT` review and never owns the
@@ -74,7 +80,7 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 ## Shared Z.AI account limits
 
 Treat Pydanty and the Z.AI-backed workflows as consumers of one Z.AI account.
-On `v1` those are `pydantic-ai-pr-review.md` and `pydantic-ai-ui-security-review.md`, which import `shared/engine-zai.md`.
+On a `v1` PR those are `main`'s `CI Review` and `v1`'s `pydantic-ai-ui-security-review.md`, which imports `shared/engine-zai.md`.
 The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
 Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
 Include delegates and SDK retries in the request timeline.

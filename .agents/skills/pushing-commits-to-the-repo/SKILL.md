@@ -126,18 +126,16 @@ Triage comments already posted before handoff; do not wait for future hosted rev
 
 ## When the loop completes — consider a deep `douwebot` review
 
-A `v1` PR has two standards reviewers, and they are independent (see `.github/workflows/AGENTS.md`):
+The repo has two standards reviewers, and they are independent (see `.github/workflows/AGENTS.md`):
 
-- **`Pydantic AI PR Review`** runs automatically when the PR is opened, pushed to, or marked ready
-  for review. It submits an `APPROVE` or `REQUEST_CHANGES` verdict and has the more rigorous
-  process — severity scale and sub-agent fan-out.
+- **`CI Review`** runs automatically once the `CI` workflow succeeds on the PR's current head. It
+  submits an `APPROVE` or `REQUEST_CHANGES` verdict and has the more rigorous process — severity
+  scale, sub-agent fan-out, per-finding verification.
 - **`douwebot`** runs only when the `douwebot` label is applied, on a stronger model. It posts
   inline findings and a formal `APPROVE` or `REQUEST_CHANGES` review, and it deletes the label when
   it finishes, so each application buys exactly one review of the diff as it stands at that moment.
 
-Applying the label adds a second opinion; it does not suppress or replace `Pydantic AI PR Review`.
-**Never apply `auto-review` to a `v1` PR:** it makes `Pydantic AI PR Review` skip, and nothing
-reviews in its place.
+Applying the label adds a second opinion; it does not suppress or replace `CI Review`.
 
 - Skip this entire section for prose-only documentation; do not dispatch reviews or ask for a second-opinion choice.
 - Skip additional-review selection for a mechanical text/data refresh defined above.

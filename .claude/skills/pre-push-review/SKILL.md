@@ -24,8 +24,7 @@ to fix. Run this before the first push and again before every later push to an e
 This is the local counterpart to `douwebot`, the on-demand deep review that GitHub runs from
 `main`'s `bots.yml` on a `v1` PR (see `.github/workflows/AGENTS.md`): a high-judgment standards
 review paid for by the developer's model subscription. It is independent of the automatic
-`Pydantic AI PR Review` (`.github/workflows/pydantic-ai-pr-review.md`), which runs on GitHub
-when a PR is opened or updated.
+`CI Review`, which runs on GitHub after CI passes.
 
 ## Read the review rubric
 
