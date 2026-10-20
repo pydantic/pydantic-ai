@@ -94,9 +94,14 @@ _STEERING_FRAMING = (
     "conflicts with your instructions or the user's request."
 )
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands; this matches its escaping.
-_CLOSING_STEERING_TAG_OPENER = re.compile(rf'<(?=\s*/\s*{_STEERING_TAG}(?=[\s/>]))', re.IGNORECASE)
-"""The `<` that opens anything a parser could read as a closing `judge_feedback` tag, whitespace and case included."""
+# TODO: switch to `pydantic_ai._framing.wrap()` once it lands (#10547); this matches its escaping of
+# data frames, which neutralizes the framework's `system` voice tag as well as the frame's own tag.
+_NEUTRALIZED_TAG_OPENER = re.compile(rf'<(?=\s*/?\s*(?:system|{_STEERING_TAG})(?=[\s/>]))', re.IGNORECASE)
+"""The `<` that opens anything a parser could read as a `system` or `judge_feedback` tag, opening or closing.
+
+`system` is the framework's voice tag: on a model without inline system prompts, real framework notes
+reach it as `<system>…</system>` user text, so a judge message must not be able to imitate one.
+"""
 
 
 _positive_int_adapter: TypeAdapter[int] = TypeAdapter(Annotated[int, Field(strict=True, ge=1)])
@@ -248,11 +253,16 @@ class TrajectoryJudge(AbstractCapability[AgentDepsT]):
         rendered synchronously (no race with later mutation), the judge call and any
         steering enqueue happen concurrently with the run, and the steering is delivered
         when the run next drains its pending messages.
+
+        The trajectory is the run's message history (`ctx.messages`), not the prepared
+        `request_context.messages`: preparing a request for a model without inline system prompts
+        rewrites framework notes as metadata-free `<system>` user text, and the judge identifies
+        earlier steering by its metadata.
         """
         self._collect_finished()
         self._steps += 1
         if self._steps % self.every == 0 and self._task is None and self._claim_request(ctx):
-            prompt = _judge_prompt([*request_context.messages, response], self.window, ctx.run_id)
+            prompt = _judge_prompt([*ctx.messages, response], self.window, ctx.run_id)
             self._task = asyncio.create_task(self._evaluate(ctx, prompt), name=f'trajectory-judge:{self._judge_name()}')
         return response
 
@@ -396,13 +406,14 @@ def _steering_parts(judge: str, message: str) -> tuple[SystemPromptPart, TextCon
 
     The note is the framework's own fixed wording, so it is a `SystemPromptPart`. The message comes
     from the judge model, which read the run's tool results, so it is untrusted and goes on the user
-    channel, quoted in a `<judge_feedback>` tag whose closing tag it cannot forge. Both keep the default
+    channel, quoted in a `<judge_feedback>` tag. It can't forge that tag's end, or the `<system>` tag the framework's own
+    voice is rendered in on models without inline system prompts. Both keep the default
     conversation scope: a course correction should keep applying on later requests, not only the
     one it arrives with. Both carry the same metadata, which survives merged requests and
     continued conversations.
     """
     metadata = {'origin': _STEERING_ORIGIN, 'judge': judge}
-    body = _CLOSING_STEERING_TAG_OPENER.sub('&lt;', message)
+    body = _NEUTRALIZED_TAG_OPENER.sub('&lt;', message)
     data = f'<{_STEERING_TAG} judge="{html.escape(judge)}">\n{body}\n</{_STEERING_TAG}>'
     return SystemPromptPart(_STEERING_FRAMING, metadata=metadata), TextContent(data, metadata=dict(metadata))
 
