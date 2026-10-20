@@ -11,6 +11,7 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
     model_request_telemetry_url_ids,
 )
+from pydantic_ai.capabilities._dynamic import DynamicCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.durable_exec._capability_operation import (
@@ -282,12 +283,22 @@ def restore_telemetry_mcp_url_ids(
     agent: AbstractAgent[AgentDepsT, OutputDataT] | None,
 ) -> None:
     """Restore URL provenance omitted from the provider request payload."""
+    legacy_dynamic_local_ids: set[str] = set()
     if url_ids is None:
         url_ids = model_request_telemetry_url_ids(parameters)
         explicit_ids: set[tuple[str | None, str | None]] = set()
         if agent is not None:
             configured_capabilities = list(leaf_capabilities(agent.root_capability))
             url_ids.update(mcp_telemetry_url_ids(configured_capabilities))
+            if any(isinstance(capability, DynamicCapability) for capability in configured_capabilities):
+                # Legacy payloads cannot resolve a dynamic capability's local MCP toolset.
+                # Its generated capability and toolset IDs are equal in the tool definition.
+                legacy_dynamic_local_ids = {
+                    tool.capability_id
+                    for tool in parameters.function_tools
+                    if tool.capability_id is not None and tool.capability_id == tool.toolset_id
+                }
+                url_ids.update(legacy_dynamic_local_ids)
             for toolset in agent.toolsets:
                 url_ids.update(mcp_telemetry_url_ids([], toolset))
             # Legacy payloads omit per-run provenance. Static explicit IDs can be recovered
@@ -309,7 +320,7 @@ def restore_telemetry_mcp_url_ids(
                 url_ids.add(tool.id)
     parameters._telemetry_mcp_url_ids = url_ids  # pyright: ignore[reportPrivateUsage]
     if toolset_ids is None:
-        toolset_ids = set()
+        toolset_ids = legacy_dynamic_local_ids
         if agent is not None:
             if isinstance(capability_toolset := agent.root_capability.get_toolset(), AbstractToolset):
                 toolset_ids.update(mcp_telemetry_url_toolset_ids(capability_toolset))  # pyright: ignore[reportUnknownArgumentType]

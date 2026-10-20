@@ -2071,6 +2071,38 @@ def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool
     assert json.loads(serialized)['native_tools'][0]['id'] == ('[REDACTED]' if derived_id else identity)
 
 
+def test_temporal_legacy_payload_recovers_dynamic_local_mcp_capability_id() -> None:
+    url = 'https://mcp.example.test/private/SENTINEL-path-token'
+    capability = MCP(url, native=False, local=True)
+    assert capability.id is not None
+    model = TestModel()
+    agent = Agent(
+        model,
+        name='telemetry_recovery',
+        capabilities=[DynamicCapability(lambda _ctx: capability, id='dynamic-mcp')],
+    )
+    bound_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG).for_agent(agent)
+    assert isinstance(bound_durability, TemporalDurability)
+    ctx = RunContext[object](deps=None, model=model, usage=RunUsage())
+    payload = _RequestParams(
+        messages=[ModelRequest.user_text_prompt('hello')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[ToolDefinition(name='ping', toolset_id=capability.id, capability_id=capability.id)]
+        ),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+    wire = TypeAdapter(_RequestParams).dump_python(payload, mode='json')
+    decoded = TypeAdapter(_RequestParams).validate_python(wire)
+    loaded = _ModelRequestTransport(bound_durability, result_type=ModelResponse).load((decoded, None), runtime=object())
+    serialized = model_request_parameters_attributes(loaded.model_request_parameters)['model_request_parameters']
+
+    assert isinstance(serialized, str)
+    assert 'SENTINEL-path-token' not in serialized
+    assert json.loads(serialized)['function_tools'][0]['capability_id'] == '[REDACTED]'
+    assert json.loads(serialized)['function_tools'][0]['toolset_id'] == '[REDACTED]'
+
+
 @pytest.mark.parametrize('explicit_native_tool', [False, True])
 def test_temporal_legacy_payload_preserves_static_explicit_mcp_id_matching_url(explicit_native_tool: bool) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
