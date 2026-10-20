@@ -754,7 +754,9 @@ class FileStore:
             raise ValueError('limit must be positive')
         workspace = self._workspace()
         root = await workspace.realpath(await self._root(workspace))
-        start = posixpath.join(root, prefix.removesuffix('/')) if prefix.endswith('/') else root
+        # Every path below `prefix` sits under its directory part, which also bounds a non-nested listing.
+        parent = posixpath.dirname(prefix)
+        start = posixpath.join(root, parent) if parent else root
         # A scoped prefix can itself be a symlink; check it before listing its first child.
         if start != root and await workspace.realpath(start) != start:
             return []

@@ -112,6 +112,9 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
     assert [match.path for match in result.matches] == ['acme/main/MEMORY.md', 'acme/main/notes.md']
     assert result.scanned == 2
     assert not result.truncated
+    # A prefix that ends mid-name matches the direct children it begins.
+    partial = await store.search('acme/main/no', 'tea', limit=10, max_files=10, max_chars=100, max_file_chars=100)
+    assert [match.path for match in partial.matches] == ['acme/main/notes.md']
     assert await store.list_paths('acme/main/', limit=10) == [
         'acme/main/MEMORY.md',
         'acme/main/main/MEMORY.md',
