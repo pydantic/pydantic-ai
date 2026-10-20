@@ -10,7 +10,8 @@ from pydantic_ai.messages import TextContent, UserContent
 
 _BACKGROUND_RESULT_ORIGIN = 'pydantic-ai-harness.background_tools.result.v1'
 
-_TOOL_RESULT_CLOSING_TAG = re.compile(r'</(tool_result)\s*>', re.IGNORECASE)
+_TOOL_RESULT_CLOSING_TAG_OPENER = re.compile(r'<(?=\s*/\s*tool_result(?=[\s/>]))', re.IGNORECASE)
+"""Matches only the `<` of a closing `tool_result` tag, in any case, spacing or with attributes, as `_framing` does."""
 
 
 # TODO: switch to `pydantic_ai._framing.wrap()` once it lands (https://github.com/pydantic/pydantic-ai/pull/10547).
@@ -30,7 +31,7 @@ def tool_result_tags(tool_name: str, tool_call_id: str) -> tuple[str, str]:
 
 def escape_tool_result_body(text: str) -> str:
     """Neutralize closing `</tool_result>` tags in tool output, so it cannot end its own frame early."""
-    return _TOOL_RESULT_CLOSING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', text)
+    return _TOOL_RESULT_CLOSING_TAG_OPENER.sub('&lt;', text)
 
 
 def make_background_completion(text: str, task_id: str) -> TextContent:
