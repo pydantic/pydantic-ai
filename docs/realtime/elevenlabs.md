@@ -91,6 +91,13 @@ which per-conversation overrides are permitted. Every
 `model_name`; the LLM the agent runs on is part of the agent configuration and is not reported per
 response.
 
+That LLM doesn't always answer. When it errors, returns nothing or an invalid tool call, or goes quiet for longer
+than the agent's `prompt.cascade_timeout_seconds` (4 seconds by default; in [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models), ElevenLabs sets this wait itself), ElevenLabs answers the turn with a backup
+LLM from its fallback cascade. The response's `model_name` is still the agent id: only a `context_usage` report
+(see [Usage and cost](#usage-and-cost)) names the LLM, and it isn't tied to a response. The conversations API reports
+the answering LLM afterwards, per message, as `producing_llm`. To turn the cascade off, set the agent's `prompt.backup_llm_config` to `{"preference": "disabled"}`.
+To choose the backup LLMs, set it to `{"preference": "override", "order": [...]}`.
+
 ### Configuration ownership
 
 Pydantic AI is the source of truth wherever ElevenLabs allows a per-conversation override, and
@@ -221,8 +228,9 @@ ElevenLabs runs them itself. Its calls to webhook and system tools (such as `end
 session's history; its calls to MCP tools are recorded as a
 [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and
 [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. MCP tools that require approval on
-the ElevenLabs side aren't supported: the session denies such a call (with a warning) rather than leave
-the conversation waiting. Give the agent those tools through a Pydantic AI
+the ElevenLabs side aren't supported. The session denies such a call (with a warning) rather than leave
+the conversation waiting up to 300 seconds for an approval that can't come. The agent's LLM is told that the user
+denied the call, and ElevenLabs reports nothing further about it. Give the agent those tools through a Pydantic AI
 [MCP toolset](../mcp/client.md) instead, which is the recommended way, or turn approval off for the tool
 in the agent's configuration.
 
@@ -272,8 +280,8 @@ with an `elevenlabs-agents:<agent_id>` model string, or with `provider='elevenla
 ElevenLabs reports the LLM's context consumption only, as `input_tokens`, and only when
 `context_usage` is in the agent's `conversation.client_events` list (it is not by default, and adding it
 is recommended: it also tells the session where a spoken response ends, see
-[Provider-specific quirks](#provider-specific-quirks); a session on an agent without it warns once). A report arrives with the end of each response's
-audio and counts toward the session's usage without belonging to any one response. When ElevenLabs
+[Provider-specific quirks](#provider-specific-quirks); a session on an agent without it warns once). A report arrives when the agent has finished generating a
+response, with its last audio chunk (well before that audio has played), and counts toward the session's usage without belonging to any one response. When ElevenLabs
 answers a turn with a fallback LLM, the report names that model and its context window. The context window it names is kept on
 [`ElevenLabsAgentsRealtimeConnection.context_limit_tokens`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeConnection.context_limit_tokens],
 and [`context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used] is the ratio of
@@ -281,7 +289,9 @@ the two.
 
 No price is known for the platform, so [`usage.cost`][pydantic_ai.usage.RunUsage.cost] is always
 `None` and a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] can't be enforced. Look the
-cost up afterwards through the ElevenLabs conversations API: every
+cost up afterwards through the ElevenLabs conversations API: `GET /v1/convai/conversations/{conversation_id}`
+reports the conversation's cost in credits as `metadata.cost`, its length as `metadata.call_duration_secs`, and a
+breakdown, including the LLM tokens used per model, under `metadata.charging`. Every
 [`ModelResponse`][pydantic_ai.messages.ModelResponse] the conversation ends, cut off and lost ones included,
 carries the conversation's id in `provider_details['conversation_id']` (one still under way when the session
 itself closes has none), and the live connection has it as
@@ -298,7 +308,9 @@ itself closes has none), and the live connection has it as
   alike, and keeps them, in order and without brackets, in the response's `provider_details['audio_tags']`
   (`['laughs']`). Only lowercase words in square brackets count as tags, so citations (`[1]`), Markdown links,
   and placeholders like `[Your Name]` stay in the text. Set `elevenlabs_agents_strip_audio_tags=False` to keep the
-  transcript as ElevenLabs sends it (`[laughs] Hi there.`).
+  transcript as ElevenLabs sends it (`[laughs] Hi there.`). To keep the LLM from writing tags in the first place,
+  turn off expressive mode on the agent (`tts.expressive_mode: false`), which also gives up the expressive delivery.
+  This works only in Custom voice mode: in [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models), ElevenLabs manages expressive mode itself.
 - A barge-in cuts each agent message down to what the user heard, as ElevenLabs reports it. Synthesis
   outruns playback, so this is usually after the message's response has ended. History then holds an
   [interrupted copy](history.md#transcription-and-history-edge-cases) of the response, in the same position,
