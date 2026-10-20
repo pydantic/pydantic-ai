@@ -1310,6 +1310,14 @@ clears it. Its input runs your own cell with `/monty` between turns, shown as yo
 prompt tells the model what you ran. A saved session keeps no sandbox call log, so its cells list
 the calls found in their code.
 
+Images pasted or dropped into the composer go with the next prompt: the page shows each as a
+thumbnail until it is sent, and sends them with the text (`POST /api/sessions/ID/input` with
+`images`, base64-encoded), which the server checks and converts to PNG as the terminal does a pasted
+image, then enters with `send_input(text, images=...)`. A prompt may be images alone; a `/command`
+takes none. A prompt's transcript item lists its images by ID (`images`, the SHA-256 of the bytes),
+and the page fetches each from `GET /api/sessions/ID/images/IMAGE_ID` with the token header,
+showing it as a thumbnail in the message.
+
 The composer's **Code** and **Speculative** toggles flip `run.code_mode` and
 `run.speculative_code_mode` by sending `/set` through the prompt, so they save the setting as
 typing it would; a running turn keeps the tools it started with. While speculation is on, code
@@ -2616,9 +2624,13 @@ prompt the keyboard does:
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
   where only the keyboard or `interrupt()` closes it; send `/model NAME` or `/resume ID` instead,
   or show the menu the command declares (`command_menu`, below) yourself.
+  `send_input(text, images=[...])` attaches `BinaryContent` images to a prompt, as images pasted at
+  the prompt are: the model gets them after the text, which may be blank. It raises `ValueError` for
+  a `/command` or `!` line, which take no images, and when images waiting to be sent would pass 32 MiB.
   A headless `-p` run reads no prompts, so what it is sent never runs. It raises `RuntimeError` on a host with no
   prompt to type at: one built without `send_input=`, or a CLAI whose output is not a terminal,
-  which reads its prompts line by line.
+  which reads its prompts line by line. A `PluginHost` you build yourself calls its `send_input=`
+  callback with two arguments, the text and the images, `(text, images)`.
 - `self.host.setting(KEY)` reads the effective value of a CLAI setting, such as
   `run.code_mode`, as `/set KEY` shows it; change one as the user would, with
   `send_input('/set KEY VALUE')`. It raises `KeyError` for an unknown key, and on a host without
@@ -3646,7 +3658,7 @@ A `LiveSession` is one live session:
 | `queued` | how many inputs wait for its running turn or command to end |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
-| `send_input(text)` | enter `text` at its prompt, as its `host.send_input` does |
+| `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
 | `interrupt()` | cancel its running turn or command; `False` when nothing was running |
 | `await complete(text)` | what Tab offers at its prompt for `text` |
 

@@ -4,6 +4,7 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -11,6 +12,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
+from typing_extensions import TypeIs
 
 from pydantic_ai import (
     AgentStreamEvent,
@@ -20,6 +22,7 @@ from pydantic_ai import (
     PartStartEvent,
 )
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     RetryPromptPart,
@@ -30,6 +33,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from pydantic_ai.usage import RunUsage
@@ -97,6 +101,8 @@ class Item:
     """The tools a `run_code` cell called from its sandbox; live runs only, as history keeps none."""
     by_user: bool = False
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
+    images: list[str] = field(default_factory=list[str])
+    """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
 
 
 @dataclass(kw_only=True)
@@ -906,29 +912,96 @@ def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
     return text
 
 
-def user_text(part: UserPromptPart) -> str:
-    """A prompt's text, naming the attachments the browser does not show.
+def image_id(image: BinaryContent) -> str:
+    """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
+    return hashlib.sha256(image.data).hexdigest()
+
+
+class ImageIds:
+    """The transcript IDs of a live session's images, each hashed once while the session holds the image."""
+
+    def __init__(self) -> None:
+        """Start knowing no image."""
+        self._known: dict[int, tuple[BinaryContent, str]] = {}
+        """By `id()`, which stays unique as the image is kept here with its ID."""
+
+    def __call__(self, image: BinaryContent) -> str:
+        """The ID of `image`."""
+        known = self._known.get(id(image))
+        if known is None:
+            known = self._known[id(image)] = (image, image_id(image))
+        return known[1]
+
+    def find(self, wanted: str) -> BinaryContent | None:
+        """The image whose ID is `wanted`, of those the transcript listed and the session still holds."""
+        return next((image for image, known in self._known.values() if known == wanted), None)
+
+    def keep(self, images: Sequence[BinaryContent]) -> None:
+        """Forget every image but `images`, those the session holds now."""
+        held = {id(image) for image in images}
+        self._known = {key: known for key, known in self._known.items() if key in held}
+
+
+def user_images(part: UserPromptPart) -> list[BinaryContent]:
+    """The images a prompt carries, which the browser shows as thumbnails."""
+    if isinstance(part.content, str):
+        return []
+    return [item for item in part.content if _is_image(item)]
+
+
+def _is_image(item: UserContent) -> TypeIs[BinaryContent]:
+    return isinstance(item, BinaryContent) and item.is_image
+
+
+def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
+    """A prompt's text, naming the attachments the browser does not show: images too, unless as `thumbnails`.
 
     Notes telling the model about `/monty` cells are left out: the Monty panel shows those cells.
     """
     if isinstance(part.content, str):
         return part.content
     return '\n'.join(
-        item if isinstance(item, str) else f'[{type(item).__name__}]'
+        item if isinstance(item, str) else '[image]' if _is_image(item) else f'[{type(item).__name__}]'
         for item in part.content
-        if not (isinstance(item, str) and item.startswith(NOTE_PREFIX))
+        # A prompt sent as images alone has an empty text.
+        if not (isinstance(item, str) and (not item or item.startswith(NOTE_PREFIX)))
+        and not (thumbnails and _is_image(item))
     )
 
 
-def history_items(messages: Sequence[ModelMessage]) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls."""
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None) -> Item:
+    """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
+
+    Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
+    """
+    images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
+    return Item(id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images)
+
+
+def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
+    """Every image the prompts of a history carry."""
+    return [
+        image
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for image in user_images(part)
+    ]
+
+
+def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
+    """The transcript items of a saved or finished history; tool results join their calls.
+
+    A live session passes its `image_ids`, so prompts list their images; see `user_item`.
+    """
     items: list[Item] = []
     tools: dict[str, Item] = {}
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
-                    items.append(Item(id=f'h{len(items)}', kind='user', text=user_text(part)))
+                    items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
                 elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
                     tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'
