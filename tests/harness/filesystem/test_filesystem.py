@@ -60,7 +60,6 @@ from pydantic_ai_harness.filesystem._toolset import (
     FileSystemToolset,
     _content_hash,  # pyright: ignore[reportPrivateUsage]
     _format_lines,  # pyright: ignore[reportPrivateUsage]
-    _has_nested_quantifier,  # pyright: ignore[reportPrivateUsage]
     _is_binary,  # pyright: ignore[reportPrivateUsage]
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
@@ -574,25 +573,19 @@ class TestRootDir:
 
 
 class TestAccessPatterns:
-    async def test_denied_and_read_only_patterns_ignore_case(self, fs_root: Path) -> None:
+    async def test_denied_and_read_only_patterns_ignore_case(self, tmp_path: Path) -> None:
         # On a case-insensitive filesystem `PRIVATE/notes.txt` is `private/notes.txt`, and the workspace
         # reports a path in the case it was written, so the patterns have to match either spelling.
-        ts = FileSystemToolset(
-            root_dir=fs_root,
-            allowed_patterns=[],
-            denied_patterns=['private'],
-            read_only_patterns=['**/.git', '**/.env'],
-            max_read_lines=2000,
-            max_list_results=1000,
-            max_search_results=1000,
-            max_find_results=1000,
-        )
-        with pytest.raises(PermissionError, match=r"'PRIVATE/notes\.txt' is denied by pattern 'private'"):
-            ts._check_access('PRIVATE/notes.txt')  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(PermissionError, match=r"'\.GIT/config' is protected \(matches '\*\*/\.git'\)"):
-            ts._check_access('.GIT/config', write=True)  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(PermissionError, match=r"'apps/\.Env' is protected"):
-            ts._check_access('apps/.Env', write=True)  # pyright: ignore[reportPrivateUsage]
+        # The access check comes before any I/O, so this holds on a case-sensitive filesystem too.
+        toolset = FileSystem[None](denied_patterns=['private']).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        ws = LocalWorkspaceBackend(tmp_path)
+        with pytest.raises(ModelRetry, match=r"'PRIVATE/notes\.txt' is denied by pattern 'private'"):
+            await toolset.read_file('PRIVATE/notes.txt', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'\.GIT/config' is protected \(matches '\*\*/\.git'\)"):
+            await toolset.write_file('.GIT/config', '[core]\n', workspace=ws)
+        with pytest.raises(ModelRetry, match=r"'apps/\.Env' is protected \(matches '\*\*/\.env'\)"):
+            await toolset.write_file('apps/.Env', 'X=1\n', workspace=ws)
 
     async def test_default_read_only_patterns_protect_a_git_file(self, tmp_path: Path) -> None:
         # In a git worktree or submodule `.git` is a file naming the git directory; rewriting it
@@ -1524,37 +1517,39 @@ class TestSearchFiles:
             '[1 files skipped (too large or unreadable): large.txt]'
         )
 
-    async def test_nested_repetition_is_refused_when_searching_in_python(
-        self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
-    ) -> None:
-        # Python's backtracking `re` takes exponential time on `(a+)+$` and has no timeout, and it
-        # runs on the event loop, so one model call would stall every run sharing it.
-        (fs_root / 'slow.txt').write_text('a' * 40 + '!\n')
-        with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
-            await toolset.search_files('(a+)+$', workspace=ReadOnlyWorkspace(Workspace(ws)))
-
     @pytest.mark.parametrize(
-        ('pattern', 'nested'),
+        ('pattern', 'refused'),
         [
-            ('(a+)+', True),
+            ('(a+)+$', True),
             ('(a*)*b', True),
             ('(?:x|a{2,})+', True),
             ('((a+)b)*', True),
-            ('(\\w+\\s?)*$', True),
-            ('(a+){2}', False),
-            ('(a{2})+', False),
+            (r'(\w+\s?)*$', True),
+            ('(a+){1,30}$', True),
+            ('(.*a){12}$', True),
+            ('(a{2})+', True),
+            ('(a+){0,1}', False),
+            ('(a+){1}', False),
+            ('(a?)+', False),
             ('(ab)+c*', False),
-            ('\\(a+\\)+', False),
+            (r'\(a+\)+', False),
             ('([+*])+', False),
             ('([]+)])+', False),
             ('([^]+])+', False),
-            ('([\\]+])+', False),
-            ('a+)+', False),
-            ('', False),
+            (r'([\]+])+', False),
         ],
     )
-    def test_nested_repetition_detection(self, pattern: str, nested: bool) -> None:
-        assert _has_nested_quantifier(pattern) is nested
+    async def test_nested_repetition_is_refused_when_searching_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str, refused: bool
+    ) -> None:
+        # Python's backtracking `re` can take exponential time on `(a+)+$` and has no timeout, and it
+        # runs on the event loop, so one model call would stall every run sharing it.
+        walked = ReadOnlyWorkspace(Workspace(ws))
+        if refused:
+            with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
+                await toolset.search_files(pattern, workspace=walked)
+        else:
+            assert 'repeats a group' not in await toolset.search_files(pattern, workspace=walked)
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)

@@ -68,7 +68,7 @@ For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) ra
 
 - In a remote workspace, install `rg` and `git` in the image for fast searches. The agent host's `rg` is not used there.
 - Without `rg`, a command-capable POSIX workspace runs one git/grep/find command for `grep`, `list_files`, and `search_files`, after an initial `rg` probe, and logs one debug message the first time. With git it reads nested `.gitignore` files but only the search root's `.ignore`, and also searches files git tracks even though `.gitignore` lists them, which `rg` skips. Without git it applies no ignore files. Regex features specific to `rg` need `rg`.
-- A filesystem-only or read-only workspace walks its files in Python, bounded, and refuses a regex that repeats a repeating group, such as `(a+)+`, which Python's regex engine can take exponential time on.
+- A filesystem-only or read-only workspace walks its files in Python, bounded. Python's regex engine has no time limit, so a regex that repeats a repeating group, such as `(a+)+`, is refused: that shape can take exponential time. The check is a heuristic for that shape, not a time limit.
 - An explicitly named file is always searched, even when ignored. A file a search cannot read (with `rg`, a directory too) is skipped, and a note at the end of the result names it and the reason. Output and result caps are reported, so a partial result never reads as complete.
 
 For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output.

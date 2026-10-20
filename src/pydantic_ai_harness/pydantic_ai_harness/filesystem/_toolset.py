@@ -428,14 +428,26 @@ def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: i
     return matches, False
 
 
-_UNBOUNDED_QUANTIFIER = re.compile(r'[*+]|\{\d+,\}')
+_QUANTIFIER = re.compile(r'[*+]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
+
+
+def _repeats_at(pattern: str, index: int) -> bool:
+    """Whether a quantifier that can repeat what precedes it more than once starts at `index`."""
+    if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
+        return False
+    if (count := quantifier['count']) is not None:
+        return int(count) > 1
+    high = quantifier['high']
+    return high is None or not high or int(high) > 1
 
 
 def _has_nested_quantifier(pattern: str) -> bool:
-    """Whether an unboundedly repeated group itself contains an unbounded repetition, as `(a+)+` does.
+    """Whether a repeated group itself contains a repetition, as `(a+)+` and `(.*a){12}` do.
 
-    That shape makes a backtracking engine such as Python's `re` take exponential time on a short
-    non-matching line, and `re` has no timeout, so a search run in Python refuses it.
+    That shape can make a backtracking engine such as Python's `re` take exponential or high
+    polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
+    This is a heuristic for the common shape: it also refuses some harmless patterns, such as
+    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`.
     """
     enclosing: list[bool] = []
     repeats = False  # whether the innermost open group repeats anything so far
@@ -455,11 +467,11 @@ def _has_nested_quantifier(pattern: str) -> bool:
         elif char == '(':
             enclosing.append(repeats)
             repeats = False
-        elif char == ')' and enclosing:
-            if repeats and _UNBOUNDED_QUANTIFIER.match(pattern, index + 1):
+        elif char == ')':  # the pattern compiled, so every unescaped `)` closes a group
+            if repeats and _repeats_at(pattern, index + 1):
                 return True
             repeats = enclosing.pop() or repeats
-        elif _UNBOUNDED_QUANTIFIER.match(pattern, index):
+        elif _repeats_at(pattern, index):
             repeats = True
         index += 1
     return False
@@ -1540,10 +1552,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         command_glob = include_glob if include_glob and '/' not in include_glob else None
 
         def selected(record: Record) -> bool:
-            path = posixpath.normpath(record.path)
-            return not include_glob or any(
-                fnmatch.fnmatch(candidate, include_glob)
-                for candidate in (path, posixpath.normpath(posixpath.join(prefix, path)))
+            return not include_glob or fnmatch.fnmatch(
+                posixpath.normpath(posixpath.join(prefix, record.path)), include_glob
             )
 
         async def accept(record: Record) -> str | None:

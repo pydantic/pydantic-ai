@@ -388,3 +388,6 @@ async def test_include_glob_matches_alike_on_every_search_path(tmp_path: Path, n
         assert rooted == 'test_root.py:1:needle', name
         below = await tools.search_files('needle', path='src', include_glob='*.py', workspace=workspace)
         assert below == 'src/pkg/m.py:1:needle', name
+        # The glob is matched against the root-relative path, not the path below the search directory.
+        relative = await tools.search_files('needle', path='src', include_glob='pkg/*.py', workspace=workspace)
+        assert relative == 'No matches found.', name
