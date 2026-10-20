@@ -2030,6 +2030,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
         if self._resume_suspended is None:
             processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
+        # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
+        # copy, so what's recorded on its request below, like the instructions sent, lands in history.
+        self.request = _enqueue.run_queue(run_context).request_in_history(self.request)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original

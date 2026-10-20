@@ -4178,7 +4178,7 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
                 'content': [
                     {
                         'text': """\
-<assistant_thinking provider="anthropic">
+<assistant_thinking>
 I was interrupted mid-thought
 </assistant_thinking>\
 """,

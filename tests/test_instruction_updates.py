@@ -162,6 +162,43 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
     ] == ['C']
 
 
+async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
+    """Unsetting the parts ends a window that opened with no blocks too, so the changes recorded in it stop applying."""
+    received: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    def clear_parts(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = None
+        return request
+
+    agent = Agent(FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    unset = [Hooks(before_model_request=clear_parts)]
+    history = (await agent.run('Continue.', deps=State('A'))).all_messages()
+    # Unsetting the parts ends the window `A` opened, with an empty baseline.
+    history = (
+        await agent.run('Continue.', deps=State('A'), message_history=history, capabilities=unset)
+    ).all_messages()
+    # `B` is first seen in that empty window, so it's delivered as a change.
+    history = (await agent.run('Continue.', deps=State('B'), message_history=history)).all_messages()
+    assert received[-1] == ['<context id="agent:state">\nB\n</context>']
+    # Unsetting the parts again ends this window as well, so `B` isn't sent.
+    result = await agent.run('Continue.', deps=State('B'), message_history=history, capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) == []
+    # A window with no blocks and no changes has nothing to end, so this request records no baseline.
+    result = await agent.run('Continue.', deps=State('B'), message_history=result.all_messages(), capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) is None
+
+
 async def test_instruction_updates_hook_appended_request_preserves_history():
     """Pin history merging and projected prefixes independently of provider response matching."""
     prefixes: list[str | None] = []

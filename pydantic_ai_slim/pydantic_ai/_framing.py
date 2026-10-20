@@ -29,7 +29,7 @@ TOOL_RESULT_TAG: Final = 'tool_result'
 """Frames a tool's output that has to travel on the user channel, naming the call it came from."""
 
 ASSISTANT_THINKING_TAG: Final = 'assistant_thinking'
-"""Frames another model's reasoning carried into a user turn, naming the model that produced it."""
+"""Frames another model's reasoning carried into a user turn, so it doesn't read as the user's."""
 
 CONTEXT_TAG: Final = 'context'
 """Frames an instruction block's text with the id a later `<context>` element replaces it by."""
