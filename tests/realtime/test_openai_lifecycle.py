@@ -1267,3 +1267,22 @@ async def test_input_sent_ahead_of_a_commit_is_placed_by_its_own_acknowledgement
             InputAdded(input_id=0),
         ]
     )
+
+
+@pytest.mark.parametrize('refused_first', [False, True])
+async def test_a_request_overtaken_by_a_response_the_user_cut_off_is_dropped(refused_first: bool) -> None:
+    """The user barged in on the response that overtook our request: their speech takes the turn, as it does from a
+    request deferred behind that response, so the request is dropped whenever its refusal comes."""
+    cancelled = done('resp_vad', status='cancelled')
+    refused = active_refusal('pydantic_ai.response.0')
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        *((refused, cancelled) if refused_first else (cancelled, refused)),
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert InputLost(input_ids=(0,)) in events
+    assert 'RealtimeSessionErrorEvent' not in events[:-1]
+    assert len(requests_sent(stream.ws)) == 1

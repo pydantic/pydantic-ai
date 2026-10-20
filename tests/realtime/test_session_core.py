@@ -486,6 +486,24 @@ def test_a_tool_calling_response_can_release_an_input_after_it_ended() -> None:
         feed(session_core, AnswersRevised(response_id='r1', claimed=(1,)))
 
 
+def test_a_wait_taken_once_the_tool_result_is_out_still_follows_a_released_input() -> None:
+    """A waiter that holds only the result input still sees an input the calling response later released."""
+    result = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='shipped', tool_call_id='call_1')])
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Order 4411?'), solicits=True),
+        InputSent(input_id=1, request=text_request('Also, 2 plus 2?'), solicits=True),
+        started('r1', 0, 1),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1', finish_reason='tool_call'),
+        InputSent(input_id=2, solicits=True, tool_call_id='call_1'),
+        ToolReturned(tool_call_id='call_1', request=result),
+    )
+    wait = session_core.wait_tokens()
+    feed(session_core, AnswersRevised(response_id='r1', released=(1,)), InputLost(input_ids=(2,)))
+    assert session_core.still_owed(wait) == snapshot(frozenset({Owed(kind='input', key='1', epoch=0)}))
+
+
 def test_a_response_under_way_can_claim_an_input_sent_during_it() -> None:
     """GPT-Live speaks to text placed mid-reply in that reply: it settles the text, which joins history after it."""
     session_core = feed(

@@ -537,6 +537,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._request_in_flight: tuple[tuple[int, ...], tuple[InputId, ...]] | None = None
         # How many of our requests in a row the provider refused because a response of its own was under way.
         self._active_response_refusals = 0
+        # Whether the user barged in on the response that overtook `_request_in_flight`: their speech takes the turn,
+        # so if the provider refuses the request on that response's account, it isn't asked for again.
+        self._in_flight_cut_off = False
         self._response_request_answers: tuple[InputId, ...] = ()
         # Which response, user turn, and input each frame is about (see `frames()`). Under server VAD (unless
         # `manual_turns` says turn detection is off), the provider commits the speech it hears on its own too.
@@ -1100,11 +1103,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # Not ours: one the provider started on its own while ours was on its way, which it refuses or
                 # (xAI) starts once this one is cancelled.
                 self._request_in_flight = (self._response_request_inputs, self._response_request_answers)
+                self._in_flight_cut_off = False
             elif (in_flight := self._request_in_flight) is not None and not self._lifecycle.request_outstanding(
                 client_event_id('response', in_flight[0])
             ):
                 # Ours after all, started once the provider cancelled its own.
                 self._request_in_flight = None
+                self._in_flight_cut_off = False
                 self._active_response_refusals = 0
             elif outstanding is not None:
                 self._active_response_refusals = 0
@@ -1178,6 +1183,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         ):
             # Refused for good: nothing asks for it again, not a reconnect either.
             self._request_in_flight = None
+            self._in_flight_cut_off = False
         if (
             self._response_active
             and not self._response_started
@@ -1198,6 +1204,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if in_flight is not None and event_id == client_event_id('response', in_flight[0]):
             # Refused as the response that overtook it was under way.
             self._request_in_flight = None
+            if self._in_flight_cut_off:
+                # The user barged in on that response: their speech takes the turn.
+                self._in_flight_cut_off = False
+                self._lifecycle.requests_dropped(in_flight[1])
+                return True
             request = in_flight
         elif (
             self._response_active
@@ -1302,6 +1313,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             else:
                 # The user's barge-in takes the turn: no response is requested for them.
                 self._lifecycle.requests_dropped(deferred_answers)
+        if matches_active_response and response.status == 'cancelled' and not was_client_cancel:
+            # Likewise for the request that response overtook, should the provider refuse it on its account. (xAI
+            # cancels a response of its own for ours instead, and starts ours.)
+            self._in_flight_cut_off = self._request_in_flight is not None
         if isinstance(response_id, str) and (batch := self._tool_call_batches.get(response_id)) is not None:
             # No more calls can join the response: its tool results are answered once all are in.
             batch.done = True
@@ -1370,6 +1385,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._lifecycle.socket_replaced()
         # The new conversation's items have ids of their own, which its replay reports as it adds them.
         self._tool_items.clear()
+        self._in_flight_cut_off = False
         try:
             self._ws = await self._dial()
             # A response the socket dropped before it could complete will never be released by its

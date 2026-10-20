@@ -140,7 +140,8 @@ class InferredLifecycle:
 
     The next reply then answers the input, so a reply cut off (`ResponseStarted` through a cancelled `ResponseEnded`)
     answers only the oldest input it was taken to answer, as that one started it, or none if it said nothing; and a
-    reply whose tool calls the provider cancels answers only the oldest too. The rest are released
+    reply whose tool calls the provider cancels answers only the oldest too. That is, unless audio went out after
+    those inputs: the user may have spoken over the reply, cutting it off as ever. The rest are released
     ([`AnswersRevised.released`][pydantic_ai.realtime.lifecycle.AnswersRevised.released]) to the next reply. A
     subclass for a provider that cuts its reply off this way (Gemini Live's 3.x models do) sets it to `True`.
     """
@@ -173,9 +174,15 @@ class InferredLifecycle:
         """The inputs the response under way answers, oldest first."""
         self._open_said = False
         """Whether the response under way said (or called) anything yet."""
-        self._calling: tuple[str, tuple[InputId, ...]] | None = None
-        """The latest response that ended at its tool calls, and the inputs it answers: its reply goes on in the
-        answer to the calls, until the next response starts."""
+        self._open_calls: list[str] = []
+        """The tool calls the response under way made."""
+        self._calling: dict[str, tuple[str, tuple[InputId, ...]]] = {}
+        """The response that ended at each tool call (until the next response starts), and the inputs it answers: its
+        reply goes on in the answer to the calls."""
+        self._spoken_since = -1
+        """The last audio input sent: the user may have spoken over a reply with it. Only an input sent after it can
+        have cut the reply off (see `inputs_cut_off_replies`). (The provider's transcripts of the user's speech can
+        come long after it, so they don't say when the user spoke.)"""
         self._ended_by_usage: str | None = None
         """The response a usage report or its tool call just ended: its terminal, if one follows, ends nothing more."""
         self._cut_off = False
@@ -227,6 +234,7 @@ class InferredLifecycle:
         self._inputs += 1
         if isinstance(content, BinaryContent) and content.is_audio:
             self._audio_since_reply = True
+            self._spoken_since = input_id
             return input_id
         if isinstance(content, CommitAudio):
             # The audio sent since the last turn is one now: it joins the conversation as the commit arrives. (Undone
@@ -431,7 +439,7 @@ class InferredLifecycle:
         elif isinstance(event, InputRejected):
             self._input_rejected(event, after)
         elif isinstance(event, ToolCallCancelled):
-            self._calls_cancelled(before)
+            self._calls_cancelled(event, before)
         # Everything else (the end of a native part, a cancelled call, a typed turn the connection reports lost to a
         # drop, which `connection_lost` lost already, ...) says nothing about the lifecycle.
         return before, after
@@ -468,6 +476,7 @@ class InferredLifecycle:
         self._ensure_response(before, named=named)
         self._open_said = True
         if isinstance(event, ToolCall):
+            self._open_calls.append(event.tool_call_id)
             if event.response_usage_follows:
                 self._calls_awaiting_usage = True
             elif not self._calls_awaiting_usage:
@@ -671,7 +680,8 @@ class InferredLifecycle:
         self._open = named or f'pydantic_ai_response_{self._responses}'
         self._open_named = named is not None
         self._open_answers = answers
-        self._calling = None
+        self._open_calls = []
+        self._calling = {}
         if turn_id is not None:
             self._turn_reply = (turn_id, self._open)
         elif not answers and self._transcribes and self.transcripts_lag_replies:
@@ -733,12 +743,13 @@ class InferredLifecycle:
         self._open = None
         answers, self._open_answers = self._open_answers, ()
         said, self._open_said = self._open_said, False
-        if status == 'cancelled' and self.inputs_cut_off_replies:
+        calls, self._open_calls = self._open_calls, []
+        if status == 'cancelled':
             # Cut off: it answers what started it, if it said anything, and the next response answers the rest.
             self._release(events, response_id, answers if not said else answers[1:])
         elif finish_reason == 'tool_call' and self.inputs_cut_off_replies:
             # Its reply goes on in the answer to its calls, unless the provider cancels them (see `_calls_cancelled`).
-            self._calling = (response_id, answers)
+            self._calling.update(dict.fromkeys(calls, (response_id, answers)))
         self._cut_off = False
         self._unprompted_reply = None
         self._deferred = None
@@ -762,19 +773,21 @@ class InferredLifecycle:
         cuts it off (as Gemini Live does). Which of those taken for its own came during it can't be told, but the
         oldest of them started it.
         """
-        if released:
+        # Only with no sign the user spoke since the last of them went out, which would cut the reply off as well.
+        if self.inputs_cut_off_replies and released and released[-1] > self._spoken_since:
             events.append(AnswersRevised(response_id=response_id, released=released))
             self._unanswered[:0] = released
 
-    def _calls_cancelled(self, events: list[LifecycleEvent]) -> None:
-        """The provider cancelled tool calls: an input cut off the turn waiting on their results.
+    def _calls_cancelled(self, event: ToolCallCancelled, events: list[LifecycleEvent]) -> None:
+        """The provider cancelled tool calls: an input may have cut off the turn waiting on their results.
 
         That turn's reply would have gone on in the answer to the calls, so the response that made them answers
         only what started it, and the next response, which the provider starts for the input that cut in, the rest.
         """
-        if (calling := self._calling) is not None:
-            self._calling = None
-            response_id, answers = calling
+        cancelled = next((self._calling[call_id] for call_id in event.tool_call_ids if call_id in self._calling), None)
+        if cancelled is not None:
+            self._calling = {call_id: calling for call_id, calling in self._calling.items() if calling != cancelled}
+            response_id, answers = cancelled
             self._release(events, response_id, answers[1:])
 
     def _end_deferred(self, events: list[LifecycleEvent]) -> None:

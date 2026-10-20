@@ -1703,10 +1703,16 @@ class SessionCore:
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
         owed = self.still_owed(frozenset(tokens))
-        # An input a response under way (or the tool round it started) answers is followed from the input itself, so
-        # a waiter still waits for it if the response turns out not to answer it after all (`AnswersRevised`).
+        # An input a response under way (or the tool round it started, while a call or the input carrying its result
+        # is owed) answers is followed from the input itself, so a waiter still waits for it if the response turns out
+        # not to answer it after all (`AnswersRevised`).
+        calls = [token.key for token in owed if token.kind == 'call'] + [
+            call_id
+            for token in owed
+            if token.kind == 'input' and (call_id := self._result_call.get(int(token.key))) is not None
+        ]
         revisable = {token.key for token in owed if token.kind == 'response'} | {
-            self._call_response[token.key].id for token in owed if token.kind == 'call'
+            response.id for call_id in calls if (response := self._call_response.get(call_id)) is not None
         }
         return owed | {
             Owed('input', str(input_id), epoch)
