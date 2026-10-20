@@ -107,7 +107,8 @@ async def _unless_locked(record: str, write: Awaitable[None]) -> None:
     except sqlite3.OperationalError as error:
         if error.sqlite_errorcode & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
             raise
-        logging.getLogger(__name__).warning('Skipped saving a %s: %s', record, error)
+        # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
+        logging.getLogger(__name__).info('Skipped saving a %s: %s', record, error)
 
 
 def step_store(conversations: SqliteConversationStore) -> SessionStepStore:

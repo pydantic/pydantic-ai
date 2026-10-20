@@ -2172,10 +2172,11 @@ model requests, after model responses, and at settled tool-cycle boundaries.
 `/plugins disable persistence` disables that extra step capture, not conversation
 saving. Without it, a hard kill recovers the accepted prompt and preceding saved
 history, not the in-flight turn's progress. Every CLAI on the machine shares
-`sessions.db`, and SQLite lets one of them write at a time: a step record that
-other writers keep locked out for 30 seconds is skipped instead of failing the
-turn. Resume then uses an earlier checkpoint, and a tool whose completion was
-skipped is listed under unknown effects.
+`sessions.db`, and SQLite lets one of them write at a time. A step record waits
+for the lock, so it can delay a tool result or a cancel by up to 30 seconds; one
+still locked out then is skipped instead of failing the turn. Resume then uses an
+earlier checkpoint, and a tool whose completion was skipped is listed under
+unknown effects.
 
 An interrupted session is marked `!`. If a process died mid-run, resume loads its
 newest available step checkpoint and warns you to inspect external effects. A

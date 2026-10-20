@@ -1,5 +1,6 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
+import logging
 import os
 import sqlite3
 from collections.abc import AsyncIterator, Sequence
@@ -277,6 +278,7 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
         return connect(*args, **{**kwargs, 'timeout': 0.01})
 
     monkeypatch.setattr(sqlite3, 'connect', connect_without_waiting)
+    caplog.set_level(logging.INFO, logger='pydantic_clai2.runtime._session')
 
     def run_command() -> str:
         # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
@@ -308,8 +310,10 @@ async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
     assert session.conversations is not None and session.summary.run_id is not None
     saved = await session.conversations.get(conversation_id=session.summary.id)
     assert saved.summary.outcome == 'completed' and saved.messages == session.messages
-    assert 'Skipped saving a tool effect: database is locked' in caplog.text
-    assert 'Skipped saving a step checkpoint: database is locked' in caplog.text
+    skipped = {record.getMessage(): record.levelno for record in caplog.records if record.name.endswith('_session')}
+    # Below `WARNING`, which `logging` would print over the live display.
+    assert skipped.get('Skipped saving a tool effect: database is locked') == logging.INFO
+    assert skipped.get('Skipped saving a step checkpoint: database is locked') == logging.INFO
     # The tool's completion was not recorded, so its effect still reads as started.
     assert [
         effect.tool_call_id for effect in await steps.list_unresolved_tool_effects(run_id=session.summary.run_id)
