@@ -823,7 +823,7 @@ class TestMcpSessions:
 _HEARTBEAT_INTERVAL = 'pydantic_ai_harness.absurd._operation_backend._heartbeat_interval'
 
 
-def _no_heartbeat_wait(task_ctx: object) -> float:
+def _no_heartbeat_wait(claim_timeout: int) -> float:
     return 0
 
 
@@ -854,6 +854,36 @@ class TestClaim:
             result = await agent.run('go')
 
         assert result.output == 'done'
+
+    async def test_claim_without_expiry_is_not_extended(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `claim_timeout=0` claims the task with no expiry, and Absurd refuses to extend such a claim,
+        # so a step that runs past a heartbeat interval must not try.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            # A query of its own lets a heartbeat, were one due, reach the database first.
+            await checkpoints(absurd, task['id'])
+            return 'done slowly'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, claim_timeout=0) as ctx:
+            task['id'] = ctx.task_id
+            result = await agent.run('go')
+
+        assert result.output == 'done'
+        assert list(await checkpoints(absurd, ctx.task_id)) == snapshot(
+            ['slow__model.request', 'slow__function_toolset__tools.call_tool:slow', 'slow__model.request#2']
+        )
 
     async def test_lost_claim_cancels_the_step(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
         # Once the run can't extend its claim (here, the task was cancelled), the step stops instead

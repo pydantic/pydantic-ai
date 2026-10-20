@@ -44,8 +44,10 @@ async def _noop(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:  # pragm
 
 
 @asynccontextmanager
-async def _entered(absurd: AsyncAbsurd, task: ClaimedTask) -> AsyncGenerator[AsyncTaskContext]:
-    ctx = await _create_async_task_context(task['task_id'], _conn(absurd), _queue(absurd), task, 120)
+async def _entered(
+    absurd: AsyncAbsurd, task: ClaimedTask, *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
+    ctx = await _create_async_task_context(task['task_id'], _conn(absurd), _queue(absurd), task, claim_timeout)
     token = _current_task_context.set(ctx)
     try:
         yield ctx
@@ -54,16 +56,18 @@ async def _entered(absurd: AsyncAbsurd, task: ClaimedTask) -> AsyncGenerator[Asy
 
 
 @asynccontextmanager
-async def running_task_context(absurd: AsyncAbsurd, task_name: str = 'noop') -> AsyncGenerator[AsyncTaskContext]:
+async def running_task_context(
+    absurd: AsyncAbsurd, task_name: str = 'noop', *, claim_timeout: int = 120
+) -> AsyncGenerator[AsyncTaskContext]:
     """Spawn, claim and enter a task context for the duration of the block.
 
     The task stays `running` when the block exits, so `reenter_running_task` can retry it.
     """
     absurd.register_task(name=task_name)(_noop)
     spawned = await absurd.spawn(task_name, None, max_attempts=2)
-    [task] = await absurd.claim_tasks(batch_size=1)
+    [task] = await absurd.claim_tasks(batch_size=1, claim_timeout=claim_timeout)
     assert task['task_id'] == spawned['task_id']
-    async with _entered(absurd, task) as ctx:
+    async with _entered(absurd, task, claim_timeout=claim_timeout) as ctx:
         yield ctx
 
 

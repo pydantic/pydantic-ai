@@ -81,11 +81,16 @@ def _from_checkpoint(stored: object) -> object:
     return {'kind': 'tool_return', 'result': stored}
 
 
-def _heartbeat_interval(task_ctx: AsyncTaskContext) -> float:
+def _claim_timeout(task_ctx: AsyncTaskContext) -> int:
     # The SDK has no public accessor for the worker's claim timeout. Read it directly: a fallback
     # would skip heartbeats for a shorter `claim_timeout` without any error, while a rename in the SDK
-    # fails every step with `AttributeError`. Half of it is the interval the SDK's own long waits use.
-    return max(0.5, task_ctx._claim_timeout / 2)  # pyright: ignore[reportPrivateUsage]
+    # fails every step with `AttributeError`.
+    return task_ctx._claim_timeout  # pyright: ignore[reportPrivateUsage]
+
+
+def _heartbeat_interval(claim_timeout: int) -> float:
+    # Half the claim timeout is the interval the SDK's own long waits use.
+    return max(0.5, claim_timeout / 2)
 
 
 async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awaitable[object]]) -> object:
@@ -96,7 +101,11 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
     fails, the run no longer owns the task (it was cancelled, or failed and retried elsewhere), so
     the body is cancelled and the SDK's error propagates.
     """
-    interval = _heartbeat_interval(task_ctx)
+    claim_timeout = _claim_timeout(task_ctx)
+    if claim_timeout <= 0:
+        # A worker with `claim_timeout=0` holds its claim with no expiry, which Absurd refuses to extend.
+        return await body()
+    interval = _heartbeat_interval(claim_timeout)
 
     async def extend_claim() -> None:
         while True:
